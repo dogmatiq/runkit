@@ -1,0 +1,41 @@
+package eventstream
+
+import (
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+)
+
+type Offset uint64
+
+type AppendRequest struct {
+	CommandID *uuidpb.UUID
+
+	// StreamID is the ID of the event stream to which the events are appended.
+	StreamID *uuidpb.UUID
+
+	// Events is the set of events to append to the stream. It must not be
+	// empty.
+	Events []*envelopepb.Envelope
+
+	// OffsetHint is the lowest offset within the stream at which these events
+	// may have already been appended. The stream may ignore any events before
+	// this offset when deduplicating the events.
+	OffsetHint Offset
+
+	Response chan<- AppendResponse
+}
+
+// AppendResponse is the successful result of an [AppendRequest].
+type AppendResponse struct {
+	CommandID *uuidpb.UUID
+
+	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
+	// the appended events within the stream. That is, BeginOffset is the offset
+	// of the first event in the [AppendRequest], and EndOffset is the offset
+	// after the last event in the [AppendRequest].
+	BeginOffset, EndOffset Offset
+
+	// Deduplicated is true if the events were appended by a prior
+	// [AppendRequest] and hence deduplicated.
+	Deduplicated bool
+}
