@@ -1,3 +1,4 @@
 /artifacts/
 /.makefiles/
 .vscode/settings.json
+**/testdata/rapid/
