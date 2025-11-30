@@ -38,7 +38,7 @@ type Recorder struct {
 
 // Recorder returns a new Recorder instance.
 func (p *Provider) Recorder(attrs ...Attr) *Recorder {
-	const pkg = "github.com/dogmatiq/runkit/"
+	const pkg = "github.com/dogmatiq/runkit"
 
 	var (
 		tracerProvider trace.TracerProvider
