@@ -2,6 +2,7 @@ package xrapid
 
 import (
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"pgregory.net/rapid"
 )
 
@@ -11,7 +12,7 @@ func Identity() *rapid.Generator[*identitypb.Identity] {
 		func(t *rapid.T) *identitypb.Identity {
 			return &identitypb.Identity{
 				Name: rapid.String().Draw(t, "identity name"),
-				Key:  UUID().Draw(t, "identity key"),
+				Key:  uuidpb.Generate(),
 			}
 		},
 	)

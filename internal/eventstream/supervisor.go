@@ -103,6 +103,22 @@ func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) e
 		telemetry.UUID("stream_id", req.StreamID),
 	)
 
+	// If the request is malformed, we just close the reply channel and return.
+	// The sender of the request is misbehaving, and it's up to that subsystem
+	// to recover itself.
+	if len(req.Events) == 0 {
+		close(req.Reply)
+
+		s.telemetry.Info(
+			ctx,
+			"eventstream.supervisor.append.discarded",
+			"discarded append request with zero events",
+			telemetry.UUID("stream_id", req.StreamID),
+		)
+
+		return nil
+	}
+
 	w := s.worker(ctx, req.StreamID)
 
 	for {

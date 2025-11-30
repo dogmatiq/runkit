@@ -24,7 +24,7 @@ func Open(
 		).
 		Open(
 			ctx,
-			"runkit.eventstream.journal.v1."+streamID.String(),
+			"runkit.eventstream.journal.v1/"+streamID.AsString(),
 		)
 }
 

@@ -33,7 +33,7 @@ func NewReader(
 			return nil, err
 		}
 
-		pos, txn, err := journal.Search(
+		pos, rec, err := journal.Search(
 			ctx,
 			j,
 			bounds,
@@ -43,8 +43,8 @@ func NewReader(
 			return nil, err
 		}
 
-		r.pos = pos
-		r.events = txn.GetAppendEvents().Events[offset-txn.OffsetBefore:]
+		r.events = rec.GetAppendEvents().Events[offset-rec.OffsetBefore:]
+		r.pos = pos + 1
 	}
 
 	return r, nil
@@ -66,15 +66,18 @@ func (r *Reader) Read(ctx context.Context) (
 	err error,
 ) {
 	if len(r.events) == 0 {
-		tx, err := r.journal.Get(ctx, r.pos)
+		rec, err := r.journal.Get(ctx, r.pos)
 		if err != nil {
+			if journal.IsNotFound(err) {
+				return 0, nil, false, nil
+			}
 			return 0, nil, false, err
 		}
 
 		r.pos++
 
 		eventstreamjournal.MustSwitch_Record_Op(
-			tx,
+			rec,
 			func(op *eventstreamjournal.AppendEvents) {
 				r.events = op.Events
 			},
