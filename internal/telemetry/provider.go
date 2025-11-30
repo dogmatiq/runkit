@@ -12,7 +12,7 @@ import (
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
 )
 
-// Provider provides Recorder instances scoped to particular subsystems.
+// Provider provides Recorder instances scoped to particular service.
 //
 // The zero value of a *Provider is equivalent to a provider configured with
 // no-op tracer, meter and logging providers.
@@ -23,7 +23,7 @@ type Provider struct {
 	Attrs          []Attr
 }
 
-// Recorder records traces, metrics and logs for a particular subsystem.
+// Recorder records traces, metrics and logs for a particular service.
 type Recorder struct {
 	tracer  trace.Tracer
 	meter   metric.Meter
