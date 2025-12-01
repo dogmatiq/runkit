@@ -8,6 +8,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/eventstream/internal/teststate"
 	"github.com/dogmatiq/runkit/internal/telemetry"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
@@ -15,32 +16,32 @@ import (
 
 func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		tele := telemetry.NewTestProvider(t)
+		telem := telemetry.NewTestProvider(t)
 
-		state := &state{
-			Shutdown:       make(chan struct{}),
-			AppendEvents:   make(chan AppendEvents),
-			EventsAppended: make(chan EventsAppended),
+		subsystem := &teststate.Subsystem{
+			Shutdown:      make(chan struct{}),
+			Requests:      make(chan AppendEventsRequest),
+			Notifications: make(chan EventsAppendedNotification),
 		}
 
 		supervisor := &Supervisor{
 			Journals: journal.WithTelemetry(
-				&state.Journals,
-				tele.TracerProvider,
-				tele.MeterProvider,
-				tele.LoggerProvider,
+				&subsystem.Journals,
+				telem.TracerProvider,
+				telem.MeterProvider,
+				telem.LoggerProvider,
 			),
-			Shutdown:       state.Shutdown,
-			AppendEvents:   state.AppendEvents,
-			EventsAppended: state.EventsAppended,
-			Telemetry:      tele,
+			Shutdown:      subsystem.Shutdown,
+			Requests:      subsystem.Requests,
+			Notifications: subsystem.Notifications,
+			Telemetry:     telem,
 		}
 
 		// Setup a channel to signal when the test has ended.
 		supervisorDone := make(chan error, 1)
 
 		t.Cleanup(func() {
-			close(state.Shutdown)
+			close(subsystem.Shutdown)
 
 			if err := <-supervisorDone; err != nil {
 				t.Fatalf("supervisor failed: %s", err)
@@ -54,13 +55,19 @@ func TestSupervisor(t *testing.T) {
 			supervisorDone <- supervisor.Run(context.Background())
 		}()
 
-		t.Repeat(rapid.StateMachineActions(state))
+		t.Repeat(
+			rapid.StateMachineActions(&state{subsystem}),
+		)
 	})
 }
 
+type state struct {
+	subsystem *teststate.Subsystem
+}
+
 func (s *state) Check(t *rapid.T) {
-	for stream := range s.Streams.Values() {
-		if stream.NextOffset() == 0 {
+	for stream := range s.subsystem.Streams.Values() {
+		if stream.NextOffset == 0 {
 			t.Fatalf("[%s] invariant violated: stream has no events", stream)
 		}
 
@@ -81,24 +88,28 @@ func (s *state) Check(t *rapid.T) {
 }
 
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
-	req := AppendEvents{
+	res := make(chan AppendEventsResponse, 1)
+	req := AppendEventsRequest{
 		StreamID: uuidpb.Generate(),
+		Response: res,
 	}
 
-	for range rapid.IntRange(1, 3).Draw(t, "number of events") {
+	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
 		req.Events = append(
 			req.Events,
-			xrapid.Envelope().Draw(t, "event envelope"),
+			xrapid.Envelope().Draw(t, "event"),
 		)
 	}
 
-	s.sendAppendEvents(t, req, AppendEventsReply{
+	s.subsystem.SendAppendEventsRequest(t, req)
+
+	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
 		BeginOffset:  0,
 		EndOffset:    uint64(len(req.Events)),
 		Deduplicated: false,
 	})
 
-	s.awaitEventsAppended(t, EventsAppended{
+	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
 		StreamID: req.StreamID,
 		Offset:   0,
 		Events:   req.Events,
@@ -106,39 +117,46 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 }
 
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
-	stream := s.drawExistingStream(t)
+	stream := s.subsystem.StreamsGen().Draw(t, "stream")
 
-	req := AppendEvents{
+	res := make(chan AppendEventsResponse, 1)
+	req := AppendEventsRequest{
 		StreamID: stream.ID,
+		Response: res,
 	}
 
-	for range rapid.IntRange(1, 3).Draw(t, "number of events") {
+	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
 		req.Events = append(
 			req.Events,
-			xrapid.Envelope().Draw(t, "event envelope"),
+			xrapid.Envelope().Draw(t, "event"),
 		)
 	}
 
-	s.sendAppendEvents(t, req, AppendEventsReply{
-		BeginOffset:  stream.NextOffset(),
-		EndOffset:    stream.NextOffset() + uint64(len(req.Events)),
+	s.subsystem.SendAppendEventsRequest(t, req)
+
+	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
+		BeginOffset:  stream.NextOffset,
+		EndOffset:    stream.NextOffset + uint64(len(req.Events)),
 		Deduplicated: false,
 	})
 
-	s.awaitEventsAppended(t, EventsAppended{
+	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
 		StreamID: req.StreamID,
-		Offset:   stream.NextOffset(),
+		Offset:   stream.NextOffset,
 		Events:   req.Events,
 	})
 }
 
 func (s *state) SendEmptyAppendEventsRequest(t *rapid.T) {
-	req := AppendEvents{
+	res := make(chan AppendEventsResponse, 1)
+	req := AppendEventsRequest{
 		StreamID: uuidpb.Generate(),
+		Response: res,
 	}
 
-	s.sendAppendEvents(t, req, AppendEventsReply{})
-	s.ensureNoEventsAppended(t, req.StreamID)
+	s.subsystem.SendAppendEventsRequest(t, req)
+	s.subsystem.ExpectAppendEventsRejection(t, req, res)
+	s.subsystem.ExpectNoEventsAppendedNotification(t, req.StreamID)
 }
 
 // func (s *subsystemState) AppendDuplicateEvent(t *rapid.T) {
@@ -158,7 +176,7 @@ func (s *state) SendEmptyAppendEventsRequest(t *rapid.T) {
 // 		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 // 	}
 
-// 	s.sendAppendEvents(t, req, AppendEventsReply{
+// 	s.sendAppendEvents(t, req, AppendEventsResponse{
 // 		BeginOffset:  offset,
 // 		EndOffset:    offset + 1,
 // 		Deduplicated: true,

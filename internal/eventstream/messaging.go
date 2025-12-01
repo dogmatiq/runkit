@@ -5,9 +5,9 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
-// EventsAppended is a notification sent when events have been appended
-// to a stream.
-type EventsAppended struct {
+// EventsAppendedNotification is a notification sent when events have been
+// appended to a stream.
+type EventsAppendedNotification struct {
 	// StreamID is the ID of the event stream to which the events were appended.
 	StreamID *uuidpb.UUID
 
@@ -19,8 +19,8 @@ type EventsAppended struct {
 	Events []*envelopepb.Envelope
 }
 
-// AppendEvents is a request to append events to an event stream.
-type AppendEvents struct {
+// AppendEventsRequest is a request to append events to an event stream.
+type AppendEventsRequest struct {
 	// StreamID is the ID of the event stream to which the events are appended.
 	StreamID *uuidpb.UUID
 
@@ -33,12 +33,14 @@ type AppendEvents struct {
 	// before this offset when deduplicating the events.
 	DeduplicationHint uint64
 
-	// Reply is the channel on which the result of the append is sent.
-	Reply chan<- AppendEventsReply
+	// Response is the channel to which the [AppendEventsResponse] is sent.
+	// It is closed if the request is rejected.
+	Response chan<- AppendEventsResponse
 }
 
-// AppendEventsReply is the successful result of an [AppendEvents] request.
-type AppendEventsReply struct {
+// AppendEventsResponse is the successful result of an [AppendEventsRequest]
+// request.
+type AppendEventsResponse struct {
 	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
 	// the appended events within the stream.
 	//

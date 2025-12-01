@@ -33,9 +33,9 @@ type worker struct {
 	Journals  journal.BinaryStore
 	Telemetry *telemetry.Recorder
 
-	Shutdown       <-chan struct{}
-	EventsAppended chan<- EventsAppended
-	AppendEvents   chan AppendEvents
+	Shutdown      <-chan struct{}
+	Requests      chan AppendEventsRequest
+	Notifications chan<- EventsAppendedNotification
 
 	journal eventstreamjournal.Journal
 	pos     journal.Position
@@ -122,12 +122,12 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 			telemetry.Duration("worker.idle_timeout", w.idle.timeout),
 		)
 		return false, nil
-	case req := <-w.AppendEvents:
+	case req := <-w.Requests:
 		return true, w.handleAppendEvents(ctx, req)
 	}
 }
 
-func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error {
+func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) error {
 	w.Telemetry.Info(
 		ctx,
 		"eventstream.worker.append.recv",
@@ -136,10 +136,10 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 		telemetry.Int("append.events", len(req.Events)),
 	)
 
-	// If the request is malformed, we just close the reply channel and return.
-	// It's up to the sender to recover itself.
+	// If the request is malformed, we just close the response channel and
+	// return. It's up to the sender to recover itself.
 	if len(req.Events) == 0 {
-		close(req.Reply)
+		close(req.Response)
 
 		w.Telemetry.Info(
 			ctx,
@@ -187,12 +187,12 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 	return w.publish(
 		ctx,
 		req,
-		AppendEventsReply{
+		AppendEventsResponse{
 			BeginOffset:  begin,
 			EndOffset:    end,
 			Deduplicated: false,
 		},
-		EventsAppended{
+		EventsAppendedNotification{
 			StreamID: w.StreamID,
 			Offset:   begin,
 			Events:   req.Events,
@@ -201,7 +201,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 }
 
 // computeIdleTimeout updates the worker's idle timeout based on recent
-// activity. It must be called when an [AppendEvents] request is received.
+// activity. It must be called when an [AppendEventsRequest] request is received.
 func (w *worker) computeIdleTimeout() {
 	// Update the time of the last request.
 	prev := w.idle.prev
@@ -228,30 +228,30 @@ func (w *worker) computeIdleTimeout() {
 
 func (w *worker) publish(
 	ctx context.Context,
-	req AppendEvents,
-	reply AppendEventsReply,
-	appended EventsAppended,
+	req AppendEventsRequest,
+	res AppendEventsResponse,
+	n EventsAppendedNotification,
 ) error {
-	replyChan := req.Reply
-	appendChan := w.EventsAppended
+	responseChan := req.Response
+	notificationChan := w.Notifications
 
 	// Send to each of the channels, delivering whichever is ready first.
 	// Set that channel to nil so we don't redeliver.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case replyChan <- reply:
-		replyChan = nil
-	case appendChan <- appended:
-		appendChan = nil
+	case responseChan <- res:
+		responseChan = nil
+	case notificationChan <- n:
+		notificationChan = nil
 	}
 
 	// Then send to the remaining channel.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case replyChan <- reply:
-	case appendChan <- appended:
+	case responseChan <- res:
+	case notificationChan <- n:
 	}
 
 	return nil

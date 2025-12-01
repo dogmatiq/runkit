@@ -10,10 +10,15 @@ import (
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	stream := s.drawExistingStream(t)
-	wantOffset := stream.DrawOffset(t)
+	stream := s.subsystem.StreamsGen().Draw(t, "stream")
+	wantOffset := stream.OffsetsGen().Draw(t, "start offset")
 
-	r, err := NewReader(t.Context(), &s.Journals, stream.ID, wantOffset)
+	r, err := NewReader(
+		t.Context(),
+		&s.subsystem.Journals,
+		stream.ID,
+		wantOffset,
+	)
 	if err != nil {
 		t.Fatalf("[%s] unable to create reader: %s", stream, err)
 	}

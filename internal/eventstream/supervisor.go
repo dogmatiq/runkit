@@ -10,13 +10,13 @@ import (
 	"github.com/dogmatiq/runkit/internal/telemetry"
 )
 
-// Supervisor accepts and delegates [AppendEvents] requests.
+// Supervisor accepts and delegates [AppendEventsRequest] requests.
 type Supervisor struct {
 	// Journals is the journal store used to persist event streams.
 	Journals journal.BinaryStore
 
-	// BufferSize is the number of [AppendEvents] requests that can be buffered
-	// in memory, per event stream.
+	// BufferSize is the number of pending [AppendEventsRequest] values that can
+	// be buffered in memory, per event stream.
 	BufferSize int
 
 	// Telemetry is used to record logs, metrics and traces.
@@ -26,13 +26,13 @@ type Supervisor struct {
 	// gracefully.
 	Shutdown <-chan struct{}
 
-	// AppendEvents is a channel on which the supervisor receives requests to
+	// Requests is a channel on which the supervisor receives requests to
 	// append events to streams.
-	AppendEvents <-chan AppendEvents
+	Requests <-chan AppendEventsRequest
 
-	// EventsAppended is a channel on which the supervisor sends notifications
+	// Notifications is a channel on which the supervisor sends notifications
 	// that events have been appended to streams.
-	EventsAppended chan<- EventsAppended
+	Notifications chan<- EventsAppendedNotification
 
 	telemetry *telemetry.Recorder
 
@@ -86,12 +86,12 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 		return false, nil
 	case x := <-s.workerStopped:
 		return true, s.handleWorkerStopped(ctx, x, false)
-	case req := <-s.AppendEvents:
+	case req := <-s.Requests:
 		return true, s.handleAppendEvents(ctx, req)
 	}
 }
 
-func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) error {
+func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEventsRequest) error {
 	s.telemetry.Info(
 		ctx,
 		"eventstream.supervisor.append.recv",
@@ -106,7 +106,7 @@ func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) e
 			w = s.startWorker(
 				ctx,
 				req.StreamID,
-				make(chan AppendEvents, s.BufferSize),
+				make(chan AppendEventsRequest, s.BufferSize),
 			)
 		}
 
@@ -117,14 +117,14 @@ func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) e
 			if err := s.handleWorkerStopped(ctx, x, false); err != nil {
 				return err
 			}
-		case w.AppendEvents <- req:
+		case w.Requests <- req:
 			s.telemetry.Info(
 				ctx,
 				"eventstream.supervisor.append.dispatch",
 				"supervisor dispatched append request to worker queue",
 				telemetry.UUID("stream.id", req.StreamID),
 				telemetry.Int("worker.id", w.ID),
-				telemetry.Int("worker.pending_requests", len(w.AppendEvents)),
+				telemetry.Int("worker.pending_requests", len(w.Requests)),
 			)
 			return nil
 		}
@@ -133,7 +133,7 @@ func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) e
 
 func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, shutdown bool) error {
 	s.workers.Remove(x.Worker.StreamID)
-	pending := len(x.Worker.AppendEvents)
+	pending := len(x.Worker.Requests)
 
 	if x.Error != nil {
 		s.telemetry.Error(
@@ -159,7 +159,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, s
 		telemetry.Int("supervisor.workers", s.workers.Len()),
 	)
 
-	if shutdown || len(x.Worker.AppendEvents) == 0 {
+	if shutdown || len(x.Worker.Requests) == 0 {
 		return nil
 	}
 
@@ -168,7 +168,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, s
 	s.startWorker(
 		ctx,
 		x.Worker.StreamID,
-		x.Worker.AppendEvents,
+		x.Worker.Requests,
 	)
 
 	return nil
@@ -177,17 +177,17 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, s
 func (s *Supervisor) startWorker(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
-	appendEvents chan AppendEvents,
+	appendEvents chan AppendEventsRequest,
 ) *worker {
 	s.workerID++
 
 	w := &worker{
-		ID:             s.workerID,
-		StreamID:       streamID,
-		Journals:       s.Journals,
-		Shutdown:       s.Shutdown,
-		EventsAppended: s.EventsAppended,
-		AppendEvents:   appendEvents,
+		ID:            s.workerID,
+		StreamID:      streamID,
+		Journals:      s.Journals,
+		Shutdown:      s.Shutdown,
+		Notifications: s.Notifications,
+		Requests:      appendEvents,
 		Telemetry: s.Telemetry.Recorder(
 			telemetry.UUID("stream.id", streamID),
 			telemetry.Int("worker.id", s.workerID),
@@ -216,7 +216,7 @@ func (s *Supervisor) startWorker(
 		"supervisor started new worker",
 		telemetry.UUID("stream.id", w.StreamID),
 		telemetry.Int("worker.id", w.ID),
-		telemetry.Int("worker.pending_requests", len(w.AppendEvents)),
+		telemetry.Int("worker.pending_requests", len(w.Requests)),
 		telemetry.Int("supervisor.workers", s.workers.Len()),
 	)
 
