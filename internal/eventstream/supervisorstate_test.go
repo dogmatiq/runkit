@@ -12,9 +12,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-// subsystemState represents the state of the eventstream subsystem within the
-// a test.
-type subsystemState struct {
+// state represents the state of the eventstream system within the a test.
+type state struct {
 	Journals memoryjournal.BinaryStore
 	Streams  maps.Proto[*uuidpb.UUID, *streamState]
 
@@ -23,7 +22,7 @@ type subsystemState struct {
 	EventsAppended chan EventsAppended
 }
 
-func (s *subsystemState) drawExistingStream(t *rapid.T) *streamState {
+func (s *state) drawExistingStream(t *rapid.T) *streamState {
 	if s.Streams.Len() == 0 {
 		t.Skip("there are no existing streams")
 	}
@@ -33,7 +32,7 @@ func (s *subsystemState) drawExistingStream(t *rapid.T) *streamState {
 		Draw(t, "existing stream")
 }
 
-func (s *subsystemState) sendAppendEvents(t *rapid.T, req AppendEvents, want AppendEventsReply) {
+func (s *state) sendAppendEvents(t *rapid.T, req AppendEvents, want AppendEventsReply) {
 	if req.Reply != nil {
 		panic("test misuse: don't set AppendEvents.Reply")
 	}
@@ -82,7 +81,7 @@ func (s *subsystemState) sendAppendEvents(t *rapid.T, req AppendEvents, want App
 	}
 }
 
-func (s *subsystemState) awaitEventsAppended(t *rapid.T, want EventsAppended) {
+func (s *state) awaitEventsAppended(t *rapid.T, want EventsAppended) {
 	select {
 	case <-t.Context().Done():
 		t.Fatalf("[%s] context canceled while waiting for EventsAppended notification: %s", want.StreamID, t.Context().Err())
@@ -144,7 +143,7 @@ func (s *subsystemState) awaitEventsAppended(t *rapid.T, want EventsAppended) {
 	}
 }
 
-func (s *subsystemState) ensureNoEventsAppended(t *rapid.T, streamID *uuidpb.UUID) {
+func (s *state) ensureNoEventsAppended(t *rapid.T, streamID *uuidpb.UUID) {
 	select {
 	case <-s.EventsAppended:
 		t.Fatalf("[%s] unexpected EventsAppended notification received", streamID)

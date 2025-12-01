@@ -43,7 +43,7 @@ func NewReader(
 			return nil, err
 		}
 
-		r.events = rec.GetAppendEvents().Events[offset-rec.OffsetBefore:]
+		r.events = rec.GetAppendEvents().Events[offset-rec.MetaData.OffsetBefore:]
 		r.pos = pos + 1
 	}
 

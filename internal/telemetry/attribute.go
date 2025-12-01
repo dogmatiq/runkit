@@ -90,7 +90,7 @@ func Bool[T ~bool](k string, v T) Attr {
 }
 
 // Int returns an int64 attribute.
-func Int[T constraints.Signed](k string, v T) Attr {
+func Int[T constraints.Integer](k string, v T) Attr {
 	return Attr{
 		typ: attrTypeInt64,
 		key: k,

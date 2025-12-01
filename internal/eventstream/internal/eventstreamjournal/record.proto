@@ -7,14 +7,27 @@ import "github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto";
 
 // Record is an entry in the journal.
 message Record {
-  // OffsetBefore is the highest stream offset before this record was appended.
-  uint64 offset_before = 1;
+  message MetaData {
+    // OffsetBefore is the highest stream offset before this record was
+    // appended.
+    uint64 offset_before = 1;
 
-  // OffsetAfter is the highest stream offset after this record was appended.
-  uint64 offset_after = 2;
+    // OffsetAfter is the highest stream offset after this record was appended.
+    //
+    // It is the same as OffsetBefore plus the number of events appended by this
+    // record, if any.
+    uint64 offset_after = 2;
+
+    // AverageIdle is the average idle time between requests for the stream at
+    // the time this record was appended, in nanoseconds.
+    uint64 average_idle = 3;
+  }
+
+  // MetaData contains metadata about this record.
+  MetaData meta_data = 1;
 
   // Op is the operation being performed.
-  oneof op { AppendEvents append_events = 3; }
+  oneof op { AppendEvents append_events = 2; }
 }
 
 // AppendEvents is an operation that appends events to the stream.

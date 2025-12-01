@@ -7,38 +7,50 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal"
+	"github.com/dogmatiq/runkit/internal/ewma"
+	"github.com/dogmatiq/runkit/internal/telemetry"
+)
+
+const (
+	// minIdleTimeout is the minimum duration that a worker will remain idle
+	// before shutting down to conserve resources.
+	minIdleTimeout = 1 * time.Second
+
+	// maxIdleTimeout is the maximum duration that a worker will remain idle
+	// before shutting down to conserve resources.
+	maxIdleTimeout = 5 * time.Minute
+
+	// idleSmoothing is the smoothing factor (aka alpha-value) used when
+	// computing the moving average of the idle time (time between requests). A
+	// value closer to 0 biases the average towards historical values.
+	idleSmoothing = 0.25
 )
 
 // A worker is a service that appends events to a specific stream.
 type worker struct {
-	ID          int
-	StreamID    *uuidpb.UUID
-	Journals    journal.BinaryStore
-	IdleTimeout time.Duration
+	ID        int
+	StreamID  *uuidpb.UUID
+	Journals  journal.BinaryStore
+	Telemetry *telemetry.Recorder
 
 	Shutdown       <-chan struct{}
-	Terminate      <-chan struct{}
 	EventsAppended chan<- EventsAppended
 	AppendEvents   chan AppendEvents
 
 	journal eventstreamjournal.Journal
 	pos     journal.Position
 	offset  uint64
+
+	idle struct {
+		prev    time.Time     // time of alst request
+		avg     time.Duration // average time between requests
+		timeout time.Duration // current idle timeout
+	}
 }
 
 func (w *worker) Run(ctx context.Context) error {
 	if err := w.init(ctx); err != nil {
 		return err
-	}
-
-	// The worker was started to service a request, so do that first.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case req := <-w.AppendEvents:
-		if err := w.handleAppendEvents(ctx, req); err != nil {
-			return err
-		}
 	}
 
 	// Only after that first request has been handled do we honor the graceful
@@ -62,26 +74,53 @@ func (w *worker) init(ctx context.Context) error {
 		ctx,
 		w.journal,
 	)
-	if !ok || err != nil {
+	if err != nil {
 		return err
 	}
 
-	w.pos = pos + 1
-	w.offset = rec.OffsetAfter
+	if ok {
+		w.pos = pos + 1
+		w.offset = rec.MetaData.OffsetAfter
+		w.idle.avg = time.Duration(rec.MetaData.AverageIdle)
+	}
+
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.init",
+		"worker initialized successfully",
+		telemetry.Int("stream.offset", w.offset),
+		telemetry.Duration("worker.average_idle", w.idle.avg),
+	)
 
 	return nil
 }
 
 func (w *worker) tick(ctx context.Context) (bool, error) {
-	idle := time.NewTimer(w.IdleTimeout)
-	defer idle.Stop()
+	var timeout <-chan time.Time
+	if w.idle.timeout != 0 {
+		timer := time.NewTimer(w.idle.timeout)
+		defer timer.Stop()
+		timeout = timer.C
+	}
 
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
 	case <-w.Shutdown:
+		w.Telemetry.Info(
+			ctx,
+			"eventstream.worker.shutdown.signal",
+			"worker received shutdown signal",
+		)
 		return false, nil
-	case <-idle.C:
+	case <-timeout:
+		w.Telemetry.Info(
+			ctx,
+			"eventstream.worker.shutdown.inactivity",
+			"worker shutting down due to inactivity",
+			telemetry.Duration("worker.average_idle", w.idle.avg),
+			telemetry.Duration("worker.idle_timeout", w.idle.timeout),
+		)
 		return false, nil
 	case req := <-w.AppendEvents:
 		return true, w.handleAppendEvents(ctx, req)
@@ -89,9 +128,29 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 }
 
 func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error {
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.append.recv",
+		"worker received request to append events",
+		telemetry.Int("stream.offset", w.offset),
+		telemetry.Int("append.events", len(req.Events)),
+	)
+
+	// If the request is malformed, we just close the reply channel and return.
+	// It's up to the sender to recover itself.
 	if len(req.Events) == 0 {
-		panic("zero-length append request, should have been ignored by the supervisor")
+		close(req.Reply)
+
+		w.Telemetry.Info(
+			ctx,
+			"eventstream.worker.append.drop",
+			"worker dropped empty append request",
+		)
+
+		return nil
 	}
+
+	w.computeIdleTimeout()
 
 	begin := w.offset
 	end := begin + uint64(len(req.Events))
@@ -101,13 +160,14 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 		w.pos,
 		eventstreamjournal.
 			NewRecordBuilder().
-			WithOffsetBefore(begin).
-			WithOffsetAfter(end).
-			WithAppendEvents(
-				&eventstreamjournal.AppendEvents{
-					Events: req.Events,
-				},
-			).
+			WithMetaData(&eventstreamjournal.Record_MetaData{
+				OffsetBefore: begin,
+				OffsetAfter:  end,
+				AverageIdle:  uint64(w.idle.avg),
+			}).
+			WithAppendEvents(&eventstreamjournal.AppendEvents{
+				Events: req.Events,
+			}).
 			Build(),
 	); err != nil {
 		return err
@@ -115,6 +175,14 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 
 	w.pos++
 	w.offset = end
+
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.append.commit",
+		"worker committed events to stream",
+		telemetry.Int("stream.offset", w.offset),
+		telemetry.Int("append.events", len(req.Events)),
+	)
 
 	return w.publish(
 		ctx,
@@ -129,6 +197,32 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEvents) error
 			Offset:   begin,
 			Events:   req.Events,
 		},
+	)
+}
+
+// computeIdleTimeout updates the worker's idle timeout based on recent
+// activity. It must be called when an [AppendEvents] request is received.
+func (w *worker) computeIdleTimeout() {
+	// Update the time of the last request.
+	prev := w.idle.prev
+	now := time.Now()
+	w.idle.prev = now
+
+	// If this is _not_ the first request we have a new idle time to incorporate
+	// into the average.
+	if !prev.IsZero() {
+		idle := now.Sub(prev)
+
+		if w.idle.avg == 0 {
+			w.idle.avg = idle
+		} else {
+			ewma.Update(&w.idle.avg, idle, idleSmoothing)
+		}
+	}
+
+	w.idle.timeout = min(
+		minIdleTimeout+w.idle.avg, // always more than the expected idle time
+		maxIdleTimeout,            // but don't keep mostly-idle workers alive forever
 	)
 }
 
@@ -157,10 +251,10 @@ func (w *worker) publish(
 	case <-ctx.Done():
 		return ctx.Err()
 	case replyChan <- reply:
-		return nil
 	case appendChan <- appended:
-		return nil
 	}
+
+	return nil
 }
 
 // // mightBeDuplicates returns true if it's possible that the events in req have

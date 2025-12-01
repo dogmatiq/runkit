@@ -17,7 +17,7 @@ func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		tele := telemetry.NewTestProvider(t)
 
-		state := &subsystemState{
+		state := &state{
 			Shutdown:       make(chan struct{}),
 			AppendEvents:   make(chan AppendEvents),
 			EventsAppended: make(chan EventsAppended),
@@ -58,7 +58,7 @@ func TestSupervisor(t *testing.T) {
 	})
 }
 
-func (s *subsystemState) Check(t *rapid.T) {
+func (s *state) Check(t *rapid.T) {
 	for stream := range s.Streams.Values() {
 		if stream.NextOffset() == 0 {
 			t.Fatalf("[%s] invariant violated: stream has no events", stream)
@@ -80,7 +80,7 @@ func (s *subsystemState) Check(t *rapid.T) {
 	}
 }
 
-func (s *subsystemState) AppendEventsToNewStream(t *rapid.T) {
+func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	req := AppendEvents{
 		StreamID: uuidpb.Generate(),
 	}
@@ -105,7 +105,7 @@ func (s *subsystemState) AppendEventsToNewStream(t *rapid.T) {
 	})
 }
 
-func (s *subsystemState) AppendMoreEventsToAnExistingStream(t *rapid.T) {
+func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	stream := s.drawExistingStream(t)
 
 	req := AppendEvents{
@@ -132,7 +132,7 @@ func (s *subsystemState) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	})
 }
 
-func (s *subsystemState) AppendZeroEvents(t *rapid.T) {
+func (s *state) SendEmptyAppendEventsRequest(t *rapid.T) {
 	req := AppendEvents{
 		StreamID: uuidpb.Generate(),
 	}

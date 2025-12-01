@@ -9,7 +9,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-func (s *subsystemState) ReadFromStream(t *rapid.T) {
+func (s *state) ReadFromStream(t *rapid.T) {
 	stream := s.drawExistingStream(t)
 	wantOffset := stream.DrawOffset(t)
 

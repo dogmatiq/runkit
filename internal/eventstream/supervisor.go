@@ -2,6 +2,7 @@ package eventstream
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -35,9 +36,9 @@ type Supervisor struct {
 
 	telemetry *telemetry.Recorder
 
-	workerID     int
-	workers      maps.Proto[*uuidpb.UUID, *worker]
-	workerExited chan workerExited
+	workerID      int
+	workers       maps.Proto[*uuidpb.UUID, *worker]
+	workerStopped chan workerStopped
 }
 
 // Run starts the supervisor's main event loop.
@@ -53,20 +54,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	defer func() {
 		cancel()
 
-		// Wait for all workers to exit.
+		// Wait for all workers to stop.
 		//
-		// The workers share the same shutdown and terminate channels as the
-		// supervisor therefore if the supervisor is exiting, the workers will
-		// also be exiting.
+		// The workers share the same context and shutdown channel as the
+		// supervisor. Therefore, if the supervisor is stopping, so too will the
+		// workers.
 		for s.workers.Len() > 0 {
-			s.handleWorkerExited(ctx, <-s.workerExited)
+			s.handleWorkerStopped(ctx, <-s.workerStopped, true)
 		}
-
-		s.telemetry.Info(
-			ctx,
-			"eventstream.supervisor.done",
-			"all workers have exited",
-		)
 	}()
 
 	for {
@@ -84,12 +79,13 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 	case <-s.Shutdown:
 		s.telemetry.Info(
 			ctx,
-			"eventstream.supervisor.shutdown",
-			"received shutdown signal",
+			"eventstream.supervisor.shutdown.signal",
+			"supervisor received shutdown signal",
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 		)
 		return false, nil
-	case x := <-s.workerExited:
-		return true, s.handleWorkerExited(ctx, x)
+	case x := <-s.workerStopped:
+		return true, s.handleWorkerStopped(ctx, x, false)
 	case req := <-s.AppendEvents:
 		return true, s.handleAppendEvents(ctx, req)
 	}
@@ -98,60 +94,56 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 func (s *Supervisor) handleAppendEvents(ctx context.Context, req AppendEvents) error {
 	s.telemetry.Info(
 		ctx,
-		"eventstream.supervisor.append.received",
-		"received append request",
-		telemetry.UUID("stream_id", req.StreamID),
+		"eventstream.supervisor.append.recv",
+		"supervisor received request to append events",
+		telemetry.UUID("stream.id", req.StreamID),
 	)
 
-	// If the request is malformed, we just close the reply channel and return.
-	// The sender of the request is misbehaving, and it's up to that subsystem
-	// to recover itself.
-	if len(req.Events) == 0 {
-		close(req.Reply)
-
-		s.telemetry.Info(
-			ctx,
-			"eventstream.supervisor.append.discarded",
-			"discarded append request with zero events",
-			telemetry.UUID("stream_id", req.StreamID),
-		)
-
-		return nil
-	}
-
-	w := s.worker(ctx, req.StreamID)
-
+	// Attempt to deliver to an existing worker.
 	for {
+		w, ok := s.workers.TryGet(req.StreamID)
+		if !ok {
+			w = s.startWorker(
+				ctx,
+				req.StreamID,
+				make(chan AppendEvents, s.BufferSize),
+			)
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case x := <-s.workerExited:
-			if err := s.handleWorkerExited(ctx, x); err != nil {
+		case x := <-s.workerStopped:
+			if err := s.handleWorkerStopped(ctx, x, false); err != nil {
 				return err
 			}
 		case w.AppendEvents <- req:
 			s.telemetry.Info(
 				ctx,
-				"eventstream.supervisor.append.sent",
-				"forwarded append request to worker",
-				telemetry.Int("worker_id", w.ID),
-				telemetry.UUID("stream_id", req.StreamID),
+				"eventstream.supervisor.append.dispatch",
+				"supervisor dispatched append request to worker queue",
+				telemetry.UUID("stream.id", req.StreamID),
+				telemetry.Int("worker.id", w.ID),
+				telemetry.Int("worker.pending_requests", len(w.AppendEvents)),
 			)
 			return nil
 		}
 	}
 }
 
-func (s *Supervisor) handleWorkerExited(ctx context.Context, x workerExited) error {
+func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, shutdown bool) error {
 	s.workers.Remove(x.Worker.StreamID)
+	pending := len(x.Worker.AppendEvents)
 
 	if x.Error != nil {
 		s.telemetry.Error(
 			ctx,
-			"eventstream.supervisor.worker.failed",
-			x.Error,
-			telemetry.Int("worker_id", x.Worker.ID),
-			telemetry.UUID("stream_id", x.Worker.StreamID),
+			"eventstream.supervisor.worker.error",
+			fmt.Errorf("supervisor observed worker error: %w", x.Error),
+			telemetry.UUID("stream.id", x.Worker.StreamID),
+			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.Int("worker.pending_requests", pending),
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 		)
 
 		return x.Error
@@ -159,20 +151,34 @@ func (s *Supervisor) handleWorkerExited(ctx context.Context, x workerExited) err
 
 	s.telemetry.Info(
 		ctx,
-		"eventstream.supervisor.worker.exited",
-		"worker exited normally",
-		telemetry.Int("worker_id", x.Worker.ID),
-		telemetry.UUID("stream_id", x.Worker.StreamID),
+		"eventstream.supervisor.worker.stop",
+		"supervisor observed worker stop gracefully",
+		telemetry.UUID("stream.id", x.Worker.StreamID),
+		telemetry.Int("worker.id", x.Worker.ID),
+		telemetry.Int("worker.pending_requests", pending),
+		telemetry.Int("supervisor.workers", s.workers.Len()),
+	)
+
+	if shutdown || len(x.Worker.AppendEvents) == 0 {
+		return nil
+	}
+
+	// We're not shutting down, and the worker had unhandled append requests, so
+	// we immediately start a new worker to take over.
+	s.startWorker(
+		ctx,
+		x.Worker.StreamID,
+		x.Worker.AppendEvents,
 	)
 
 	return nil
 }
 
-func (s *Supervisor) worker(ctx context.Context, streamID *uuidpb.UUID) *worker {
-	if w, ok := s.workers.TryGet(streamID); ok {
-		return w
-	}
-
+func (s *Supervisor) startWorker(
+	ctx context.Context,
+	streamID *uuidpb.UUID,
+	appendEvents chan AppendEvents,
+) *worker {
 	s.workerID++
 
 	w := &worker{
@@ -181,36 +187,43 @@ func (s *Supervisor) worker(ctx context.Context, streamID *uuidpb.UUID) *worker 
 		Journals:       s.Journals,
 		Shutdown:       s.Shutdown,
 		EventsAppended: s.EventsAppended,
-		AppendEvents:   make(chan AppendEvents, s.BufferSize),
+		AppendEvents:   appendEvents,
+		Telemetry: s.Telemetry.Recorder(
+			telemetry.UUID("stream.id", streamID),
+			telemetry.Int("worker.id", s.workerID),
+		),
 	}
 
-	if s.workerExited == nil {
-		s.workerExited = make(chan workerExited)
+	if s.workerStopped == nil {
+		s.workerStopped = make(chan workerStopped)
 	}
-
-	s.telemetry.Info(
-		ctx,
-		"eventstream.supervisor.worker.started",
-		"started a new worker",
-		telemetry.Int("worker_id", w.ID),
-		telemetry.UUID("stream_id", streamID),
-	)
 
 	go func() {
-		err := w.Run(ctx)
-
 		// We can send to this channel without blocking (forever), because the
-		// supervisor will always wait for workers to exit before it exits
-		// itself.
-		s.workerExited <- workerExited{w, err}
+		// supervisor will wait for all workers to stop before it stops
+		// receiving from this channel.
+		s.workerStopped <- workerStopped{
+			w,
+			w.Run(ctx),
+		}
 	}()
 
 	s.workers.Set(streamID, w)
 
+	s.telemetry.Info(
+		ctx,
+		"eventstream.supervisor.worker.start",
+		"supervisor started new worker",
+		telemetry.UUID("stream.id", w.StreamID),
+		telemetry.Int("worker.id", w.ID),
+		telemetry.Int("worker.pending_requests", len(w.AppendEvents)),
+		telemetry.Int("supervisor.workers", s.workers.Len()),
+	)
+
 	return w
 }
 
-type workerExited struct {
+type workerStopped struct {
 	Worker *worker
 	Error  error
 }

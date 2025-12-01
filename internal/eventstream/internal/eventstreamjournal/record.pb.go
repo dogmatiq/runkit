@@ -25,10 +25,8 @@ const (
 // Record is an entry in the journal.
 type Record struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// OffsetBefore is the highest stream offset before this record was appended.
-	OffsetBefore uint64 `protobuf:"varint,1,opt,name=offset_before,json=offsetBefore,proto3" json:"offset_before,omitempty"`
-	// OffsetAfter is the highest stream offset after this record was appended.
-	OffsetAfter uint64 `protobuf:"varint,2,opt,name=offset_after,json=offsetAfter,proto3" json:"offset_after,omitempty"`
+	// MetaData contains metadata about this record.
+	MetaData *Record_MetaData `protobuf:"bytes,1,opt,name=meta_data,json=metaData,proto3" json:"meta_data,omitempty"`
 	// Op is the operation being performed.
 	//
 	// Types that are valid to be assigned to Op:
@@ -69,18 +67,11 @@ func (*Record) Descriptor() ([]byte, []int) {
 	return file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Record) GetOffsetBefore() uint64 {
+func (x *Record) GetMetaData() *Record_MetaData {
 	if x != nil {
-		return x.OffsetBefore
+		return x.MetaData
 	}
-	return 0
-}
-
-func (x *Record) GetOffsetAfter() uint64 {
-	if x != nil {
-		return x.OffsetAfter
-	}
-	return 0
+	return nil
 }
 
 func (x *Record) GetOp() isRecord_Op {
@@ -104,7 +95,7 @@ type isRecord_Op interface {
 }
 
 type Record_AppendEvents struct {
-	AppendEvents *AppendEvents `protobuf:"bytes,3,opt,name=append_events,json=appendEvents,proto3,oneof"`
+	AppendEvents *AppendEvents `protobuf:"bytes,2,opt,name=append_events,json=appendEvents,proto3,oneof"`
 }
 
 func (*Record_AppendEvents) isRecord_Op() {}
@@ -155,15 +146,86 @@ func (x *AppendEvents) GetEvents() []*envelopepb.Envelope {
 	return nil
 }
 
+type Record_MetaData struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// OffsetBefore is the highest stream offset before this record was
+	// appended.
+	OffsetBefore uint64 `protobuf:"varint,1,opt,name=offset_before,json=offsetBefore,proto3" json:"offset_before,omitempty"`
+	// OffsetAfter is the highest stream offset after this record was appended.
+	//
+	// It is the same as OffsetBefore plus the number of events appended by this
+	// record, if any.
+	OffsetAfter uint64 `protobuf:"varint,2,opt,name=offset_after,json=offsetAfter,proto3" json:"offset_after,omitempty"`
+	// AverageIdle is the average idle time between requests for the stream at
+	// the time this record was appended, in nanoseconds.
+	AverageIdle   uint64 `protobuf:"varint,3,opt,name=average_idle,json=averageIdle,proto3" json:"average_idle,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Record_MetaData) Reset() {
+	*x = Record_MetaData{}
+	mi := &file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Record_MetaData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Record_MetaData) ProtoMessage() {}
+
+func (x *Record_MetaData) ProtoReflect() protoreflect.Message {
+	mi := &file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Record_MetaData.ProtoReflect.Descriptor instead.
+func (*Record_MetaData) Descriptor() ([]byte, []int) {
+	return file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDescGZIP(), []int{0, 0}
+}
+
+func (x *Record_MetaData) GetOffsetBefore() uint64 {
+	if x != nil {
+		return x.OffsetBefore
+	}
+	return 0
+}
+
+func (x *Record_MetaData) GetOffsetAfter() uint64 {
+	if x != nil {
+		return x.OffsetAfter
+	}
+	return 0
+}
+
+func (x *Record_MetaData) GetAverageIdle() uint64 {
+	if x != nil {
+		return x.AverageIdle
+	}
+	return 0
+}
+
 var File_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto protoreflect.FileDescriptor
 
 const file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDesc = "" +
 	"\n" +
-	"Xgithub.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal/record.proto\x12\x1drunkit.eventstream.journal.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\xaa\x01\n" +
-	"\x06Record\x12#\n" +
+	"Xgithub.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal/record.proto\x12\x1drunkit.eventstream.journal.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\xa6\x02\n" +
+	"\x06Record\x12K\n" +
+	"\tmeta_data\x18\x01 \x01(\v2..runkit.eventstream.journal.v1.Record.MetaDataR\bmetaData\x12R\n" +
+	"\rappend_events\x18\x02 \x01(\v2+.runkit.eventstream.journal.v1.AppendEventsH\x00R\fappendEvents\x1au\n" +
+	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
-	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfter\x12R\n" +
-	"\rappend_events\x18\x03 \x01(\v2+.runkit.eventstream.journal.v1.AppendEventsH\x00R\fappendEventsB\x04\n" +
+	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfter\x12!\n" +
+	"\faverage_idle\x18\x03 \x01(\x04R\vaverageIdleB\x04\n" +
 	"\x02op\"@\n" +
 	"\fAppendEvents\x120\n" +
 	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBMZKgithub.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournalb\x06proto3"
@@ -180,20 +242,22 @@ func file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjo
 	return file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDescData
 }
 
-var file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_goTypes = []any{
 	(*Record)(nil),              // 0: runkit.eventstream.journal.v1.Record
 	(*AppendEvents)(nil),        // 1: runkit.eventstream.journal.v1.AppendEvents
-	(*envelopepb.Envelope)(nil), // 2: dogma.protobuf.Envelope
+	(*Record_MetaData)(nil),     // 2: runkit.eventstream.journal.v1.Record.MetaData
+	(*envelopepb.Envelope)(nil), // 3: dogma.protobuf.Envelope
 }
 var file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_depIdxs = []int32{
-	1, // 0: runkit.eventstream.journal.v1.Record.append_events:type_name -> runkit.eventstream.journal.v1.AppendEvents
-	2, // 1: runkit.eventstream.journal.v1.AppendEvents.events:type_name -> dogma.protobuf.Envelope
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	2, // 0: runkit.eventstream.journal.v1.Record.meta_data:type_name -> runkit.eventstream.journal.v1.Record.MetaData
+	1, // 1: runkit.eventstream.journal.v1.Record.append_events:type_name -> runkit.eventstream.journal.v1.AppendEvents
+	3, // 2: runkit.eventstream.journal.v1.AppendEvents.events:type_name -> dogma.protobuf.Envelope
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() {
@@ -212,7 +276,7 @@ func file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjo
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDesc), len(file_github_com_dogmatiq_runkit_internal_eventstream_internal_eventstreamjournal_record_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

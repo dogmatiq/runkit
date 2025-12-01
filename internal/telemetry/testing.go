@@ -60,7 +60,24 @@ func (l *testLogger) Emit(ctx context.Context, rec log.Record) {
 
 	var attrs []slog.Attr
 
-	if !rec.Body().Empty() {
+	rec.WalkAttributes(
+		func(kv log.KeyValue) bool {
+			attrs = append(
+				attrs,
+				convertValue(kv.Key, kv.Value),
+			)
+			return true
+		},
+	)
+
+	if rec.Body().Kind() == log.KindMap {
+		for _, pair := range rec.Body().AsMap() {
+			attrs = append(
+				attrs,
+				convertValue(pair.Key, pair.Value),
+			)
+		}
+	} else if !rec.Body().Empty() {
 		attrs = append(
 			attrs,
 			convertValue("body", rec.Body()),
@@ -74,16 +91,6 @@ func (l *testLogger) Emit(ctx context.Context, rec log.Record) {
 	if !rec.ObservedTimestamp().IsZero() {
 		attrs = append(attrs, slog.Time("observed_timestamp", rec.ObservedTimestamp()))
 	}
-
-	rec.WalkAttributes(
-		func(kv log.KeyValue) bool {
-			attrs = append(
-				attrs,
-				convertValue(kv.Key, kv.Value),
-			)
-			return true
-		},
-	)
 
 	l.logger.LogAttrs(
 		ctx,

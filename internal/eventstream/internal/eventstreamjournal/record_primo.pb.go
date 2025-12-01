@@ -35,8 +35,7 @@ func NewRecordBuilder() *RecordBuilder {
 // It performs a shallow copy of x, such that any changes made via the builder
 // do not modify x. It does not make a copy of the field values themselves.
 func (b *RecordBuilder) From(x *Record) *RecordBuilder {
-	b.prototype.OffsetBefore = x.OffsetBefore
-	b.prototype.OffsetAfter = x.OffsetAfter
+	b.prototype.MetaData = x.MetaData
 	b.prototype.Op = x.Op
 	return b
 }
@@ -47,23 +46,15 @@ func (b *RecordBuilder) From(x *Record) *RecordBuilder {
 // not modify previously constructed messages.
 func (b *RecordBuilder) Build() *Record {
 	return &Record{
-		OffsetBefore: b.prototype.OffsetBefore,
-		OffsetAfter:  b.prototype.OffsetAfter,
-		Op:           b.prototype.Op,
+		MetaData: b.prototype.MetaData,
+		Op:       b.prototype.Op,
 	}
 }
 
-// WithOffsetBefore configures the builder to set the OffsetBefore field to v,
+// WithMetaData configures the builder to set the MetaData field to v,
 // then returns b.
-func (b *RecordBuilder) WithOffsetBefore(v uint64) *RecordBuilder {
-	b.prototype.OffsetBefore = v
-	return b
-}
-
-// WithOffsetAfter configures the builder to set the OffsetAfter field to v,
-// then returns b.
-func (b *RecordBuilder) WithOffsetAfter(v uint64) *RecordBuilder {
-	b.prototype.OffsetAfter = v
+func (b *RecordBuilder) WithMetaData(v *Record_MetaData) *RecordBuilder {
+	b.prototype.MetaData = v
 	return b
 }
 
@@ -71,6 +62,60 @@ func (b *RecordBuilder) WithOffsetAfter(v uint64) *RecordBuilder {
 // [Record_AppendEvents] value containing v, then returns b
 func (b *RecordBuilder) WithAppendEvents(v *AppendEvents) *RecordBuilder {
 	b.prototype.Op = &Record_AppendEvents{AppendEvents: v}
+	return b
+}
+
+type Record_MetaDataBuilder struct {
+	prototype Record_MetaData
+}
+
+// NewRecord_MetaDataBuilder returns a builder that constructs [Record_MetaData] messages.
+func NewRecord_MetaDataBuilder() *Record_MetaDataBuilder {
+	return &Record_MetaDataBuilder{}
+}
+
+// From configures the builder to use x as the prototype for new messages,
+// then returns b.
+//
+// It performs a shallow copy of x, such that any changes made via the builder
+// do not modify x. It does not make a copy of the field values themselves.
+func (b *Record_MetaDataBuilder) From(x *Record_MetaData) *Record_MetaDataBuilder {
+	b.prototype.OffsetBefore = x.OffsetBefore
+	b.prototype.OffsetAfter = x.OffsetAfter
+	b.prototype.AverageIdle = x.AverageIdle
+	return b
+}
+
+// Build returns a new [Record_MetaData] containing the values configured via the builder.
+//
+// Each call returns a new message, such that future changes to the builder do
+// not modify previously constructed messages.
+func (b *Record_MetaDataBuilder) Build() *Record_MetaData {
+	return &Record_MetaData{
+		OffsetBefore: b.prototype.OffsetBefore,
+		OffsetAfter:  b.prototype.OffsetAfter,
+		AverageIdle:  b.prototype.AverageIdle,
+	}
+}
+
+// WithOffsetBefore configures the builder to set the OffsetBefore field to v,
+// then returns b.
+func (b *Record_MetaDataBuilder) WithOffsetBefore(v uint64) *Record_MetaDataBuilder {
+	b.prototype.OffsetBefore = v
+	return b
+}
+
+// WithOffsetAfter configures the builder to set the OffsetAfter field to v,
+// then returns b.
+func (b *Record_MetaDataBuilder) WithOffsetAfter(v uint64) *Record_MetaDataBuilder {
+	b.prototype.OffsetAfter = v
+	return b
+}
+
+// WithAverageIdle configures the builder to set the AverageIdle field to v,
+// then returns b.
+func (b *Record_MetaDataBuilder) WithAverageIdle(v uint64) *Record_MetaDataBuilder {
+	b.prototype.AverageIdle = v
 	return b
 }
 
@@ -197,6 +242,22 @@ func (x *Record) UnmarshalBinary(data []byte) error {
 // MarshalBinary returns the binary representation of the message, equivalent to
 // calling proto.Marshal(x).
 //
+// It allows [*Record_MetaData] to implement [encoding.BinaryMarshaler].
+func (x *Record_MetaData) MarshalBinary() ([]byte, error) {
+	return proto.Marshal(x)
+}
+
+// UnmarshalBinary populates x from its binary representation, equivalent to
+// calling proto.Unmarshal(data, x).
+//
+// It allows [*Record_MetaData] to implement [encoding.BinaryUnmarshaler].
+func (x *Record_MetaData) UnmarshalBinary(data []byte) error {
+	return proto.Unmarshal(data, x)
+}
+
+// MarshalBinary returns the binary representation of the message, equivalent to
+// calling proto.Marshal(x).
+//
 // It allows [*AppendEvents] to implement [encoding.BinaryMarshaler].
 func (x *AppendEvents) MarshalBinary() ([]byte, error) {
 	return proto.Marshal(x)
@@ -210,20 +271,30 @@ func (x *AppendEvents) UnmarshalBinary(data []byte) error {
 	return proto.Unmarshal(data, x)
 }
 
-// SetOffsetBefore sets the x.OffsetBefore field to v, then returns x.
-func (x *Record) SetOffsetBefore(v uint64) {
-	x.OffsetBefore = v
-}
-
-// SetOffsetAfter sets the x.OffsetAfter field to v, then returns x.
-func (x *Record) SetOffsetAfter(v uint64) {
-	x.OffsetAfter = v
+// SetMetaData sets the x.MetaData field to v, then returns x.
+func (x *Record) SetMetaData(v *Record_MetaData) {
+	x.MetaData = v
 }
 
 // SetAppendEvents sets the x.Op field to a [Record_AppendEvents] value containing v,
 // then returns x.
 func (x *Record) SetAppendEvents(v *AppendEvents) {
 	x.Op = &Record_AppendEvents{AppendEvents: v}
+}
+
+// SetOffsetBefore sets the x.OffsetBefore field to v, then returns x.
+func (x *Record_MetaData) SetOffsetBefore(v uint64) {
+	x.OffsetBefore = v
+}
+
+// SetOffsetAfter sets the x.OffsetAfter field to v, then returns x.
+func (x *Record_MetaData) SetOffsetAfter(v uint64) {
+	x.OffsetAfter = v
+}
+
+// SetAverageIdle sets the x.AverageIdle field to v, then returns x.
+func (x *Record_MetaData) SetAverageIdle(v uint64) {
+	x.AverageIdle = v
 }
 
 // SetEvents sets the x.Events field to v, then returns x.

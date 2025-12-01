@@ -38,9 +38,9 @@ func SearchByOffset(off uint64) journal.CompareFunc[*Record] {
 		_ journal.Position,
 		rec *Record,
 	) (int, error) {
-		if rec.OffsetBefore > off {
+		if rec.MetaData.OffsetBefore > off {
 			return +1, nil
-		} else if rec.OffsetAfter <= off {
+		} else if rec.MetaData.OffsetAfter <= off {
 			return -1, nil
 		}
 		return 0, nil
