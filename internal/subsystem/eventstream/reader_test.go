@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/dapper"
-	. "github.com/dogmatiq/runkit/internal/eventstream"
+	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 )

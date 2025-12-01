@@ -5,7 +5,7 @@ import (
 	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/driver/memory/memoryjournal"
-	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"

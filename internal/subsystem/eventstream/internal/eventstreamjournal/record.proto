@@ -1,7 +1,7 @@
 syntax = "proto3";
 package runkit.eventstream.journal.v1;
 
-option go_package = "github.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal";
+option go_package = "github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal";
 
 import "github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto";
 

@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go-primo v
 // 	protoc              v6.33.1
-// source: github.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal/record.proto
+// source: github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal/record.proto
 
 package eventstreamjournal
 

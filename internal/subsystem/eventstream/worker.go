@@ -6,9 +6,9 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal"
-	"github.com/dogmatiq/runkit/internal/ewma"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
 	"github.com/dogmatiq/runkit/internal/telemetry"
+	"github.com/dogmatiq/runkit/internal/x/ewma"
 )
 
 const (

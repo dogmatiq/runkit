@@ -6,7 +6,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/eventstreamjournal"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
 )
 
 // NewReader creates a new [Reader] that reads historical events from a stream
