@@ -82,7 +82,6 @@ func NewRecord_MetaDataBuilder() *Record_MetaDataBuilder {
 func (b *Record_MetaDataBuilder) From(x *Record_MetaData) *Record_MetaDataBuilder {
 	b.prototype.OffsetBefore = x.OffsetBefore
 	b.prototype.OffsetAfter = x.OffsetAfter
-	b.prototype.AverageIdle = x.AverageIdle
 	return b
 }
 
@@ -94,7 +93,6 @@ func (b *Record_MetaDataBuilder) Build() *Record_MetaData {
 	return &Record_MetaData{
 		OffsetBefore: b.prototype.OffsetBefore,
 		OffsetAfter:  b.prototype.OffsetAfter,
-		AverageIdle:  b.prototype.AverageIdle,
 	}
 }
 
@@ -109,13 +107,6 @@ func (b *Record_MetaDataBuilder) WithOffsetBefore(v uint64) *Record_MetaDataBuil
 // then returns b.
 func (b *Record_MetaDataBuilder) WithOffsetAfter(v uint64) *Record_MetaDataBuilder {
 	b.prototype.OffsetAfter = v
-	return b
-}
-
-// WithAverageIdle configures the builder to set the AverageIdle field to v,
-// then returns b.
-func (b *Record_MetaDataBuilder) WithAverageIdle(v uint64) *Record_MetaDataBuilder {
-	b.prototype.AverageIdle = v
 	return b
 }
 
@@ -290,11 +281,6 @@ func (x *Record_MetaData) SetOffsetBefore(v uint64) {
 // SetOffsetAfter sets the x.OffsetAfter field to v, then returns x.
 func (x *Record_MetaData) SetOffsetAfter(v uint64) {
 	x.OffsetAfter = v
-}
-
-// SetAverageIdle sets the x.AverageIdle field to v, then returns x.
-func (x *Record_MetaData) SetAverageIdle(v uint64) {
-	x.AverageIdle = v
 }
 
 // SetEvents sets the x.Events field to v, then returns x.

@@ -17,10 +17,6 @@ message Record {
     // It is the same as OffsetBefore plus the number of events appended by this
     // record, if any.
     uint64 offset_after = 2;
-
-    // AverageIdle is the average idle time between requests for the stream at
-    // the time this record was appended, in nanoseconds.
-    uint64 average_idle = 3;
   }
 
   // MetaData contains metadata about this record.

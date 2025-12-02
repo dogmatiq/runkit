@@ -1,6 +1,8 @@
 package teststate
 
 import (
+	"context"
+
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -14,13 +16,24 @@ import (
 // Subsystem represents the Subsystem of the eventstream system within the a
 // test.
 type Subsystem struct {
-	Journals memoryjournal.BinaryStore
-	Streams  maps.Proto[*uuidpb.UUID, *Stream]
+	// Context is the context in which the subsystem is running.
+	Context context.Context
 
-	Done          chan struct{}
-	Shutdown      chan struct{}
-	Requests      chan eventstream.AppendEventsRequest
-	Notifications chan eventstream.EventsAppendedNotification
+	// Journals is the in-memory journal store used to persist event streams.
+	Journals memoryjournal.BinaryStore
+
+	// Streams is the set of event streams known to the subsystem. This
+	// represents the _expected_ state of the streams based on prior
+	// observations.
+	Streams maps.Proto[*uuidpb.UUID, *Stream]
+
+	// Requests is used to send [eventstream.AppendEventsRequest] requests to a
+	// supervisor.
+	Requests chan<- eventstream.AppendEventsRequest
+
+	// Notifications is used to receive [eventstream.EventsAppendedNotification]
+	// notifications from supervisors.
+	Notifications <-chan eventstream.EventsAppendedNotification
 }
 
 // StreamsGen returns a generator that yields existing streams.
@@ -36,7 +49,8 @@ func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
 // supervisor.
 func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest) {
 	select {
-	case <-s.Done:
+	case <-s.Context.Done():
+		t.Fatalf("[%s] context cancelled while sending AppendEventsRequest: %s", req.StreamID, context.Cause(s.Context))
 	case s.Requests <- req:
 		t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
 	}
@@ -55,7 +69,8 @@ func (s *Subsystem) ExpectAppendEventsResponse(
 	}
 
 	select {
-	case <-s.Done:
+	case <-s.Context.Done():
+		t.Fatalf("[%s] context cancelled while waiting for AppendEventsResponse: %s", req.StreamID, context.Cause(s.Context))
 	case got, ok := <-res:
 		if !ok {
 			t.Fatalf("[%s] AppendEventsRequest was rejected", req.StreamID)
@@ -89,7 +104,8 @@ func (s *Subsystem) ExpectAppendEventsResponse(
 // notification from the supervisor.
 func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstream.EventsAppendedNotification) {
 	select {
-	case <-s.Done:
+	case <-s.Context.Done():
+		t.Fatalf("[%s] context cancelled while waiting for EventsAppendedNotification: %s", want.StreamID, context.Cause(s.Context))
 	case got, ok := <-s.Notifications:
 		if !ok {
 			t.Fatalf("[%s] Notifications channel was closed", want.StreamID)

@@ -7,6 +7,7 @@ require (
 	github.com/dogmatiq/enginekit v0.19.11-0.20251202090412-ddd0df65dd57
 	github.com/dogmatiq/persistencekit v0.11.2
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39
+	golang.org/x/sync v0.18.0
 	google.golang.org/protobuf v1.36.10
 	pgregory.net/rapid v1.2.0
 )

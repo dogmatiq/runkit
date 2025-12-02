@@ -9,19 +9,17 @@ import (
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
-	"github.com/dogmatiq/runkit/internal/x/ewma"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 const (
 	// maxIdleTimeout is the maximum duration that a worker will remain idle
 	// before shutting down to conserve resources.
-	maxIdleTimeout = 5 * time.Minute
+	maxIdleTimeout = 1 * time.Minute
 
-	// idleSmoothing is the smoothing factor (aka alpha-value) used when
-	// computing the moving average of the idle time (time between requests). A
-	// value closer to 0 biases the average towards historical values.
-	idleSmoothing = 0.25
+	// startupCost is the unit-less cost of starting a new worker. A higher value
+	// causes workers to choose longer idle timeouts.
+	startupCost = 5
 )
 
 // A worker is a service that appends events to a specific stream.
@@ -35,34 +33,29 @@ type worker struct {
 	Requests      chan AppendEventsRequest
 	Notifications chan<- EventsAppendedNotification
 
-	journal eventstreamjournal.Journal
-	pos     journal.Position
-	offset  uint64
-
-	idle struct {
-		startup time.Duration // time worker started
-		prev    time.Time     // time of alst request
-		avg     time.Duration // average time between requests
-		timeout time.Duration // current idle timeout
-	}
+	journal     eventstreamjournal.Journal
+	pos         journal.Position
+	offset      uint64
+	idleTimeout time.Duration
 }
 
 func (w *worker) Run(ctx context.Context) error {
-	start := time.Now()
+	startedAt := time.Now()
 
 	if err := w.load(ctx); err != nil {
 		return err
 	}
 
-	w.idle.startup = time.Since(start)
-	w.computeIdleTimeout()
+	w.idleTimeout = min(
+		maxIdleTimeout,
+		time.Since(startedAt)*time.Duration(startupCost),
+	)
 
 	w.Telemetry.Info(
 		ctx,
 		"eventstream.worker.init",
 		"worker loaded stream state from the journal",
-		telemetry.Duration("worker.idle_duration_avg", w.idle.avg),
-		telemetry.Duration("worker.idle_timeout", w.idle.timeout),
+		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 	)
 
 	// Only after that first request has been handled do we honor the graceful
@@ -112,13 +105,12 @@ func (w *worker) load(ctx context.Context) error {
 
 	w.pos = pos + 1
 	w.offset = rec.MetaData.OffsetAfter
-	w.idle.avg = time.Duration(rec.MetaData.AverageIdle)
 
 	return nil
 }
 
 func (w *worker) tick(ctx context.Context) (bool, error) {
-	idle := time.NewTimer(w.idle.timeout)
+	idle := time.NewTimer(w.idleTimeout)
 	defer idle.Stop()
 
 	select {
@@ -134,10 +126,9 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 	case <-idle.C:
 		w.Telemetry.Info(
 			ctx,
-			"eventstream.worker.timeout",
+			"eventstream.worker.idle-timeout",
 			"worker is shutting down due to inactivity",
-			telemetry.Duration("worker.idle_duration_avg", w.idle.avg),
-			telemetry.Duration("worker.idle_timeout", w.idle.timeout),
+			telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 		)
 		return false, nil
 	case req := <-w.Requests:
@@ -159,8 +150,6 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 		return err
 	}
 
-	w.computeIdleTimeout()
-
 	if ok, err := w.deduplicate(ctx, req); ok || err != nil {
 		return err
 	}
@@ -180,7 +169,6 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 			WithMetaData(&eventstreamjournal.Record_MetaData{
 				OffsetBefore: begin,
 				OffsetAfter:  end,
-				AverageIdle:  uint64(w.idle.avg),
 			}).
 			WithAppendEvents(&eventstreamjournal.AppendEvents{
 				Events: req.Events,
@@ -200,8 +188,6 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 		telemetry.Int("stream.offset", w.offset),
 		telemetry.Int("append.offset", begin),
 		telemetry.Int("append.event_count", len(req.Events)),
-		telemetry.Duration("worker.idle_duration_avg", w.idle.avg),
-		telemetry.Duration("worker.idle_timeout", w.idle.timeout),
 	)
 
 	select {
@@ -227,27 +213,6 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 	return nil
 }
 
-// computeIdleTimeout updates the worker's idle timeout based on recent
-// activity. It must be called when an [AppendEventsRequest] request is received.
-func (w *worker) computeIdleTimeout() {
-	// Update the time of the last request.
-	prev := w.idle.prev
-	now := time.Now()
-	w.idle.prev = now
-
-	if !prev.IsZero() {
-		// If this is _not_ the first request we have a new idle time to
-		// incorporate into the average.
-		idle := now.Sub(prev)
-		ewma.Update(&w.idle.avg, idle, idleSmoothing)
-	}
-
-	w.idle.timeout = min(
-		w.idle.startup+w.idle.avg, // minimum of startup time and always longer than the average
-		maxIdleTimeout,            // never more than the maximum
-	)
-}
-
 // deduplicate checks whether the events in the given [AppendEventsRequest] have
 // already been appended to the stream.
 //
@@ -266,8 +231,6 @@ func (w *worker) deduplicate(ctx context.Context, req AppendEventsRequest) (bool
 		telemetry.Int("stream.offset", w.offset),
 		telemetry.Int("append.offset", rec.MetaData.OffsetBefore),
 		telemetry.Int("append.event_count", len(req.Events)),
-		telemetry.Duration("worker.idle_duration_avg", w.idle.avg),
-		telemetry.Duration("worker.idle_timeout", w.idle.timeout),
 	)
 
 	select {

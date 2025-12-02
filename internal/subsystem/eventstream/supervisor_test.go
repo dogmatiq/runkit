@@ -2,6 +2,9 @@ package eventstream_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/dogmatiq/enginekit/collections/sets"
@@ -16,54 +19,65 @@ import (
 
 func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		telem := telemetry.NewTestProvider(t)
+		requests := make(chan AppendEventsRequest)
+		notifications := make(chan EventsAppendedNotification)
+
+		// Create a context under which we execute the supervisors.
+		//
+		// Note that it's NOT based on [testing.T.Context], so that we can
+		// execute the supervisor's graceful shutdown logic when the test ends.
+		ctx, cancel := context.WithCancelCause(context.Background())
 
 		subsystem := &teststate.Subsystem{
-			Done:          make(chan struct{}),
-			Shutdown:      make(chan struct{}),
-			Requests:      make(chan AppendEventsRequest),
-			Notifications: make(chan EventsAppendedNotification),
+			Context:       ctx,
+			Requests:      requests,
+			Notifications: notifications,
 		}
 
-		supervisor := &Supervisor{
-			Journals: journal.WithTelemetry(
-				&subsystem.Journals,
-				telem.TracerProvider,
-				telem.MeterProvider,
-				telem.LoggerProvider,
-			),
-			Shutdown:      subsystem.Shutdown,
-			Requests:      subsystem.Requests,
-			Notifications: subsystem.Notifications,
-			Telemetry:     telem,
-		}
+		// shutdown is a channel used to signal all supervisors to shut down
+		// gracefully.
+		shutdown := make(chan struct{})
 
-		// Setup a channel to signal when the test has ended.
-		supervisorDone := make(chan error, 1)
+		// Run multiple supervisors in the background for the duration of the
+		// tests.
+		//
+		// Each supervisor represents a separate running instance of the event
+		// stream subsystem, as would normally be run on separate
+		// machines/containers in a production system.
+		var supervisors sync.WaitGroup
 
-		t.Cleanup(func() {
-			close(subsystem.Shutdown)
+		for idx := range 1 {
+			supervisors.Go(func() {
+				// TODO: add a supervisor ID of some kind
+				telem := telemetry.NewTestProvider(t)
 
-			// Drain the notifications channel until the supervisor stops.
-			for {
-				select {
-				case <-subsystem.Notifications:
-				case err := <-supervisorDone:
-					if err != nil {
-						t.Fatalf("supervisor failed: %s", err)
-					}
-					return
+				sup := &Supervisor{
+					Journals: journal.WithTelemetry(
+						&subsystem.Journals,
+						telem.TracerProvider,
+						telem.MeterProvider,
+						telem.LoggerProvider,
+					),
+					Shutdown:      shutdown,
+					Requests:      requests,
+					Notifications: notifications,
+					Telemetry:     telem,
 				}
-			}
-		})
 
-		// Run the supervisor in the background for the duration of the test.
-		// We don't use the test context here, because we want to be able to
-		// control how it shuts down in the cleanup function above.
-		go func() {
-			supervisorDone <- supervisor.Run(context.Background())
-			close(subsystem.Done)
-		}()
+				if err := sup.Run(ctx); err != nil {
+					t.Errorf("supervisor %d failed: %s", idx, err)
+					cancel(fmt.Errorf("supervisor %d failed: %w", idx, err))
+				}
+			})
+		}
+
+		// When the test ends signal all supervisors to shut down gracefully
+		// and wait for them to stop.
+		t.Cleanup(func() {
+			close(shutdown)
+			supervisors.Wait()
+			cancel(errors.New("test completed"))
+		})
 
 		t.Repeat(
 			rapid.StateMachineActions(&state{subsystem}),

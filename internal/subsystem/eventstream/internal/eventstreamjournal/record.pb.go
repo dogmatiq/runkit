@@ -155,10 +155,7 @@ type Record_MetaData struct {
 	//
 	// It is the same as OffsetBefore plus the number of events appended by this
 	// record, if any.
-	OffsetAfter uint64 `protobuf:"varint,2,opt,name=offset_after,json=offsetAfter,proto3" json:"offset_after,omitempty"`
-	// AverageIdle is the average idle time between requests for the stream at
-	// the time this record was appended, in nanoseconds.
-	AverageIdle   uint64 `protobuf:"varint,3,opt,name=average_idle,json=averageIdle,proto3" json:"average_idle,omitempty"`
+	OffsetAfter   uint64 `protobuf:"varint,2,opt,name=offset_after,json=offsetAfter,proto3" json:"offset_after,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -207,25 +204,17 @@ func (x *Record_MetaData) GetOffsetAfter() uint64 {
 	return 0
 }
 
-func (x *Record_MetaData) GetAverageIdle() uint64 {
-	if x != nil {
-		return x.AverageIdle
-	}
-	return 0
-}
-
 var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_eventstreamjournal_record_proto protoreflect.FileDescriptor
 
 const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_eventstreamjournal_record_proto_rawDesc = "" +
 	"\n" +
-	"bgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal/record.proto\x12\x1drunkit.eventstream.journal.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\xa6\x02\n" +
+	"bgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal/record.proto\x12\x1drunkit.eventstream.journal.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x83\x02\n" +
 	"\x06Record\x12K\n" +
 	"\tmeta_data\x18\x01 \x01(\v2..runkit.eventstream.journal.v1.Record.MetaDataR\bmetaData\x12R\n" +
-	"\rappend_events\x18\x02 \x01(\v2+.runkit.eventstream.journal.v1.AppendEventsH\x00R\fappendEvents\x1au\n" +
+	"\rappend_events\x18\x02 \x01(\v2+.runkit.eventstream.journal.v1.AppendEventsH\x00R\fappendEvents\x1aR\n" +
 	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
-	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfter\x12!\n" +
-	"\faverage_idle\x18\x03 \x01(\x04R\vaverageIdleB\x04\n" +
+	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfterB\x04\n" +
 	"\x02op\"@\n" +
 	"\fAppendEvents\x120\n" +
 	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBWZUgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournalb\x06proto3"
