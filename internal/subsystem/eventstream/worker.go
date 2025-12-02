@@ -204,56 +204,27 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 		telemetry.Duration("worker.idle_timeout", w.idle.timeout),
 	)
 
-	return w.publish(
-		ctx,
-		req,
-		AppendEventsResponse{
-			BeginOffset:  begin,
-			EndOffset:    end,
-			Deduplicated: false,
-		},
-		EventsAppendedNotification{
-			StreamID: w.StreamID,
-			Offset:   begin,
-			Events:   req.Events,
-		},
-	)
-}
+	select {
+	default:
+		return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
+	case req.Response <- AppendEventsResponse{
+		BeginOffset:  begin,
+		EndOffset:    end,
+		Deduplicated: false,
+	}:
+	}
 
-// publish sends an [AppendEventsResponse] and [EventsAppendedNotification] to
-// their respective channels without blocking on either.
-func (w *worker) publish(
-	ctx context.Context,
-	req AppendEventsRequest,
-	res AppendEventsResponse,
-	n EventsAppendedNotification,
-) error {
-	response := req.Response
-	notification := w.Notifications
-
-	// Send to each of the channels, delivering whichever is ready first. Set
-	// that channel to nil so we don't redeliver.
-	//
-	// This approach allows us to send to whichever channel is ready first
-	// without the overhead of creating separate goroutines for each.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case response <- res:
-		response = nil
-	case notification <- n:
-		notification = nil
+	case w.Notifications <- EventsAppendedNotification{
+		StreamID: w.StreamID,
+		Offset:   begin,
+		Events:   req.Events,
+	}:
 	}
 
-	// Then send to the remaining channel.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case response <- res:
-		return nil
-	case notification <- n:
-		return nil
-	}
+	return nil
 }
 
 // computeIdleTimeout updates the worker's idle timeout based on recent
@@ -300,15 +271,16 @@ func (w *worker) deduplicate(ctx context.Context, req AppendEventsRequest) (bool
 	)
 
 	select {
-	case <-ctx.Done():
-		return true, ctx.Err()
+	default:
+		return false, xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
 	case req.Response <- AppendEventsResponse{
 		BeginOffset:  rec.MetaData.OffsetBefore,
 		EndOffset:    rec.MetaData.OffsetAfter,
 		Deduplicated: true,
 	}:
-		return true, nil
 	}
+
+	return true, nil
 }
 
 // findAppendRecord searches the journal to find the record that represents the
@@ -398,8 +370,8 @@ func hasCollision(lhs, rhs []*envelopepb.Envelope) (identical, collision bool) {
 		return false, hasCollisionCartesian(lhs, rhs)
 	}
 
-	for idxL, envL := range lhs {
-		envR := rhs[idxL]
+	for idx, envL := range lhs {
+		envR := rhs[idx]
 
 		if envL.MessageId.Equal(envR.MessageId) {
 			// Keep going so long as we have the same message IDs at the same
@@ -408,14 +380,14 @@ func hasCollision(lhs, rhs []*envelopepb.Envelope) (identical, collision bool) {
 		}
 
 		// Otherwise, we know the sets aren't identical. If we've already found
-		// one collusion, we can return immediately.
-		if idxL > 0 {
+		// one collision, we can return immediately.
+		if idx > 0 {
 			return false, true
 		}
 
 		// Otherwise, we fall back to the cartesian comparison on the remainder
 		// of the slices.
-		return false, hasCollisionCartesian(lhs[idxL:], rhs[idxL:])
+		return false, hasCollisionCartesian(lhs[idx:], rhs[idx:])
 	}
 
 	return true, true

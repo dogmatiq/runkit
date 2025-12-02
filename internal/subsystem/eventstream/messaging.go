@@ -64,12 +64,12 @@ func validateAppendEventsResponse(req AppendEventsRequest) error {
 		return xerrors.Bug("AppendEventsRequest.StreamID is invalid: %w", err)
 	}
 
-	if req.Response == nil {
-		return xerrors.Bug("AppendEventsRequest.Response is nil")
-	}
-
 	if len(req.Events) == 0 {
 		return xerrors.Bug("AppendEventsRequest.Events is empty")
+	}
+
+	if req.Response == nil {
+		return xerrors.Bug("AppendEventsRequest.Response is nil")
 	}
 
 	return nil
