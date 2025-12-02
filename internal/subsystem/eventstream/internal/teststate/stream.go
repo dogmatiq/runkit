@@ -9,46 +9,44 @@ import (
 
 // Stream represents the state of a single event stream.
 type Stream struct {
-	ID         *uuidpb.UUID
-	NextOffset uint64
-	Events     []*envelopepb.Envelope
-	Appends    []eventstream.EventsAppendedNotification
+	ID            *uuidpb.UUID
+	NextOffset    uint64
+	Events        []*envelopepb.Envelope
+	Notifications []eventstream.EventsAppendedNotification
 }
 
 // EventsGen returns a generator that produces events from the stream.
-func (s *Stream) EventsGen() *rapid.Generator[*envelopepb.Envelope] {
-	return rapid.Custom(
-		func(t *rapid.T) *envelopepb.Envelope {
-			if s.NextOffset == 0 {
-				t.Skip("stream is empty")
-			}
+func (s *Stream) EventsGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelope] {
+	if s.NextOffset == 0 {
+		t.Skip("stream is empty")
+	}
 
-			return rapid.SampledFrom(s.Events).Draw(t, "event")
-		},
-	)
+	return rapid.SampledFrom(s.Events)
 }
 
 // OffsetsGen returns a generator that produces offsets of events on the stream.
-func (s *Stream) OffsetsGen() *rapid.Generator[uint64] {
-	return rapid.Custom(
-		func(t *rapid.T) uint64 {
-			if s.NextOffset == 0 {
-				t.Skip("stream is empty")
-			}
+func (s *Stream) OffsetsGen(t *rapid.T) *rapid.Generator[uint64] {
+	if s.NextOffset == 0 {
+		t.Skip("stream is empty")
+	}
 
-			return rapid.Uint64Range(0, s.NextOffset-1).Draw(t, "offset")
-		},
-	)
+	return rapid.Uint64Range(0, s.NextOffset-1)
 }
 
-// func (s *Stream) DrawOffset(t *rapid.T) uint64 {
-// 	return rapid.
-// 		Uint64Range(0, s.NextOffset()-1).
-// 		Draw(t, "offset of existing event")
-// }
+// NotificationsGen returns a generator that produces
+// [eventstream.EventsAppendedNotification] that pertain to the stream.
+func (s *Stream) NotificationsGen(t *rapid.T) *rapid.Generator[eventstream.EventsAppendedNotification] {
+	if len(s.Notifications) == 0 {
+		t.Skip("stream is empty")
+	}
 
-func (s *Stream) OffsetOf(messageID *uuidpb.UUID) (uint64, bool) {
-	for _, op := range s.Appends {
+	return rapid.SampledFrom(s.Notifications)
+}
+
+// FindOffset returns the offset of the event with the given message ID,
+// or false if the event is not present on the stream.
+func (s *Stream) FindOffset(messageID *uuidpb.UUID) (uint64, bool) {
+	for _, op := range s.Notifications {
 		for i, env := range op.Events {
 			if env.MessageId.Equal(messageID) {
 				return op.Offset + uint64(i), true
@@ -57,6 +55,21 @@ func (s *Stream) OffsetOf(messageID *uuidpb.UUID) (uint64, bool) {
 	}
 
 	return 0, false
+}
+
+// FindNotification returns the [eventstream.EventsAppendedNotification] that
+// contains the event with the given message ID, or false if the event is not
+// present on the stream.
+func (s *Stream) FindNotification(messageID *uuidpb.UUID) (eventstream.EventsAppendedNotification, bool) {
+	for _, op := range s.Notifications {
+		for _, env := range op.Events {
+			if env.MessageId.Equal(messageID) {
+				return op, true
+			}
+		}
+	}
+
+	return eventstream.EventsAppendedNotification{}, false
 }
 
 // append updates the stream's state to reflect the occurrence of the events
@@ -73,7 +86,7 @@ func (s *Stream) append(t *rapid.T, x eventstream.EventsAppendedNotification) {
 
 	s.NextOffset += uint64(len(x.Events))
 	s.Events = append(s.Events, x.Events...)
-	s.Appends = append(s.Appends, x)
+	s.Notifications = append(s.Notifications, x)
 }
 
 func (s *Stream) String() string {

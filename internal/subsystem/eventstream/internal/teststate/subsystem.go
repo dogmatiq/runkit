@@ -17,31 +17,26 @@ type Subsystem struct {
 	Journals memoryjournal.BinaryStore
 	Streams  maps.Proto[*uuidpb.UUID, *Stream]
 
+	Done          chan struct{}
 	Shutdown      chan struct{}
 	Requests      chan eventstream.AppendEventsRequest
 	Notifications chan eventstream.EventsAppendedNotification
 }
 
 // StreamsGen returns a generator that yields existing streams.
-func (s *Subsystem) StreamsGen() *rapid.Generator[*Stream] {
-	return rapid.Custom(
-		func(t *rapid.T) *Stream {
-			if s.Streams.Len() == 0 {
-				t.Skip("stream is empty")
-			}
+func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
+	if s.Streams.Len() == 0 {
+		t.Skip("stream is empty")
+	}
 
-			return xrapid.SampledFromSeq(s.Streams.Values()).Draw(t, "stream")
-		},
-	)
+	return xrapid.SampledFromSeq(s.Streams.Values())
 }
 
 // SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to the
 // supervisor.
 func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest) {
 	select {
-	case <-t.Context().Done():
-		t.Fatalf("[%s] context canceled while sending AppendEventsRequest: %s", req.StreamID, t.Context().Err())
-
+	case <-s.Done:
 	case s.Requests <- req:
 		t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
 	}
@@ -55,10 +50,12 @@ func (s *Subsystem) ExpectAppendEventsResponse(
 	res <-chan eventstream.AppendEventsResponse,
 	want eventstream.AppendEventsResponse,
 ) {
-	select {
-	case <-t.Context().Done():
-		t.Fatalf("[%s] context canceled while awaiting AppendEventsResponse: %s", req.StreamID, t.Context().Err())
+	if res == nil {
+		panic("test misuse: response channel is nil")
+	}
 
+	select {
+	case <-s.Done:
 	case got, ok := <-res:
 		if !ok {
 			t.Fatalf("[%s] AppendEventsRequest was rejected", req.StreamID)
@@ -88,33 +85,11 @@ func (s *Subsystem) ExpectAppendEventsResponse(
 	}
 }
 
-// ExpectAppendEventsRejection waits for an [eventstream.AppendEventsRequest] to
-// be rejected by the supervisor.
-func (s *Subsystem) ExpectAppendEventsRejection(
-	t *rapid.T,
-	req eventstream.AppendEventsRequest,
-	res <-chan eventstream.AppendEventsResponse,
-) {
-	select {
-	case <-t.Context().Done():
-		t.Fatalf("[%s] context canceled while awaiting AppendEventsResponse: %s", req.StreamID, t.Context().Err())
-
-	case _, ok := <-res:
-		if ok {
-			t.Fatalf("[%s] received unexpected AppendEventsResponse", req.StreamID)
-		}
-
-		t.Logf("[%s] AppendEventsRequest was rejected as expected", req.StreamID)
-	}
-}
-
 // ExpectEventsAppendedNotification waits for and verifies an [eventstream.EventsAppendedNotification]
 // notification from the supervisor.
 func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstream.EventsAppendedNotification) {
 	select {
-	case <-t.Context().Done():
-		t.Fatalf("[%s] context canceled while waiting for EventsAppendedNotification: %s", want.StreamID, t.Context().Err())
-
+	case <-s.Done:
 	case got, ok := <-s.Notifications:
 		if !ok {
 			t.Fatalf("[%s] Notifications channel was closed", want.StreamID)

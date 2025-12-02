@@ -6,10 +6,10 @@ import (
 
 	"github.com/dogmatiq/enginekit/collections/sets"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/teststate"
-	"github.com/dogmatiq/runkit/internal/telemetry"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
 )
@@ -19,6 +19,7 @@ func TestSupervisor(t *testing.T) {
 		telem := telemetry.NewTestProvider(t)
 
 		subsystem := &teststate.Subsystem{
+			Done:          make(chan struct{}),
 			Shutdown:      make(chan struct{}),
 			Requests:      make(chan AppendEventsRequest),
 			Notifications: make(chan EventsAppendedNotification),
@@ -43,8 +44,16 @@ func TestSupervisor(t *testing.T) {
 		t.Cleanup(func() {
 			close(subsystem.Shutdown)
 
-			if err := <-supervisorDone; err != nil {
-				t.Fatalf("supervisor failed: %s", err)
+			// Drain the notifications channel until the supervisor stops.
+			for {
+				select {
+				case <-subsystem.Notifications:
+				case err := <-supervisorDone:
+					if err != nil {
+						t.Fatalf("supervisor failed: %s", err)
+					}
+					return
+				}
 			}
 		})
 
@@ -53,6 +62,7 @@ func TestSupervisor(t *testing.T) {
 		// control how it shuts down in the cleanup function above.
 		go func() {
 			supervisorDone <- supervisor.Run(context.Background())
+			close(subsystem.Done)
 		}()
 
 		t.Repeat(
@@ -117,12 +127,13 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 }
 
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
-	stream := s.subsystem.StreamsGen().Draw(t, "stream")
+	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
 
 	res := make(chan AppendEventsResponse, 1)
 	req := AppendEventsRequest{
-		StreamID: stream.ID,
-		Response: res,
+		StreamID:          stream.ID,
+		Response:          res,
+		DeduplicationHint: rapid.Uint64Range(0, stream.NextOffset).Draw(t, "deduplication hint"),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
@@ -147,40 +158,30 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	})
 }
 
-func (s *state) SendEmptyAppendEventsRequest(t *rapid.T) {
+func (s *state) ReappendExistingEvents(t *rapid.T) {
+	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
+	n := stream.NotificationsGen(t).Draw(t, "prior notification")
+
 	res := make(chan AppendEventsResponse, 1)
 	req := AppendEventsRequest{
-		StreamID: uuidpb.Generate(),
+		StreamID: stream.ID,
+		Events:   n.Events,
 		Response: res,
+
+		// Draw a deduplication hint that is somewhere between 0 and the actual
+		// offset of the duplicated event so that the event stream will always
+		// find the original event.
+		//
+		// We don't bother testing what happens if the hint is greater than the
+		// actual offset, as this is essentially a misuse of the internal API.
+		DeduplicationHint: rapid.Uint64Range(0, n.Offset).Draw(t, "deduplication hint"),
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req)
-	s.subsystem.ExpectAppendEventsRejection(t, req, res)
+	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
+		BeginOffset:  n.Offset,
+		EndOffset:    n.Offset + uint64(len(n.Events)),
+		Deduplicated: true,
+	})
 	s.subsystem.ExpectNoEventsAppendedNotification(t, req.StreamID)
 }
-
-// func (s *subsystemState) AppendDuplicateEvent(t *rapid.T) {
-// 	stream := s.drawExistingStream(t)
-// 	offset := stream.DrawOffset(t)
-
-// 	req := AppendEvents{
-// 		StreamID: stream.ID,
-// 		Events:   []*envelopepb.Envelope{stream.Events[offset]},
-
-// 		// Draw a deduplication hint that is somewhere between 0 and the actual
-// 		// offset of the duplicated event so that the event stream will always
-// 		// find the original event.
-// 		//
-// 		// We don't bother testing what happens if the hint is greater than the
-// 		// actual offset, as this is essentially a misuse of the internal API.
-// 		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
-// 	}
-
-// 	s.sendAppendEvents(t, req, AppendEventsResponse{
-// 		BeginOffset:  offset,
-// 		EndOffset:    offset + 1,
-// 		Deduplicated: true,
-// 	})
-
-// 	s.ensureNoEventsAppended(t, req.StreamID)
-// }

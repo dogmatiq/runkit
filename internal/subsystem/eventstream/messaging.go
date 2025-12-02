@@ -3,6 +3,7 @@ package eventstream
 import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // EventsAppendedNotification is a notification sent when events have been
@@ -34,7 +35,6 @@ type AppendEventsRequest struct {
 	DeduplicationHint uint64
 
 	// Response is the channel to which the [AppendEventsResponse] is sent.
-	// It is closed if the request is rejected.
 	Response chan<- AppendEventsResponse
 }
 
@@ -55,4 +55,22 @@ type AppendEventsResponse struct {
 	// Deduplicated is true if the events were appended by a prior
 	// [AppendRequest] and hence deduplicated.
 	Deduplicated bool
+}
+
+// validateAppendEventsResponse returns an error if the given request is
+// malformed. Any error indicates a bug within the engine.
+func validateAppendEventsResponse(req AppendEventsRequest) error {
+	if err := req.StreamID.Validate(); err != nil {
+		return xerrors.Bug("AppendEventsRequest.StreamID is invalid: %w", err)
+	}
+
+	if req.Response == nil {
+		return xerrors.Bug("AppendEventsRequest.Response is nil")
+	}
+
+	if len(req.Events) == 0 {
+		return xerrors.Bug("AppendEventsRequest.Events is empty")
+	}
+
+	return nil
 }

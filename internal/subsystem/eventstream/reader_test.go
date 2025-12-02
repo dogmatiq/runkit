@@ -10,8 +10,8 @@ import (
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	stream := s.subsystem.StreamsGen().Draw(t, "stream")
-	wantOffset := stream.OffsetsGen().Draw(t, "start offset")
+	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
+	wantOffset := stream.OffsetsGen(t).Draw(t, "start offset")
 
 	r, err := NewReader(
 		t.Context(),
@@ -53,7 +53,7 @@ func (s *state) ReadFromStream(t *rapid.T) {
 
 		if !gotEnv.MessageId.Equal(wantEnv.MessageId) {
 			desc := "which is not in the stream"
-			if foundAtOffset, ok := stream.OffsetOf(gotEnv.MessageId); ok {
+			if foundAtOffset, ok := stream.FindOffset(gotEnv.MessageId); ok {
 				desc = fmt.Sprintf("which is actually @%d", foundAtOffset)
 			}
 
@@ -103,7 +103,7 @@ func (s *state) ReadFromStream(t *rapid.T) {
 	}
 
 	desc := "which is not in the stream"
-	if foundAtOffset, ok := stream.OffsetOf(gotEnv.MessageId); ok {
+	if foundAtOffset, ok := stream.FindOffset(gotEnv.MessageId); ok {
 		desc = fmt.Sprintf("which is actually @%d", foundAtOffset)
 	}
 
