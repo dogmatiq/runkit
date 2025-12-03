@@ -42,20 +42,13 @@ type worker struct {
 func (w *worker) Run(ctx context.Context) error {
 	startedAt := time.Now()
 
-	if err := w.load(ctx); err != nil {
+	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
 		return err
 	}
 
 	w.idleTimeout = min(
 		maxIdleTimeout,
 		time.Since(startedAt)*time.Duration(startupCost),
-	)
-
-	w.Telemetry.Info(
-		ctx,
-		"eventstream.worker.init",
-		"worker loaded stream state from the journal",
-		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 	)
 
 	// Only after that first request has been handled do we honor the graceful
@@ -69,7 +62,7 @@ func (w *worker) Run(ctx context.Context) error {
 }
 
 // load reloads the worker's state from the journal.
-func (w *worker) load(ctx context.Context) error {
+func (w *worker) load(ctx context.Context, message string) error {
 	var err error
 	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.StreamID)
 	if err != nil {
@@ -84,27 +77,40 @@ func (w *worker) load(ctx context.Context) error {
 		return err
 	}
 
-	if !ok {
-		if w.pos != 0 {
-			return xerrors.Bug(
-				"journal is empty, but worker has previously seen a record at position %d",
-				w.pos-1,
-			)
-		}
+	lastKnownPos := w.pos
+	lastKnownOffset := w.offset
 
-		return nil
+	if ok {
+		w.pos = pos + 1
+		w.offset = rec.MetaData.OffsetAfter
+	} else {
+		w.pos = 0
+		w.offset = 0
 	}
 
-	if w.pos != 0 && pos < w.pos-1 {
+	if w.pos < lastKnownPos {
 		return xerrors.Bug(
-			"last journal record is at position %d, but worker has previously seen a record at position %d",
-			pos,
-			w.pos-1,
+			"next journal position is %d, but worker was already at position %d",
+			w.pos,
+			lastKnownPos,
 		)
 	}
 
-	w.pos = pos + 1
-	w.offset = rec.MetaData.OffsetAfter
+	if w.offset < lastKnownOffset {
+		return xerrors.Bug(
+			"stream offset is %d, but worker was already at offset %d",
+			w.offset,
+			lastKnownOffset,
+		)
+	}
+
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.load",
+		message,
+		telemetry.Int("stream.offset", w.offset),
+		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
+	)
 
 	return nil
 }
@@ -146,18 +152,27 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 		telemetry.Int("request.deduplication_hint", req.DeduplicationHint),
 	)
 
-	if err := validateAppendEventsResponse(req); err != nil {
-		return err
-	}
+	for {
+		if err := validateAppendEventsResponse(req); err != nil {
+			return err
+		}
 
-	if ok, err := w.deduplicate(ctx, req); ok || err != nil {
-		return err
-	}
+		if ok, err := w.deduplicate(ctx, req); ok || err != nil {
+			return err
+		}
 
-	return w.commit(ctx, req)
+		ok, err := w.commit(ctx, req)
+		if ok || err != nil {
+			return err
+		}
+
+		if err := w.load(ctx, "worker reloaded stream state due to conflict"); err != nil {
+			return err
+		}
+	}
 }
 
-func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
+func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (bool, error) {
 	begin := w.offset
 	end := begin + uint64(len(req.Events))
 
@@ -175,7 +190,11 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 			}).
 			Build(),
 	); err != nil {
-		return err
+		if journal.IsConflict(err) {
+			return false, nil
+		}
+
+		return false, err
 	}
 
 	w.pos++
@@ -192,7 +211,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 
 	select {
 	default:
-		return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
+		return false, xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
 	case req.Response <- AppendEventsResponse{
 		BeginOffset:  begin,
 		EndOffset:    end,
@@ -202,7 +221,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	case w.Notifications <- EventsAppendedNotification{
 		StreamID: w.StreamID,
 		Offset:   begin,
@@ -210,7 +229,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) error {
 	}:
 	}
 
-	return nil
+	return true, nil
 }
 
 // deduplicate checks whether the events in the given [AppendEventsRequest] have
@@ -261,7 +280,7 @@ func (w *worker) findAppendRecord(
 	// than the current offset, we assume our knowledge of the journal is stale
 	// and reload the latest record.
 	if req.DeduplicationHint > w.offset {
-		if err := w.load(ctx); err != nil {
+		if err := w.load(ctx, "worker reloaded stream state due to future deduplication hint"); err != nil {
 			return nil, false, err
 		}
 

@@ -46,7 +46,7 @@ func TestSupervisor(t *testing.T) {
 		// machines/containers in a production system.
 		var supervisors sync.WaitGroup
 
-		for idx := range 1 {
+		for idx := range 3 {
 			supervisors.Go(func() {
 				// TODO: add a supervisor ID of some kind
 				telem := telemetry.NewTestProvider(t)
