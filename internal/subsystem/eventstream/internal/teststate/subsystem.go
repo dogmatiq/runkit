@@ -6,9 +6,9 @@ import (
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/persistencekit/driver/memory/memoryjournal"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
+	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 )
@@ -20,7 +20,7 @@ type Subsystem struct {
 	Context context.Context
 
 	// Journals is the in-memory journal store used to persist event streams.
-	Journals memoryjournal.BinaryStore
+	Journals journaltest.FailableBinaryStore
 
 	// Streams is the set of event streams known to the subsystem. This
 	// represents the _expected_ state of the streams based on prior
@@ -45,57 +45,47 @@ func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
 	return xrapid.SampledFromSeq(s.Streams.Values())
 }
 
-// SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to the
-// supervisor.
-func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest) {
-	select {
-	case <-s.Context.Done():
-		t.Fatalf("[%s] context cancelled while sending AppendEventsRequest: %s", req.StreamID, context.Cause(s.Context))
-	case s.Requests <- req:
-		t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
-	}
-}
-
-// ExpectAppendEventsResponse waits for and verifies an
-// [eventstream.AppendEventsResponse] from the supervisor.
-func (s *Subsystem) ExpectAppendEventsResponse(
-	t *rapid.T,
-	req eventstream.AppendEventsRequest,
-	res <-chan eventstream.AppendEventsResponse,
-	want eventstream.AppendEventsResponse,
-) {
-	if res == nil {
-		panic("test misuse: response channel is nil")
+// SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to
+// the supervisor.
+func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest, want eventstream.AppendEventsResponse) {
+	if req.Response != nil {
+		panic("test misuse: do not set request.Response channel")
 	}
 
-	select {
-	case <-s.Context.Done():
-		t.Fatalf("[%s] context cancelled while waiting for AppendEventsResponse: %s", req.StreamID, context.Cause(s.Context))
-	case got, ok := <-res:
-		if !ok {
-			t.Fatalf("[%s] AppendEventsRequest was rejected", req.StreamID)
+	for {
+		response := make(chan eventstream.AppendEventsResponse, 1)
+		req.Response = response
+
+		select {
+		case <-s.Context.Done():
+			t.Fatalf("[%s] context cancelled while sending AppendEventsRequest: %s", req.StreamID, context.Cause(s.Context))
+		case s.Requests <- req:
+			t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
 		}
 
-		t.Logf("[%s] received AppendEventsResponse", req.StreamID)
+		select {
+		case <-s.Context.Done():
+			t.Fatalf("[%s] context cancelled while waiting for AppendEventsResponse: %s", req.StreamID, context.Cause(s.Context))
+		case got, ok := <-response:
+			if !ok {
+				t.Logf("[%s] AppendEventsResponse was rejected, retrying", req.StreamID)
+				continue
+			}
 
-		if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
-			t.Fatalf(
-				"[%s] AppendEventsResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
-				req.StreamID,
-				got.BeginOffset,
-				got.EndOffset,
-				want.BeginOffset,
-				want.EndOffset,
-			)
-		}
+			t.Logf("[%s] received AppendEventsResponse", req.StreamID)
 
-		if got.Deduplicated != want.Deduplicated {
-			t.Fatalf(
-				"[%s] AppendEventsResponse has unexpected deduplication flag: got %t, want %t",
-				req.StreamID,
-				got.Deduplicated,
-				want.Deduplicated,
-			)
+			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
+				t.Fatalf(
+					"[%s] AppendEventsResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
+					req.StreamID,
+					got.BeginOffset,
+					got.EndOffset,
+					want.BeginOffset,
+					want.EndOffset,
+				)
+			}
+
+			return
 		}
 	}
 }
@@ -164,15 +154,5 @@ func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstrea
 		}
 
 		stream.append(t, got)
-	}
-}
-
-// ExpectNoEventsAppendedNotification verifies that no [eventstream.EventsAppendedNotification]
-// notification has been published for the given stream.
-func (s *Subsystem) ExpectNoEventsAppendedNotification(t *rapid.T, streamID *uuidpb.UUID) {
-	select {
-	case <-s.Notifications:
-		t.Fatalf("[%s] unexpected EventsAppendedNotification received", streamID)
-	default:
 	}
 }

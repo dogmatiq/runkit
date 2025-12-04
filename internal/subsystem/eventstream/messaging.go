@@ -8,6 +8,9 @@ import (
 
 // EventsAppendedNotification is a notification sent when events have been
 // appended to a stream.
+//
+// Notifications may be sent multiple times for the same appended events in the
+// case of retries, so consumers must be prepared to handle duplicates.
 type EventsAppendedNotification struct {
 	// StreamID is the ID of the event stream to which the events were appended.
 	StreamID *uuidpb.UUID
@@ -51,15 +54,11 @@ type AppendEventsResponse struct {
 	// are both set to the offset at which the next appended event would be
 	// written.
 	BeginOffset, EndOffset uint64
-
-	// Deduplicated is true if the events were appended by a prior
-	// [AppendRequest] and hence deduplicated.
-	Deduplicated bool
 }
 
-// validateAppendEventsResponse returns an error if the given request is
+// validateAppendEventsRequest returns an error if the given request is
 // malformed. Any error indicates a bug within the engine.
-func validateAppendEventsResponse(req AppendEventsRequest) error {
+func validateAppendEventsRequest(req AppendEventsRequest) error {
 	if err := req.StreamID.Validate(); err != nil {
 		return xerrors.Bug("AppendEventsRequest.StreamID is invalid: %w", err)
 	}

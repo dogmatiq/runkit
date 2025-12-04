@@ -74,19 +74,34 @@ func (s *Stream) FindNotification(messageID *uuidpb.UUID) (eventstream.EventsApp
 
 // append updates the stream's state to reflect the occurrence of the events
 // described by the given [eventstream.EventsAppendedNotification] notification.
-func (s *Stream) append(t *rapid.T, x eventstream.EventsAppendedNotification) {
-	for i, env := range x.Events {
-		t.Logf(
-			"[%s@%d] appended %s",
-			x.StreamID,
-			x.Offset+uint64(i),
-			env.MessageId,
+func (s *Stream) append(t *rapid.T, n eventstream.EventsAppendedNotification) {
+	if n.Offset < s.NextOffset {
+		// This is a duplicated/resent notification.
+		// We assume at this point that it's already been validated as expected.
+		return
+	}
+
+	if n.Offset > s.NextOffset {
+		t.Fatalf(
+			"[%s] cannot append @%d, stream is @%d",
+			s.ID,
+			n.Offset,
+			s.NextOffset,
 		)
 	}
 
-	s.NextOffset += uint64(len(x.Events))
-	s.Events = append(s.Events, x.Events...)
-	s.Notifications = append(s.Notifications, x)
+	for i, env := range n.Events {
+		t.Logf(
+			"[%s] appended %s @%d",
+			n.StreamID,
+			env.MessageId,
+			n.Offset+uint64(i),
+		)
+	}
+
+	s.NextOffset += uint64(len(n.Events))
+	s.Events = append(s.Events, n.Events...)
+	s.Notifications = append(s.Notifications, n)
 }
 
 func (s *Stream) String() string {

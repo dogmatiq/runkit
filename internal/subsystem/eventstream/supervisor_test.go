@@ -14,6 +14,7 @@ import (
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/teststate"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
+	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
 	"pgregory.net/rapid"
 )
 
@@ -112,10 +113,8 @@ func (s *state) Check(t *rapid.T) {
 }
 
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
-	res := make(chan AppendEventsResponse, 1)
 	req := AppendEventsRequest{
 		StreamID: uuidpb.Generate(),
-		Response: res,
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
@@ -125,12 +124,9 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req)
-
-	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
-		BeginOffset:  0,
-		EndOffset:    uint64(len(req.Events)),
-		Deduplicated: false,
+	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+		BeginOffset: 0,
+		EndOffset:   uint64(len(req.Events)),
 	})
 
 	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
@@ -143,10 +139,8 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
 
-	res := make(chan AppendEventsResponse, 1)
 	req := AppendEventsRequest{
 		StreamID:          stream.ID,
-		Response:          res,
 		DeduplicationHint: rapid.Uint64Range(0, stream.NextOffset).Draw(t, "deduplication hint"),
 	}
 
@@ -157,16 +151,13 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req)
-
-	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
-		BeginOffset:  stream.NextOffset,
-		EndOffset:    stream.NextOffset + uint64(len(req.Events)),
-		Deduplicated: false,
+	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+		BeginOffset: stream.NextOffset,
+		EndOffset:   stream.NextOffset + uint64(len(req.Events)),
 	})
 
 	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
-		StreamID: req.StreamID,
+		StreamID: stream.ID,
 		Offset:   stream.NextOffset,
 		Events:   req.Events,
 	})
@@ -176,26 +167,28 @@ func (s *state) ReappendExistingEvents(t *rapid.T) {
 	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
 	n := stream.NotificationsGen(t).Draw(t, "prior notification")
 
-	res := make(chan AppendEventsResponse, 1)
 	req := AppendEventsRequest{
-		StreamID: stream.ID,
-		Events:   n.Events,
-		Response: res,
-
-		// Draw a deduplication hint that is somewhere between 0 and the actual
-		// offset of the duplicated event so that the event stream will always
-		// find the original event.
-		//
-		// We don't bother testing what happens if the hint is greater than the
-		// actual offset, as this is essentially a misuse of the internal API.
+		StreamID:          stream.ID,
+		Events:            n.Events,
 		DeduplicationHint: rapid.Uint64Range(0, n.Offset).Draw(t, "deduplication hint"),
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req)
-	s.subsystem.ExpectAppendEventsResponse(t, req, res, AppendEventsResponse{
-		BeginOffset:  n.Offset,
-		EndOffset:    n.Offset + uint64(len(n.Events)),
-		Deduplicated: true,
+	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+		BeginOffset: n.Offset,
+		EndOffset:   n.Offset + uint64(len(n.Events)),
 	})
-	s.subsystem.ExpectNoEventsAppendedNotification(t, req.StreamID)
+
+	s.subsystem.ExpectEventsAppendedNotification(t, n)
+}
+
+func (s *state) InduceFailureOnNextJournalOpen(t *rapid.T) {
+	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeJournalOpen)
+}
+
+func (s *state) InduceFailureBeforeNextJournalAppend(t *rapid.T) {
+	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeJournalAppend)
+}
+
+func (s *state) InduceFailureAfterNextJournalAppend(t *rapid.T) {
+	s.subsystem.Journals.ScheduleFailure(journaltest.AfterJournalAppend)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xtelemetry"
 )
 
@@ -66,7 +67,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		// supervisor. Therefore, if the supervisor is stopping, so too will the
 		// workers.
 		for s.workers.Len() > 0 {
-			s.handleWorkerStopped(ctx, <-s.workerStopped, true)
+			s.handleWorkerStopped(ctx, <-s.workerStopped)
 		}
 	}()
 
@@ -79,6 +80,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 }
 
 func (s *Supervisor) tick(ctx context.Context) (bool, error) {
+	s.telemetry.Info(
+		ctx,
+		"eventstream.supervisor.tick",
+		"supervisor is waiting for the next request",
+		telemetry.Int("supervisor.worker_count", s.workers.Len()),
+	)
+
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -91,14 +99,14 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 		)
 		return false, nil
 	case x := <-s.workerStopped:
-		return true, s.handleWorkerStopped(ctx, x, false)
+		return true, s.handleWorkerStopped(ctx, x)
 	case req := <-s.Requests:
 		return true, s.handleAppendEventsRequest(ctx, req)
 	}
 }
 
 func (s *Supervisor) handleAppendEventsRequest(ctx context.Context, req AppendEventsRequest) error {
-	if err := validateAppendEventsResponse(req); err != nil {
+	if err := validateAppendEventsRequest(req); err != nil {
 		return err
 	}
 
@@ -109,7 +117,6 @@ func (s *Supervisor) handleAppendEventsRequest(ctx context.Context, req AppendEv
 		telemetry.UUID("stream.id", req.StreamID),
 	)
 
-	// Attempt to deliver to an existing worker.
 	for {
 		w, ok := s.workers.TryGet(req.StreamID)
 		if !ok {
@@ -124,7 +131,7 @@ func (s *Supervisor) handleAppendEventsRequest(ctx context.Context, req AppendEv
 		case <-ctx.Done():
 			return ctx.Err()
 		case x := <-s.workerStopped:
-			if err := s.handleWorkerStopped(ctx, x, false); err != nil {
+			if err := s.handleWorkerStopped(ctx, x); err != nil {
 				return err
 			}
 		case w.Requests <- req:
@@ -141,55 +148,60 @@ func (s *Supervisor) handleAppendEventsRequest(ctx context.Context, req AppendEv
 	}
 }
 
-func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped, shutdown bool) error {
+func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) error {
 	s.workers.Remove(x.Worker.StreamID)
-	pending := len(x.Worker.Requests)
 
-	if x.Error != nil {
+	if x.Error == nil {
+		s.telemetry.Info(
+			ctx,
+			"eventstream.supervisor.worker.shutdown",
+			"supervisor detected a graceful worker shutdown",
+			telemetry.UUID("stream.id", x.Worker.StreamID),
+			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
+			telemetry.Int("supervisor.worker_count", s.workers.Len()),
+		)
+	} else if xerrors.IsFatal(x.Error) {
 		s.telemetry.Error(
 			ctx,
 			"eventstream.supervisor.worker.error",
-			"supervisor detected a failed worker",
+			"supervisor is shutting down due to a fatal-worker error",
 			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
-			telemetry.Int("worker.queue_length", pending),
+			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
 		)
-
 		return x.Error
-	}
-
-	if shutdown || len(x.Worker.Requests) == 0 {
-		s.telemetry.Info(
+	} else {
+		s.telemetry.Error(
 			ctx,
-			"eventstream.supervisor.worker.stop",
-			"supervisor detected a gracefully stopped worker",
+			"eventstream.supervisor.worker.error",
+			"supervisor detected a non-fatal worker failure",
+			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
 		)
-
-		return nil
 	}
 
-	s.telemetry.Info(
-		ctx,
-		"eventstream.supervisor.worker.stop",
-		"supervisor detected a stopped worker with pending requests on its queue",
-		telemetry.UUID("stream.id", x.Worker.StreamID),
-		telemetry.Int("worker.id", x.Worker.ID),
-		telemetry.Int("worker.queue_length", pending),
-		telemetry.Int("supervisor.worker_count", s.workers.Len()),
-	)
-
-	// We're not shutting down, and the worker had unhandled append requests, so
-	// we immediately start a new worker to take over.
-	s.startWorker(
-		ctx,
-		x.Worker.StreamID,
-		x.Worker.Requests,
-	)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.Shutdown:
+		// We're shutting down, so we don't want to restart the worker.
+	default:
+		// We're not shutting down, and the worker had unhandled append
+		// requests, so we immediately start a new worker to take over.
+		if len(x.Worker.Requests) != 0 {
+			s.startWorker(
+				ctx,
+				x.Worker.StreamID,
+				x.Worker.Requests,
+			)
+		}
+	}
 
 	return nil
 }

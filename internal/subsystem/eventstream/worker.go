@@ -143,6 +143,11 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 }
 
 func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) error {
+	// If we send a reply first the sender will receive it before the close.
+	// Otherwise, they will see the closed channel and know that their request
+	// was not processed.
+	defer close(req.Response)
+
 	w.Telemetry.Info(
 		ctx,
 		"eventstream.worker.append.recv",
@@ -152,18 +157,30 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 		telemetry.Int("request.deduplication_hint", req.DeduplicationHint),
 	)
 
+	if err := validateAppendEventsRequest(req); err != nil {
+		return err
+	}
+
 	for {
-		if err := validateAppendEventsResponse(req); err != nil {
+		res, ok, err := w.commit(ctx, req)
+		if err != nil {
 			return err
 		}
 
-		if ok, err := w.deduplicate(ctx, req); ok || err != nil {
-			return err
-		}
+		if ok {
+			select {
+			default:
+				return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
+			case req.Response <- res:
+				// response sent
+			}
 
-		ok, err := w.commit(ctx, req)
-		if ok || err != nil {
-			return err
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case w.Notifications <- EventsAppendedNotification{w.StreamID, res.BeginOffset, req.Events}:
+				return nil
+			}
 		}
 
 		if err := w.load(ctx, "worker reloaded stream state due to conflict"); err != nil {
@@ -172,7 +189,25 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 	}
 }
 
-func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (bool, error) {
+func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEventsResponse, bool, error) {
+	res, ok, err := w.deduplicate(ctx, req)
+	if err != nil {
+		return AppendEventsResponse{}, false, err
+	}
+
+	if ok {
+		w.Telemetry.Info(
+			ctx,
+			"eventstream.worker.append.skip",
+			"worker skipped append request that has already been processed",
+			telemetry.Int("stream.offset", w.offset),
+			telemetry.Int("append.offset", res.BeginOffset),
+			telemetry.Int("append.event_count", len(req.Events)),
+		)
+
+		return res, true, nil
+	}
+
 	begin := w.offset
 	end := begin + uint64(len(req.Events))
 
@@ -191,10 +226,10 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (bool, err
 			Build(),
 	); err != nil {
 		if journal.IsConflict(err) {
-			return false, nil
+			return AppendEventsResponse{}, false, nil
 		}
 
-		return false, err
+		return AppendEventsResponse{}, false, err
 	}
 
 	w.pos++
@@ -209,92 +244,39 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (bool, err
 		telemetry.Int("append.event_count", len(req.Events)),
 	)
 
-	select {
-	default:
-		return false, xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
-	case req.Response <- AppendEventsResponse{
-		BeginOffset:  begin,
-		EndOffset:    end,
-		Deduplicated: false,
-	}:
-	}
-
-	select {
-	case <-ctx.Done():
-		return false, ctx.Err()
-	case w.Notifications <- EventsAppendedNotification{
-		StreamID: w.StreamID,
-		Offset:   begin,
-		Events:   req.Events,
-	}:
-	}
-
-	return true, nil
+	return AppendEventsResponse{begin, end}, true, nil
 }
 
-// deduplicate checks whether the events in the given [AppendEventsRequest] have
-// already been appended to the stream.
-//
-// If they have, it sends the appropriate response to the request's response
-// channel and returns true.
-func (w *worker) deduplicate(ctx context.Context, req AppendEventsRequest) (bool, error) {
-	rec, ok, err := w.findAppendRecord(ctx, req)
-	if !ok || err != nil {
-		return false, err
-	}
-
-	w.Telemetry.Info(
-		ctx,
-		"eventstream.worker.append.skip",
-		"worker skipped append request containing duplicate events",
-		telemetry.Int("stream.offset", w.offset),
-		telemetry.Int("append.offset", rec.MetaData.OffsetBefore),
-		telemetry.Int("append.event_count", len(req.Events)),
-	)
-
-	select {
-	default:
-		return false, xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
-	case req.Response <- AppendEventsResponse{
-		BeginOffset:  rec.MetaData.OffsetBefore,
-		EndOffset:    rec.MetaData.OffsetAfter,
-		Deduplicated: true,
-	}:
-	}
-
-	return true, nil
-}
-
-// findAppendRecord searches the journal to find the record that represents the
+// deduplicate searches the journal to find the record that represents the
 // given [AppendEventsRequest], if any.
 //
 // TODO: This is a brute-force approach that searches the journal directly
 // (though efficiently). We could improve upon this approach by keeping some
 // in-memory state of recent event IDs (either explicitly, or via a bloom
 // filter, for example).
-func (w *worker) findAppendRecord(
+func (w *worker) deduplicate(
 	ctx context.Context,
 	req AppendEventsRequest,
-) (*eventstreamjournal.Record, bool, error) {
+) (AppendEventsResponse, bool, error) {
 	// Assuming the request is well-formed, if its deduplication hint is greater
 	// than the current offset, we assume our knowledge of the journal is stale
 	// and reload the latest record.
 	if req.DeduplicationHint > w.offset {
 		if err := w.load(ctx, "worker reloaded stream state due to future deduplication hint"); err != nil {
-			return nil, false, err
+			return AppendEventsResponse{}, false, err
 		}
 
 		// If the deduplication hint is still greater than the current offset,
 		// then the request is malformed.
 		if req.DeduplicationHint > w.offset {
-			return nil, false, xerrors.Bug("AppendEventsRequest.DeduplicationHint is beyond the end of the stream")
+			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.DeduplicationHint is beyond the end of the stream")
 		}
 	}
 
 	// The events can't be duplicates if the only place they could be is at the
 	// *current* end of the stream.
 	if req.DeduplicationHint == w.offset {
-		return nil, false, nil
+		return AppendEventsResponse{}, false, nil
 	}
 
 	// Perform a binary search of the joirnal to find the
@@ -332,10 +314,10 @@ func (w *worker) findAppendRecord(
 	)
 
 	if journal.IsNotFound(err) {
-		return nil, false, nil
+		return AppendEventsResponse{}, false, nil
 	}
 
-	return rec, true, err
+	return AppendEventsResponse{rec.MetaData.OffsetBefore, rec.MetaData.OffsetAfter}, true, err
 }
 
 // hasCollision determines whether there is any overlap between the two slices
