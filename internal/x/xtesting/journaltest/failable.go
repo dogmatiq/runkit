@@ -13,11 +13,11 @@ import (
 // forced to fail using a [FailableJournalStore].
 type FailurePoint string
 
-// Errors that can be triggered by [Failer.Induce].
+// Errors that can be induced.
 var (
-	BeforeJournalOpen   FailurePoint = "before journal open"
-	BeforeJournalAppend FailurePoint = "before journal append"
-	AfterJournalAppend  FailurePoint = "after journal append"
+	BeforeOpen   FailurePoint = "before open"
+	BeforeAppend FailurePoint = "before append"
+	AfterAppend  FailurePoint = "after append"
 )
 
 // FailableBinaryStore is a [journal.Store] that can be configured to induce errors
@@ -32,9 +32,9 @@ type FailableBinaryStore struct {
 func (s *FailableBinaryStore) Open(ctx context.Context, name string) (journal.BinaryJournal, error) {
 	s.m.Lock()
 	if s.store.BeforeOpen == nil {
-		s.store.BeforeOpen = func(string) error { return s.fail(BeforeJournalOpen) }
-		s.store.BeforeAppend = func(string, []byte) error { return s.fail(BeforeJournalAppend) }
-		s.store.AfterAppend = func(string, []byte) error { return s.fail(AfterJournalAppend) }
+		s.store.BeforeOpen = func(string) error { return s.fail(BeforeOpen) }
+		s.store.BeforeAppend = func(string, []byte) error { return s.fail(BeforeAppend) }
+		s.store.AfterAppend = func(string, []byte) error { return s.fail(AfterAppend) }
 	}
 	s.m.Unlock()
 

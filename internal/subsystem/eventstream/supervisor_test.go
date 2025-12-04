@@ -182,13 +182,13 @@ func (s *state) ReappendExistingEvents(t *rapid.T) {
 }
 
 func (s *state) InduceFailureOnNextJournalOpen(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeJournalOpen)
+	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeOpen)
 }
 
 func (s *state) InduceFailureBeforeNextJournalAppend(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeJournalAppend)
+	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeAppend)
 }
 
 func (s *state) InduceFailureAfterNextJournalAppend(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.AfterJournalAppend)
+	s.subsystem.Journals.ScheduleFailure(journaltest.AfterAppend)
 }

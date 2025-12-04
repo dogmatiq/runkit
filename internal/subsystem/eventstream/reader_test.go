@@ -11,7 +11,7 @@ import (
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	if s.subsystem.Journals.WillFail(journaltest.BeforeJournalOpen) {
+	if s.subsystem.Journals.WillFail(journaltest.BeforeOpen) {
 		t.Skip("cannot read due to induced journal open failure")
 	}
 
