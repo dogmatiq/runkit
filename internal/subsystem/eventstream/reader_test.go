@@ -5,22 +5,17 @@ import (
 
 	"github.com/dogmatiq/dapper"
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
-	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	if s.subsystem.Journals.WillFail(journaltest.BeforeOpen) {
-		t.Skip("cannot read due to induced journal open failure")
-	}
-
 	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
 	wantOffset := stream.OffsetsGen(t).Draw(t, "start offset")
 
 	r, err := NewReader(
 		t.Context(),
-		&s.subsystem.Journals,
+		&s.subsystem.Journals.NonFailing,
 		stream.ID,
 		wantOffset,
 	)

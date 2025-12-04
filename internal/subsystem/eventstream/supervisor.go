@@ -7,6 +7,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/set"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xtelemetry"
 )
@@ -15,6 +16,9 @@ import (
 type Supervisor struct {
 	// Journals is the journal store used to persist event streams.
 	Journals journal.BinaryStore
+
+	// Sets is the set store used to persist the registry of event streams.
+	Sets set.BinaryStore
 
 	// BufferSize is the number of pending [AppendEventsRequest] values that can
 	// be buffered in memory, per event stream.
@@ -217,6 +221,7 @@ func (s *Supervisor) startWorker(
 		ID:            s.workerID,
 		StreamID:      streamID,
 		Journals:      s.Journals,
+		Sets:          s.Sets,
 		Shutdown:      s.Shutdown,
 		Notifications: s.Notifications,
 		Requests:      appendEvents,

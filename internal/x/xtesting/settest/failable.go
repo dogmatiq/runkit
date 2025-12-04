@@ -1,12 +1,12 @@
-package journaltest
+package settest
 
 import (
 	"context"
 	"errors"
 	"sync"
 
-	"github.com/dogmatiq/persistencekit/driver/memory/memoryjournal"
-	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/driver/memory/memoryset"
+	"github.com/dogmatiq/persistencekit/set"
 )
 
 // FailurePoint is an enumeration of journal operations that can be
@@ -16,8 +16,10 @@ type FailurePoint string
 // Errors that can be induced.
 var (
 	BeforeOpen   FailurePoint = "before open"
-	BeforeAppend FailurePoint = "before append"
-	AfterAppend  FailurePoint = "after append"
+	BeforeAdd    FailurePoint = "before add"
+	AfterAdd     FailurePoint = "after add"
+	BeforeRemove FailurePoint = "before remove"
+	AfterRemove  FailurePoint = "after remove"
 )
 
 // IsInducedError returns true if the given error was induced by an
@@ -30,16 +32,16 @@ func IsInducedError(err error) bool {
 // FailableBinaryStore is a [journal.Store] that can be configured to induce errors
 // on specific operations.
 type FailableBinaryStore struct {
-	NonFailing memoryjournal.BinaryStore
+	NonFailing memoryset.BinaryStore
 
-	in       journal.BinaryInterceptor
+	in       set.BinaryInterceptor
 	m        sync.Mutex
-	failable journal.BinaryStore
+	failable set.BinaryStore
 	counts   map[FailurePoint]uint64
 }
 
 // Open returns the journal with the given name.
-func (s *FailableBinaryStore) Open(ctx context.Context, name string) (journal.BinaryJournal, error) {
+func (s *FailableBinaryStore) Open(ctx context.Context, name string) (set.BinarySet, error) {
 	s.m.Lock()
 	s.init()
 	s.m.Unlock()
@@ -92,18 +94,27 @@ func (s *FailableBinaryStore) init() {
 		return
 	}
 
-	s.failable = journal.WithInterceptor(&s.NonFailing, &s.in)
+	s.failable = set.WithInterceptor(&s.NonFailing, &s.in)
+	s.counts = map[FailurePoint]uint64{}
 
 	s.in.BeforeOpen(func(string) error {
 		return s.fail(BeforeOpen)
 	})
 
-	s.in.BeforeAppend(func(string, []byte) error {
-		return s.fail(BeforeAppend)
+	s.in.BeforeAdd(func(string, []byte) error {
+		return s.fail(BeforeAdd)
 	})
 
-	s.in.AfterAppend(func(string, []byte) error {
-		return s.fail(AfterAppend)
+	s.in.AfterAdd(func(string, []byte) error {
+		return s.fail(AfterAdd)
+	})
+
+	s.in.BeforeRemove(func(string, []byte) error {
+		return s.fail(BeforeRemove)
+	})
+
+	s.in.AfterRemove(func(string, []byte) error {
+		return s.fail(AfterRemove)
 	})
 }
 
@@ -112,5 +123,5 @@ type inducedError struct {
 }
 
 func (e inducedError) Error() string {
-	return "induced journal error: " + string(e.fp)
+	return "induced set error: " + string(e.fp)
 }

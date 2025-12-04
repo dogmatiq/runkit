@@ -11,10 +11,13 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/set"
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamregistry"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/teststate"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
+	"github.com/dogmatiq/runkit/internal/x/xtesting/settest"
 	"pgregory.net/rapid"
 )
 
@@ -59,6 +62,12 @@ func TestSupervisor(t *testing.T) {
 						telem.MeterProvider,
 						telem.LoggerProvider,
 					),
+					Sets: set.WithTelemetry(
+						&subsystem.Sets,
+						telem.TracerProvider,
+						telem.MeterProvider,
+						telem.LoggerProvider,
+					),
 					Shutdown:      shutdown,
 					Requests:      requests,
 					Notifications: notifications,
@@ -91,6 +100,11 @@ type state struct {
 }
 
 func (s *state) Check(t *rapid.T) {
+	s.guardAgainstDuplicateEvents(t)
+	s.guardAgainstInconsistentRegistry(t)
+}
+
+func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 	for stream := range s.subsystem.Streams.Values() {
 		if stream.NextOffset == 0 {
 			t.Fatalf("[%s] invariant violated: stream has no events", stream)
@@ -109,6 +123,42 @@ func (s *state) Check(t *rapid.T) {
 
 			seen.Add(env.MessageId)
 		}
+	}
+}
+
+func (s *state) guardAgainstInconsistentRegistry(t *rapid.T) {
+	reg, err := eventstreamregistry.Open(t.Context(), &s.subsystem.Sets.NonFailing)
+	if err != nil {
+		t.Fatalf("failed to open event stream registry: %s", err)
+	}
+	defer reg.Close()
+
+	missing := s.subsystem.Streams.Clone()
+
+	if err := reg.Range(
+		t.Context(),
+		func(
+			ctx context.Context,
+			id *uuidpb.UUID,
+		) (bool, error) {
+			if missing.Has(id) {
+				missing.Remove(id)
+			} else {
+				// There should never be any unknown IDs in the registry because
+				// failed [AppendRequest] operations are always retried.
+				//
+				// Outside of a test, this would indicate a bug in the subsystem
+				// that sends the request.
+				t.Fatalf("invariant violated: event stream registry contains unknown stream ID %s", id)
+			}
+			return true, nil
+		},
+	); err != nil {
+		t.Fatalf("failed to range event stream registry: %s", err)
+	}
+
+	for id := range missing.Keys() {
+		t.Errorf("invariant violated: event stream registry is missing stream ID %s", id)
 	}
 }
 
@@ -191,4 +241,16 @@ func (s *state) InduceFailureBeforeNextJournalAppend(t *rapid.T) {
 
 func (s *state) InduceFailureAfterNextJournalAppend(t *rapid.T) {
 	s.subsystem.Journals.ScheduleFailure(journaltest.AfterAppend)
+}
+
+func (s *state) InduceFailureOnNextSetOpen(t *rapid.T) {
+	s.subsystem.Sets.ScheduleFailure(settest.BeforeOpen)
+}
+
+func (s *state) InduceFailureBeforeNextSetAdd(t *rapid.T) {
+	s.subsystem.Sets.ScheduleFailure(settest.BeforeAdd)
+}
+
+func (s *state) IduceFailureAfterNextSetAdd(t *rapid.T) {
+	s.subsystem.Sets.ScheduleFailure(settest.AfterAdd)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
+	"github.com/dogmatiq/runkit/internal/x/xtesting/settest"
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 )
@@ -21,6 +22,10 @@ type Subsystem struct {
 
 	// Journals is the in-memory journal store used to persist event streams.
 	Journals journaltest.FailableBinaryStore
+
+	// Sets is the in-memory set store used to persist the event stream
+	// registry.
+	Sets settest.FailableBinaryStore
 
 	// Streams is the set of event streams known to the subsystem. This
 	// represents the _expected_ state of the streams based on prior

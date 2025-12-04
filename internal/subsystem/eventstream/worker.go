@@ -8,7 +8,9 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/set"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamregistry"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
@@ -27,6 +29,7 @@ type worker struct {
 	ID        int
 	StreamID  *uuidpb.UUID
 	Journals  journal.BinaryStore
+	Sets      set.BinaryStore
 	Telemetry *telemetry.Recorder
 
 	Shutdown      <-chan struct{}
@@ -44,6 +47,13 @@ func (w *worker) Run(ctx context.Context) error {
 
 	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
 		return err
+	}
+
+	if w.pos == 0 {
+		// If the stream is new, we add it to the registry.
+		if err := w.register(ctx); err != nil {
+			return err
+		}
 	}
 
 	w.idleTimeout = min(
@@ -108,6 +118,29 @@ func (w *worker) load(ctx context.Context, message string) error {
 		ctx,
 		"eventstream.worker.load",
 		message,
+		telemetry.Int("stream.offset", w.offset),
+		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
+	)
+
+	return nil
+}
+
+// register adds the stream to the registry.
+func (w *worker) register(ctx context.Context) error {
+	reg, err := eventstreamregistry.Open(ctx, w.Sets)
+	if err != nil {
+		return err
+	}
+	defer reg.Close()
+
+	if err := reg.Add(ctx, w.StreamID); err != nil {
+		return err
+	}
+
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.register",
+		"worker added stream to the registry",
 		telemetry.Int("stream.offset", w.offset),
 		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 	)
