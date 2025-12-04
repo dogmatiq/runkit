@@ -6,12 +6,12 @@ github.com/dogmatiq/dogma v0.18.0 h1:H3SAIacQKICve42zCKHosKv7YoQ+ckn/oCz3Pnw3I84
 github.com/dogmatiq/dogma v0.18.0/go.mod h1:TF6xisRxQ2RE3JQwFr6MCI4nWLKQQp7KRWXVHOq9K0k=
 github.com/dogmatiq/dyad v1.0.0 h1:T50WQ9rAzCMcT941wVH5RW5+tAGRssuVlNog+ZMQR54=
 github.com/dogmatiq/dyad v1.0.0/go.mod h1:PrUQr7OCSEUjAkhi7ad8BjxFPKe0I9yP2f1kGimPcJE=
-github.com/dogmatiq/enginekit v0.19.11-0.20251202090412-ddd0df65dd57 h1:fefL2z9Op6zUEkCM9H/lczvd7hPbi3i4oehmlFRQJLQ=
-github.com/dogmatiq/enginekit v0.19.11-0.20251202090412-ddd0df65dd57/go.mod h1:34zcGyd/pqUhFKODOAnl1cGA4Q3MnccTze6M5CozTW8=
+github.com/dogmatiq/enginekit v0.19.14 h1:l5PsNj9oeuhjENtxgtlmr1chPYtUUS5WJA3Ry/RLEys=
+github.com/dogmatiq/enginekit v0.19.14/go.mod h1:34zcGyd/pqUhFKODOAnl1cGA4Q3MnccTze6M5CozTW8=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
-github.com/dogmatiq/persistencekit v0.11.2 h1:wEMzv9Nut0VwgjxULtgZB2Q7LkuQTBzhgrofOQwI4zw=
-github.com/dogmatiq/persistencekit v0.11.2/go.mod h1:n60wW24rsEyeEMLMYpEcfUyPidOGEV/VHbwfsIz5AtE=
+github.com/dogmatiq/persistencekit v0.13.0 h1:u0vnx3MJsnURfZfZ+KUjKBXtHr/HdhK3TiXEbyZgbDM=
+github.com/dogmatiq/persistencekit v0.13.0/go.mod h1:T/KeT/LDlvvdR8rDHXoX2IhFghDtvK7R/rLJ9tag+wQ=
 github.com/dogmatiq/spruce v0.2.3 h1:sm5WLRYTtrNiIePLDXeElChI+/cXK3w4Wy1qL+quBQ0=
 github.com/dogmatiq/spruce v0.2.3/go.mod h1:za5ZdNvh+FRWg4B3DCn8jfNB2LVR/9Dk3fkuHVDJLrk=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=

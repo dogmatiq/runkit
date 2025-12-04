@@ -4,8 +4,8 @@ go 1.25
 
 require (
 	github.com/dogmatiq/dapper v0.6.0
-	github.com/dogmatiq/enginekit v0.19.11-0.20251202090412-ddd0df65dd57
-	github.com/dogmatiq/persistencekit v0.11.2
+	github.com/dogmatiq/enginekit v0.19.14
+	github.com/dogmatiq/persistencekit v0.13.0
 	google.golang.org/protobuf v1.36.10
 	pgregory.net/rapid v1.2.0
 )

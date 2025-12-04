@@ -24,27 +24,32 @@ var (
 // on specific operations.
 type FailableBinaryStore struct {
 	m      sync.Mutex
-	store  memoryjournal.BinaryStore
+	in     journal.BinaryInterceptor
+	store  journal.BinaryStore
 	counts map[FailurePoint]uint64
 }
 
 // Open returns the journal with the given name.
 func (s *FailableBinaryStore) Open(ctx context.Context, name string) (journal.BinaryJournal, error) {
 	s.m.Lock()
-	if s.store.BeforeOpen == nil {
-		s.store.BeforeOpen = func(string) error { return s.fail(BeforeOpen) }
-		s.store.BeforeAppend = func(string, []byte) error { return s.fail(BeforeAppend) }
-		s.store.AfterAppend = func(string, []byte) error { return s.fail(AfterAppend) }
+	if s.store == nil {
+		s.store = journal.WithInterceptor(&memoryjournal.BinaryStore{}, &s.in)
+
+		s.in.BeforeOpen(func(string) error {
+			return s.fail(BeforeOpen)
+		})
+
+		s.in.BeforeAppend(func(string, []byte) error {
+			return s.fail(BeforeAppend)
+		})
+
+		s.in.AfterAppend(func(string, []byte) error {
+			return s.fail(AfterAppend)
+		})
 	}
 	s.m.Unlock()
 
 	return s.store.Open(ctx, name)
-}
-
-func (s *FailableBinaryStore) init() {
-	if s.counts == nil {
-		s.counts = map[FailurePoint]uint64{}
-	}
 }
 
 // ScheduleFailure schedules an error to be returned on the next occurrence of
