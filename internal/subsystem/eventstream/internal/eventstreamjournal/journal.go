@@ -18,17 +18,11 @@ func Open(
 	streamID *uuidpb.UUID,
 ) (Journal, error) {
 	return journal.
-		NewMarshalingStore(
-			store,
-			txMarshaler,
-		).
-		Open(
-			ctx,
-			"runkit.eventstream.journal.v1/"+streamID.AsString(),
-		)
+		NewMarshalingStore(store, recordMarshaler).
+		Open(ctx, "runkit.eventstream.journal.v1/"+streamID.AsString())
 }
 
-var txMarshaler = marshaler.NewProto[*Record]()
+var recordMarshaler = marshaler.NewProto[*Record]()
 
 // SearchByOffset returns a comparison function that searches for the
 // [Transaction] that appended the event at the given offset.
