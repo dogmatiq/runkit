@@ -47,11 +47,11 @@ func (p *Partitioner) RemoveTarget(id *uuidpb.UUID) {
 
 // SelectTarget returns the ID of the target that should handle the given
 // workload.
-func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) *uuidpb.UUID {
+func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	targets := p.targets.Load()
 
 	if targets == nil {
-		panic("partitioner has no targets")
+		return nil, false
 	}
 
 	var (
@@ -65,7 +65,7 @@ func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) *uuidpb.UUID {
 		// always be selected. This is a simple mechanism to have targets "own"
 		// workloads that originate from them.
 		if workload.Equal(target) {
-			return target
+			return target, true
 		}
 
 		hash.Reset()
@@ -78,7 +78,7 @@ func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) *uuidpb.UUID {
 		}
 	}
 
-	return wins
+	return wins, true
 }
 
 func cloneAndInsert(set *[]*uuidpb.UUID, id *uuidpb.UUID) *[]*uuidpb.UUID {

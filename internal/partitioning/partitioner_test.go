@@ -19,8 +19,19 @@ func TestPartitioner(t *testing.T) {
 
 		t.Repeat(map[string]func(*rapid.T){
 			"": func(t *rapid.T) {
+				if workloads.Len() == 0 {
+					_, ok := partitioner.SelectTarget(uuidpb.Generate())
+					if ok {
+						t.Fatal("expected no target to be selected when there are no targets")
+					}
+					return
+				}
+
 				for workload, want := range workloads.All() {
-					got := partitioner.SelectTarget(workload)
+					got, ok := partitioner.SelectTarget(workload)
+					if !ok {
+						t.Fatalf("no target selected for workload %q", workload)
+					}
 
 					if !got.Equal(want) {
 						t.Fatalf(
@@ -41,7 +52,10 @@ func TestPartitioner(t *testing.T) {
 				// previous target, or start using the new target, but do not
 				// switch to any other existing target.
 				for workload, want := range workloads.All() {
-					got := partitioner.SelectTarget(workload)
+					got, ok := partitioner.SelectTarget(workload)
+					if !ok {
+						t.Fatalf("no target selected for workload %q", workload)
+					}
 
 					if got.Equal(target) {
 						workloads.Set(workload, got)
@@ -82,7 +96,10 @@ func TestPartitioner(t *testing.T) {
 				// removed target are reassigned to other targets, but no other
 				// workloads change target.
 				for workload, want := range workloads.All() {
-					got := partitioner.SelectTarget(workload)
+					got, ok := partitioner.SelectTarget(workload)
+					if !ok {
+						t.Fatalf("no target selected for workload %q", workload)
+					}
 
 					if want.Equal(target) {
 						workloads.Set(workload, got)
@@ -106,7 +123,10 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				workload := uuidpb.Generate()
-				got := partitioner.SelectTarget(workload)
+				got, ok := partitioner.SelectTarget(workload)
+				if !ok {
+					t.Fatalf("no target selected for workload %q", workload)
+				}
 
 				if !targets.Has(got) {
 					t.Fatalf(
@@ -123,7 +143,10 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				want := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				got := partitioner.SelectTarget(want)
+				got, ok := partitioner.SelectTarget(want)
+				if !ok {
+					t.Fatalf("no target selected for workload %q", want)
+				}
 
 				if !got.Equal(want) {
 					t.Fatalf(
