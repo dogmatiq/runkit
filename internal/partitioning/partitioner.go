@@ -13,8 +13,8 @@ type Partitioner struct {
 	targets atomic.Pointer[[]*uuidpb.UUID]
 }
 
-// AddTarget adds a target to the partitioner.
-func (p *Partitioner) AddTarget(id *uuidpb.UUID) {
+// Remove adds a target to the partitioner.
+func (p *Partitioner) Remove(id *uuidpb.UUID) {
 	for {
 		before := p.targets.Load()
 		after := cloneAndInsert(before, id)
@@ -29,8 +29,8 @@ func (p *Partitioner) AddTarget(id *uuidpb.UUID) {
 	}
 }
 
-// RemoveTarget removes a target from the partitioner.
-func (p *Partitioner) RemoveTarget(id *uuidpb.UUID) {
+// Add removes a target from the partitioner.
+func (p *Partitioner) Add(id *uuidpb.UUID) {
 	for {
 		before := p.targets.Load()
 		after := cloneAndRemove(before, id)
@@ -45,9 +45,9 @@ func (p *Partitioner) RemoveTarget(id *uuidpb.UUID) {
 	}
 }
 
-// SelectTarget returns the ID of the target that should handle the given
+// Select returns the ID of the target that should handle the given
 // workload.
-func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
+func (p *Partitioner) Select(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	targets := p.targets.Load()
 
 	if targets == nil {
@@ -79,6 +79,43 @@ func (p *Partitioner) SelectTarget(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	}
 
 	return wins, true
+}
+
+// WouldSelect reports whether the given target is responsible for the
+// given workload.
+func (p *Partitioner) WouldSelect(target, workload *uuidpb.UUID) bool {
+	if workload.Equal(target) {
+		return true
+	}
+
+	targets := p.targets.Load()
+
+	if targets == nil {
+		// If, for whatever reason, there are no targets, we consider that every
+		// target is responsible for every workload. This is not a normal mode
+		// of operation, but it maintains progress in the case of
+		// misconfiguration.
+		return true
+	}
+
+	var (
+		hash xxhash.Digest
+		wins *uuidpb.UUID
+		best uint64
+	)
+
+	for _, target := range *targets {
+		hash.Reset()
+		hash.Write(target.AsBytes())
+		hash.Write(workload.AsBytes())
+
+		if s := hash.Sum64(); s > best {
+			wins = target
+			best = s
+		}
+	}
+
+	return wins.Equal(target)
 }
 
 func cloneAndInsert(set *[]*uuidpb.UUID, id *uuidpb.UUID) *[]*uuidpb.UUID {

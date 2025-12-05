@@ -19,40 +19,52 @@ func TestPartitioner(t *testing.T) {
 
 		t.Repeat(map[string]func(*rapid.T){
 			"": func(t *rapid.T) {
-				if workloads.Len() == 0 {
-					_, ok := partitioner.SelectTarget(uuidpb.Generate())
-					if ok {
-						t.Fatal("expected no target to be selected when there are no targets")
+				if targets.Len() == 0 {
+					if !partitioner.WouldSelect(uuidpb.Generate(), uuidpb.Generate()) {
+						t.Fatal("expected every target to be responsible for every workload when there are no targets")
 					}
+
+					_, ok := partitioner.Select(uuidpb.Generate())
+					if ok {
+						t.Fatal("expected selection to fail when there are no targets")
+					}
+
 					return
 				}
 
 				for workload, want := range workloads.All() {
-					got, ok := partitioner.SelectTarget(workload)
+					got, ok := partitioner.Select(workload)
 					if !ok {
-						t.Fatalf("no target selected for workload %q", workload)
+						t.Fatal("expected selection to succeed when there are targets")
 					}
 
 					if !got.Equal(want) {
 						t.Fatalf(
-							"non-deterministic target selection for workload %q: got %q, want %q",
+							"non-deterministic target selection workload %q: got %q, want %q",
 							workload,
 							got,
 							want,
+						)
+					}
+
+					if !partitioner.WouldSelect(want, workload) {
+						t.Fatalf(
+							"non-deterministic target selection for workload %q",
+							workload,
 						)
 					}
 				}
 			},
 			"add new target": func(t *rapid.T) {
 				target := uuidpb.Generate()
-				partitioner.AddTarget(target)
+				partitioner.Remove(target)
 				targets.Add(target)
 
 				// Ensure that existing workloads either continue to use their
 				// previous target, or start using the new target, but do not
 				// switch to any other existing target.
 				for workload, want := range workloads.All() {
-					got, ok := partitioner.SelectTarget(workload)
+					got, ok := partitioner.Select(workload)
 					if !ok {
 						t.Fatalf("no target selected for workload %q", workload)
 					}
@@ -76,7 +88,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.AddTarget(target)
+				partitioner.Remove(target)
 			},
 			"remove existing target": func(t *rapid.T) {
 				if targets.Len() == 0 {
@@ -84,7 +96,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.RemoveTarget(target)
+				partitioner.Add(target)
 				targets.Remove(target)
 
 				if targets.Len() == 0 {
@@ -96,7 +108,7 @@ func TestPartitioner(t *testing.T) {
 				// removed target are reassigned to other targets, but no other
 				// workloads change target.
 				for workload, want := range workloads.All() {
-					got, ok := partitioner.SelectTarget(workload)
+					got, ok := partitioner.Select(workload)
 					if !ok {
 						t.Fatalf("no target selected for workload %q", workload)
 					}
@@ -115,7 +127,7 @@ func TestPartitioner(t *testing.T) {
 				}
 			},
 			"remove unknown target": func(t *rapid.T) {
-				partitioner.RemoveTarget(uuidpb.Generate())
+				partitioner.Add(uuidpb.Generate())
 			},
 			"select target for workload": func(t *rapid.T) {
 				if targets.Len() == 0 {
@@ -123,7 +135,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				workload := uuidpb.Generate()
-				got, ok := partitioner.SelectTarget(workload)
+				got, ok := partitioner.Select(workload)
 				if !ok {
 					t.Fatalf("no target selected for workload %q", workload)
 				}
@@ -143,7 +155,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				want := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				got, ok := partitioner.SelectTarget(want)
+				got, ok := partitioner.Select(want)
 				if !ok {
 					t.Fatalf("no target selected for workload %q", want)
 				}
