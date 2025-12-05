@@ -5,7 +5,7 @@ go 1.25
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/dogmatiq/dapper v0.6.0
-	github.com/dogmatiq/enginekit v0.19.14
+	github.com/dogmatiq/enginekit v0.19.16
 	github.com/dogmatiq/persistencekit v0.13.0
 	google.golang.org/protobuf v1.36.10
 	pgregory.net/rapid v1.2.0
