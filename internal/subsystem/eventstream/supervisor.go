@@ -22,7 +22,7 @@ type Supervisor struct {
 
 	// BufferSize is the number of pending [AppendEventsRequest] values that can
 	// be buffered in memory, per event stream.
-	BufferSize int
+	BufferSize uint
 
 	// Telemetry is used to record logs, metrics and traces.
 	Telemetry *telemetry.Provider
@@ -84,13 +84,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 }
 
 func (s *Supervisor) tick(ctx context.Context) (bool, error) {
-	s.telemetry.Info(
-		ctx,
-		"eventstream.supervisor.tick",
-		"supervisor is waiting for the next request",
-		telemetry.Int("supervisor.worker_count", s.workers.Len()),
-	)
-
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -105,11 +98,11 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 	case x := <-s.workerStopped:
 		return true, s.handleWorkerStopped(ctx, x)
 	case req := <-s.Requests:
-		return true, s.handleAppendEventsRequest(ctx, req)
+		return true, s.handleRequest(ctx, req)
 	}
 }
 
-func (s *Supervisor) handleAppendEventsRequest(ctx context.Context, req AppendEventsRequest) error {
+func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest) error {
 	if err := validateAppendEventsRequest(req); err != nil {
 		return err
 	}
@@ -213,7 +206,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 func (s *Supervisor) startWorker(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
-	appendEvents chan AppendEventsRequest,
+	requests chan AppendEventsRequest,
 ) *worker {
 	s.workerID++
 
@@ -224,7 +217,7 @@ func (s *Supervisor) startWorker(
 		Sets:          s.Sets,
 		Shutdown:      s.Shutdown,
 		Notifications: s.Notifications,
-		Requests:      appendEvents,
+		Requests:      requests,
 		Telemetry: s.Telemetry.Recorder(
 			xtelemetry.ModulePath,
 			telemetry.UUID("stream.id", streamID),
