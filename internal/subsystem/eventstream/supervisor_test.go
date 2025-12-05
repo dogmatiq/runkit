@@ -68,6 +68,7 @@ func TestSupervisor(t *testing.T) {
 						telem.MeterProvider,
 						telem.LoggerProvider,
 					),
+					BufferSize:    2, // small buffer size to increase chance of contention
 					Shutdown:      shutdown,
 					Requests:      requests,
 					Notifications: notifications,
