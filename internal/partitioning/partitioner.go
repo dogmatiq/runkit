@@ -7,50 +7,49 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
-// Partitioner distributes workloads across a set of targets using rendezvous
-// hashing. Both targets and workloads are identified by UUIDs.
+// Partitioner distributes workloads across a set of partitions using rendezvous
+// hashing. Both partitions and workloads are identified by UUIDs.
 type Partitioner struct {
-	targets atomic.Pointer[[]*uuidpb.UUID]
+	partitions atomic.Pointer[[]*uuidpb.UUID]
 }
 
-// Add adds a target to the partitioner.
-func (p *Partitioner) Add(id *uuidpb.UUID) {
+// Add adds a partition to the partitioner.
+func (p *Partitioner) Add(part *uuidpb.UUID) {
 	for {
-		before := p.targets.Load()
-		after := cloneAndInsert(before, id)
+		before := p.partitions.Load()
+		after := cloneAndInsert(before, part)
 
 		if before == after {
 			return
 		}
 
-		if p.targets.CompareAndSwap(before, after) {
+		if p.partitions.CompareAndSwap(before, after) {
 			return
 		}
 	}
 }
 
-// Remove removes a target from the partitioner.
-func (p *Partitioner) Remove(id *uuidpb.UUID) {
+// Remove removes a partition from the partitioner.
+func (p *Partitioner) Remove(part *uuidpb.UUID) {
 	for {
-		before := p.targets.Load()
-		after := cloneAndRemove(before, id)
+		before := p.partitions.Load()
+		after := cloneAndRemove(before, part)
 
 		if before == after {
 			return
 		}
 
-		if p.targets.CompareAndSwap(before, after) {
+		if p.partitions.CompareAndSwap(before, after) {
 			return
 		}
 	}
 }
 
-// Select returns the ID of the target that should handle the given
-// workload.
-func (p *Partitioner) Select(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
-	targets := p.targets.Load()
+// Select returns the ID of the partition that owns the given workload.
+func (p *Partitioner) Select(work *uuidpb.UUID) (*uuidpb.UUID, bool) {
+	partitions := p.partitions.Load()
 
-	if targets == nil {
+	if partitions == nil {
 		return nil, false
 	}
 
@@ -60,20 +59,20 @@ func (p *Partitioner) Select(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
 		best uint64
 	)
 
-	for _, target := range *targets {
-		// Whenever a workload _has_ the same ID as a target, that target should
-		// always be selected. This is a simple mechanism to have targets "own"
-		// workloads that originate from them.
-		if workload.Equal(target) {
-			return target, true
+	for _, part := range *partitions {
+		// Whenever a workload _has_ the same ID as a partition, that partition
+		// should always be selected. This is a simple mechanism to have
+		// partitions "own" workloads that originate from them.
+		if work.Equal(part) {
+			return part, true
 		}
 
 		hash.Reset()
-		hash.Write(target.AsBytes())
-		hash.Write(workload.AsBytes())
+		hash.Write(part.AsBytes())
+		hash.Write(work.AsBytes())
 
 		if s := hash.Sum64(); s > best {
-			wins = target
+			wins = part
 			best = s
 		}
 	}
@@ -81,19 +80,18 @@ func (p *Partitioner) Select(workload *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	return wins, true
 }
 
-// WouldSelect reports whether the given target is responsible for the
-// given workload.
-func (p *Partitioner) WouldSelect(target, workload *uuidpb.UUID) bool {
-	if workload.Equal(target) {
+// WouldSelect returns true if the given partition owns the given workload.
+func (p *Partitioner) WouldSelect(part, work *uuidpb.UUID) bool {
+	if work.Equal(part) {
 		return true
 	}
 
-	targets := p.targets.Load()
+	partitions := p.partitions.Load()
 
-	if targets == nil {
-		// If, for whatever reason, there are no targets, we consider that every
-		// target is responsible for every workload. This is not a normal mode
-		// of operation, but it maintains progress in the case of
+	if partitions == nil {
+		// If, for whatever reason, there are no partitions, we consider every
+		// partition to be responsible for every workload. This is not a normal
+		// mode of operation, but it maintains progress in the case of
 		// misconfiguration.
 		return true
 	}
@@ -104,18 +102,18 @@ func (p *Partitioner) WouldSelect(target, workload *uuidpb.UUID) bool {
 		best uint64
 	)
 
-	for _, target := range *targets {
+	for _, part := range *partitions {
 		hash.Reset()
-		hash.Write(target.AsBytes())
-		hash.Write(workload.AsBytes())
+		hash.Write(part.AsBytes())
+		hash.Write(work.AsBytes())
 
 		if s := hash.Sum64(); s > best {
-			wins = target
+			wins = part
 			best = s
 		}
 	}
 
-	return wins.Equal(target)
+	return wins.Equal(part)
 }
 
 func cloneAndInsert(set *[]*uuidpb.UUID, id *uuidpb.UUID) *[]*uuidpb.UUID {

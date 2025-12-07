@@ -14,155 +14,155 @@ import (
 func TestPartitioner(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		partitioner := &Partitioner{}
-		targets := sets.NewProto[*uuidpb.UUID]()
+		partitions := sets.NewProto[*uuidpb.UUID]()
 		workloads := maps.NewProto[*uuidpb.UUID, *uuidpb.UUID]()
 
 		t.Repeat(map[string]func(*rapid.T){
 			"": func(t *rapid.T) {
-				if targets.Len() == 0 {
+				if partitions.Len() == 0 {
 					if !partitioner.WouldSelect(uuidpb.Generate(), uuidpb.Generate()) {
-						t.Fatal("expected every target to be responsible for every workload when there are no targets")
+						t.Fatal("expected every partition to be responsible for every workload when there are no partitions")
 					}
 
 					_, ok := partitioner.Select(uuidpb.Generate())
 					if ok {
-						t.Fatal("expected selection to fail when there are no targets")
+						t.Fatal("expected selection to fail when there are no partitions")
 					}
 
 					return
 				}
 
-				for workload, want := range workloads.All() {
-					got, ok := partitioner.Select(workload)
+				for work, want := range workloads.All() {
+					got, ok := partitioner.Select(work)
 					if !ok {
-						t.Fatal("expected selection to succeed when there are targets")
+						t.Fatal("expected selection to succeed when there are partitions")
 					}
 
 					if !got.Equal(want) {
 						t.Fatalf(
-							"non-deterministic target selection workload %q: got %q, want %q",
-							workload,
+							"non-deterministic partition selection for workload %q: got %q, want %q",
+							work,
 							got,
 							want,
 						)
 					}
 
-					if !partitioner.WouldSelect(want, workload) {
+					if !partitioner.WouldSelect(want, work) {
 						t.Fatalf(
-							"non-deterministic target selection for workload %q",
-							workload,
+							"non-deterministic partition selection for workload %q",
+							work,
 						)
 					}
 				}
 			},
-			"add new target": func(t *rapid.T) {
-				target := uuidpb.Generate()
-				partitioner.Add(target)
-				targets.Add(target)
+			"add a new partition": func(t *rapid.T) {
+				part := uuidpb.Generate()
+				partitioner.Add(part)
+				partitions.Add(part)
 
 				// Ensure that existing workloads either continue to use their
-				// previous target, or start using the new target, but do not
-				// switch to any other existing target.
-				for workload, want := range workloads.All() {
-					got, ok := partitioner.Select(workload)
+				// previous partition, or start using the new partition, but do
+				// not switch to any other existing partition.
+				for work, want := range workloads.All() {
+					got, ok := partitioner.Select(work)
 					if !ok {
-						t.Fatalf("no target selected for workload %q", workload)
+						t.Fatalf("no partition selected for workload %q", work)
 					}
 
-					if got.Equal(target) {
-						workloads.Set(workload, got)
+					if got.Equal(part) {
+						workloads.Set(work, got)
 					} else if !got.Equal(want) {
 						t.Fatalf(
-							"non-deterministic target selection for workload %q after addition of target %q: got %q, want %q",
-							workload,
-							target,
+							"non-deterministic partition selection for workload %q after addition of partition %q: got %q, want %q",
+							work,
+							part,
 							got,
 							want,
 						)
 					}
 				}
 			},
-			"add existing target": func(t *rapid.T) {
-				if targets.Len() == 0 {
-					t.Skip("no existing targets")
+			"add an existing partition": func(t *rapid.T) {
+				if partitions.Len() == 0 {
+					t.Skip("no existing partitions")
 				}
 
-				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.Add(target)
+				part := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
+				partitioner.Add(part)
 			},
-			"remove existing target": func(t *rapid.T) {
-				if targets.Len() == 0 {
-					t.Skip("no existing targets")
+			"remove an existing partition": func(t *rapid.T) {
+				if partitions.Len() == 0 {
+					t.Skip("no existing partitions")
 				}
 
-				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.Remove(target)
-				targets.Remove(target)
+				part := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
+				partitioner.Remove(part)
+				partitions.Remove(part)
 
-				if targets.Len() == 0 {
+				if partitions.Len() == 0 {
 					workloads.Clear()
 					return
 				}
 
 				// Ensure that existing workloads that were assigned to the
-				// removed target are reassigned to other targets, but no other
-				// workloads change target.
-				for workload, want := range workloads.All() {
-					got, ok := partitioner.Select(workload)
+				// removed paritition are reassigned to other partitions, but no
+				// other workloads change partition.
+				for work, want := range workloads.All() {
+					got, ok := partitioner.Select(work)
 					if !ok {
-						t.Fatalf("no target selected for workload %q", workload)
+						t.Fatalf("no partition selected for workload %q", work)
 					}
 
-					if want.Equal(target) {
-						workloads.Set(workload, got)
+					if want.Equal(part) {
+						workloads.Set(work, got)
 					} else if !got.Equal(want) {
 						t.Fatalf(
-							"non-deterministic target selection for workload %q after removal of target %q: got %q, want %q",
-							workload,
-							target,
+							"non-deterministic partition selection for workload %q after removal of partition %q: got %q, want %q",
+							work,
+							part,
 							got,
 							want,
 						)
 					}
 				}
 			},
-			"remove unknown target": func(t *rapid.T) {
+			"remove an unknown partition": func(t *rapid.T) {
 				partitioner.Remove(uuidpb.Generate())
 			},
-			"select target for workload": func(t *rapid.T) {
-				if targets.Len() == 0 {
-					t.Skip("no existing targets")
+			"select a partition for a workload": func(t *rapid.T) {
+				if partitions.Len() == 0 {
+					t.Skip("no existing partitions")
 				}
 
-				workload := uuidpb.Generate()
-				got, ok := partitioner.Select(workload)
+				work := uuidpb.Generate()
+				got, ok := partitioner.Select(work)
 				if !ok {
-					t.Fatalf("no target selected for workload %q", workload)
+					t.Fatalf("no partition selected for workload %q", work)
 				}
 
-				if !targets.Has(got) {
+				if !partitions.Has(got) {
 					t.Fatalf(
-						"selected target %q is not in the set of known targets",
+						"selected partition %q is not in the set of known partitions",
 						got,
 					)
 				}
 
-				workloads.Set(workload, got)
+				workloads.Set(work, got)
 			},
-			"select target for workload with same value as target": func(t *rapid.T) {
-				if targets.Len() == 0 {
-					t.Skip("no existing targets")
+			"select a partition for a workload with same value as a known partition": func(t *rapid.T) {
+				if partitions.Len() == 0 {
+					t.Skip("no existing partitions")
 				}
 
-				want := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
+				want := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
 				got, ok := partitioner.Select(want)
 				if !ok {
-					t.Fatalf("no target selected for workload %q", want)
+					t.Fatalf("no partition selected for workload %q", want)
 				}
 
 				if !got.Equal(want) {
 					t.Fatalf(
-						"non-deterministic target selection when workload == target: got %q, want %q",
+						"non-deterministic partition selection when workload == partition: got %q, want %q",
 						got,
 						want,
 					)
