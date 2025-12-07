@@ -5,7 +5,6 @@ go 1.25
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/dogmatiq/dapper v0.6.0
-	github.com/dogmatiq/dogma v0.19.0
 	github.com/dogmatiq/enginekit v0.19.17
 	github.com/dogmatiq/persistencekit v0.13.0
 	google.golang.org/protobuf v1.36.10
@@ -13,6 +12,7 @@ require (
 )
 
 require (
+	github.com/dogmatiq/dogma v0.19.0 // indirect
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/jumble v0.1.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect

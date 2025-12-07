@@ -1,4 +1,4 @@
-package partitioning_test
+package partition_test
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/collections/sets"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	. "github.com/dogmatiq/runkit/internal/partitioning"
+	. "github.com/dogmatiq/runkit/internal/partition"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
 )

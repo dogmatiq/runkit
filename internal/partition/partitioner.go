@@ -1,4 +1,4 @@
-package partitioning
+package partition
 
 import (
 	"sync/atomic"
