@@ -13,8 +13,8 @@ type Partitioner struct {
 	targets atomic.Pointer[[]*uuidpb.UUID]
 }
 
-// Remove adds a target to the partitioner.
-func (p *Partitioner) Remove(id *uuidpb.UUID) {
+// Add adds a target to the partitioner.
+func (p *Partitioner) Add(id *uuidpb.UUID) {
 	for {
 		before := p.targets.Load()
 		after := cloneAndInsert(before, id)
@@ -29,8 +29,8 @@ func (p *Partitioner) Remove(id *uuidpb.UUID) {
 	}
 }
 
-// Add removes a target from the partitioner.
-func (p *Partitioner) Add(id *uuidpb.UUID) {
+// Remove removes a target from the partitioner.
+func (p *Partitioner) Remove(id *uuidpb.UUID) {
 	for {
 		before := p.targets.Load()
 		after := cloneAndRemove(before, id)

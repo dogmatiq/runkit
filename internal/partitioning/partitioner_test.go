@@ -57,7 +57,7 @@ func TestPartitioner(t *testing.T) {
 			},
 			"add new target": func(t *rapid.T) {
 				target := uuidpb.Generate()
-				partitioner.Remove(target)
+				partitioner.Add(target)
 				targets.Add(target)
 
 				// Ensure that existing workloads either continue to use their
@@ -88,7 +88,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.Remove(target)
+				partitioner.Add(target)
 			},
 			"remove existing target": func(t *rapid.T) {
 				if targets.Len() == 0 {
@@ -96,7 +96,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				target := xrapid.SampledFromSeq(targets.All()).Draw(t, "existing target")
-				partitioner.Add(target)
+				partitioner.Remove(target)
 				targets.Remove(target)
 
 				if targets.Len() == 0 {
@@ -127,7 +127,7 @@ func TestPartitioner(t *testing.T) {
 				}
 			},
 			"remove unknown target": func(t *rapid.T) {
-				partitioner.Add(uuidpb.Generate())
+				partitioner.Remove(uuidpb.Generate())
 			},
 			"select target for workload": func(t *rapid.T) {
 				if targets.Len() == 0 {
