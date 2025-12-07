@@ -47,9 +47,6 @@ type Supervisor struct {
 }
 
 // Run starts the supervisor's main event loop.
-//
-// It appends events to streams until a shutdown or terminate signal is
-// received.
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.telemetry = s.Telemetry.Recorder(xtelemetry.ModulePath)
 
