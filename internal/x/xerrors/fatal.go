@@ -20,7 +20,7 @@ func Fatal(format string, args ...any) error {
 
 // Bug returns an [FatalError] error that indicates a bug in the engine.
 func Bug(format string, args ...any) error {
-	return fmt.Errorf("[BUG] "+format, args...)
+	return fmt.Errorf("[DOGMA BUG] "+format, args...)
 }
 
 // IsFatal returns true if err is a [FatalError].
