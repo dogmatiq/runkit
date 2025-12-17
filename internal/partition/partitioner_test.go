@@ -3,8 +3,6 @@ package partition_test
 import (
 	"testing"
 
-	"github.com/dogmatiq/enginekit/collections/maps"
-	"github.com/dogmatiq/enginekit/collections/sets"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/partition"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
@@ -13,9 +11,11 @@ import (
 
 func TestPartitioner(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		partitioner := &Partitioner{}
-		partitions := sets.NewProto[*uuidpb.UUID]()
-		workloads := maps.NewProto[*uuidpb.UUID, *uuidpb.UUID]()
+		var (
+			partitioner Partitioner
+			partitions  uuidpb.Set
+			workloads   uuidpb.Map[*uuidpb.UUID]
+		)
 
 		t.Repeat(map[string]func(*rapid.T){
 			"": func(t *rapid.T) {
@@ -97,7 +97,7 @@ func TestPartitioner(t *testing.T) {
 
 				part := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
 				partitioner.Remove(part)
-				partitions.Remove(part)
+				partitions.Delete(part)
 
 				if partitions.Len() == 0 {
 					workloads.Clear()

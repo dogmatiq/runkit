@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/dogmatiq/dapper"
-	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
@@ -30,7 +29,7 @@ type Subsystem struct {
 	// Streams is the set of event streams known to the subsystem. This
 	// represents the _expected_ state of the streams based on prior
 	// observations.
-	Streams maps.Proto[*uuidpb.UUID, *Stream]
+	Streams uuidpb.Map[*Stream]
 
 	// Requests is used to send [eventstream.AppendEventsRequest] requests to a
 	// supervisor.
@@ -149,7 +148,7 @@ func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstrea
 			}
 		}
 
-		stream, ok := s.Streams.TryGet(got.StreamID)
+		stream, ok := s.Streams.Get(got.StreamID)
 
 		if !ok {
 			stream = &Stream{

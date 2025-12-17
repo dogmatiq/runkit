@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dogmatiq/enginekit/collections/sets"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
@@ -111,7 +110,7 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 			t.Fatalf("[%s] invariant violated: stream has no events", stream)
 		}
 
-		var seen sets.Proto[*uuidpb.UUID]
+		var seen uuidpb.Set
 
 		for _, env := range stream.Events {
 			if seen.Has(env.MessageId) {
@@ -143,7 +142,7 @@ func (s *state) guardAgainstInconsistentRegistry(t *rapid.T) {
 			id *uuidpb.UUID,
 		) (bool, error) {
 			if missing.Has(id) {
-				missing.Remove(id)
+				missing.Delete(id)
 			} else {
 				// There should never be any unknown IDs in the registry because
 				// failed [AppendRequest] operations are always retried.

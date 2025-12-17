@@ -3,7 +3,6 @@ package eventstream
 import (
 	"context"
 
-	"github.com/dogmatiq/enginekit/collections/maps"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
@@ -42,7 +41,7 @@ type Supervisor struct {
 	telemetry *telemetry.Recorder
 
 	workerID      int
-	workers       maps.Proto[*uuidpb.UUID, *worker]
+	workers       uuidpb.Map[*worker]
 	workerStopped chan workerStopped
 }
 
@@ -112,7 +111,7 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 	)
 
 	for {
-		w, ok := s.workers.TryGet(req.StreamID)
+		w, ok := s.workers.Get(req.StreamID)
 		if !ok {
 			w = s.startWorker(
 				ctx,
@@ -143,7 +142,7 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 }
 
 func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) error {
-	s.workers.Remove(x.Worker.StreamID)
+	s.workers.Delete(x.Worker.StreamID)
 
 	if x.Error == nil {
 		s.telemetry.Info(
