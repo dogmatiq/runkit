@@ -53,7 +53,7 @@ func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
 // the supervisor.
 func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest, want eventstream.AppendEventsResponse) {
 	if req.Response != nil {
-		panic("test misuse: do not set request.Response channel")
+		panic("test misuse: do not set req.Response channel")
 	}
 
 	for {

@@ -40,7 +40,7 @@ type Supervisor struct {
 
 	telemetry *telemetry.Recorder
 
-	workerID      int
+	workerID      uint
 	workers       uuidpb.Map[*worker]
 	workerStopped chan workerStopped
 }
@@ -158,7 +158,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 		s.telemetry.Error(
 			ctx,
 			"eventstream.supervisor.worker.error",
-			"supervisor is shutting down due to a fatal-worker error",
+			"supervisor is shutting down due to a fatal worker error",
 			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
@@ -170,7 +170,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 		s.telemetry.Error(
 			ctx,
 			"eventstream.supervisor.worker.error",
-			"supervisor detected a non-fatal worker failure",
+			"supervisor detected a non-fatal worker error",
 			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),

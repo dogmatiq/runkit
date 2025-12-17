@@ -26,7 +26,7 @@ const (
 
 // A worker is a service that appends events to a specific stream.
 type worker struct {
-	ID        int
+	ID        uint
 	StreamID  *uuidpb.UUID
 	Journals  journal.BinaryStore
 	Sets      set.BinaryStore
