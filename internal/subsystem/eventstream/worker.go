@@ -32,9 +32,9 @@ type worker struct {
 	Sets      set.BinaryStore
 	Telemetry *telemetry.Recorder
 
-	Shutdown      <-chan struct{}
-	Requests      chan AppendEventsRequest
-	Notifications chan<- EventsAppendedNotification
+	Shutdown                    <-chan struct{}
+	AppendEventsRequests        chan AppendEventsRequest
+	EventsAppendedNotifications chan<- EventsAppendedNotification
 
 	journal     eventstreamjournal.Journal
 	pos         journal.Position
@@ -170,7 +170,7 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 			telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 		)
 		return false, nil
-	case req := <-w.Requests:
+	case req := <-w.AppendEventsRequests:
 		return true, w.handleAppendEvents(ctx, req)
 	}
 }
@@ -211,7 +211,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case w.Notifications <- EventsAppendedNotification{w.StreamID, res.BeginOffset, req.Events}:
+			case w.EventsAppendedNotifications <- EventsAppendedNotification{w.StreamID, res.BeginOffset, req.Events}:
 				return nil
 			}
 		}

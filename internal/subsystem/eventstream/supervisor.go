@@ -30,13 +30,13 @@ type Supervisor struct {
 	// gracefully.
 	Shutdown <-chan struct{}
 
-	// Requests is a channel on which the supervisor receives requests to
-	// append events to streams.
-	Requests <-chan AppendEventsRequest
+	// AppendEventsRequests is a channel on which the supervisor receives
+	// requests to append events to streams.
+	AppendEventsRequests <-chan AppendEventsRequest
 
-	// Notifications is a channel on which the supervisor sends notifications
-	// that events have been appended to streams.
-	Notifications chan<- EventsAppendedNotification
+	// EventsAppendedNotifications is a channel on which the supervisor sends
+	// notifications that events have been appended to streams.
+	EventsAppendedNotifications chan<- EventsAppendedNotification
 
 	telemetry *telemetry.Recorder
 
@@ -93,7 +93,7 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 		return false, nil
 	case x := <-s.workerStopped:
 		return true, s.handleWorkerStopped(ctx, x)
-	case req := <-s.Requests:
+	case req := <-s.AppendEventsRequests:
 		return true, s.handleRequest(ctx, req)
 	}
 }
@@ -127,14 +127,14 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 			if err := s.handleWorkerStopped(ctx, x); err != nil {
 				return err
 			}
-		case w.Requests <- req:
+		case w.AppendEventsRequests <- req:
 			s.telemetry.Info(
 				ctx,
 				"eventstream.supervisor.append.enqueue",
 				"supervisor added an append request to the worker queue",
 				telemetry.UUID("stream.id", req.StreamID),
 				telemetry.Int("worker.id", w.ID),
-				telemetry.Int("worker.queue_length", len(w.Requests)),
+				telemetry.Int("worker.queue_length", len(w.AppendEventsRequests)),
 			)
 			return nil
 		}
@@ -151,7 +151,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			"supervisor detected a graceful worker shutdown",
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
-			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
+			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
 		)
 	} else if xerrors.IsFatal(x.Error) {
@@ -162,7 +162,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
-			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
+			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
 		)
 		return x.Error
@@ -174,7 +174,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			x.Error,
 			telemetry.UUID("stream.id", x.Worker.StreamID),
 			telemetry.Int("worker.id", x.Worker.ID),
-			telemetry.Int("worker.queue_length", len(x.Worker.Requests)),
+			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
 		)
 	}
@@ -187,11 +187,11 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 	default:
 		// We're not shutting down, and the worker had unhandled append
 		// requests, so we immediately start a new worker to take over.
-		if len(x.Worker.Requests) != 0 {
+		if len(x.Worker.AppendEventsRequests) != 0 {
 			s.startWorker(
 				ctx,
 				x.Worker.StreamID,
-				x.Worker.Requests,
+				x.Worker.AppendEventsRequests,
 			)
 		}
 	}
@@ -207,13 +207,13 @@ func (s *Supervisor) startWorker(
 	s.workerID++
 
 	w := &worker{
-		ID:            s.workerID,
-		StreamID:      streamID,
-		Journals:      s.Journals,
-		Sets:          s.Sets,
-		Shutdown:      s.Shutdown,
-		Notifications: s.Notifications,
-		Requests:      requests,
+		ID:                          s.workerID,
+		StreamID:                    streamID,
+		Journals:                    s.Journals,
+		Sets:                        s.Sets,
+		Shutdown:                    s.Shutdown,
+		EventsAppendedNotifications: s.EventsAppendedNotifications,
+		AppendEventsRequests:        requests,
 		Telemetry: s.Telemetry.Recorder(
 			xtelemetry.ModulePath,
 			telemetry.UUID("stream.id", streamID),
@@ -243,7 +243,7 @@ func (s *Supervisor) startWorker(
 		"supervisor started a new worker",
 		telemetry.UUID("stream.id", w.StreamID),
 		telemetry.Int("worker.id", w.ID),
-		telemetry.Int("worker.queue_length", len(w.Requests)),
+		telemetry.Int("worker.queue_length", len(w.AppendEventsRequests)),
 		telemetry.Int("supervisor.worker_count", s.workers.Len()),
 	)
 

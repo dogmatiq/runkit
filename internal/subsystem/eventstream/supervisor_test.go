@@ -67,11 +67,11 @@ func TestSupervisor(t *testing.T) {
 						telem.MeterProvider,
 						telem.LoggerProvider,
 					),
-					BufferSize:    2, // small buffer size to increase chance of contention
-					Shutdown:      shutdown,
-					Requests:      requests,
-					Notifications: notifications,
-					Telemetry:     telem,
+					BufferSize:                  2, // small buffer size to increase chance of contention
+					Shutdown:                    shutdown,
+					AppendEventsRequests:        requests,
+					EventsAppendedNotifications: notifications,
+					Telemetry:                   telem,
 				}
 
 				if err := sup.Run(ctx); err != nil {
