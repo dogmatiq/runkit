@@ -16,11 +16,17 @@ func NewReader(
 	journals journal.BinaryStore,
 	streamID *uuidpb.UUID,
 	offset uint64,
-) (*Reader, error) {
+) (_ *Reader, err error) {
 	j, err := eventstreamjournal.Open(ctx, journals, streamID)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if err != nil {
+			j.Close()
+		}
+	}()
 
 	r := &Reader{
 		journal: j,
@@ -94,4 +100,9 @@ func (r *Reader) Read(ctx context.Context) (
 	r.offset++
 
 	return offset, env, true, nil
+}
+
+// Close releases any resources held by the reader.
+func (r *Reader) Close() error {
+	return r.journal.Close()
 }

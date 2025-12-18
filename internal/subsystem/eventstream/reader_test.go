@@ -22,6 +22,7 @@ func (s *state) ReadFromStream(t *rapid.T) {
 	if err != nil {
 		t.Fatalf("[%s] unable to create reader: %s", stream, err)
 	}
+	defer r.Close()
 
 	for _, wantEnv := range stream.Events[wantOffset:] {
 		gotOffset, gotEnv, ok, err := r.Read(t.Context())

@@ -48,6 +48,11 @@ func (w *worker) Run(ctx context.Context) error {
 	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
 		return err
 	}
+	defer func() {
+		if w.journal != nil {
+			w.journal.Close()
+		}
+	}()
 
 	if w.pos == 0 {
 		// If the stream is new, we add it to the registry.
