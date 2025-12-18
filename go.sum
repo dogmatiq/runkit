@@ -8,8 +8,8 @@ github.com/dogmatiq/dogma v0.19.0 h1:Mzagmk0z+PnnQUSGXtet7VZfm+8o3XgOsCOwlceVDKw
 github.com/dogmatiq/dogma v0.19.0/go.mod h1:BNKrZq9wm3jRu35XUWQXkMRhq4EzYK+rOVbGjrbCVyI=
 github.com/dogmatiq/dyad v1.0.0 h1:T50WQ9rAzCMcT941wVH5RW5+tAGRssuVlNog+ZMQR54=
 github.com/dogmatiq/dyad v1.0.0/go.mod h1:PrUQr7OCSEUjAkhi7ad8BjxFPKe0I9yP2f1kGimPcJE=
-github.com/dogmatiq/enginekit v0.19.18 h1:mj/5IGA7BhVaKckzzyKkY/MnkB0Dbccw4OZivpoYgfE=
-github.com/dogmatiq/enginekit v0.19.18/go.mod h1:4vyrXVe5VBmdhZDD2kCyXnOAZjngdJEd8KlxStXkrDk=
+github.com/dogmatiq/enginekit v0.19.19 h1:rvZWK51Fo0KvcscvwjND4DyhRDF5/QzPAmKRc8EjWoo=
+github.com/dogmatiq/enginekit v0.19.19/go.mod h1:4vyrXVe5VBmdhZDD2kCyXnOAZjngdJEd8KlxStXkrDk=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
 github.com/dogmatiq/persistencekit v0.13.0 h1:u0vnx3MJsnURfZfZ+KUjKBXtHr/HdhK3TiXEbyZgbDM=
