@@ -61,8 +61,6 @@ func (w *worker) Run(ctx context.Context) error {
 		time.Since(startedAt)*time.Duration(startupCost),
 	)
 
-	// Only after that first request has been handled do we honor the graceful
-	// shutdown and idle signals.
 	for {
 		ok, err := w.tick(ctx)
 		if !ok || err != nil {

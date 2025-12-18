@@ -52,6 +52,8 @@ func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
 // SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to
 // the supervisor.
 func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest, want eventstream.AppendEventsResponse) {
+	t.Helper()
+
 	if req.Response != nil {
 		panic("test misuse: do not set req.Response channel")
 	}
@@ -97,6 +99,8 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 // ExpectEventsAppendedNotification waits for and verifies an [eventstream.EventsAppendedNotification]
 // notification from the supervisor.
 func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstream.EventsAppendedNotification) {
+	t.Helper()
+
 	select {
 	case <-s.Context.Done():
 		t.Fatalf("[%s] context cancelled while waiting for EventsAppendedNotification: %s", want.StreamID, context.Cause(s.Context))
