@@ -45,14 +45,16 @@ type worker struct {
 func (w *worker) Run(ctx context.Context) error {
 	startedAt := time.Now()
 
+	var err error
+	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.StreamID)
+	if err != nil {
+		return err
+	}
+	defer w.journal.Close()
+
 	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
 		return err
 	}
-	defer func() {
-		if w.journal != nil {
-			w.journal.Close()
-		}
-	}()
 
 	if w.pos == 0 {
 		// If the stream is new, we add it to the registry.
@@ -76,12 +78,6 @@ func (w *worker) Run(ctx context.Context) error {
 
 // load reloads the worker's state from the journal.
 func (w *worker) load(ctx context.Context, message string) error {
-	var err error
-	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.StreamID)
-	if err != nil {
-		return err
-	}
-
 	pos, rec, ok, err := journal.LastRecord(
 		ctx,
 		w.journal,
