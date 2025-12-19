@@ -9,10 +9,10 @@ import (
 
 // Stream represents the state of a single event stream.
 type Stream struct {
-	ID            *uuidpb.UUID
-	NextOffset    uint64
-	Events        []*envelopepb.Envelope
-	Notifications []eventstream.EventsAppendedNotification
+	ID                   *uuidpb.UUID
+	NextOffset           uint64
+	AppendEventsRequests []eventstream.AppendEventsRequest
+	Events               []*envelopepb.Envelope
 }
 
 // EventsGen returns a generator that produces events from the stream.
@@ -33,75 +33,73 @@ func (s *Stream) OffsetsGen(t *rapid.T) *rapid.Generator[uint64] {
 	return rapid.Uint64Range(0, s.NextOffset-1)
 }
 
-// NotificationsGen returns a generator that produces
-// [eventstream.EventsAppendedNotification] that pertain to the stream.
-func (s *Stream) NotificationsGen(t *rapid.T) *rapid.Generator[eventstream.EventsAppendedNotification] {
-	if len(s.Notifications) == 0 {
+// AppendEventsRequestsGen returns a generator that produces prior successful
+// [eventstream.AppendEventsRequest] that target this stream.
+func (s *Stream) AppendEventsRequestsGen(t *rapid.T) *rapid.Generator[eventstream.AppendEventsRequest] {
+	if len(s.AppendEventsRequests) == 0 {
 		t.Skip("stream is empty")
 	}
 
-	return rapid.SampledFrom(s.Notifications)
+	return rapid.SampledFrom(s.AppendEventsRequests)
 }
 
 // FindOffset returns the offset of the event with the given message ID,
 // or false if the event is not present on the stream.
 func (s *Stream) FindOffset(messageID *uuidpb.UUID) (uint64, bool) {
-	for _, op := range s.Notifications {
-		for i, env := range op.Events {
-			if env.MessageId.Equal(messageID) {
-				return op.Offset + uint64(i), true
-			}
+	for i, env := range s.Events {
+		if env.MessageId.Equal(messageID) {
+			return uint64(i), true
 		}
 	}
 
 	return 0, false
 }
 
-// FindNotification returns the [eventstream.EventsAppendedNotification] that
+// FindAppendEventsRequest returns the [eventstream.AppendEventsRequest] that
 // contains the event with the given message ID, or false if the event is not
 // present on the stream.
-func (s *Stream) FindNotification(messageID *uuidpb.UUID) (eventstream.EventsAppendedNotification, bool) {
-	for _, op := range s.Notifications {
-		for _, env := range op.Events {
+func (s *Stream) FindAppendEventsRequest(messageID *uuidpb.UUID) (eventstream.AppendEventsRequest, bool) {
+	for _, req := range s.AppendEventsRequests {
+		for _, env := range req.Events {
 			if env.MessageId.Equal(messageID) {
-				return op, true
+				return req, true
 			}
 		}
 	}
 
-	return eventstream.EventsAppendedNotification{}, false
+	return eventstream.AppendEventsRequest{}, false
 }
 
 // append updates the stream's state to reflect the occurrence of the events
-// described by the given [eventstream.EventsAppendedNotification] notification.
-func (s *Stream) append(t *rapid.T, n eventstream.EventsAppendedNotification) {
-	if n.Offset < s.NextOffset {
-		// This is a duplicated/resent notification.
+// described by the given request/response exchange.
+func (s *Stream) append(t *rapid.T, req eventstream.AppendEventsRequest, res eventstream.AppendEventsResponse) {
+	if res.BeginOffset < s.NextOffset {
+		// This is a response to a retried request.
 		// We assume at this point that it's already been validated as expected.
 		return
 	}
 
-	if n.Offset > s.NextOffset {
+	if res.BeginOffset > s.NextOffset {
 		t.Fatalf(
 			"[%s] cannot append @%d, stream is @%d",
 			s.ID,
-			n.Offset,
+			res.BeginOffset,
 			s.NextOffset,
 		)
 	}
 
-	for i, env := range n.Events {
+	for i, env := range req.Events {
 		t.Logf(
 			"[%s] appended %s @%d",
-			n.StreamID,
+			s.ID,
 			env.MessageId,
-			n.Offset+uint64(i),
+			res.BeginOffset+uint64(i),
 		)
 	}
 
-	s.NextOffset += uint64(len(n.Events))
-	s.Events = append(s.Events, n.Events...)
-	s.Notifications = append(s.Notifications, n)
+	s.NextOffset += uint64(len(req.Events))
+	s.AppendEventsRequests = append(s.AppendEventsRequests, req)
+	s.Events = append(s.Events, req.Events...)
 }
 
 func (s *Stream) String() string {

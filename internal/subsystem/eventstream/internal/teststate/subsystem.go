@@ -3,13 +3,11 @@ package teststate
 import (
 	"context"
 
-	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/settest"
-	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 )
 
@@ -31,13 +29,9 @@ type Subsystem struct {
 	// observations.
 	Streams uuidpb.Map[*Stream]
 
-	// Requests is used to send [eventstream.AppendEventsRequest] requests to a
-	// supervisor.
-	Requests chan<- eventstream.AppendEventsRequest
-
-	// Notifications is used to receive [eventstream.EventsAppendedNotification]
-	// notifications from supervisors.
-	Notifications <-chan eventstream.EventsAppendedNotification
+	// AppendEventsRequests is used to send [eventstream.AppendEventsRequest]
+	// requests to a supervisor.
+	AppendEventsRequests chan<- eventstream.AppendEventsRequest
 }
 
 // StreamsGen returns a generator that yields existing streams.
@@ -65,7 +59,7 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 		select {
 		case <-s.Context.Done():
 			t.Fatalf("[%s] context cancelled while sending AppendEventsRequest: %s", req.StreamID, context.Cause(s.Context))
-		case s.Requests <- req:
+		case s.AppendEventsRequests <- req:
 			t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
 		}
 
@@ -91,76 +85,18 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				)
 			}
 
+			stream, ok := s.Streams.Get(req.StreamID)
+
+			if !ok {
+				stream = &Stream{
+					ID: req.StreamID,
+				}
+				s.Streams.Set(req.StreamID, stream)
+			}
+
+			stream.append(t, req, got)
+
 			return
 		}
-	}
-}
-
-// ExpectEventsAppendedNotification waits for and verifies an [eventstream.EventsAppendedNotification]
-// notification from the supervisor.
-func (s *Subsystem) ExpectEventsAppendedNotification(t *rapid.T, want eventstream.EventsAppendedNotification) {
-	t.Helper()
-
-	select {
-	case <-s.Context.Done():
-		t.Fatalf("[%s] context cancelled while waiting for EventsAppendedNotification: %s", want.StreamID, context.Cause(s.Context))
-	case got, ok := <-s.Notifications:
-		if !ok {
-			t.Fatalf("[%s] Notifications channel was closed", want.StreamID)
-		}
-
-		t.Logf("[%s] received EventsAppendedNotification", want.StreamID)
-
-		if !got.StreamID.Equal(want.StreamID) {
-			t.Fatalf(
-				"[%s] EventsAppendedNotification has unexpected stream ID: got %s, want %s",
-				want.StreamID,
-				got.StreamID,
-				want.StreamID,
-			)
-		}
-
-		if got.Offset != want.Offset {
-			t.Fatalf(
-				"[%s] EventsAppendedNotification has unexpected offset: got %d, want %d",
-				want.StreamID,
-				got.Offset,
-				want.Offset,
-			)
-		}
-
-		if len(got.Events) != len(want.Events) {
-			t.Fatalf(
-				"[%s] EventsAppendedNotification has unexpected number of events: got %d, want %d",
-				want.StreamID,
-				len(got.Events),
-				len(want.Events),
-			)
-		}
-
-		for idx, gotEvent := range got.Events {
-			wantEvent := want.Events[idx]
-
-			if !proto.Equal(gotEvent, wantEvent) {
-				t.Fatalf(
-					"[%s] EventsAppendedNotification has unexpected event at index %d:\ngot %s\nwant %s",
-					want.StreamID,
-					idx,
-					dapper.Format(gotEvent),
-					dapper.Format(wantEvent),
-				)
-			}
-		}
-
-		stream, ok := s.Streams.Get(got.StreamID)
-
-		if !ok {
-			stream = &Stream{
-				ID: got.StreamID,
-			}
-			s.Streams.Set(got.StreamID, stream)
-		}
-
-		stream.append(t, got)
 	}
 }

@@ -6,23 +6,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
-// EventsAppendedNotification is a notification sent when events have been
-// appended to a stream.
-//
-// Notifications may be sent multiple times for the same appended events in the
-// case of retries, so consumers must be prepared to handle duplicates.
-type EventsAppendedNotification struct {
-	// StreamID is the ID of the event stream to which the events were appended.
-	StreamID *uuidpb.UUID
-
-	// Offset is the offset within the stream at which the first event was
-	// appended.
-	Offset uint64
-
-	// Events is the set of events that were appended.
-	Events []*envelopepb.Envelope
-}
-
 // AppendEventsRequest is a request to append events to an event stream.
 type AppendEventsRequest struct {
 	// StreamID is the ID of the event stream to which the events are appended.

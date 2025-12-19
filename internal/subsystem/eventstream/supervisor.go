@@ -34,10 +34,6 @@ type Supervisor struct {
 	// requests to append events to streams.
 	AppendEventsRequests <-chan AppendEventsRequest
 
-	// EventsAppendedNotifications is a channel on which the supervisor sends
-	// notifications that events have been appended to streams.
-	EventsAppendedNotifications chan<- EventsAppendedNotification
-
 	telemetry *telemetry.Recorder
 
 	workerID      uint
@@ -207,13 +203,12 @@ func (s *Supervisor) startWorker(
 	s.workerID++
 
 	w := &worker{
-		ID:                          s.workerID,
-		StreamID:                    streamID,
-		Journals:                    s.Journals,
-		Sets:                        s.Sets,
-		Shutdown:                    s.Shutdown,
-		EventsAppendedNotifications: s.EventsAppendedNotifications,
-		AppendEventsRequests:        requests,
+		ID:                   s.workerID,
+		StreamID:             streamID,
+		Journals:             s.Journals,
+		Sets:                 s.Sets,
+		Shutdown:             s.Shutdown,
+		AppendEventsRequests: requests,
 		Telemetry: s.Telemetry.Recorder(
 			xtelemetry.ModulePath,
 			telemetry.UUID("stream.id", streamID),

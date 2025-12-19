@@ -23,7 +23,6 @@ import (
 func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		requests := make(chan AppendEventsRequest)
-		notifications := make(chan EventsAppendedNotification)
 
 		// Create a context under which we execute the supervisors.
 		//
@@ -32,9 +31,8 @@ func TestSupervisor(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 
 		subsystem := &teststate.Subsystem{
-			Context:       ctx,
-			Requests:      requests,
-			Notifications: notifications,
+			Context:              ctx,
+			AppendEventsRequests: requests,
 		}
 
 		// shutdown is a channel used to signal all supervisors to shut down
@@ -67,11 +65,10 @@ func TestSupervisor(t *testing.T) {
 						telem.MeterProvider,
 						telem.LoggerProvider,
 					),
-					BufferSize:                  2, // small buffer size to increase chance of contention
-					Shutdown:                    shutdown,
-					AppendEventsRequests:        requests,
-					EventsAppendedNotifications: notifications,
-					Telemetry:                   telem,
+					BufferSize:           2, // small buffer size to increase chance of contention
+					Shutdown:             shutdown,
+					AppendEventsRequests: requests,
+					Telemetry:            telem,
 				}
 
 				if err := sup.Run(ctx); err != nil {
@@ -178,12 +175,6 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 		BeginOffset: 0,
 		EndOffset:   uint64(len(req.Events)),
 	})
-
-	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
-		StreamID: req.StreamID,
-		Offset:   0,
-		Events:   req.Events,
-	})
 }
 
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
@@ -205,30 +196,26 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 		BeginOffset: stream.NextOffset,
 		EndOffset:   stream.NextOffset + uint64(len(req.Events)),
 	})
-
-	s.subsystem.ExpectEventsAppendedNotification(t, EventsAppendedNotification{
-		StreamID: stream.ID,
-		Offset:   stream.NextOffset,
-		Events:   req.Events,
-	})
 }
 
 func (s *state) ReappendExistingEvents(t *rapid.T) {
 	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
-	n := stream.NotificationsGen(t).Draw(t, "prior notification")
+	prior := stream.AppendEventsRequestsGen(t).Draw(t, "prior request")
+	offset, ok := stream.FindOffset(prior.Events[0].MessageId)
+	if !ok {
+		t.Fatalf("[%s] unable to find offset of existing event", stream)
+	}
 
 	req := AppendEventsRequest{
 		StreamID:          stream.ID,
-		Events:            n.Events,
-		DeduplicationHint: rapid.Uint64Range(0, n.Offset).Draw(t, "deduplication hint"),
+		Events:            prior.Events,
+		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
-		BeginOffset: n.Offset,
-		EndOffset:   n.Offset + uint64(len(n.Events)),
+		BeginOffset: offset,
+		EndOffset:   offset + uint64(len(prior.Events)),
 	})
-
-	s.subsystem.ExpectEventsAppendedNotification(t, n)
 }
 
 func (s *state) InduceFailureOnNextJournalOpen(t *rapid.T) {

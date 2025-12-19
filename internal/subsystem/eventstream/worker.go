@@ -32,9 +32,8 @@ type worker struct {
 	Sets      set.BinaryStore
 	Telemetry *telemetry.Recorder
 
-	Shutdown                    <-chan struct{}
-	AppendEventsRequests        chan AppendEventsRequest
-	EventsAppendedNotifications chan<- EventsAppendedNotification
+	Shutdown             <-chan struct{}
+	AppendEventsRequests chan AppendEventsRequest
 
 	journal     eventstreamjournal.Journal
 	pos         journal.Position
@@ -205,13 +204,6 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 				return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
 			case req.Response <- res:
 				// response sent
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case w.EventsAppendedNotifications <- EventsAppendedNotification{w.StreamID, res.BeginOffset, req.Events}:
-				return nil
 			}
 		}
 
