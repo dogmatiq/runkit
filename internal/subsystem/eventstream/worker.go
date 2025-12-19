@@ -9,8 +9,8 @@ import (
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/persistencekit/set"
+	"github.com/dogmatiq/runkit/internal/partition"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamregistry"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
@@ -125,7 +125,7 @@ func (w *worker) load(ctx context.Context, message string) error {
 
 // register adds the stream to the registry.
 func (w *worker) register(ctx context.Context) error {
-	reg, err := eventstreamregistry.Open(ctx, w.Sets)
+	reg, err := partition.OpenRegistry(ctx, w.Sets)
 	if err != nil {
 		return err
 	}

@@ -11,8 +11,8 @@ import (
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/persistencekit/set"
+	"github.com/dogmatiq/runkit/internal/partition"
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamregistry"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/teststate"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
@@ -124,7 +124,7 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 }
 
 func (s *state) guardAgainstInconsistentRegistry(t *rapid.T) {
-	reg, err := eventstreamregistry.Open(t.Context(), &s.subsystem.Sets.NonFailing)
+	reg, err := partition.OpenRegistry(t.Context(), &s.subsystem.Sets.NonFailing)
 	if err != nil {
 		t.Fatalf("failed to open event stream registry: %s", err)
 	}
