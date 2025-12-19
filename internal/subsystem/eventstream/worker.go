@@ -200,8 +200,8 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 
 		if ok {
 			select {
-			default:
-				return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
+			case <-ctx.Done():
+				return ctx.Err()
 			case req.Response <- res:
 				return nil
 			}
