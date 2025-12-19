@@ -173,7 +173,7 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 	}
 }
 
-func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) error {
+func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) (err error) {
 	// If we send a reply first the sender will receive it before the close.
 	// Otherwise, they will see the closed channel and know that their request
 	// was not processed.
@@ -203,7 +203,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 			default:
 				return xerrors.Bug("AppendEventsRequest.Response channel is unbuffered")
 			case req.Response <- res:
-				// response sent
+				return nil
 			}
 		}
 
