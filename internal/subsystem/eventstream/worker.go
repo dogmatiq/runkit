@@ -337,8 +337,11 @@ func (w *worker) deduplicate(
 		},
 	)
 
-	if journal.IsNotFound(err) {
-		return AppendEventsResponse{}, false, nil
+	if err != nil {
+		if journal.IsNotFound(err) {
+			err = nil
+		}
+		return AppendEventsResponse{}, false, err
 	}
 
 	return AppendEventsResponse{rec.MetaData.OffsetBefore, rec.MetaData.OffsetAfter}, true, err

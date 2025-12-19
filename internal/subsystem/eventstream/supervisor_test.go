@@ -238,6 +238,6 @@ func (s *state) InduceFailureBeforeNextSetAdd(t *rapid.T) {
 	s.subsystem.Sets.ScheduleFailure(settest.BeforeAdd)
 }
 
-func (s *state) IduceFailureAfterNextSetAdd(t *rapid.T) {
+func (s *state) InduceFailureAfterNextSetAdd(t *rapid.T) {
 	s.subsystem.Sets.ScheduleFailure(settest.AfterAdd)
 }
