@@ -12,15 +12,9 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
-const (
-	// maxIdleTimeout is the maximum duration that a worker will remain idle
-	// before shutting down to conserve resources.
-	maxIdleTimeout = 1 * time.Minute
-
-	// startupCost is the unit-less cost of starting a new worker. A higher
-	// value causes workers to choose longer idle timeouts.
-	startupCost = 5
-)
+// idleTimeout is the duration that a worker will remain idle before
+// shutting down to conserve resources.
+const idleTimeout = 3 * time.Minute
 
 // A worker is a service that appends events to a specific partition of the
 // event stream.
@@ -33,10 +27,9 @@ type worker struct {
 	Shutdown             <-chan struct{}
 	AppendEventsRequests chan AppendEventsRequest
 
-	journal     journal.Journal[*transaction.Transaction]
-	nextPos     journal.Position
-	nextOffset  uint64
-	idleTimeout time.Duration
+	journal    journal.Journal[*transaction.Transaction]
+	nextPos    journal.Position
+	nextOffset uint64
 }
 
 func (w *worker) Run(ctx context.Context) error {
@@ -48,8 +41,6 @@ func (w *worker) Run(ctx context.Context) error {
 		)
 	}()
 
-	startedAt := time.Now()
-
 	var err error
 	w.journal, err = openJournal(ctx, w.Journals, w.PartitionID)
 	if err != nil {
@@ -60,11 +51,6 @@ func (w *worker) Run(ctx context.Context) error {
 	if err := w.load(ctx, "event stream worker loaded partition state from the journal"); err != nil {
 		return err
 	}
-
-	w.idleTimeout = min(
-		maxIdleTimeout,
-		time.Since(startedAt)*time.Duration(startupCost),
-	)
 
 	for {
 		ok, err := w.tick(ctx)
@@ -113,17 +99,17 @@ func (w *worker) load(ctx context.Context, message string) error {
 
 	w.Telemetry.Info(
 		ctx,
-		"eventstream.worker.load",
+		"eventstream.worker.loaded-state",
 		message,
 		telemetry.Int("partition.next_offset", w.nextOffset),
-		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
+		telemetry.Duration("worker.idle_timeout", idleTimeout),
 	)
 
 	return nil
 }
 
 func (w *worker) tick(ctx context.Context) (bool, error) {
-	idle := time.NewTimer(w.idleTimeout)
+	idle := time.NewTimer(idleTimeout)
 	defer idle.Stop()
 
 	select {
@@ -139,9 +125,9 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 	case <-idle.C:
 		w.Telemetry.Info(
 			ctx,
-			"eventstream.worker.idle-timeout",
+			"eventstream.worker.timed-out",
 			"event stream worker timed-out due to inactivity",
-			telemetry.Duration("worker.idle_timeout", w.idleTimeout),
+			telemetry.Duration("worker.idle_timeout", idleTimeout),
 		)
 		return false, nil
 	case req := <-w.AppendEventsRequests:
