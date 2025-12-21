@@ -10,26 +10,26 @@ import (
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
-	wantOffset := stream.OffsetsGen(t).Draw(t, "start offset")
+	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
+	wantOffset := part.OffsetsGen(t).Draw(t, "start offset")
 
 	r, err := NewReader(
 		t.Context(),
 		&s.subsystem.Journals.NonFailing,
-		stream.ID,
+		part.ID,
 		wantOffset,
 	)
 	if err != nil {
-		t.Fatalf("[%s] unable to create reader: %s", stream, err)
+		t.Fatalf("unable to create reader for partition %s: %s", part, err)
 	}
 	defer r.Close()
 
-	for _, wantEnv := range stream.Events[wantOffset:] {
+	for _, wantEnv := range part.Events[wantOffset:] {
 		gotOffset, gotEnv, ok, err := r.Read(t.Context())
 		if err != nil {
 			t.Fatalf(
-				"[%s] unable to read @%d: %s",
-				stream,
+				"unable to read from partition %s at offset %d: %s",
+				part,
 				wantOffset,
 				err,
 			)
@@ -37,16 +37,16 @@ func (s *state) ReadFromStream(t *rapid.T) {
 
 		if !ok {
 			t.Fatalf(
-				"[%s] unexpected end @%d",
-				stream,
+				"unexpected end of partition %s at offset %d",
+				part,
 				gotOffset,
 			)
 		}
 
 		if gotOffset != wantOffset {
 			t.Fatalf(
-				"[%s] unexpected offset when reading event: got %d, want %d",
-				stream,
+				"unexpected offset when reading event from partition %s: got %d, want %d",
+				part,
 				gotOffset,
 				wantOffset,
 			)
@@ -54,14 +54,14 @@ func (s *state) ReadFromStream(t *rapid.T) {
 
 		if !gotEnv.MessageId.Equal(wantEnv.MessageId) {
 			desc := "which is not in the stream"
-			if foundAtOffset, ok := stream.FindOffset(gotEnv.MessageId); ok {
-				desc = fmt.Sprintf("which is actually @%d", foundAtOffset)
+			if foundAtOffset, ok := part.FindOffset(gotEnv.MessageId); ok {
+				desc = fmt.Sprintf("which is actually at offset %d", foundAtOffset)
 			}
 
 			t.Fatalf(
-				"[%s] unexpected event @%d: got %s (%s), want %s",
-				stream,
+				"unexpected event at offset %d of partition %s: got %s (%s), want %s",
 				gotOffset,
+				part,
 				gotEnv.MessageId,
 				desc,
 				wantEnv.MessageId,
@@ -70,18 +70,18 @@ func (s *state) ReadFromStream(t *rapid.T) {
 
 		if !proto.Equal(gotEnv, wantEnv) {
 			t.Fatalf(
-				"[%s] unexpected envelope @%d:\ngot %s\nwant %s",
-				stream,
+				"unexpected envelope at offset %d of partition %s:\ngot %s\nwant %s",
 				gotOffset,
+				part,
 				dapper.Format(gotEnv),
 				dapper.Format(wantEnv),
 			)
 		}
 
 		t.Logf(
-			"[%s] read expected event @%d: %s",
-			stream,
+			"read expected event at offset %d of partition %s: %s",
 			gotOffset,
+			part,
 			gotEnv.MessageId,
 		)
 
@@ -91,8 +91,8 @@ func (s *state) ReadFromStream(t *rapid.T) {
 	gotOffset, gotEnv, ok, err := r.Read(t.Context())
 	if err != nil {
 		t.Fatalf(
-			"[%s] unable to read @%d: %s",
-			stream,
+			"unable to read from partition %s at offset %d: %s",
+			part,
 			wantOffset,
 			err,
 		)
@@ -104,14 +104,14 @@ func (s *state) ReadFromStream(t *rapid.T) {
 	}
 
 	desc := "which is not in the stream"
-	if foundAtOffset, ok := stream.FindOffset(gotEnv.MessageId); ok {
+	if foundAtOffset, ok := part.FindOffset(gotEnv.MessageId); ok {
 		desc = fmt.Sprintf("which is actually @%d", foundAtOffset)
 	}
 
 	t.Fatalf(
-		"[%s] read unexpected event @%d: got %s (%s), want end-of-stream",
-		stream,
+		"read unexpected event at offset %d of partition %s: got %s (%s), want end-of-stream",
 		gotOffset,
+		part,
 		gotEnv.MessageId,
 		desc,
 	)

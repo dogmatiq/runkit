@@ -10,14 +10,14 @@ import (
 )
 
 // NewReader creates a new [Reader] that reads historical events from a stream
-// starting at the given offset.
+// partition starting at the given offset.
 func NewReader(
 	ctx context.Context,
 	journals journal.BinaryStore,
-	streamID *uuidpb.UUID,
+	partitionID *uuidpb.UUID,
 	offset uint64,
 ) (_ *Reader, err error) {
-	j, err := eventstreamjournal.Open(ctx, journals, streamID)
+	j, err := eventstreamjournal.Open(ctx, journals, partitionID)
 	if err != nil {
 		return nil, err
 	}

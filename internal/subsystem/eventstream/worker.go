@@ -8,8 +8,6 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/persistencekit/set"
-	"github.com/dogmatiq/runkit/internal/partition"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
@@ -19,18 +17,18 @@ const (
 	// before shutting down to conserve resources.
 	maxIdleTimeout = 1 * time.Minute
 
-	// startupCost is the unit-less cost of starting a new worker. A higher value
-	// causes workers to choose longer idle timeouts.
+	// startupCost is the unit-less cost of starting a new worker. A higher
+	// value causes workers to choose longer idle timeouts.
 	startupCost = 5
 )
 
-// A worker is a service that appends events to a specific stream.
+// A worker is a service that appends events to a specific partition of the
+// event stream.
 type worker struct {
-	ID        uint
-	StreamID  *uuidpb.UUID
-	Journals  journal.BinaryStore
-	Sets      set.BinaryStore
-	Telemetry *telemetry.Recorder
+	ID          uint
+	PartitionID *uuidpb.UUID
+	Journals    journal.BinaryStore
+	Telemetry   *telemetry.Recorder
 
 	Shutdown             <-chan struct{}
 	AppendEventsRequests chan AppendEventsRequest
@@ -45,7 +43,7 @@ func (w *worker) Run(ctx context.Context) error {
 	startedAt := time.Now()
 
 	var err error
-	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.StreamID)
+	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.PartitionID)
 	if err != nil {
 		return err
 	}
@@ -53,13 +51,6 @@ func (w *worker) Run(ctx context.Context) error {
 
 	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
 		return err
-	}
-
-	if w.pos == 0 {
-		// If the stream is new, we add it to the registry.
-		if err := w.register(ctx); err != nil {
-			return err
-		}
 	}
 
 	w.idleTimeout = min(
@@ -116,29 +107,6 @@ func (w *worker) load(ctx context.Context, message string) error {
 		ctx,
 		"eventstream.worker.load",
 		message,
-		telemetry.Int("stream.offset", w.offset),
-		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
-	)
-
-	return nil
-}
-
-// register adds the stream to the registry.
-func (w *worker) register(ctx context.Context) error {
-	reg, err := partition.OpenRegistry(ctx, w.Sets)
-	if err != nil {
-		return err
-	}
-	defer reg.Close()
-
-	if err := reg.Add(ctx, w.StreamID); err != nil {
-		return err
-	}
-
-	w.Telemetry.Info(
-		ctx,
-		"eventstream.worker.register",
-		"worker added stream to the registry",
 		telemetry.Int("stream.offset", w.offset),
 		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 	)

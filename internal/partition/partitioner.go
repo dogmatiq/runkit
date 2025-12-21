@@ -13,11 +13,11 @@ type Partitioner struct {
 	partitions atomic.Pointer[[]*uuidpb.UUID]
 }
 
-// Add adds a partition to the partitioner.
-func (p *Partitioner) Add(part *uuidpb.UUID) {
+// AddPartition adds a partition to the partitioner.
+func (p *Partitioner) AddPartition(id *uuidpb.UUID) {
 	for {
 		before := p.partitions.Load()
-		after := cloneAndInsert(before, part)
+		after := cloneAndInsert(before, id)
 
 		if before == after {
 			return
@@ -29,11 +29,11 @@ func (p *Partitioner) Add(part *uuidpb.UUID) {
 	}
 }
 
-// Remove removes a partition from the partitioner.
-func (p *Partitioner) Remove(part *uuidpb.UUID) {
+// RemovePartition removes a partition from the partitioner.
+func (p *Partitioner) RemovePartition(id *uuidpb.UUID) {
 	for {
 		before := p.partitions.Load()
-		after := cloneAndRemove(before, part)
+		after := cloneAndRemove(before, id)
 
 		if before == after {
 			return
@@ -45,8 +45,8 @@ func (p *Partitioner) Remove(part *uuidpb.UUID) {
 	}
 }
 
-// Select returns the ID of the partition that owns the given workload.
-func (p *Partitioner) Select(work *uuidpb.UUID) (*uuidpb.UUID, bool) {
+// SelectPartition returns the ID of the partition that owns the given workload.
+func (p *Partitioner) SelectPartition(work *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	partitions := p.partitions.Load()
 
 	if partitions == nil {
@@ -59,20 +59,20 @@ func (p *Partitioner) Select(work *uuidpb.UUID) (*uuidpb.UUID, bool) {
 		best uint64
 	)
 
-	for _, part := range *partitions {
+	for _, id := range *partitions {
 		// Whenever a workload _has_ the same ID as a partition, that partition
 		// should always be selected. This is a simple mechanism to have
 		// partitions "own" workloads that originate from them.
-		if work.Equal(part) {
-			return part, true
+		if work.Equal(id) {
+			return id, true
 		}
 
 		hash.Reset()
-		hash.Write(part.AsBytes())
+		hash.Write(id.AsBytes())
 		hash.Write(work.AsBytes())
 
 		if s := hash.Sum64(); s > best {
-			wins = part
+			wins = id
 			best = s
 		}
 	}
@@ -80,9 +80,10 @@ func (p *Partitioner) Select(work *uuidpb.UUID) (*uuidpb.UUID, bool) {
 	return wins, true
 }
 
-// WouldSelect returns true if the given partition owns the given workload.
-func (p *Partitioner) WouldSelect(part, work *uuidpb.UUID) bool {
-	if work.Equal(part) {
+// WouldSelectPartition returns true if the given partition owns the given
+// workload.
+func (p *Partitioner) WouldSelectPartition(id, work *uuidpb.UUID) bool {
+	if work.Equal(id) {
 		return true
 	}
 
@@ -102,18 +103,18 @@ func (p *Partitioner) WouldSelect(part, work *uuidpb.UUID) bool {
 		best uint64
 	)
 
-	for _, part := range *partitions {
+	for _, id := range *partitions {
 		hash.Reset()
-		hash.Write(part.AsBytes())
+		hash.Write(id.AsBytes())
 		hash.Write(work.AsBytes())
 
 		if s := hash.Sum64(); s > best {
-			wins = part
+			wins = id
 			best = s
 		}
 	}
 
-	return wins.Equal(part)
+	return wins.Equal(id)
 }
 
 func cloneAndInsert(set *[]*uuidpb.UUID, id *uuidpb.UUID) *[]*uuidpb.UUID {

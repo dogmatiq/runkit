@@ -6,21 +6,26 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
-// AppendEventsRequest is a request to append events to an event stream.
+// AppendEventsRequest is a request to append events to a specific partition of
+// the event stream.
 type AppendEventsRequest struct {
-	// StreamID is the ID of the event stream to which the events are appended.
-	StreamID *uuidpb.UUID
+	// PartitionID is the UUID of the partition to which the events are
+	// appended.
+	PartitionID *uuidpb.UUID
 
-	// Events is the set of events to append to the stream.
+	// Events is the set of events to append to the stream partition.
 	// If empty, no events are appended.
 	Events []*envelopepb.Envelope
 
-	// DeduplicationHint is the lowest offset within the stream at which these
-	// events may have already been appended. The stream may ignore any events
-	// before this offset when deduplicating the events.
+	// DeduplicationHint is the lowest offset within the partition at which
+	// these events may have already been appended.
+	//
+	// Any events before this offset are not considered when deduplicating
+	// events.
 	DeduplicationHint uint64
 
-	// Response is the channel to which the [AppendEventsResponse] is sent.
+	// Response is the channel to which the corresponding [AppendEventsResponse]
+	// is sent.
 	Response chan<- AppendEventsResponse
 }
 
@@ -42,8 +47,8 @@ type AppendEventsResponse struct {
 // validateAppendEventsRequest returns an error if the given request is
 // malformed. Any error indicates a bug within the engine.
 func validateAppendEventsRequest(req AppendEventsRequest) error {
-	if err := req.StreamID.Validate(); err != nil {
-		return xerrors.Bug("AppendEventsRequest.StreamID is invalid: %w", err)
+	if err := req.PartitionID.Validate(); err != nil {
+		return xerrors.Bug("AppendEventsRequest.Partition is invalid: %w", err)
 	}
 
 	if len(req.Events) == 0 {

@@ -7,40 +7,34 @@ import (
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
-	"github.com/dogmatiq/runkit/internal/x/xtesting/settest"
 	"pgregory.net/rapid"
 )
 
-// Subsystem represents the Subsystem of the eventstream system within the a
-// test.
+// Subsystem represents the state of the eventstream subsystem within a test.
 type Subsystem struct {
 	// Context is the context in which the subsystem is running.
 	Context context.Context
 
-	// Journals is the in-memory journal store used to persist event streams.
+	// Journals is the in-memory journal store used to persist events.
 	Journals journaltest.FailableBinaryStore
 
-	// Sets is the in-memory set store used to persist the event stream
-	// registry.
-	Sets settest.FailableBinaryStore
-
-	// Streams is the set of event streams known to the subsystem. This
-	// represents the _expected_ state of the streams based on prior
-	// observations.
-	Streams uuidpb.Map[*Stream]
+	// Partitions is the set of known stream partitions. This represents the
+	// _expected_ state of the partitions based the events that have been
+	// appended.
+	Partitions uuidpb.Map[*Partition]
 
 	// AppendEventsRequests is used to send [eventstream.AppendEventsRequest]
 	// requests to a supervisor.
 	AppendEventsRequests chan<- eventstream.AppendEventsRequest
 }
 
-// StreamsGen returns a generator that yields existing streams.
-func (s *Subsystem) StreamsGen(t *rapid.T) *rapid.Generator[*Stream] {
-	if s.Streams.Len() == 0 {
-		t.Skip("stream is empty")
+// PartitionsGen returns a generator that yields existing partitions.
+func (s *Subsystem) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
+	if s.Partitions.Len() == 0 {
+		t.Skip("stream is empty (has no partitions)")
 	}
 
-	return xrapid.SampledFromSeq(s.Streams.Values())
+	return xrapid.SampledFromSeq(s.Partitions.Values())
 }
 
 // SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to
@@ -58,26 +52,26 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 
 		select {
 		case <-s.Context.Done():
-			t.Fatalf("[%s] context cancelled while sending AppendEventsRequest: %s", req.StreamID, context.Cause(s.Context))
+			t.Fatalf("context cancelled while sending AppendEventsRequest for partition %s: %s", req.PartitionID, context.Cause(s.Context))
 		case s.AppendEventsRequests <- req:
-			t.Logf("[%s] sent AppendEventsRequest request", req.StreamID)
+			t.Logf("sent AppendEventsRequest request for partition %s", req.PartitionID)
 		}
 
 		select {
 		case <-s.Context.Done():
-			t.Fatalf("[%s] context cancelled while waiting for AppendEventsResponse: %s", req.StreamID, context.Cause(s.Context))
+			t.Fatalf("context cancelled while waiting for AppendEventsResponse for partition %s: %s", req.PartitionID, context.Cause(s.Context))
 		case got, ok := <-response:
 			if !ok {
-				t.Logf("[%s] AppendEventsResponse was rejected, retrying", req.StreamID)
+				t.Logf("AppendEventsResponse for partition %s was rejected, retrying", req.PartitionID)
 				continue
 			}
 
-			t.Logf("[%s] received AppendEventsResponse", req.StreamID)
+			t.Logf("received AppendEventsResponse for partition %s", req.PartitionID)
 
 			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
 				t.Fatalf(
-					"[%s] AppendEventsResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
-					req.StreamID,
+					"AppendEventsResponse has unexpected offset range for partition %d: got [%d, %d), want [%d, %d)",
+					req.PartitionID,
 					got.BeginOffset,
 					got.EndOffset,
 					want.BeginOffset,
@@ -85,16 +79,16 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				)
 			}
 
-			stream, ok := s.Streams.Get(req.StreamID)
+			part, ok := s.Partitions.Get(req.PartitionID)
 
 			if !ok {
-				stream = &Stream{
-					ID: req.StreamID,
+				part = &Partition{
+					ID: req.PartitionID,
 				}
-				s.Streams.Set(req.StreamID, stream)
+				s.Partitions.Set(req.PartitionID, part)
 			}
 
-			stream.append(t, req, got)
+			part.append(t, req, got)
 
 			return
 		}

@@ -20,11 +20,11 @@ func TestPartitioner(t *testing.T) {
 		t.Repeat(map[string]func(*rapid.T){
 			"": func(t *rapid.T) {
 				if partitions.Len() == 0 {
-					if !partitioner.WouldSelect(uuidpb.Generate(), uuidpb.Generate()) {
+					if !partitioner.WouldSelectPartition(uuidpb.Generate(), uuidpb.Generate()) {
 						t.Fatal("expected every partition to be responsible for every workload when there are no partitions")
 					}
 
-					_, ok := partitioner.Select(uuidpb.Generate())
+					_, ok := partitioner.SelectPartition(uuidpb.Generate())
 					if ok {
 						t.Fatal("expected selection to fail when there are no partitions")
 					}
@@ -33,7 +33,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				for work, want := range workloads.All() {
-					got, ok := partitioner.Select(work)
+					got, ok := partitioner.SelectPartition(work)
 					if !ok {
 						t.Fatal("expected selection to succeed when there are partitions")
 					}
@@ -47,7 +47,7 @@ func TestPartitioner(t *testing.T) {
 						)
 					}
 
-					if !partitioner.WouldSelect(want, work) {
+					if !partitioner.WouldSelectPartition(want, work) {
 						t.Fatalf(
 							"non-deterministic partition selection for workload %q",
 							work,
@@ -56,26 +56,26 @@ func TestPartitioner(t *testing.T) {
 				}
 			},
 			"add a new partition": func(t *rapid.T) {
-				part := uuidpb.Generate()
-				partitioner.Add(part)
-				partitions.Add(part)
+				partitionID := uuidpb.Generate()
+				partitioner.AddPartition(partitionID)
+				partitions.Add(partitionID)
 
 				// Ensure that existing workloads either continue to use their
 				// previous partition, or start using the new partition, but do
 				// not switch to any other existing partition.
 				for work, want := range workloads.All() {
-					got, ok := partitioner.Select(work)
+					got, ok := partitioner.SelectPartition(work)
 					if !ok {
 						t.Fatalf("no partition selected for workload %q", work)
 					}
 
-					if got.Equal(part) {
+					if got.Equal(partitionID) {
 						workloads.Set(work, got)
 					} else if !got.Equal(want) {
 						t.Fatalf(
 							"non-deterministic partition selection for workload %q after addition of partition %q: got %q, want %q",
 							work,
-							part,
+							partitionID,
 							got,
 							want,
 						)
@@ -87,17 +87,17 @@ func TestPartitioner(t *testing.T) {
 					t.Skip("no existing partitions")
 				}
 
-				part := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
-				partitioner.Add(part)
+				partitionID := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
+				partitioner.AddPartition(partitionID)
 			},
 			"remove an existing partition": func(t *rapid.T) {
 				if partitions.Len() == 0 {
 					t.Skip("no existing partitions")
 				}
 
-				part := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
-				partitioner.Remove(part)
-				partitions.Delete(part)
+				partitionID := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
+				partitioner.RemovePartition(partitionID)
+				partitions.Delete(partitionID)
 
 				if partitions.Len() == 0 {
 					workloads.Clear()
@@ -108,18 +108,18 @@ func TestPartitioner(t *testing.T) {
 				// removed paritition are reassigned to other partitions, but no
 				// other workloads change partition.
 				for work, want := range workloads.All() {
-					got, ok := partitioner.Select(work)
+					got, ok := partitioner.SelectPartition(work)
 					if !ok {
 						t.Fatalf("no partition selected for workload %q", work)
 					}
 
-					if want.Equal(part) {
+					if want.Equal(partitionID) {
 						workloads.Set(work, got)
 					} else if !got.Equal(want) {
 						t.Fatalf(
 							"non-deterministic partition selection for workload %q after removal of partition %q: got %q, want %q",
 							work,
-							part,
+							partitionID,
 							got,
 							want,
 						)
@@ -127,7 +127,7 @@ func TestPartitioner(t *testing.T) {
 				}
 			},
 			"remove an unknown partition": func(t *rapid.T) {
-				partitioner.Remove(uuidpb.Generate())
+				partitioner.RemovePartition(uuidpb.Generate())
 			},
 			"select a partition for a workload": func(t *rapid.T) {
 				if partitions.Len() == 0 {
@@ -135,7 +135,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				work := uuidpb.Generate()
-				got, ok := partitioner.Select(work)
+				got, ok := partitioner.SelectPartition(work)
 				if !ok {
 					t.Fatalf("no partition selected for workload %q", work)
 				}
@@ -155,7 +155,7 @@ func TestPartitioner(t *testing.T) {
 				}
 
 				want := xrapid.SampledFromSeq(partitions.All()).Draw(t, "existing partition")
-				got, ok := partitioner.Select(want)
+				got, ok := partitioner.SelectPartition(want)
 				if !ok {
 					t.Fatalf("no partition selected for workload %q", want)
 				}

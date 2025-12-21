@@ -10,13 +10,10 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/persistencekit/set"
-	"github.com/dogmatiq/runkit/internal/partition"
 	. "github.com/dogmatiq/runkit/internal/subsystem/eventstream"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/teststate"
 	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
-	"github.com/dogmatiq/runkit/internal/x/xtesting/settest"
 	"pgregory.net/rapid"
 )
 
@@ -59,12 +56,6 @@ func TestSupervisor(t *testing.T) {
 						telem.MeterProvider,
 						telem.LoggerProvider,
 					),
-					Sets: set.WithTelemetry(
-						&subsystem.Sets,
-						telem.TracerProvider,
-						telem.MeterProvider,
-						telem.LoggerProvider,
-					),
 					BufferSize:           2, // small buffer size to increase chance of contention
 					Shutdown:             shutdown,
 					AppendEventsRequests: requests,
@@ -98,23 +89,22 @@ type state struct {
 
 func (s *state) Check(t *rapid.T) {
 	s.guardAgainstDuplicateEvents(t)
-	s.guardAgainstInconsistentRegistry(t)
 }
 
 func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
-	for stream := range s.subsystem.Streams.Values() {
-		if stream.NextOffset == 0 {
-			t.Fatalf("[%s] invariant violated: stream has no events", stream)
+	for part := range s.subsystem.Partitions.Values() {
+		if part.NextOffset == 0 {
+			t.Fatalf("invariant violated: stream partition %q exists with no events", part)
 		}
 
 		var seen uuidpb.Set
 
-		for _, env := range stream.Events {
+		for _, env := range part.Events {
 			if seen.Has(env.MessageId) {
 				t.Fatalf(
-					"[%s] invariant violated: duplicate event %s found on stream",
-					stream,
+					"invariant violated: duplicate event %s found on stream partition %q",
 					env.MessageId,
+					part,
 				)
 			}
 
@@ -123,45 +113,9 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 	}
 }
 
-func (s *state) guardAgainstInconsistentRegistry(t *rapid.T) {
-	reg, err := partition.OpenRegistry(t.Context(), &s.subsystem.Sets.NonFailing)
-	if err != nil {
-		t.Fatalf("failed to open event stream registry: %s", err)
-	}
-	defer reg.Close()
-
-	missing := s.subsystem.Streams.Clone()
-
-	if err := reg.Range(
-		t.Context(),
-		func(
-			ctx context.Context,
-			id *uuidpb.UUID,
-		) (bool, error) {
-			if missing.Has(id) {
-				missing.Delete(id)
-			} else {
-				// There should never be any unknown IDs in the registry because
-				// failed [AppendRequest] operations are always retried.
-				//
-				// Outside of a test, this would indicate a bug in the subsystem
-				// that sends the request.
-				t.Fatalf("invariant violated: event stream registry contains unknown stream ID %s", id)
-			}
-			return true, nil
-		},
-	); err != nil {
-		t.Fatalf("failed to range event stream registry: %s", err)
-	}
-
-	for id := range missing.Keys() {
-		t.Errorf("invariant violated: event stream registry is missing stream ID %s", id)
-	}
-}
-
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	req := AppendEventsRequest{
-		StreamID: uuidpb.Generate(),
+		PartitionID: uuidpb.Generate(),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
@@ -178,11 +132,11 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 }
 
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
-	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
+	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 
 	req := AppendEventsRequest{
-		StreamID:          stream.ID,
-		DeduplicationHint: rapid.Uint64Range(0, stream.NextOffset).Draw(t, "deduplication hint"),
+		PartitionID:       part.ID,
+		DeduplicationHint: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
@@ -193,21 +147,21 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
-		BeginOffset: stream.NextOffset,
-		EndOffset:   stream.NextOffset + uint64(len(req.Events)),
+		BeginOffset: part.NextOffset,
+		EndOffset:   part.NextOffset + uint64(len(req.Events)),
 	})
 }
 
 func (s *state) ReappendExistingEvents(t *rapid.T) {
-	stream := s.subsystem.StreamsGen(t).Draw(t, "stream")
-	prior := stream.AppendEventsRequestsGen(t).Draw(t, "prior request")
-	offset, ok := stream.FindOffset(prior.Events[0].MessageId)
+	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
+	prior := part.AppendEventsRequestsGen(t).Draw(t, "prior request")
+	offset, ok := part.FindOffset(prior.Events[0].MessageId)
 	if !ok {
-		t.Fatalf("[%s] unable to find offset of existing event", stream)
+		t.Fatalf("unable to find offset of existing event in partition %q", part)
 	}
 
 	req := AppendEventsRequest{
-		StreamID:          stream.ID,
+		PartitionID:       part.ID,
 		Events:            prior.Events,
 		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
@@ -228,16 +182,4 @@ func (s *state) InduceFailureBeforeNextJournalAppend(t *rapid.T) {
 
 func (s *state) InduceFailureAfterNextJournalAppend(t *rapid.T) {
 	s.subsystem.Journals.ScheduleFailure(journaltest.AfterAppend)
-}
-
-func (s *state) InduceFailureOnNextSetOpen(t *rapid.T) {
-	s.subsystem.Sets.ScheduleFailure(settest.BeforeOpen)
-}
-
-func (s *state) InduceFailureBeforeNextSetAdd(t *rapid.T) {
-	s.subsystem.Sets.ScheduleFailure(settest.BeforeAdd)
-}
-
-func (s *state) InduceFailureAfterNextSetAdd(t *rapid.T) {
-	s.subsystem.Sets.ScheduleFailure(settest.AfterAdd)
 }

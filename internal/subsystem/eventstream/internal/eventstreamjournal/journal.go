@@ -11,21 +11,22 @@ import (
 // Journal is an alias for the type of journal that stores [Record] entries.
 type Journal = journal.Journal[*Record]
 
-// Open returns the journal for the specified stream.
+// Open returns the journal for the specified stream partition.
 func Open(
 	ctx context.Context,
 	store journal.BinaryStore,
-	streamID *uuidpb.UUID,
+	partitionID *uuidpb.UUID,
 ) (Journal, error) {
 	return journal.
 		NewMarshalingStore(store, recordMarshaler).
-		Open(ctx, "runkit.eventstream.journal.v1/"+streamID.AsString())
+		Open(ctx, "runkit.eventstream.journal.v1/"+partitionID.AsString())
 }
 
 var recordMarshaler = marshaler.NewProto[*Record]()
 
-// SearchByOffset returns a comparison function that searches for the
-// [Transaction] that appended the event at the given offset.
+// SearchByOffset returns a comparison function that searches for the [Record]
+// that records the [AppendEvents] operation containing the event at the given
+// offset.
 func SearchByOffset(off uint64) journal.CompareFunc[*Record] {
 	return func(
 		_ context.Context,

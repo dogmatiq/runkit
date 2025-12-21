@@ -6,21 +6,17 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/persistencekit/set"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xtelemetry"
 )
 
 // Supervisor accepts and delegates [AppendEventsRequest] requests.
 type Supervisor struct {
-	// Journals is the journal store used to persist event streams.
+	// Journals is the journal store used to persist events.
 	Journals journal.BinaryStore
 
-	// Sets is the set store used to persist the registry of event streams.
-	Sets set.BinaryStore
-
 	// BufferSize is the number of pending [AppendEventsRequest] values that can
-	// be buffered in memory, per event stream.
+	// be buffered in memory, per partition.
 	BufferSize uint
 
 	// Telemetry is used to record logs, metrics and traces.
@@ -31,7 +27,7 @@ type Supervisor struct {
 	Shutdown <-chan struct{}
 
 	// AppendEventsRequests is a channel on which the supervisor receives
-	// requests to append events to streams.
+	// requests to append events to the event stream.
 	AppendEventsRequests <-chan AppendEventsRequest
 
 	telemetry *telemetry.Recorder
@@ -103,15 +99,15 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 		ctx,
 		"eventstream.supervisor.append.recv",
 		"supervisor received a request to append events",
-		telemetry.UUID("stream.id", req.StreamID),
+		telemetry.UUID("partition.id", req.PartitionID),
 	)
 
 	for {
-		w, ok := s.workers.Get(req.StreamID)
+		w, ok := s.workers.Get(req.PartitionID)
 		if !ok {
 			w = s.startWorker(
 				ctx,
-				req.StreamID,
+				req.PartitionID,
 				make(chan AppendEventsRequest, s.BufferSize),
 			)
 		}
@@ -128,7 +124,7 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 				ctx,
 				"eventstream.supervisor.append.enqueue",
 				"supervisor added an append request to the worker queue",
-				telemetry.UUID("stream.id", req.StreamID),
+				telemetry.UUID("partition.id", req.PartitionID),
 				telemetry.Int("worker.id", w.ID),
 				telemetry.Int("worker.queue_length", len(w.AppendEventsRequests)),
 			)
@@ -138,14 +134,14 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 }
 
 func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) error {
-	s.workers.Delete(x.Worker.StreamID)
+	s.workers.Delete(x.Worker.PartitionID)
 
 	if x.Error == nil {
 		s.telemetry.Info(
 			ctx,
 			"eventstream.supervisor.worker.shutdown",
 			"supervisor detected a graceful worker shutdown",
-			telemetry.UUID("stream.id", x.Worker.StreamID),
+			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("worker.id", x.Worker.ID),
 			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
@@ -156,7 +152,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			"eventstream.supervisor.worker.error",
 			"supervisor is shutting down due to a fatal worker error",
 			x.Error,
-			telemetry.UUID("stream.id", x.Worker.StreamID),
+			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("worker.id", x.Worker.ID),
 			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
@@ -168,7 +164,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			"eventstream.supervisor.worker.error",
 			"supervisor detected a non-fatal worker error",
 			x.Error,
-			telemetry.UUID("stream.id", x.Worker.StreamID),
+			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("worker.id", x.Worker.ID),
 			telemetry.Int("worker.queue_length", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("supervisor.worker_count", s.workers.Len()),
@@ -186,7 +182,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 		if len(x.Worker.AppendEventsRequests) != 0 {
 			s.startWorker(
 				ctx,
-				x.Worker.StreamID,
+				x.Worker.PartitionID,
 				x.Worker.AppendEventsRequests,
 			)
 		}
@@ -197,21 +193,20 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 
 func (s *Supervisor) startWorker(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	partitionID *uuidpb.UUID,
 	requests chan AppendEventsRequest,
 ) *worker {
 	s.workerID++
 
 	w := &worker{
 		ID:                   s.workerID,
-		StreamID:             streamID,
+		PartitionID:          partitionID,
 		Journals:             s.Journals,
-		Sets:                 s.Sets,
 		Shutdown:             s.Shutdown,
 		AppendEventsRequests: requests,
 		Telemetry: s.Telemetry.Recorder(
 			xtelemetry.ModulePath,
-			telemetry.UUID("stream.id", streamID),
+			telemetry.UUID("partition.id", partitionID),
 			telemetry.Int("worker.id", s.workerID),
 		),
 	}
@@ -230,13 +225,13 @@ func (s *Supervisor) startWorker(
 		}
 	}()
 
-	s.workers.Set(streamID, w)
+	s.workers.Set(partitionID, w)
 
 	s.telemetry.Info(
 		ctx,
 		"eventstream.supervisor.worker.start",
 		"supervisor started a new worker",
-		telemetry.UUID("stream.id", w.StreamID),
+		telemetry.UUID("partition.id", w.PartitionID),
 		telemetry.Int("worker.id", w.ID),
 		telemetry.Int("worker.queue_length", len(w.AppendEventsRequests)),
 		telemetry.Int("supervisor.worker_count", s.workers.Len()),
