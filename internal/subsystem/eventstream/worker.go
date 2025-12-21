@@ -16,8 +16,7 @@ import (
 // shutting down to conserve resources.
 const idleTimeout = 3 * time.Minute
 
-// A worker is a service that appends events to a specific partition of the
-// event stream.
+// A worker appends events to a specific partition of the event stream.
 type worker struct {
 	ID          uint
 	PartitionID *uuidpb.UUID
