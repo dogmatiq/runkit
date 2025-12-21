@@ -46,10 +46,10 @@ func TestSupervisor(t *testing.T) {
 
 		for idx := range 3 {
 			supervisors.Go(func() {
-				// TODO: add a supervisor ID of some kind
 				telem := telemetry.NewTestProvider(t)
 
 				sup := &Supervisor{
+					ID: uuidpb.Generate(),
 					Journals: journal.WithTelemetry(
 						&subsystem.Journals,
 						telem.TracerProvider,
@@ -115,6 +115,7 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	req := AppendEventsRequest{
+		ID:          uuidpb.Generate(),
 		PartitionID: uuidpb.Generate(),
 	}
 
@@ -135,6 +136,7 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 
 	req := AppendEventsRequest{
+		ID:                uuidpb.Generate(),
 		PartitionID:       part.ID,
 		DeduplicationHint: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
 	}
@@ -161,7 +163,8 @@ func (s *state) ReappendExistingEvents(t *rapid.T) {
 	}
 
 	req := AppendEventsRequest{
-		PartitionID:       part.ID,
+		ID:                prior.ID,
+		PartitionID:       prior.PartitionID,
 		Events:            prior.Events,
 		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}

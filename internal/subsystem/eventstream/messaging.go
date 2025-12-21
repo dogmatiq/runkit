@@ -9,6 +9,9 @@ import (
 // AppendEventsRequest is a request to append events to a specific partition of
 // the event stream.
 type AppendEventsRequest struct {
+	// ID is a unique identifier for this request.
+	ID *uuidpb.UUID
+
 	// PartitionID is the UUID of the partition to which the events are
 	// appended.
 	PartitionID *uuidpb.UUID
@@ -32,21 +35,27 @@ type AppendEventsRequest struct {
 // AppendEventsResponse is the successful result of an [AppendEventsRequest]
 // request.
 type AppendEventsResponse struct {
+	// RequestID is the unique identifier of the corresponding
+	// [AppendEventsRequest].
+	RequestID *uuidpb.UUID
+
 	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
 	// the appended events within the stream.
 	//
 	// BeginOffset is the offset of the first event in the [AppendRequest], and
 	// EndOffset is the offset after the last event in the [AppendRequest].
 	//
-	// If the [AppendRequest] contained no events, then BeginOffset and EndOffset
-	// are both set to the offset at which the next appended event would be
-	// written.
+	// If both offsets are zero, the request was not processed.
 	BeginOffset, EndOffset uint64
 }
 
 // validateAppendEventsRequest returns an error if the given request is
 // malformed. Any error indicates a bug within the engine.
 func validateAppendEventsRequest(req AppendEventsRequest) error {
+	if err := req.ID.Validate(); err != nil {
+		return xerrors.Bug("AppendEventsRequest.ID is invalid: %w", err)
+	}
+
 	if err := req.PartitionID.Validate(); err != nil {
 		return xerrors.Bug("AppendEventsRequest.Partition is invalid: %w", err)
 	}

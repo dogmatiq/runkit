@@ -6,7 +6,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction"
 )
 
 // NewReader creates a new [Reader] that reads historical events from a stream
@@ -17,7 +17,7 @@ func NewReader(
 	partitionID *uuidpb.UUID,
 	offset uint64,
 ) (_ *Reader, err error) {
-	j, err := eventstreamjournal.Open(ctx, journals, partitionID)
+	j, err := openJournal(ctx, journals, partitionID)
 	if err != nil {
 		return nil, err
 	}
@@ -39,17 +39,17 @@ func NewReader(
 			return nil, err
 		}
 
-		pos, rec, err := journal.Search(
+		pos, txn, err := journal.Search(
 			ctx,
 			j,
 			bounds,
-			eventstreamjournal.SearchByOffset(offset),
+			searchForOffset(offset),
 		)
 		if err != nil {
 			return nil, err
 		}
 
-		r.events = rec.GetAppendEvents().Events[offset-rec.MetaData.OffsetBefore:]
+		r.events = txn.GetAppendEventsOperation().Events[offset-txn.MetaData.OffsetBefore:]
 		r.pos = pos + 1
 	}
 
@@ -58,7 +58,7 @@ func NewReader(
 
 // Reader synchronously reads events from an event stream in order.
 type Reader struct {
-	journal eventstreamjournal.Journal
+	journal journal.Journal[*transaction.Transaction]
 	pos     journal.Position
 	events  []*envelopepb.Envelope
 	offset  uint64
@@ -72,7 +72,7 @@ func (r *Reader) Read(ctx context.Context) (
 	err error,
 ) {
 	if len(r.events) == 0 {
-		rec, err := r.journal.Get(ctx, r.pos)
+		txn, err := r.journal.Get(ctx, r.pos)
 		if err != nil {
 			if journal.IsNotFound(err) {
 				return 0, nil, false, nil
@@ -82,9 +82,9 @@ func (r *Reader) Read(ctx context.Context) (
 
 		r.pos++
 
-		eventstreamjournal.MustSwitch_Record_Op(
-			rec,
-			func(op *eventstreamjournal.AppendEvents) {
+		transaction.MustSwitch_Transaction_Op(
+			txn,
+			func(op *transaction.AppendEventsOperation) {
 				r.events = op.Events
 			},
 		)

@@ -2,13 +2,13 @@ package eventstream
 
 import (
 	"context"
+	"errors"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/eventstreamjournal"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
@@ -33,23 +33,31 @@ type worker struct {
 	Shutdown             <-chan struct{}
 	AppendEventsRequests chan AppendEventsRequest
 
-	journal     eventstreamjournal.Journal
-	pos         journal.Position
-	offset      uint64
+	journal     journal.Journal[*transaction.Transaction]
+	nextPos     journal.Position
+	nextOffset  uint64
 	idleTimeout time.Duration
 }
 
 func (w *worker) Run(ctx context.Context) error {
+	defer func() {
+		w.Telemetry.Info(
+			ctx,
+			"eventstream.worker.stopped",
+			"event stream worker stopped",
+		)
+	}()
+
 	startedAt := time.Now()
 
 	var err error
-	w.journal, err = eventstreamjournal.Open(ctx, w.Journals, w.PartitionID)
+	w.journal, err = openJournal(ctx, w.Journals, w.PartitionID)
 	if err != nil {
 		return err
 	}
 	defer w.journal.Close()
 
-	if err := w.load(ctx, "worker loaded stream state from the journal"); err != nil {
+	if err := w.load(ctx, "event stream worker loaded partition state from the journal"); err != nil {
 		return err
 	}
 
@@ -66,9 +74,9 @@ func (w *worker) Run(ctx context.Context) error {
 	}
 }
 
-// load reloads the worker's state from the journal.
+// load (re)loads the partition state from the journal.
 func (w *worker) load(ctx context.Context, message string) error {
-	pos, rec, ok, err := journal.LastRecord(
+	pos, txn, ok, err := journal.LastRecord(
 		ctx,
 		w.journal,
 	)
@@ -76,30 +84,30 @@ func (w *worker) load(ctx context.Context, message string) error {
 		return err
 	}
 
-	lastKnownPos := w.pos
-	lastKnownOffset := w.offset
+	nextPosBefore := w.nextPos
+	nextOffsetBefore := w.nextOffset
 
 	if ok {
-		w.pos = pos + 1
-		w.offset = rec.MetaData.OffsetAfter
+		w.nextPos = pos + 1
+		w.nextOffset = txn.MetaData.OffsetAfter
 	} else {
-		w.pos = 0
-		w.offset = 0
+		w.nextPos = 0
+		w.nextOffset = 0
 	}
 
-	if w.pos < lastKnownPos {
+	if w.nextPos < nextPosBefore {
 		return xerrors.Bug(
 			"next journal position is %d, but worker was already at position %d",
-			w.pos,
-			lastKnownPos,
+			w.nextPos,
+			nextPosBefore,
 		)
 	}
 
-	if w.offset < lastKnownOffset {
+	if w.nextOffset < nextOffsetBefore {
 		return xerrors.Bug(
-			"stream offset is %d, but worker was already at offset %d",
-			w.offset,
-			lastKnownOffset,
+			"next offset is %d, but worker was already at offset %d",
+			w.nextOffset,
+			nextOffsetBefore,
 		)
 	}
 
@@ -107,7 +115,7 @@ func (w *worker) load(ctx context.Context, message string) error {
 		ctx,
 		"eventstream.worker.load",
 		message,
-		telemetry.Int("stream.offset", w.offset),
+		telemetry.Int("partition.next_offset", w.nextOffset),
 		telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 	)
 
@@ -125,14 +133,14 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 		w.Telemetry.Info(
 			ctx,
 			"eventstream.worker.shutdown",
-			"worker received a request to shut down",
+			"event stream worker received a request to shut down",
 		)
 		return false, nil
 	case <-idle.C:
 		w.Telemetry.Info(
 			ctx,
 			"eventstream.worker.idle-timeout",
-			"worker is shutting down due to inactivity",
+			"event stream worker timed-out due to inactivity",
 			telemetry.Duration("worker.idle_timeout", w.idleTimeout),
 		)
 		return false, nil
@@ -142,226 +150,194 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 }
 
 func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) (err error) {
-	// If we send a reply first the sender will receive it before the close.
-	// Otherwise, they will see the closed channel and know that their request
-	// was not processed.
-	defer close(req.Response)
-
 	w.Telemetry.Info(
 		ctx,
-		"eventstream.worker.append.recv",
-		"worker received a request to append events",
-		telemetry.Int("stream.offset", w.offset),
+		"eventstream.worker.append-request.received",
+		"event stream worker received a request to append events",
+		telemetry.Int("partition.next_offset", w.nextOffset),
+		telemetry.UUID("request.id", req.ID),
 		telemetry.Int("request.event_count", len(req.Events)),
 		telemetry.Int("request.deduplication_hint", req.DeduplicationHint),
 	)
 
-	if err := validateAppendEventsRequest(req); err != nil {
-		return err
-	}
-
-	for {
-		res, ok, err := w.commit(ctx, req)
-		if err != nil {
-			return err
+	do := func() (AppendEventsResponse, error) {
+		if err := validateAppendEventsRequest(req); err != nil {
+			return AppendEventsResponse{}, err
 		}
 
-		if ok {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case req.Response <- res:
-				return nil
+		for {
+			res, ok, err := w.deduplicate(ctx, req)
+			if err != nil {
+				return AppendEventsResponse{}, err
+			}
+
+			if ok {
+				w.Telemetry.Info(
+					ctx,
+					"eventstream.worker.append-request.deduplicated",
+					"event stream worker skipped append request that has already been processed",
+					telemetry.Int("partition.next_offset", w.nextOffset),
+					telemetry.UUID("request.id", req.ID),
+					telemetry.Int("request.event_count", len(req.Events)),
+					telemetry.Int("response.begin_offset", res.BeginOffset),
+					telemetry.Int("response.end_offset", res.EndOffset),
+				)
+
+				return res, nil
+			}
+
+			res, ok, err = w.commit(ctx, req)
+			if err != nil {
+				return AppendEventsResponse{}, err
+			}
+
+			if ok {
+				w.Telemetry.Info(
+					ctx,
+					"eventstream.worker.append-request.committed",
+					"event stream worker committed new events to the stream partition",
+					telemetry.Int("partition.next_offset", w.nextOffset),
+					telemetry.UUID("request.id", req.ID),
+					telemetry.Int("request.event_count", len(req.Events)),
+					telemetry.Int("response.begin_offset", res.BeginOffset),
+					telemetry.Int("response.end_offset", res.EndOffset),
+				)
+
+				return res, nil
+			}
+
+			if err := w.load(ctx, "event stream worker reloaded partition state due to a journal conflict"); err != nil {
+				return AppendEventsResponse{}, err
 			}
 		}
+	}
 
-		if err := w.load(ctx, "worker reloaded stream state due to conflict"); err != nil {
-			return err
-		}
+	res, err := do()
+
+	// In the case of an error, ensure we always send a correctly correlated,
+	// but otherwise empty response.
+	if err != nil {
+		res = AppendEventsResponse{RequestID: req.ID}
+	}
+
+	select {
+	case <-ctx.Done():
+		return errors.Join(err, ctx.Err())
+	case req.Response <- res:
+		return err
 	}
 }
 
+// commit writes a transaction that appends the events in the given
+// [AppendEventsRequest] to the stream partition.
 func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEventsResponse, bool, error) {
-	res, ok, err := w.deduplicate(ctx, req)
-	if err != nil {
-		return AppendEventsResponse{}, false, err
-	}
-
-	if ok {
-		w.Telemetry.Info(
-			ctx,
-			"eventstream.worker.append.skip",
-			"worker skipped append request that has already been processed",
-			telemetry.Int("stream.offset", w.offset),
-			telemetry.Int("append.offset", res.BeginOffset),
-			telemetry.Int("append.event_count", len(req.Events)),
-		)
-
-		return res, true, nil
-	}
-
-	begin := w.offset
+	begin := w.nextOffset
 	end := begin + uint64(len(req.Events))
 
 	if err := w.journal.Append(
 		ctx,
-		w.pos,
-		eventstreamjournal.
-			NewRecordBuilder().
-			WithMetaData(&eventstreamjournal.Record_MetaData{
+		w.nextPos,
+		transaction.
+			NewTransactionBuilder().
+			WithMetaData(&transaction.Transaction_MetaData{
 				OffsetBefore: begin,
 				OffsetAfter:  end,
 			}).
-			WithAppendEvents(&eventstreamjournal.AppendEvents{
-				Events: req.Events,
+			WithAppendEventsOperation(&transaction.AppendEventsOperation{
+				RequestId: req.ID,
+				Events:    req.Events,
 			}).
 			Build(),
 	); err != nil {
 		if journal.IsConflict(err) {
-			return AppendEventsResponse{}, false, nil
-		}
-
-		return AppendEventsResponse{}, false, err
-	}
-
-	w.pos++
-	w.offset = end
-
-	w.Telemetry.Info(
-		ctx,
-		"eventstream.worker.append.commit",
-		"worker committed new events to the stream",
-		telemetry.Int("stream.offset", w.offset),
-		telemetry.Int("append.offset", begin),
-		telemetry.Int("append.event_count", len(req.Events)),
-	)
-
-	return AppendEventsResponse{begin, end}, true, nil
-}
-
-// deduplicate searches the journal to find the record that represents the
-// given [AppendEventsRequest], if any.
-//
-// TODO: This is a brute-force approach that searches the journal directly
-// (though efficiently). We could improve upon this approach by keeping some
-// in-memory state of recent event IDs (either explicitly, or via a bloom
-// filter, for example).
-func (w *worker) deduplicate(
-	ctx context.Context,
-	req AppendEventsRequest,
-) (AppendEventsResponse, bool, error) {
-	// Assuming the request is well-formed, if its deduplication hint is greater
-	// than the current offset, we assume our knowledge of the journal is stale
-	// and reload the latest record.
-	if req.DeduplicationHint > w.offset {
-		if err := w.load(ctx, "worker reloaded stream state due to future deduplication hint"); err != nil {
-			return AppendEventsResponse{}, false, err
-		}
-
-		// If the deduplication hint is still greater than the current offset,
-		// then the request is malformed.
-		if req.DeduplicationHint > w.offset {
-			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.DeduplicationHint is beyond the end of the stream")
-		}
-	}
-
-	// The events can't be duplicates if the only place they could be is at the
-	// *current* end of the stream.
-	if req.DeduplicationHint == w.offset {
-		return AppendEventsResponse{}, false, nil
-	}
-
-	// Perform a binary search of the joirnal to find the
-	// [eventstreamjournal.Record] that represents a prior attempt at the same
-	// [AppendEventsRequest].
-	rec, err := journal.ScanFromSearchResult(
-		ctx,
-		w.journal,
-		journal.Interval{
-			Begin: 0,
-			End:   w.pos,
-		},
-		eventstreamjournal.SearchByOffset(req.DeduplicationHint),
-		func(
-			_ context.Context,
-			_ journal.Position,
-			rec *eventstreamjournal.Record,
-		) (*eventstreamjournal.Record, bool, error) {
-			op := rec.GetAppendEvents()
-			if op == nil {
-				return nil, false, nil
-			}
-
-			identical, collision := hasCollision(op.Events, req.Events)
-			if !collision {
-				return nil, false, nil
-			}
-
-			if identical {
-				return rec, true, nil
-			}
-
-			return nil, false, xerrors.Bug("AppendEventsRequest contains duplicate events, but does not correlate to a prior request")
-		},
-	)
-
-	if err != nil {
-		if journal.IsNotFound(err) {
 			err = nil
 		}
 		return AppendEventsResponse{}, false, err
 	}
 
-	return AppendEventsResponse{rec.MetaData.OffsetBefore, rec.MetaData.OffsetAfter}, true, err
+	w.nextPos++
+	w.nextOffset = end
+
+	return AppendEventsResponse{req.ID, begin, end}, true, nil
 }
 
-// hasCollision determines whether there is any overlap between the two slices
-// of envelopes, and if there is, whether they are identical.
-func hasCollision(lhs, rhs []*envelopepb.Envelope) (identical, collision bool) {
-	// If either set is empty, they can't collide.
-	if len(lhs) == 0 || len(rhs) == 0 {
-		return len(lhs) == len(rhs), false
-	}
-
-	// If the sets have different lengths, they can't be identical, so we jump
-	// directly to a cartesian comparison (the slow path).
-	if len(lhs) != len(rhs) {
-		return false, hasCollisionCartesian(lhs, rhs)
-	}
-
-	for idx, envL := range lhs {
-		envR := rhs[idx]
-
-		if envL.MessageId.Equal(envR.MessageId) {
-			// Keep going so long as we have the same message IDs at the same
-			// indices.
-			continue
+// deduplicate searches the journal to find an existing transaction that appends
+// the events from the given [AppendEventsRequest], if any.
+//
+// TODO: This is a brute-force approach that searches the journal directly
+// (though relatively efficiently). We could improve upon this approach by
+// keeping some in-memory state of recent request and/or event IDs (either
+// explicitly, or via a bloom filter, for example).
+func (w *worker) deduplicate(
+	ctx context.Context,
+	req AppendEventsRequest,
+) (AppendEventsResponse, bool, error) {
+	// Assuming the request is well-formed, if its deduplication hint is greater
+	// than the next offset, we assume our knowledge of the parititon is stale
+	// and reload from the journal.
+	if req.DeduplicationHint > w.nextOffset {
+		if err := w.load(ctx, "event stream worker reloaded stream state due to a deduplication hint beyond the partition's next offset"); err != nil {
+			return AppendEventsResponse{}, false, err
 		}
 
-		// Otherwise, we know the sets aren't identical. If we've already found
-		// one collision, we can return immediately.
-		if idx > 0 {
-			return false, true
+		// If the deduplication hint is _still_ greater than the next offset,
+		// then the request is malformed.
+		if req.DeduplicationHint > w.nextOffset {
+			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.DeduplicationHint is beyond the partition's next offset")
 		}
-
-		// Otherwise, we fall back to the cartesian comparison on the remainder
-		// of the slices.
-		return false, hasCollisionCartesian(lhs[idx:], rhs[idx:])
 	}
 
-	return true, true
-}
+	// The events can't be duplicates if the only place they could be is at the
+	// end of the partition.
+	if req.DeduplicationHint == w.nextOffset {
+		return AppendEventsResponse{}, false, nil
+	}
 
-// hasCollisionCartesian returns true if there is any overlap between the
-// message IDs of the two slices of envelopes.
-func hasCollisionCartesian(lhs, rhs []*envelopepb.Envelope) bool {
-	for _, envL := range lhs {
-		for _, envR := range rhs {
-			if envL.MessageId.Equal(envR.MessageId) {
-				return true
+	// Find the prior [eventstreamjournal.Transaction] for this request.
+	//
+	// We first find the transaction that appends the event at the deduplication
+	// hint offset, then scan forward from there to find the transaction that
+	// was produced this request ID.
+	txn, err := journal.ScanFromSearchResult(
+		ctx,
+		w.journal,
+		journal.Interval{
+			Begin: 0,
+			End:   w.nextPos,
+		},
+		searchForOffset(req.DeduplicationHint),
+		func(
+			_ context.Context,
+			_ journal.Position,
+			txn *transaction.Transaction,
+		) (*transaction.Transaction, bool, error) {
+			op := txn.GetAppendEventsOperation()
+
+			if !op.GetRequestId().Equal(req.ID) {
+				return nil, false, nil
 			}
-		}
+
+			if len(op.Events) != len(req.Events) {
+				return nil, false, xerrors.Bug("AppendEventsRequest %s contains different number of events to prior request with the same ID", req.ID)
+			}
+
+			for idx, env := range op.Events {
+				if !env.MessageId.Equal(req.Events[idx].MessageId) {
+					return nil, false, xerrors.Bug("AppendEventsRequest %s contains different events to prior request with the same ID", req.ID)
+				}
+			}
+
+			return txn, true, nil
+		},
+	)
+
+	if err != nil {
+		return AppendEventsResponse{}, false, journal.IgnoreNotFound(err)
 	}
 
-	return false
+	return AppendEventsResponse{
+		req.ID,
+		txn.MetaData.OffsetBefore,
+		txn.MetaData.OffsetAfter,
+	}, true, nil
 }
