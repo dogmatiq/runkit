@@ -2,6 +2,7 @@ package eventstream
 
 import (
 	"context"
+	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
@@ -43,6 +44,8 @@ type Supervisor struct {
 
 // Run starts the supervisor's main event loop.
 func (s *Supervisor) Run(ctx context.Context) error {
+	startedAt := time.Now()
+
 	s.telemetry = s.Telemetry.Recorder(
 		xtelemetry.ModulePath,
 		telemetry.UUID("supervisor.id", s.ID),
@@ -59,6 +62,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			ctx,
 			"eventstream.supervisor.stopped",
 			"event stream supervisor stopped",
+			telemetry.Duration("supervisor.uptime", time.Since(startedAt)),
 		)
 	}()
 

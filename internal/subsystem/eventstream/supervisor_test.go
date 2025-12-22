@@ -32,6 +32,21 @@ func TestSupervisor(t *testing.T) {
 			AppendEventsRequests: requests,
 		}
 
+		var (
+			journals journal.BinaryStore = &subsystem.Journals
+		)
+
+		telem := telemetry.NewTestProvider(t)
+
+		if testing.Verbose() {
+			journals = journal.WithTelemetry(
+				journals,
+				telem.TracerProvider,
+				telem.MeterProvider,
+				telem.LoggerProvider,
+			)
+		}
+
 		// shutdown is a channel used to signal all supervisors to shut down
 		// gracefully.
 		shutdown := make(chan struct{})
@@ -46,16 +61,10 @@ func TestSupervisor(t *testing.T) {
 
 		for idx := range 3 {
 			supervisors.Go(func() {
-				telem := telemetry.NewTestProvider(t)
 
 				sup := &Supervisor{
-					ID: uuidpb.Generate(),
-					Journals: journal.WithTelemetry(
-						&subsystem.Journals,
-						telem.TracerProvider,
-						telem.MeterProvider,
-						telem.LoggerProvider,
-					),
+					ID:                   uuidpb.Generate(),
+					Journals:             journals,
 					BufferSize:           2, // small buffer size to increase chance of contention
 					Shutdown:             shutdown,
 					AppendEventsRequests: requests,
