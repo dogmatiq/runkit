@@ -5,7 +5,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/set"
-	"github.com/dogmatiq/runkit/internal/persistence"
+	"github.com/dogmatiq/runkit/internal/persistence/uuidpersistence"
 )
 
 // RangeFunc is used to range over all partitions in a [Registry].
@@ -24,6 +24,6 @@ func OpenRegistry(
 	store set.BinaryStore,
 ) (Registry, error) {
 	return set.
-		NewMarshalingStore(store, persistence.UUIDMarshaler).
+		NewMarshalingStore(store, uuidpersistence.Marshaler).
 		Open(ctx, "runkit.partition.registry.v1")
 }
