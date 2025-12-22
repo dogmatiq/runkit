@@ -32,11 +32,19 @@ type worker struct {
 }
 
 func (w *worker) Run(ctx context.Context) error {
+	startedAt := time.Now()
+
+	w.Telemetry.Info(
+		ctx,
+		"eventstream.worker.started",
+		"event stream worker started",
+	)
 	defer func() {
 		w.Telemetry.Info(
 			ctx,
 			"eventstream.worker.stopped",
 			"event stream worker stopped",
+			telemetry.Duration("worker.uptime", time.Since(startedAt)),
 		)
 	}()
 

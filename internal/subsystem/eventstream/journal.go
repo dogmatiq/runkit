@@ -2,6 +2,7 @@ package eventstream
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
@@ -15,9 +16,14 @@ func openJournal(
 	store journal.BinaryStore,
 	partitionID *uuidpb.UUID,
 ) (journal.Journal[*transaction.Transaction], error) {
+	name := fmt.Sprintf(
+		"runkit.eventstream.v1/%s",
+		partitionID,
+	)
+
 	return journal.
 		NewMarshalingStore(store, transactionMarshaler).
-		Open(ctx, "runkit.eventstream.v1/"+partitionID.AsString())
+		Open(ctx, name)
 }
 
 var transactionMarshaler = marshaler.NewProto[*transaction.Transaction]()

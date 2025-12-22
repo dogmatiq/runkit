@@ -101,7 +101,7 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 			ctx,
 			"eventstream.supervisor.shutdown",
 			"event stream supervisor received a request to shut down",
-			telemetry.Int("supervisor.worker_count", s.workers.Len()),
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 		)
 		return false, nil
 	case x := <-s.workerStopped:
@@ -120,8 +120,8 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 		ctx,
 		"eventstream.supervisor.append-request.received",
 		"event stream supervisor received a request to append events to a partition",
-		telemetry.UUID("request.id", req.ID),
 		telemetry.UUID("partition.id", req.PartitionID),
+		telemetry.UUID("request.id", req.ID),
 	)
 
 	for {
@@ -156,9 +156,9 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			"eventstream.supervisor.worker.failed",
 			"event stream supervisor detected a fatal worker error, supervisor is shutting down",
 			x.Error,
-			telemetry.Int("supervisor.worker_count", s.workers.Len()),
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
-			telemetry.Int("partition.pending_append_requests", len(x.Worker.AppendEventsRequests)),
+			telemetry.Int("partition.pending_requests", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("worker.id", x.Worker.ID),
 		)
 
@@ -171,9 +171,9 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			"eventstream.supervisor.worker.failed",
 			"event stream supervisor detected a non-fatal worker error",
 			x.Error,
-			telemetry.Int("supervisor.worker_count", s.workers.Len()),
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
-			telemetry.Int("partition.pending_append_requests", len(x.Worker.AppendEventsRequests)),
+			telemetry.Int("partition.pending_requests", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("worker.id", x.Worker.ID),
 		)
 	} else {
@@ -181,19 +181,19 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			ctx,
 			"eventstream.supervisor.worker.shutdown",
 			"event stream supervisor detected a graceful worker shutdown",
-			telemetry.Int("supervisor.worker_count", s.workers.Len()),
+			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
-			telemetry.Int("partition.pending_append_requests", len(x.Worker.AppendEventsRequests)),
+			telemetry.Int("partition.pending_requests", len(x.Worker.AppendEventsRequests)),
 			telemetry.Int("worker.id", x.Worker.ID),
 		)
 	}
 
-	// If the partition had unhandled append requests then start another
-	// worker for this partition.
+	// If the partition has unhandled requests then start another worker for
+	// this partition.
 	//
-	// Note that we _don't_ start another worker just because the previous
-	// one failed. If there are no pending requests, we rely on the sender
-	// to resend requests that were outright rejected.
+	// Note that we _don't_ start another worker just because the previous one
+	// failed. If there are no pending requests, we rely on the sender to resend
+	// requests that were outright rejected.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -253,9 +253,9 @@ func (s *Supervisor) startWorker(
 		ctx,
 		"eventstream.supervisor.worker.started",
 		"event stream supervisor started a new worker",
-		telemetry.Int("supervisor.worker_count", s.workers.Len()),
+		telemetry.Int("supervisor.workers", s.workers.Len()),
 		telemetry.UUID("partition.id", w.PartitionID),
-		telemetry.Int("partition.pending_append_requests", len(w.AppendEventsRequests)),
+		telemetry.Int("partition.pending_requests", len(w.AppendEventsRequests)),
 		telemetry.Int("worker.id", w.ID),
 	)
 

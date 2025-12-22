@@ -57,7 +57,7 @@ func validateAppendEventsRequest(req AppendEventsRequest) error {
 	}
 
 	if err := req.PartitionID.Validate(); err != nil {
-		return xerrors.Bug("AppendEventsRequest.Partition is invalid: %w", err)
+		return xerrors.Bug("AppendEventsRequest.PartitionID is invalid: %w", err)
 	}
 
 	if len(req.Events) == 0 {

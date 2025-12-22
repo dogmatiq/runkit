@@ -49,18 +49,17 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 	req.Response = response
 
 	for {
-
 		select {
 		case <-s.Context.Done():
 			t.Fatalf(
-				"context cancelled while sending AppendEventsRequest %s for partition %s: %s",
+				"context cancelled while sending AppendEventsRequest %s to partition %s: %s",
 				req.PartitionID,
 				req.ID,
 				context.Cause(s.Context),
 			)
 		case s.AppendEventsRequests <- req:
 			t.Logf(
-				"sent AppendEventsRequest %s for partition %s",
+				"sent AppendEventsRequest %s to partition %s",
 				req.ID,
 				req.PartitionID,
 			)
@@ -91,7 +90,7 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				continue
 			}
 
-			t.Logf("received AppendEventsResponse for request %s", req.ID)
+			t.Logf("received AppendEventsResponse for request %s", got.RequestID)
 
 			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
 				t.Fatalf(
