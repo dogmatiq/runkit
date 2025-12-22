@@ -136,9 +136,9 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 
 	req := AppendEventsRequest{
-		ID:                uuidpb.Generate(),
-		PartitionID:       part.ID,
-		DeduplicationHint: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
+		ID:                   uuidpb.Generate(),
+		PartitionID:          part.ID,
+		LowestPossibleOffset: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
@@ -154,7 +154,7 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	})
 }
 
-func (s *state) ReappendExistingEvents(t *rapid.T) {
+func (s *state) ReappendPriorEvents(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 	prior := part.AppendEventsRequestsGen(t).Draw(t, "prior request")
 	offset, ok := part.FindOffset(prior.Events[0].MessageId)
@@ -163,10 +163,10 @@ func (s *state) ReappendExistingEvents(t *rapid.T) {
 	}
 
 	req := AppendEventsRequest{
-		ID:                prior.ID,
-		PartitionID:       prior.PartitionID,
-		Events:            prior.Events,
-		DeduplicationHint: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
+		ID:                   prior.ID,
+		PartitionID:          prior.PartitionID,
+		Events:               prior.Events,
+		LowestPossibleOffset: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{

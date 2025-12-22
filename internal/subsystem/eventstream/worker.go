@@ -150,7 +150,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 		telemetry.Int("partition.next_offset", w.nextOffset),
 		telemetry.UUID("request.id", req.ID),
 		telemetry.Int("request.event_count", len(req.Events)),
-		telemetry.Int("request.deduplication_hint", req.DeduplicationHint),
+		telemetry.Int("request.lowest_possible_offset", req.LowestPossibleOffset),
 	)
 
 	do := func() (AppendEventsResponse, error) {
@@ -265,24 +265,24 @@ func (w *worker) deduplicate(
 	ctx context.Context,
 	req AppendEventsRequest,
 ) (AppendEventsResponse, bool, error) {
-	// Assuming the request is well-formed, if its deduplication hint is greater
-	// than the next offset, we assume our knowledge of the parititon is stale
-	// and reload from the journal.
-	if req.DeduplicationHint > w.nextOffset {
-		if err := w.load(ctx, "event stream worker reloaded stream state due to a deduplication hint beyond the partition's next offset"); err != nil {
+	// Assuming the request is well-formed, if its "lowest possible offset" is
+	// greater than the next offset, we assume our knowledge of the parititon is
+	// stale and reload from the journal.
+	if req.LowestPossibleOffset > w.nextOffset {
+		if err := w.load(ctx, "event stream worker reloaded partition state, request's lowest possible offset suggested stale in-memory state"); err != nil {
 			return AppendEventsResponse{}, false, err
 		}
 
 		// If the deduplication hint is _still_ greater than the next offset,
 		// then the request is malformed.
-		if req.DeduplicationHint > w.nextOffset {
-			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.DeduplicationHint is beyond the partition's next offset")
+		if req.LowestPossibleOffset > w.nextOffset {
+			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.LowestPossibleOffset is beyond the partition's next offset")
 		}
 	}
 
 	// The events can't be duplicates if the only place they could be is at the
 	// end of the partition.
-	if req.DeduplicationHint == w.nextOffset {
+	if req.LowestPossibleOffset == w.nextOffset {
 		return AppendEventsResponse{}, false, nil
 	}
 
@@ -298,7 +298,7 @@ func (w *worker) deduplicate(
 			Begin: 0,
 			End:   w.nextPos,
 		},
-		searchForOffset(req.DeduplicationHint),
+		searchForOffset(req.LowestPossibleOffset),
 		func(
 			_ context.Context,
 			_ journal.Position,

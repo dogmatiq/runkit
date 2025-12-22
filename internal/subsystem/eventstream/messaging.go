@@ -20,12 +20,12 @@ type AppendEventsRequest struct {
 	// If empty, no events are appended.
 	Events []*envelopepb.Envelope
 
-	// DeduplicationHint is the lowest offset within the partition at which
+	// LowestPossibleOffset is the lowest offset within the partition at which
 	// these events may have already been appended.
 	//
 	// Any events before this offset are not considered when deduplicating
 	// events.
-	DeduplicationHint uint64
+	LowestPossibleOffset uint64
 
 	// Response is the channel to which the corresponding [AppendEventsResponse]
 	// is sent.
