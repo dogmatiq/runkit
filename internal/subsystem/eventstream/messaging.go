@@ -39,13 +39,16 @@ type AppendEventsResponse struct {
 	// [AppendEventsRequest].
 	RequestID *uuidpb.UUID
 
+	// Ok is true if the [AppendEventsRequest] was processed successfully.
+	Ok bool
+
 	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
 	// the appended events within the stream.
 	//
 	// BeginOffset is the offset of the first event in the [AppendRequest], and
 	// EndOffset is the offset after the last event in the [AppendRequest].
 	//
-	// If both offsets are zero, the request was not processed.
+	// The values are undefined if Ok is false.
 	BeginOffset, EndOffset uint64
 }
 

@@ -85,7 +85,7 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.RequestID, req.ID)
 			}
 
-			if got.BeginOffset == 0 && got.EndOffset == 0 {
+			if !got.Ok {
 				t.Logf("AppendEventsResponse indicates request %s was rejected, retrying", req.ID)
 				continue
 			}

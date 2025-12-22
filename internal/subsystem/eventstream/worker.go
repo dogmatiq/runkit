@@ -251,7 +251,12 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 	w.nextPos++
 	w.nextOffset = end
 
-	return AppendEventsResponse{req.ID, begin, end}, true, nil
+	return AppendEventsResponse{
+		req.ID,
+		true,
+		begin,
+		end,
+	}, true, nil
 }
 
 // deduplicate searches the journal to find an existing transaction that appends
@@ -330,6 +335,7 @@ func (w *worker) deduplicate(
 
 	return AppendEventsResponse{
 		req.ID,
+		true,
 		txn.MetaData.OffsetBefore,
 		txn.MetaData.OffsetAfter,
 	}, true, nil
