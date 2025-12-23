@@ -7,10 +7,10 @@ import (
 )
 
 // AppendEventsRequest is a request to append events to a specific partition of
-// the event stream.
+// the application's event stream.
 type AppendEventsRequest struct {
-	// PartitionID is the UUID of the partition to which the events are
-	// appended.
+	// PartitionID is the UUID of the event stream partition to which the events
+	// are appended.
 	PartitionID *uuidpb.UUID
 
 	// EventEnvelopes is the set of events to append to the stream partition.
@@ -29,14 +29,13 @@ type AppendEventsRequest struct {
 	Response chan<- AppendEventsResponse
 }
 
-// AppendEventsResponse is the successful result of an [AppendEventsRequest]
-// request.
+// AppendEventsResponse is the result of an [AppendEventsRequest].
 type AppendEventsResponse struct {
 	// FirstEventMessageID is the message ID of the first event in the
 	// corresponding [AppendEventsRequest].
 	FirstEventMessageID *uuidpb.UUID
 
-	// Ok is true if the [AppendEventsRequest] was processed successfully.
+	// Ok is true if the events were appended successfully.
 	Ok bool
 
 	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
