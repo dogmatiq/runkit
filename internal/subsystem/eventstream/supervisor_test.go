@@ -124,20 +124,19 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	req := AppendEventsRequest{
-		ID:          uuidpb.Generate(),
 		PartitionID: uuidpb.Generate(),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
-		req.Events = append(
-			req.Events,
+		req.EventEnvelopes = append(
+			req.EventEnvelopes,
 			xrapid.Envelope().Draw(t, "event"),
 		)
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
 		BeginOffset: 0,
-		EndOffset:   uint64(len(req.Events)),
+		EndOffset:   uint64(len(req.EventEnvelopes)),
 	})
 }
 
@@ -145,42 +144,40 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 
 	req := AppendEventsRequest{
-		ID:                   uuidpb.Generate(),
 		PartitionID:          part.ID,
 		LowestPossibleOffset: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
 	}
 
 	for range rapid.IntRange(1, 3).Draw(t, "number of events to append") {
-		req.Events = append(
-			req.Events,
+		req.EventEnvelopes = append(
+			req.EventEnvelopes,
 			xrapid.Envelope().Draw(t, "event"),
 		)
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
 		BeginOffset: part.NextOffset,
-		EndOffset:   part.NextOffset + uint64(len(req.Events)),
+		EndOffset:   part.NextOffset + uint64(len(req.EventEnvelopes)),
 	})
 }
 
 func (s *state) ReappendPriorEvents(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 	prior := part.AppendEventsRequestsGen(t).Draw(t, "prior request")
-	offset, ok := part.FindOffset(prior.Events[0].MessageId)
+	offset, ok := part.FindOffset(prior.EventEnvelopes[0].MessageId)
 	if !ok {
 		t.Fatalf("unable to find offset of existing event in partition %q", part)
 	}
 
 	req := AppendEventsRequest{
-		ID:                   prior.ID,
 		PartitionID:          prior.PartitionID,
-		Events:               prior.Events,
+		EventEnvelopes:       prior.EventEnvelopes,
 		LowestPossibleOffset: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
 
 	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
 		BeginOffset: offset,
-		EndOffset:   offset + uint64(len(prior.Events)),
+		EndOffset:   offset + uint64(len(prior.EventEnvelopes)),
 	})
 }
 

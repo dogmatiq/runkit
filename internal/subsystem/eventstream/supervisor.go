@@ -125,7 +125,6 @@ func (s *Supervisor) handleRequest(ctx context.Context, req AppendEventsRequest)
 		"eventstream.supervisor.append-request.received",
 		"event stream supervisor received a request to append events to a partition",
 		telemetry.UUID("partition.id", req.PartitionID),
-		telemetry.UUID("request.id", req.ID),
 	)
 
 	for {

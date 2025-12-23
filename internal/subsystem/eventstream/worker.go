@@ -148,8 +148,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 		"eventstream.worker.append-request.received",
 		"event stream worker received a request to append events",
 		telemetry.Int("partition.next_offset", w.nextOffset),
-		telemetry.UUID("request.id", req.ID),
-		telemetry.Int("request.event_count", len(req.Events)),
+		telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 		telemetry.Int("request.lowest_possible_offset", req.LowestPossibleOffset),
 	)
 
@@ -170,8 +169,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 					"eventstream.worker.append-request.deduplicated",
 					"event stream worker skipped append request that has already been processed",
 					telemetry.Int("partition.next_offset", w.nextOffset),
-					telemetry.UUID("request.id", req.ID),
-					telemetry.Int("request.event_count", len(req.Events)),
+					telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 					telemetry.Int("response.begin_offset", res.BeginOffset),
 					telemetry.Int("response.end_offset", res.EndOffset),
 				)
@@ -190,8 +188,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 					"eventstream.worker.append-request.committed",
 					"event stream worker committed new events to the stream partition",
 					telemetry.Int("partition.next_offset", w.nextOffset),
-					telemetry.UUID("request.id", req.ID),
-					telemetry.Int("request.event_count", len(req.Events)),
+					telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 					telemetry.Int("response.begin_offset", res.BeginOffset),
 					telemetry.Int("response.end_offset", res.EndOffset),
 				)
@@ -210,7 +207,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 	// In the case of an error, ensure we always send a correctly correlated,
 	// but otherwise empty response.
 	if err != nil {
-		res = AppendEventsResponse{RequestID: req.ID}
+		res = AppendEventsResponse{FistEventMessageID: req.EventEnvelopes[0].MessageId}
 	}
 
 	select {
@@ -225,7 +222,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 // [AppendEventsRequest] to the stream partition.
 func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEventsResponse, bool, error) {
 	begin := w.nextOffset
-	end := begin + uint64(len(req.Events))
+	end := begin + uint64(len(req.EventEnvelopes))
 
 	if err := w.journal.Append(
 		ctx,
@@ -237,8 +234,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 				OffsetAfter:  end,
 			}).
 			WithAppendEventsOperation(&transaction.AppendEventsOperation{
-				RequestId: req.ID,
-				Events:    req.Events,
+				Events: req.EventEnvelopes,
 			}).
 			Build(),
 	); err != nil {
@@ -252,7 +248,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 	w.nextOffset = end
 
 	return AppendEventsResponse{
-		req.ID,
+		req.EventEnvelopes[0].MessageId,
 		true,
 		begin,
 		end,
@@ -309,19 +305,25 @@ func (w *worker) deduplicate(
 			_ journal.Position,
 			txn *transaction.Transaction,
 		) (*transaction.Transaction, bool, error) {
-			op := txn.GetAppendEventsOperation()
-
-			if !op.GetRequestId().Equal(req.ID) {
+			events := txn.GetAppendEventsOperation().GetEvents()
+			if len(events) == 0 {
 				return nil, false, nil
 			}
 
-			if len(op.Events) != len(req.Events) {
-				return nil, false, xerrors.Bug("AppendEventsRequest %s contains different number of events to prior request with the same ID", req.ID)
+			if !events[0].MessageId.Equal(req.EventEnvelopes[0].MessageId) {
+				return txn, false, nil
 			}
 
-			for idx, env := range op.Events {
-				if !env.MessageId.Equal(req.Events[idx].MessageId) {
-					return nil, false, xerrors.Bug("AppendEventsRequest %s contains different events to prior request with the same ID", req.ID)
+			if len(events) != len(req.EventEnvelopes) {
+				return nil, false, xerrors.Bug("AppendEventsRequest contains different number of events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
+			}
+
+			for idx := range events {
+				got := events[idx].MessageId
+				want := req.EventEnvelopes[idx].MessageId
+
+				if !got.Equal(want) {
+					return nil, false, xerrors.Bug("AppendEventsRequest contains different events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
 				}
 			}
 
@@ -334,7 +336,7 @@ func (w *worker) deduplicate(
 	}
 
 	return AppendEventsResponse{
-		req.ID,
+		req.EventEnvelopes[0].MessageId,
 		true,
 		txn.MetaData.OffsetBefore,
 		txn.MetaData.OffsetAfter,

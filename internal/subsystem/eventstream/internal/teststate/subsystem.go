@@ -52,15 +52,13 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 		select {
 		case <-s.Context.Done():
 			t.Fatalf(
-				"context cancelled while sending AppendEventsRequest %s to partition %s: %s",
+				"context cancelled while sending AppendEventsRequest to partition %s: %s",
 				req.PartitionID,
-				req.ID,
 				context.Cause(s.Context),
 			)
 		case s.AppendEventsRequests <- req:
 			t.Logf(
-				"sent AppendEventsRequest %s to partition %s",
-				req.ID,
+				"sent AppendEventsRequest to partition %s",
 				req.PartitionID,
 			)
 		}
@@ -68,8 +66,7 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 		select {
 		case <-s.Context.Done():
 			t.Fatalf(
-				"context cancelled while waiting for AppendEventsResponse for request %s: %s",
-				req.ID,
+				"context cancelled while waiting for AppendEventsResponse: %s",
 				context.Cause(s.Context),
 			)
 		case got, ok := <-response:
@@ -77,25 +74,24 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				t.Fatal("AppendEventsResponse channel was closed")
 			}
 
-			if got.RequestID == nil {
+			if got.FistEventMessageID == nil {
 				t.Fatal("AppendEventsResponse does not have a request ID")
 			}
 
-			if !got.RequestID.Equal(req.ID) {
-				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.RequestID, req.ID)
+			if !got.FistEventMessageID.Equal(req.EventEnvelopes[0].MessageId) {
+				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.FistEventMessageID, req.EventEnvelopes[0].MessageId)
 			}
 
 			if !got.Ok {
-				t.Logf("AppendEventsResponse indicates request %s was rejected, retrying", req.ID)
+				t.Log("AppendEventsResponse indicates request was rejected, retrying")
 				continue
 			}
 
-			t.Logf("received AppendEventsResponse for request %s", got.RequestID)
+			t.Log("received AppendEventsResponse")
 
 			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
 				t.Fatalf(
-					"AppendEventsResponse for request %s has unexpected offset range: got [%d, %d), want [%d, %d)",
-					req.ID,
+					"AppendEventsResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
 					got.BeginOffset,
 					got.EndOffset,
 					want.BeginOffset,

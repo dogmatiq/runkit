@@ -8,7 +8,6 @@ package transaction
 
 import (
 	envelopepb "github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	uuidpb "github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -104,11 +103,8 @@ func (*Transaction_AppendEventsOperation) isTransaction_Op() {}
 // AppendEventsOperation is an operation that appends events to the partition.
 type AppendEventsOperation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// RequestId is the unique identifier of the request that resulted in this
-	// operation.
-	RequestId *uuidpb.UUID `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// Events is the ordered list of envelopes containing the appended events.
-	Events        []*envelopepb.Envelope `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	Events        []*envelopepb.Envelope `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -141,13 +137,6 @@ func (x *AppendEventsOperation) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AppendEventsOperation.ProtoReflect.Descriptor instead.
 func (*AppendEventsOperation) Descriptor() ([]byte, []int) {
 	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *AppendEventsOperation) GetRequestId() *uuidpb.UUID {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
 }
 
 func (x *AppendEventsOperation) GetEvents() []*envelopepb.Envelope {
@@ -220,18 +209,16 @@ var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tran
 
 const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto\x12!runkit.eventstream.transaction.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\x1a8github.com/dogmatiq/enginekit/protobuf/uuidpb/uuid.proto\"\xb1\x02\n" +
+	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto\x12!runkit.eventstream.transaction.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\xb1\x02\n" +
 	"\vTransaction\x12T\n" +
 	"\tmeta_data\x18\x01 \x01(\v27.runkit.eventstream.transaction.v1.Transaction.MetaDataR\bmetaData\x12r\n" +
 	"\x17append_events_operation\x18\x02 \x01(\v28.runkit.eventstream.transaction.v1.AppendEventsOperationH\x00R\x15appendEventsOperation\x1aR\n" +
 	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
 	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfterB\x04\n" +
-	"\x02op\"~\n" +
-	"\x15AppendEventsOperation\x123\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\v2\x14.dogma.protobuf.UUIDR\trequestId\x120\n" +
-	"\x06events\x18\x02 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBPZNgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transactionb\x06proto3"
+	"\x02op\"I\n" +
+	"\x15AppendEventsOperation\x120\n" +
+	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBPZNgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transactionb\x06proto3"
 
 var (
 	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescOnce sync.Once
@@ -250,19 +237,17 @@ var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tran
 	(*Transaction)(nil),           // 0: runkit.eventstream.transaction.v1.Transaction
 	(*AppendEventsOperation)(nil), // 1: runkit.eventstream.transaction.v1.AppendEventsOperation
 	(*Transaction_MetaData)(nil),  // 2: runkit.eventstream.transaction.v1.Transaction.MetaData
-	(*uuidpb.UUID)(nil),           // 3: dogma.protobuf.UUID
-	(*envelopepb.Envelope)(nil),   // 4: dogma.protobuf.Envelope
+	(*envelopepb.Envelope)(nil),   // 3: dogma.protobuf.Envelope
 }
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_depIdxs = []int32{
 	2, // 0: runkit.eventstream.transaction.v1.Transaction.meta_data:type_name -> runkit.eventstream.transaction.v1.Transaction.MetaData
 	1, // 1: runkit.eventstream.transaction.v1.Transaction.append_events_operation:type_name -> runkit.eventstream.transaction.v1.AppendEventsOperation
-	3, // 2: runkit.eventstream.transaction.v1.AppendEventsOperation.request_id:type_name -> dogma.protobuf.UUID
-	4, // 3: runkit.eventstream.transaction.v1.AppendEventsOperation.events:type_name -> dogma.protobuf.Envelope
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	3, // 2: runkit.eventstream.transaction.v1.AppendEventsOperation.events:type_name -> dogma.protobuf.Envelope
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() {

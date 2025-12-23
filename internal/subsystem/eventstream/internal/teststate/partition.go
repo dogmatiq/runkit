@@ -61,7 +61,7 @@ func (p *Partition) FindOffset(messageID *uuidpb.UUID) (uint64, bool) {
 // present on this partition.
 func (p *Partition) FindAppendEventsRequest(messageID *uuidpb.UUID) (eventstream.AppendEventsRequest, bool) {
 	for _, req := range p.AppendEventsRequests {
-		for _, env := range req.Events {
+		for _, env := range req.EventEnvelopes {
 			if env.MessageId.Equal(messageID) {
 				return req, true
 			}
@@ -89,7 +89,7 @@ func (p *Partition) append(t *rapid.T, req eventstream.AppendEventsRequest, res 
 		)
 	}
 
-	for i, env := range req.Events {
+	for i, env := range req.EventEnvelopes {
 		t.Logf(
 			"appended %s to partition %s at offset %d",
 			env.MessageId,
@@ -98,9 +98,9 @@ func (p *Partition) append(t *rapid.T, req eventstream.AppendEventsRequest, res 
 		)
 	}
 
-	p.NextOffset += uint64(len(req.Events))
+	p.NextOffset += uint64(len(req.EventEnvelopes))
 	p.AppendEventsRequests = append(p.AppendEventsRequests, req)
-	p.Events = append(p.Events, req.Events...)
+	p.Events = append(p.Events, req.EventEnvelopes...)
 }
 
 func (p *Partition) String() string {

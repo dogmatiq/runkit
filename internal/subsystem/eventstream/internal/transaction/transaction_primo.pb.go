@@ -8,7 +8,6 @@ package transaction
 
 import (
 	envelopepb "github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	uuidpb "github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	proto "google.golang.org/protobuf/proto"
 )
 
@@ -126,7 +125,6 @@ func NewAppendEventsOperationBuilder() *AppendEventsOperationBuilder {
 // It performs a shallow copy of x, such that any changes made via the builder
 // do not modify x. It does not make a copy of the field values themselves.
 func (b *AppendEventsOperationBuilder) From(x *AppendEventsOperation) *AppendEventsOperationBuilder {
-	b.prototype.RequestId = x.RequestId
 	b.prototype.Events = x.Events
 	return b
 }
@@ -137,16 +135,8 @@ func (b *AppendEventsOperationBuilder) From(x *AppendEventsOperation) *AppendEve
 // not modify previously constructed messages.
 func (b *AppendEventsOperationBuilder) Build() *AppendEventsOperation {
 	return &AppendEventsOperation{
-		RequestId: b.prototype.RequestId,
-		Events:    b.prototype.Events,
+		Events: b.prototype.Events,
 	}
-}
-
-// WithRequestId configures the builder to set the RequestId field to v,
-// then returns b.
-func (b *AppendEventsOperationBuilder) WithRequestId(v *uuidpb.UUID) *AppendEventsOperationBuilder {
-	b.prototype.RequestId = v
-	return b
 }
 
 // WithEvents configures the builder to set the Events field to v,
@@ -291,11 +281,6 @@ func (x *Transaction_MetaData) SetOffsetBefore(v uint64) {
 // SetOffsetAfter sets the x.OffsetAfter field to v, then returns x.
 func (x *Transaction_MetaData) SetOffsetAfter(v uint64) {
 	x.OffsetAfter = v
-}
-
-// SetRequestId sets the x.RequestId field to v, then returns x.
-func (x *AppendEventsOperation) SetRequestId(v *uuidpb.UUID) {
-	x.RequestId = v
 }
 
 // SetEvents sets the x.Events field to v, then returns x.

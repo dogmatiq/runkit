@@ -9,16 +9,13 @@ import (
 // AppendEventsRequest is a request to append events to a specific partition of
 // the event stream.
 type AppendEventsRequest struct {
-	// ID is a unique identifier for this request.
-	ID *uuidpb.UUID
-
 	// PartitionID is the UUID of the partition to which the events are
 	// appended.
 	PartitionID *uuidpb.UUID
 
-	// Events is the set of events to append to the stream partition.
+	// EventEnvelopes is the set of events to append to the stream partition.
 	// If empty, no events are appended.
-	Events []*envelopepb.Envelope
+	EventEnvelopes []*envelopepb.Envelope
 
 	// LowestPossibleOffset is the lowest offset within the partition at which
 	// these events may have already been appended.
@@ -35,9 +32,9 @@ type AppendEventsRequest struct {
 // AppendEventsResponse is the successful result of an [AppendEventsRequest]
 // request.
 type AppendEventsResponse struct {
-	// RequestID is the unique identifier of the corresponding
-	// [AppendEventsRequest].
-	RequestID *uuidpb.UUID
+	// FistEventMessageID is the message ID of the first event in the
+	// corresponding [AppendEventsRequest].
+	FistEventMessageID *uuidpb.UUID
 
 	// Ok is true if the [AppendEventsRequest] was processed successfully.
 	Ok bool
@@ -55,16 +52,12 @@ type AppendEventsResponse struct {
 // validateAppendEventsRequest returns an error if the given request is
 // malformed. Any error indicates a bug within the engine.
 func validateAppendEventsRequest(req AppendEventsRequest) error {
-	if err := req.ID.Validate(); err != nil {
-		return xerrors.Bug("AppendEventsRequest.ID is invalid: %w", err)
-	}
-
 	if err := req.PartitionID.Validate(); err != nil {
 		return xerrors.Bug("AppendEventsRequest.PartitionID is invalid: %w", err)
 	}
 
-	if len(req.Events) == 0 {
-		return xerrors.Bug("AppendEventsRequest.Events is empty")
+	if len(req.EventEnvelopes) == 0 {
+		return xerrors.Bug("AppendEventsRequest.EventEnvelopes is empty")
 	}
 
 	if req.Response == nil {
