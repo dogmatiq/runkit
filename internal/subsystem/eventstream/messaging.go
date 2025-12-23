@@ -32,9 +32,9 @@ type AppendEventsRequest struct {
 // AppendEventsResponse is the successful result of an [AppendEventsRequest]
 // request.
 type AppendEventsResponse struct {
-	// FistEventMessageID is the message ID of the first event in the
+	// FirstEventMessageID is the message ID of the first event in the
 	// corresponding [AppendEventsRequest].
-	FistEventMessageID *uuidpb.UUID
+	FirstEventMessageID *uuidpb.UUID
 
 	// Ok is true if the [AppendEventsRequest] was processed successfully.
 	Ok bool

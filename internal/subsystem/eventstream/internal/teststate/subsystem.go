@@ -74,12 +74,12 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 				t.Fatal("AppendEventsResponse channel was closed")
 			}
 
-			if got.FistEventMessageID == nil {
+			if got.FirstEventMessageID == nil {
 				t.Fatal("AppendEventsResponse does not have a request ID")
 			}
 
-			if !got.FistEventMessageID.Equal(req.EventEnvelopes[0].MessageId) {
-				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.FistEventMessageID, req.EventEnvelopes[0].MessageId)
+			if !got.FirstEventMessageID.Equal(req.EventEnvelopes[0].MessageId) {
+				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.FirstEventMessageID, req.EventEnvelopes[0].MessageId)
 			}
 
 			if !got.Ok {

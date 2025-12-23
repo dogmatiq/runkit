@@ -207,7 +207,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 	// In the case of an error, ensure we always send a correctly correlated,
 	// but otherwise empty response.
 	if err != nil {
-		res = AppendEventsResponse{FistEventMessageID: req.EventEnvelopes[0].MessageId}
+		res = AppendEventsResponse{FirstEventMessageID: req.EventEnvelopes[0].MessageId}
 	}
 
 	select {
