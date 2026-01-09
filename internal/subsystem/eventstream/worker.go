@@ -23,8 +23,8 @@ type worker struct {
 	Journals    journal.BinaryStore
 	Telemetry   *telemetry.Recorder
 
-	Shutdown             <-chan struct{}
-	AppendEventsRequests chan AppendEventsRequest
+	Shutdown       <-chan struct{}
+	AppendRequests chan AppendRequest
 
 	journal    journal.Journal[*transaction.Transaction]
 	nextPos    journal.Position
@@ -36,13 +36,13 @@ func (w *worker) Run(ctx context.Context) error {
 
 	w.Telemetry.Info(
 		ctx,
-		"eventstream.worker.started",
+		"event-stream.worker.started",
 		"event stream worker started",
 	)
 	defer func() {
 		w.Telemetry.Info(
 			ctx,
-			"eventstream.worker.stopped",
+			"event-stream.worker.stopped",
 			"event stream worker stopped",
 			telemetry.Duration("worker.uptime", time.Since(startedAt)),
 		)
@@ -55,7 +55,7 @@ func (w *worker) Run(ctx context.Context) error {
 	}
 	defer w.journal.Close()
 
-	if err := w.load(ctx, "event stream worker loaded partition state from the journal"); err != nil {
+	if err := w.loadState(ctx, "event stream worker loaded partition state from the journal"); err != nil {
 		return err
 	}
 
@@ -67,12 +67,21 @@ func (w *worker) Run(ctx context.Context) error {
 	}
 }
 
-// load (re)loads the partition state from the journal.
-func (w *worker) load(ctx context.Context, message string) error {
-	pos, txn, ok, err := journal.LastRecord(
+// loadState (re)loads the partition state from the journal.
+func (w *worker) loadState(ctx context.Context, message string) error {
+	ctx, span := w.Telemetry.StartSpan(
 		ctx,
-		w.journal,
+		"event-stream.worker.load-state",
+		telemetry.Int("partition.next_offset.before", w.nextOffset),
 	)
+	defer func() {
+		span.SetAttributes(
+			telemetry.Int("partition.next_offset.after", w.nextOffset),
+		)
+		span.End()
+	}()
+
+	pos, txn, ok, err := journal.LastRecord(ctx, w.journal)
 	if err != nil {
 		return err
 	}
@@ -87,6 +96,12 @@ func (w *worker) load(ctx context.Context, message string) error {
 		w.nextPos = 0
 		w.nextOffset = 0
 	}
+
+	w.Telemetry.Info(
+		ctx,
+		"event-stream.worker.loaded-state",
+		message,
+	)
 
 	if w.nextPos < nextPosBefore {
 		return xerrors.Bug(
@@ -104,14 +119,6 @@ func (w *worker) load(ctx context.Context, message string) error {
 		)
 	}
 
-	w.Telemetry.Info(
-		ctx,
-		"eventstream.worker.loaded-state",
-		message,
-		telemetry.Int("partition.next_offset", w.nextOffset),
-		telemetry.Duration("worker.idle_timeout", idleTimeout),
-	)
-
 	return nil
 }
 
@@ -125,51 +132,57 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 	case <-w.Shutdown:
 		w.Telemetry.Info(
 			ctx,
-			"eventstream.worker.shutdown",
+			"event-stream.worker.shutdown",
 			"event stream worker received a request to shut down",
 		)
 		return false, nil
 	case <-idle.C:
 		w.Telemetry.Info(
 			ctx,
-			"eventstream.worker.timed-out",
+			"event-stream.worker.timed-out",
 			"event stream worker timed-out due to inactivity",
 			telemetry.Duration("worker.idle_timeout", idleTimeout),
 		)
 		return false, nil
-	case req := <-w.AppendEventsRequests:
-		return true, w.handleAppendEvents(ctx, req)
+	case req := <-w.AppendRequests:
+		return true, w.handleAppendRequest(ctx, req)
 	}
 }
 
-func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest) (err error) {
-	w.Telemetry.Info(
+func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) (err error) {
+	ctx, span := w.Telemetry.StartSpan(
 		ctx,
-		"eventstream.worker.append-request.received",
-		"event stream worker received a request to append events",
-		telemetry.Int("partition.next_offset", w.nextOffset),
+		"event-stream.worker.append-events",
+		telemetry.Int("partition.next_offset.before", w.nextOffset),
+		telemetry.UUID("request.first_event_message_id", req.EventEnvelopes[0].MessageId),
 		telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 		telemetry.Int("request.lowest_possible_offset", req.LowestPossibleOffset),
 	)
+	defer func() {
+		span.SetAttributes(
+			telemetry.Int("partition.next_offset.after", w.nextOffset),
+		)
+		span.End()
+	}()
 
-	do := func() (AppendEventsResponse, error) {
-		if err := validateAppendEventsRequest(req); err != nil {
-			return AppendEventsResponse{}, err
-		}
+	w.Telemetry.Info(
+		ctx,
+		"event-stream.worker.append-events-request.received",
+		"event stream worker received a request to append events",
+	)
 
+	do := func() (AppendResponse, error) {
 		for {
 			res, ok, err := w.deduplicate(ctx, req)
 			if err != nil {
-				return AppendEventsResponse{}, err
+				return AppendResponse{}, err
 			}
 
 			if ok {
 				w.Telemetry.Info(
 					ctx,
-					"eventstream.worker.append-request.deduplicated",
+					"event-stream.worker.append-events-request.deduplicated",
 					"event stream worker skipped append request that has already been processed",
-					telemetry.Int("partition.next_offset", w.nextOffset),
-					telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 					telemetry.Int("response.begin_offset", res.BeginOffset),
 					telemetry.Int("response.end_offset", res.EndOffset),
 				)
@@ -179,14 +192,14 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 
 			res, ok, err = w.commit(ctx, req)
 			if err != nil {
-				return AppendEventsResponse{}, err
+				return AppendResponse{}, err
 			}
 
 			if ok {
 				w.Telemetry.Info(
 					ctx,
-					"eventstream.worker.append-request.committed",
-					"event stream worker committed new events to the stream partition",
+					"event-stream.worker.append-events-request.committed",
+					"event stream worker appended new events to the partition",
 					telemetry.Int("partition.next_offset", w.nextOffset),
 					telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 					telemetry.Int("response.begin_offset", res.BeginOffset),
@@ -196,8 +209,8 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 				return res, nil
 			}
 
-			if err := w.load(ctx, "event stream worker reloaded partition state due to a journal conflict"); err != nil {
-				return AppendEventsResponse{}, err
+			if err := w.loadState(ctx, "event stream worker reloaded partition state due to a journal conflict"); err != nil {
+				return AppendResponse{}, err
 			}
 		}
 	}
@@ -207,7 +220,7 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 	// In the case of an error, ensure we always send a correctly correlated,
 	// but otherwise empty response.
 	if err != nil {
-		res = AppendEventsResponse{FirstEventMessageID: req.EventEnvelopes[0].MessageId}
+		res = AppendResponse{FirstEventMessageID: req.EventEnvelopes[0].MessageId}
 	}
 
 	select {
@@ -219,8 +232,8 @@ func (w *worker) handleAppendEvents(ctx context.Context, req AppendEventsRequest
 }
 
 // commit writes a transaction that appends the events in the given
-// [AppendEventsRequest] to the stream partition.
-func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEventsResponse, bool, error) {
+// [AppendRequest] to the stream partition.
+func (w *worker) commit(ctx context.Context, req AppendRequest) (AppendResponse, bool, error) {
 	begin := w.nextOffset
 	end := begin + uint64(len(req.EventEnvelopes))
 
@@ -233,7 +246,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 				OffsetBefore: begin,
 				OffsetAfter:  end,
 			}).
-			WithAppendEventsOperation(&transaction.AppendEventsOperation{
+			WithAppendOperation(&transaction.AppendOperation{
 				Events: req.EventEnvelopes,
 			}).
 			Build(),
@@ -241,13 +254,13 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 		if journal.IsConflict(err) {
 			err = nil
 		}
-		return AppendEventsResponse{}, false, err
+		return AppendResponse{}, false, err
 	}
 
 	w.nextPos++
 	w.nextOffset = end
 
-	return AppendEventsResponse{
+	return AppendResponse{
 		req.EventEnvelopes[0].MessageId,
 		true,
 		begin,
@@ -256,7 +269,7 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 }
 
 // deduplicate searches the journal to find an existing transaction that appends
-// the events from the given [AppendEventsRequest], if any.
+// the events from the given [AppendRequest], if any.
 //
 // TODO: This is a brute-force approach that searches the journal directly
 // (though relatively efficiently). We could improve upon this approach by
@@ -264,27 +277,27 @@ func (w *worker) commit(ctx context.Context, req AppendEventsRequest) (AppendEve
 // explicitly, or via a bloom filter, for example).
 func (w *worker) deduplicate(
 	ctx context.Context,
-	req AppendEventsRequest,
-) (AppendEventsResponse, bool, error) {
+	req AppendRequest,
+) (AppendResponse, bool, error) {
 	// Assuming the request is well-formed, if its "lowest possible offset" is
 	// greater than the next offset, we assume our knowledge of the parititon is
 	// stale and reload from the journal.
 	if req.LowestPossibleOffset > w.nextOffset {
-		if err := w.load(ctx, "event stream worker reloaded partition state, request's lowest possible offset suggested stale in-memory state"); err != nil {
-			return AppendEventsResponse{}, false, err
+		if err := w.loadState(ctx, "event stream worker reloaded partition state because the request's lowest possible offset implies stale in-memory state"); err != nil {
+			return AppendResponse{}, false, err
 		}
 
 		// If the deduplication hint is _still_ greater than the next offset,
 		// then the request is malformed.
 		if req.LowestPossibleOffset > w.nextOffset {
-			return AppendEventsResponse{}, false, xerrors.Bug("AppendEventsRequest.LowestPossibleOffset is beyond the partition's next offset")
+			return AppendResponse{}, false, xerrors.Bug("AppendRequest.LowestPossibleOffset is greater than the partition's next offset")
 		}
 	}
 
 	// The events can't be duplicates if the only place they could be is at the
 	// end of the partition.
 	if req.LowestPossibleOffset == w.nextOffset {
-		return AppendEventsResponse{}, false, nil
+		return AppendResponse{}, false, nil
 	}
 
 	// Find the prior [eventstreamjournal.Transaction] for this request.
@@ -305,7 +318,7 @@ func (w *worker) deduplicate(
 			_ journal.Position,
 			txn *transaction.Transaction,
 		) (*transaction.Transaction, bool, error) {
-			events := txn.GetAppendEventsOperation().GetEvents()
+			events := txn.GetAppendOperation().GetEvents()
 			if len(events) == 0 {
 				return nil, false, nil
 			}
@@ -315,7 +328,7 @@ func (w *worker) deduplicate(
 			}
 
 			if len(events) != len(req.EventEnvelopes) {
-				return nil, false, xerrors.Bug("AppendEventsRequest contains different number of events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
+				return nil, false, xerrors.Bug("AppendRequest contains different number of events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
 			}
 
 			for idx := range events {
@@ -323,7 +336,7 @@ func (w *worker) deduplicate(
 				want := req.EventEnvelopes[idx].MessageId
 
 				if !got.Equal(want) {
-					return nil, false, xerrors.Bug("AppendEventsRequest contains different events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
+					return nil, false, xerrors.Bug("AppendRequest contains different events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId)
 				}
 			}
 
@@ -332,10 +345,10 @@ func (w *worker) deduplicate(
 	)
 
 	if err != nil {
-		return AppendEventsResponse{}, false, journal.IgnoreNotFound(err)
+		return AppendResponse{}, false, journal.IgnoreNotFound(err)
 	}
 
-	return AppendEventsResponse{
+	return AppendResponse{
 		req.EventEnvelopes[0].MessageId,
 		true,
 		txn.MetaData.OffsetBefore,

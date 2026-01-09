@@ -23,9 +23,9 @@ type Subsystem struct {
 	// appended.
 	Partitions uuidpb.Map[*Partition]
 
-	// AppendEventsRequests is used to send [eventstream.AppendEventsRequest]
-	// requests to a supervisor.
-	AppendEventsRequests chan<- eventstream.AppendEventsRequest
+	// AppendRequests is used to send [eventstream.AppendRequest] requests to a
+	// supervisor.
+	AppendRequests chan<- eventstream.AppendRequest
 }
 
 // PartitionsGen returns a generator that yields existing partitions.
@@ -37,28 +37,28 @@ func (s *Subsystem) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
 	return xrapid.SampledFromSeq(s.Partitions.Values())
 }
 
-// SendAppendEventsRequest sends an [eventstream.AppendEventsRequest] request to
+// SendAppendRequest sends an [eventstream.AppendRequest] request to
 // the supervisor.
-func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEventsRequest, want eventstream.AppendEventsResponse) {
+func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest, want eventstream.AppendResponse) {
 	t.Helper()
 
 	if req.Response != nil {
 		panic("test misuse: do not set req.Response channel")
 	}
-	response := make(chan eventstream.AppendEventsResponse)
+	response := make(chan eventstream.AppendResponse)
 	req.Response = response
 
 	for {
 		select {
 		case <-s.Context.Done():
 			t.Fatalf(
-				"context cancelled while sending AppendEventsRequest to partition %s: %s",
+				"context cancelled while sending AppendRequest to partition %s: %s",
 				req.PartitionID,
 				context.Cause(s.Context),
 			)
-		case s.AppendEventsRequests <- req:
+		case s.AppendRequests <- req:
 			t.Logf(
-				"sent AppendEventsRequest to partition %s",
+				"sent AppendRequest to partition %s",
 				req.PartitionID,
 			)
 		}
@@ -66,32 +66,32 @@ func (s *Subsystem) SendAppendEventsRequest(t *rapid.T, req eventstream.AppendEv
 		select {
 		case <-s.Context.Done():
 			t.Fatalf(
-				"context cancelled while waiting for AppendEventsResponse: %s",
+				"context cancelled while waiting for AppendResponse: %s",
 				context.Cause(s.Context),
 			)
 		case got, ok := <-response:
 			if !ok {
-				t.Fatal("AppendEventsResponse channel was closed")
+				t.Fatal("AppendResponse channel was closed")
 			}
 
 			if got.FirstEventMessageID == nil {
-				t.Fatal("AppendEventsResponse does not have a request ID")
+				t.Fatal("AppendResponse does not have a request ID")
 			}
 
 			if !got.FirstEventMessageID.Equal(req.EventEnvelopes[0].MessageId) {
-				t.Fatalf("AppendEventsResponse has unexpected request ID: got %s, want %s", got.FirstEventMessageID, req.EventEnvelopes[0].MessageId)
+				t.Fatalf("AppendResponse has unexpected request ID: got %s, want %s", got.FirstEventMessageID, req.EventEnvelopes[0].MessageId)
 			}
 
 			if !got.Ok {
-				t.Log("AppendEventsResponse indicates request was rejected, retrying")
+				t.Log("AppendResponse indicates request was rejected, retrying")
 				continue
 			}
 
-			t.Log("received AppendEventsResponse")
+			t.Log("received AppendResponse")
 
 			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
 				t.Fatalf(
-					"AppendEventsResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
+					"AppendResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
 					got.BeginOffset,
 					got.EndOffset,
 					want.BeginOffset,

@@ -31,7 +31,7 @@ type Transaction struct {
 	//
 	// Types that are valid to be assigned to Op:
 	//
-	//	*Transaction_AppendEventsOperation
+	//	*Transaction_AppendOperation
 	Op            isTransaction_Op `protobuf_oneof:"op"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -81,10 +81,10 @@ func (x *Transaction) GetOp() isTransaction_Op {
 	return nil
 }
 
-func (x *Transaction) GetAppendEventsOperation() *AppendEventsOperation {
+func (x *Transaction) GetAppendOperation() *AppendOperation {
 	if x != nil {
-		if x, ok := x.Op.(*Transaction_AppendEventsOperation); ok {
-			return x.AppendEventsOperation
+		if x, ok := x.Op.(*Transaction_AppendOperation); ok {
+			return x.AppendOperation
 		}
 	}
 	return nil
@@ -94,14 +94,14 @@ type isTransaction_Op interface {
 	isTransaction_Op()
 }
 
-type Transaction_AppendEventsOperation struct {
-	AppendEventsOperation *AppendEventsOperation `protobuf:"bytes,2,opt,name=append_events_operation,json=appendEventsOperation,proto3,oneof"`
+type Transaction_AppendOperation struct {
+	AppendOperation *AppendOperation `protobuf:"bytes,2,opt,name=append_operation,json=appendOperation,proto3,oneof"`
 }
 
-func (*Transaction_AppendEventsOperation) isTransaction_Op() {}
+func (*Transaction_AppendOperation) isTransaction_Op() {}
 
-// AppendEventsOperation is an operation that appends events to the partition.
-type AppendEventsOperation struct {
+// AppendOperation is an operation that appends events to the partition.
+type AppendOperation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Events is the ordered list of envelopes containing the appended events.
 	Events        []*envelopepb.Envelope `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
@@ -109,20 +109,20 @@ type AppendEventsOperation struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AppendEventsOperation) Reset() {
-	*x = AppendEventsOperation{}
+func (x *AppendOperation) Reset() {
+	*x = AppendOperation{}
 	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AppendEventsOperation) String() string {
+func (x *AppendOperation) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AppendEventsOperation) ProtoMessage() {}
+func (*AppendOperation) ProtoMessage() {}
 
-func (x *AppendEventsOperation) ProtoReflect() protoreflect.Message {
+func (x *AppendOperation) ProtoReflect() protoreflect.Message {
 	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -134,12 +134,12 @@ func (x *AppendEventsOperation) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AppendEventsOperation.ProtoReflect.Descriptor instead.
-func (*AppendEventsOperation) Descriptor() ([]byte, []int) {
+// Deprecated: Use AppendOperation.ProtoReflect.Descriptor instead.
+func (*AppendOperation) Descriptor() ([]byte, []int) {
 	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *AppendEventsOperation) GetEvents() []*envelopepb.Envelope {
+func (x *AppendOperation) GetEvents() []*envelopepb.Envelope {
 	if x != nil {
 		return x.Events
 	}
@@ -209,15 +209,15 @@ var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tran
 
 const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto\x12!runkit.eventstream.transaction.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\xb1\x02\n" +
+	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto\x12!runkit.eventstream.transaction.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x9e\x02\n" +
 	"\vTransaction\x12T\n" +
-	"\tmeta_data\x18\x01 \x01(\v27.runkit.eventstream.transaction.v1.Transaction.MetaDataR\bmetaData\x12r\n" +
-	"\x17append_events_operation\x18\x02 \x01(\v28.runkit.eventstream.transaction.v1.AppendEventsOperationH\x00R\x15appendEventsOperation\x1aR\n" +
+	"\tmeta_data\x18\x01 \x01(\v27.runkit.eventstream.transaction.v1.Transaction.MetaDataR\bmetaData\x12_\n" +
+	"\x10append_operation\x18\x02 \x01(\v22.runkit.eventstream.transaction.v1.AppendOperationH\x00R\x0fappendOperation\x1aR\n" +
 	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
 	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfterB\x04\n" +
-	"\x02op\"I\n" +
-	"\x15AppendEventsOperation\x120\n" +
+	"\x02op\"C\n" +
+	"\x0fAppendOperation\x120\n" +
 	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBPZNgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transactionb\x06proto3"
 
 var (
@@ -234,15 +234,15 @@ func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tra
 
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_goTypes = []any{
-	(*Transaction)(nil),           // 0: runkit.eventstream.transaction.v1.Transaction
-	(*AppendEventsOperation)(nil), // 1: runkit.eventstream.transaction.v1.AppendEventsOperation
-	(*Transaction_MetaData)(nil),  // 2: runkit.eventstream.transaction.v1.Transaction.MetaData
-	(*envelopepb.Envelope)(nil),   // 3: dogma.protobuf.Envelope
+	(*Transaction)(nil),          // 0: runkit.eventstream.transaction.v1.Transaction
+	(*AppendOperation)(nil),      // 1: runkit.eventstream.transaction.v1.AppendOperation
+	(*Transaction_MetaData)(nil), // 2: runkit.eventstream.transaction.v1.Transaction.MetaData
+	(*envelopepb.Envelope)(nil),  // 3: dogma.protobuf.Envelope
 }
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_depIdxs = []int32{
 	2, // 0: runkit.eventstream.transaction.v1.Transaction.meta_data:type_name -> runkit.eventstream.transaction.v1.Transaction.MetaData
-	1, // 1: runkit.eventstream.transaction.v1.Transaction.append_events_operation:type_name -> runkit.eventstream.transaction.v1.AppendEventsOperation
-	3, // 2: runkit.eventstream.transaction.v1.AppendEventsOperation.events:type_name -> dogma.protobuf.Envelope
+	1, // 1: runkit.eventstream.transaction.v1.Transaction.append_operation:type_name -> runkit.eventstream.transaction.v1.AppendOperation
+	3, // 2: runkit.eventstream.transaction.v1.AppendOperation.events:type_name -> dogma.protobuf.Envelope
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
@@ -258,7 +258,7 @@ func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tra
 		return
 	}
 	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[0].OneofWrappers = []any{
-		(*Transaction_AppendEventsOperation)(nil),
+		(*Transaction_AppendOperation)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

@@ -9,10 +9,10 @@ import (
 
 // Partition represents the state of a single partition of the event stream.
 type Partition struct {
-	ID                   *uuidpb.UUID
-	NextOffset           uint64
-	AppendEventsRequests []eventstream.AppendEventsRequest
-	Events               []*envelopepb.Envelope
+	ID             *uuidpb.UUID
+	NextOffset     uint64
+	AppendRequests []eventstream.AppendRequest
+	Events         []*envelopepb.Envelope
 }
 
 // EventsGen returns a generator that produces events from this partition.
@@ -34,14 +34,14 @@ func (p *Partition) OffsetsGen(t *rapid.T) *rapid.Generator[uint64] {
 	return rapid.Uint64Range(0, p.NextOffset-1)
 }
 
-// AppendEventsRequestsGen returns a generator that produces prior successful
-// [eventstream.AppendEventsRequest] that target this partition.
-func (p *Partition) AppendEventsRequestsGen(t *rapid.T) *rapid.Generator[eventstream.AppendEventsRequest] {
-	if len(p.AppendEventsRequests) == 0 {
+// AppendRequestsGen returns a generator that produces prior successful
+// [eventstream.AppendRequest] that target this partition.
+func (p *Partition) AppendRequestsGen(t *rapid.T) *rapid.Generator[eventstream.AppendRequest] {
+	if len(p.AppendRequests) == 0 {
 		t.Skip("stream partition is empty")
 	}
 
-	return rapid.SampledFrom(p.AppendEventsRequests)
+	return rapid.SampledFrom(p.AppendRequests)
 }
 
 // FindOffset returns the offset of the event with the given message ID,
@@ -56,11 +56,11 @@ func (p *Partition) FindOffset(messageID *uuidpb.UUID) (uint64, bool) {
 	return 0, false
 }
 
-// FindAppendEventsRequest returns the [eventstream.AppendEventsRequest] that
-// contains the event with the given message ID, or false if the event is not
-// present on this partition.
-func (p *Partition) FindAppendEventsRequest(messageID *uuidpb.UUID) (eventstream.AppendEventsRequest, bool) {
-	for _, req := range p.AppendEventsRequests {
+// FindAppendRequest returns the [eventstream.AppendRequest] that contains the
+// event with the given message ID, or false if the event is not present on this
+// partition.
+func (p *Partition) FindAppendRequest(messageID *uuidpb.UUID) (eventstream.AppendRequest, bool) {
+	for _, req := range p.AppendRequests {
 		for _, env := range req.EventEnvelopes {
 			if env.MessageId.Equal(messageID) {
 				return req, true
@@ -68,12 +68,12 @@ func (p *Partition) FindAppendEventsRequest(messageID *uuidpb.UUID) (eventstream
 		}
 	}
 
-	return eventstream.AppendEventsRequest{}, false
+	return eventstream.AppendRequest{}, false
 }
 
 // append updates the partition's state to reflect the occurrence of the events
 // described by the given request/response exchange.
-func (p *Partition) append(t *rapid.T, req eventstream.AppendEventsRequest, res eventstream.AppendEventsResponse) {
+func (p *Partition) append(t *rapid.T, req eventstream.AppendRequest, res eventstream.AppendResponse) {
 	if res.BeginOffset < p.NextOffset {
 		// This is a response to a retried request.
 		// We assume at this point that it's already been validated as expected.
@@ -99,7 +99,7 @@ func (p *Partition) append(t *rapid.T, req eventstream.AppendEventsRequest, res 
 	}
 
 	p.NextOffset += uint64(len(req.EventEnvelopes))
-	p.AppendEventsRequests = append(p.AppendEventsRequests, req)
+	p.AppendRequests = append(p.AppendRequests, req)
 	p.Events = append(p.Events, req.EventEnvelopes...)
 }
 

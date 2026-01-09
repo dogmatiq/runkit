@@ -24,11 +24,11 @@ message Transaction {
   MetaData meta_data = 1;
 
   // Op is the operation being performed.
-  oneof op { AppendEventsOperation append_events_operation = 2; }
+  oneof op { AppendOperation append_operation = 2; }
 }
 
-// AppendEventsOperation is an operation that appends events to the partition.
-message AppendEventsOperation {
+// AppendOperation is an operation that appends events to the partition.
+message AppendOperation {
   // Events is the ordered list of envelopes containing the appended events.
   repeated dogma.protobuf.Envelope events = 1;
 }

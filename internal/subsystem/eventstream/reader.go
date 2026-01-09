@@ -49,7 +49,7 @@ func NewReader(
 			return nil, err
 		}
 
-		r.events = txn.GetAppendEventsOperation().Events[offset-txn.MetaData.OffsetBefore:]
+		r.events = txn.GetAppendOperation().Events[offset-txn.MetaData.OffsetBefore:]
 		r.pos = pos + 1
 	}
 
@@ -84,7 +84,7 @@ func (r *Reader) Read(ctx context.Context) (
 
 		transaction.MustSwitch_Transaction_Op(
 			txn,
-			func(op *transaction.AppendEventsOperation) {
+			func(op *transaction.AppendOperation) {
 				r.events = op.Events
 			},
 		)

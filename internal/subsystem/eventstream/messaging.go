@@ -6,9 +6,9 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
-// AppendEventsRequest is a request to append events to a specific partition of
-// the application's event stream.
-type AppendEventsRequest struct {
+// AppendRequest is a request to append events to a specific partition of the
+// application's event stream.
+type AppendRequest struct {
 	// PartitionID is the UUID of the event stream partition to which the events
 	// are appended.
 	PartitionID *uuidpb.UUID
@@ -24,15 +24,15 @@ type AppendEventsRequest struct {
 	// events.
 	LowestPossibleOffset uint64
 
-	// Response is the channel to which the corresponding [AppendEventsResponse]
+	// Response is the channel to which the corresponding [AppendResponse]
 	// is sent.
-	Response chan<- AppendEventsResponse
+	Response chan<- AppendResponse
 }
 
-// AppendEventsResponse is the result of an [AppendEventsRequest].
-type AppendEventsResponse struct {
+// AppendResponse is the result of an [AppendRequest].
+type AppendResponse struct {
 	// FirstEventMessageID is the message ID of the first event in the
-	// corresponding [AppendEventsRequest].
+	// corresponding [AppendRequest].
 	FirstEventMessageID *uuidpb.UUID
 
 	// Ok is true if the events were appended successfully.
@@ -48,19 +48,19 @@ type AppendEventsResponse struct {
 	BeginOffset, EndOffset uint64
 }
 
-// validateAppendEventsRequest returns an error if the given request is
-// malformed. Any error indicates a bug within the engine.
-func validateAppendEventsRequest(req AppendEventsRequest) error {
+// validateAppendRequest returns an error if the given request is malformed. Any
+// error indicates a bug within the engine.
+func validateAppendRequest(req AppendRequest) error {
 	if err := req.PartitionID.Validate(); err != nil {
-		return xerrors.Bug("AppendEventsRequest.PartitionID is invalid: %w", err)
+		return xerrors.Bug("AppendRequest.PartitionID is invalid: %w", err)
 	}
 
 	if len(req.EventEnvelopes) == 0 {
-		return xerrors.Bug("AppendEventsRequest.EventEnvelopes is empty")
+		return xerrors.Bug("AppendRequest.EventEnvelopes is empty")
 	}
 
 	if req.Response == nil {
-		return xerrors.Bug("AppendEventsRequest.Response is nil")
+		return xerrors.Bug("AppendRequest.Response is nil")
 	}
 
 	return nil

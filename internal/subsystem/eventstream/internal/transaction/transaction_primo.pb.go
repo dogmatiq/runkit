@@ -11,11 +11,11 @@ import (
 	proto "google.golang.org/protobuf/proto"
 )
 
-// TryGetAppendEventsOperation returns x.Op.AppendEventsOperation if x.Op is a [Transaction_AppendEventsOperation].
+// TryGetAppendOperation returns x.Op.AppendOperation if x.Op is a [Transaction_AppendOperation].
 // Otherwise, ok is false and v is the zero-value.
-func (x *Transaction) TryGetAppendEventsOperation() (v *AppendEventsOperation, ok bool) {
-	if x, ok := x.GetOp().(*Transaction_AppendEventsOperation); ok {
-		return x.AppendEventsOperation, true
+func (x *Transaction) TryGetAppendOperation() (v *AppendOperation, ok bool) {
+	if x, ok := x.GetOp().(*Transaction_AppendOperation); ok {
+		return x.AppendOperation, true
 	}
 	return v, false
 }
@@ -58,10 +58,10 @@ func (b *TransactionBuilder) WithMetaData(v *Transaction_MetaData) *TransactionB
 	return b
 }
 
-// WithAppendEventsOperation configures the builder to set the Op field to a
-// [Transaction_AppendEventsOperation] value containing v, then returns b
-func (b *TransactionBuilder) WithAppendEventsOperation(v *AppendEventsOperation) *TransactionBuilder {
-	b.prototype.Op = &Transaction_AppendEventsOperation{AppendEventsOperation: v}
+// WithAppendOperation configures the builder to set the Op field to a
+// [Transaction_AppendOperation] value containing v, then returns b
+func (b *TransactionBuilder) WithAppendOperation(v *AppendOperation) *TransactionBuilder {
+	b.prototype.Op = &Transaction_AppendOperation{AppendOperation: v}
 	return b
 }
 
@@ -110,13 +110,13 @@ func (b *Transaction_MetaDataBuilder) WithOffsetAfter(v uint64) *Transaction_Met
 	return b
 }
 
-type AppendEventsOperationBuilder struct {
-	prototype AppendEventsOperation
+type AppendOperationBuilder struct {
+	prototype AppendOperation
 }
 
-// NewAppendEventsOperationBuilder returns a builder that constructs [AppendEventsOperation] messages.
-func NewAppendEventsOperationBuilder() *AppendEventsOperationBuilder {
-	return &AppendEventsOperationBuilder{}
+// NewAppendOperationBuilder returns a builder that constructs [AppendOperation] messages.
+func NewAppendOperationBuilder() *AppendOperationBuilder {
+	return &AppendOperationBuilder{}
 }
 
 // From configures the builder to use x as the prototype for new messages,
@@ -124,24 +124,24 @@ func NewAppendEventsOperationBuilder() *AppendEventsOperationBuilder {
 //
 // It performs a shallow copy of x, such that any changes made via the builder
 // do not modify x. It does not make a copy of the field values themselves.
-func (b *AppendEventsOperationBuilder) From(x *AppendEventsOperation) *AppendEventsOperationBuilder {
+func (b *AppendOperationBuilder) From(x *AppendOperation) *AppendOperationBuilder {
 	b.prototype.Events = x.Events
 	return b
 }
 
-// Build returns a new [AppendEventsOperation] containing the values configured via the builder.
+// Build returns a new [AppendOperation] containing the values configured via the builder.
 //
 // Each call returns a new message, such that future changes to the builder do
 // not modify previously constructed messages.
-func (b *AppendEventsOperationBuilder) Build() *AppendEventsOperation {
-	return &AppendEventsOperation{
+func (b *AppendOperationBuilder) Build() *AppendOperation {
+	return &AppendOperation{
 		Events: b.prototype.Events,
 	}
 }
 
 // WithEvents configures the builder to set the Events field to v,
 // then returns b.
-func (b *AppendEventsOperationBuilder) WithEvents(v []*envelopepb.Envelope) *AppendEventsOperationBuilder {
+func (b *AppendOperationBuilder) WithEvents(v []*envelopepb.Envelope) *AppendOperationBuilder {
 	b.prototype.Events = v
 	return b
 }
@@ -152,11 +152,11 @@ func (b *AppendEventsOperationBuilder) WithEvents(v []*envelopepb.Envelope) *App
 // It panics if x.Op is nil.
 func MustSwitch_Transaction_Op(
 	x *Transaction,
-	caseAppendEventsOperation func(*AppendEventsOperation),
+	caseAppendOperation func(*AppendOperation),
 ) {
 	switch v := x.GetOp().(type) {
-	case *Transaction_AppendEventsOperation:
-		caseAppendEventsOperation(v.AppendEventsOperation)
+	case *Transaction_AppendOperation:
+		caseAppendOperation(v.AppendOperation)
 	default:
 		panic("MustSwitch_Transaction_Op: x.Op is nil")
 	}
@@ -168,12 +168,12 @@ func MustSwitch_Transaction_Op(
 // It calls none() if x.Op is nil.
 func Switch_Transaction_Op(
 	x *Transaction,
-	caseAppendEventsOperation func(*AppendEventsOperation),
+	caseAppendOperation func(*AppendOperation),
 	none func(),
 ) {
 	switch v := x.GetOp().(type) {
-	case *Transaction_AppendEventsOperation:
-		caseAppendEventsOperation(v.AppendEventsOperation)
+	case *Transaction_AppendOperation:
+		caseAppendOperation(v.AppendOperation)
 	default:
 		none()
 	}
@@ -186,11 +186,11 @@ func Switch_Transaction_Op(
 // and returns that function's result. It panics if x.Op is nil.
 func MustMap_Transaction_Op[T any](
 	x *Transaction,
-	caseAppendEventsOperation func(*AppendEventsOperation) T,
+	caseAppendOperation func(*AppendOperation) T,
 ) T {
 	switch v := x.GetOp().(type) {
-	case *Transaction_AppendEventsOperation:
-		return caseAppendEventsOperation(v.AppendEventsOperation)
+	case *Transaction_AppendOperation:
+		return caseAppendOperation(v.AppendOperation)
 	default:
 		panic("MustMap_Transaction_Op: x.Op is nil")
 	}
@@ -203,12 +203,12 @@ func MustMap_Transaction_Op[T any](
 // and returns that function's result. It calls none() if x.Op is nil.
 func Map_Transaction_Op[T any](
 	x *Transaction,
-	caseAppendEventsOperation func(*AppendEventsOperation) T,
+	caseAppendOperation func(*AppendOperation) T,
 	none func() T,
 ) T {
 	switch v := x.GetOp().(type) {
-	case *Transaction_AppendEventsOperation:
-		return caseAppendEventsOperation(v.AppendEventsOperation)
+	case *Transaction_AppendOperation:
+		return caseAppendOperation(v.AppendOperation)
 	default:
 		return none()
 	}
@@ -249,16 +249,16 @@ func (x *Transaction_MetaData) UnmarshalBinary(data []byte) error {
 // MarshalBinary returns the binary representation of the message, equivalent to
 // calling proto.Marshal(x).
 //
-// It allows [*AppendEventsOperation] to implement [encoding.BinaryMarshaler].
-func (x *AppendEventsOperation) MarshalBinary() ([]byte, error) {
+// It allows [*AppendOperation] to implement [encoding.BinaryMarshaler].
+func (x *AppendOperation) MarshalBinary() ([]byte, error) {
 	return proto.Marshal(x)
 }
 
 // UnmarshalBinary populates x from its binary representation, equivalent to
 // calling proto.Unmarshal(data, x).
 //
-// It allows [*AppendEventsOperation] to implement [encoding.BinaryUnmarshaler].
-func (x *AppendEventsOperation) UnmarshalBinary(data []byte) error {
+// It allows [*AppendOperation] to implement [encoding.BinaryUnmarshaler].
+func (x *AppendOperation) UnmarshalBinary(data []byte) error {
 	return proto.Unmarshal(data, x)
 }
 
@@ -267,10 +267,10 @@ func (x *Transaction) SetMetaData(v *Transaction_MetaData) {
 	x.MetaData = v
 }
 
-// SetAppendEventsOperation sets the x.Op field to a [Transaction_AppendEventsOperation] value containing v,
+// SetAppendOperation sets the x.Op field to a [Transaction_AppendOperation] value containing v,
 // then returns x.
-func (x *Transaction) SetAppendEventsOperation(v *AppendEventsOperation) {
-	x.Op = &Transaction_AppendEventsOperation{AppendEventsOperation: v}
+func (x *Transaction) SetAppendOperation(v *AppendOperation) {
+	x.Op = &Transaction_AppendOperation{AppendOperation: v}
 }
 
 // SetOffsetBefore sets the x.OffsetBefore field to v, then returns x.
@@ -284,6 +284,6 @@ func (x *Transaction_MetaData) SetOffsetAfter(v uint64) {
 }
 
 // SetEvents sets the x.Events field to v, then returns x.
-func (x *AppendEventsOperation) SetEvents(v []*envelopepb.Envelope) {
+func (x *AppendOperation) SetEvents(v []*envelopepb.Envelope) {
 	x.Events = v
 }

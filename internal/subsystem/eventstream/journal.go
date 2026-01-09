@@ -29,9 +29,8 @@ func openJournal(
 var transactionMarshaler = marshaler.NewProto[*transaction.Transaction]()
 
 // searchForOffset returns a comparison function that searches for the
-// [transaction.Transaction] that contains the
-// [transaction.AppendEventsOperation] that appends the event at the given
-// offset.
+// [transaction.Transaction] that contains the [transaction.AppendOperation]
+// that appends the event at the given offset.
 func searchForOffset(offset uint64) journal.CompareFunc[*transaction.Transaction] {
 	return func(
 		_ context.Context,

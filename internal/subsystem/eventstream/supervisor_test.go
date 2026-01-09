@@ -19,7 +19,7 @@ import (
 
 func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		requests := make(chan AppendEventsRequest)
+		requests := make(chan AppendRequest)
 
 		// Create a context under which we execute the supervisors.
 		//
@@ -28,8 +28,8 @@ func TestSupervisor(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 
 		subsystem := &teststate.Subsystem{
-			Context:              ctx,
-			AppendEventsRequests: requests,
+			Context:        ctx,
+			AppendRequests: requests,
 		}
 
 		var (
@@ -61,14 +61,13 @@ func TestSupervisor(t *testing.T) {
 
 		for idx := range 3 {
 			supervisors.Go(func() {
-
 				sup := &Supervisor{
-					ID:                   uuidpb.Generate(),
-					Journals:             journals,
-					BufferSize:           2, // small buffer size to increase chance of contention
-					Shutdown:             shutdown,
-					AppendEventsRequests: requests,
-					Telemetry:            telem,
+					ID:             uuidpb.Generate(),
+					Journals:       journals,
+					BufferSize:     2, // small buffer size to increase chance of contention
+					Shutdown:       shutdown,
+					AppendRequests: requests,
+					Telemetry:      telem,
 				}
 
 				if err := sup.Run(ctx); err != nil {
@@ -123,7 +122,7 @@ func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
 }
 
 func (s *state) AppendEventsToNewStream(t *rapid.T) {
-	req := AppendEventsRequest{
+	req := AppendRequest{
 		PartitionID: uuidpb.Generate(),
 	}
 
@@ -134,7 +133,7 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		BeginOffset: 0,
 		EndOffset:   uint64(len(req.EventEnvelopes)),
 	})
@@ -143,7 +142,7 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
 
-	req := AppendEventsRequest{
+	req := AppendRequest{
 		PartitionID:          part.ID,
 		LowestPossibleOffset: rapid.Uint64Range(0, part.NextOffset).Draw(t, "deduplication hint"),
 	}
@@ -155,7 +154,7 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		BeginOffset: part.NextOffset,
 		EndOffset:   part.NextOffset + uint64(len(req.EventEnvelopes)),
 	})
@@ -163,19 +162,19 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 
 func (s *state) ReappendPriorEvents(t *rapid.T) {
 	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
-	prior := part.AppendEventsRequestsGen(t).Draw(t, "prior request")
+	prior := part.AppendRequestsGen(t).Draw(t, "prior request")
 	offset, ok := part.FindOffset(prior.EventEnvelopes[0].MessageId)
 	if !ok {
 		t.Fatalf("unable to find offset of existing event in partition %q", part)
 	}
 
-	req := AppendEventsRequest{
+	req := AppendRequest{
 		PartitionID:          prior.PartitionID,
 		EventEnvelopes:       prior.EventEnvelopes,
 		LowestPossibleOffset: rapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
 
-	s.subsystem.SendAppendEventsRequest(t, req, AppendEventsResponse{
+	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		BeginOffset: offset,
 		EndOffset:   offset + uint64(len(prior.EventEnvelopes)),
 	})
