@@ -122,6 +122,7 @@ func (w *worker) loadState(ctx context.Context, message string) error {
 	return nil
 }
 
+// tick waits for the next work item to arrive and processes it.
 func (w *worker) tick(ctx context.Context) (bool, error) {
 	idle := time.NewTimer(idleTimeout)
 	defer idle.Stop()
@@ -149,10 +150,11 @@ func (w *worker) tick(ctx context.Context) (bool, error) {
 	}
 }
 
-func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) (err error) {
+// handleAppendRequest processes the given [AppendRequest].
+func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) error {
 	ctx, span := w.Telemetry.StartSpan(
 		ctx,
-		"event-stream.worker.append-events",
+		"event-stream.worker.append",
 		telemetry.Int("partition.next_offset.before", w.nextOffset),
 		telemetry.UUID("request.first_event_message_id", req.EventEnvelopes[0].MessageId),
 		telemetry.Int("request.event_count", len(req.EventEnvelopes)),
@@ -167,7 +169,7 @@ func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) (er
 
 	w.Telemetry.Info(
 		ctx,
-		"event-stream.worker.append-events-request.received",
+		"event-stream.worker.append-request.received",
 		"event stream worker received a request to append events",
 	)
 
@@ -181,7 +183,7 @@ func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) (er
 			if ok {
 				w.Telemetry.Info(
 					ctx,
-					"event-stream.worker.append-events-request.deduplicated",
+					"event-stream.worker.append-request.deduplicated",
 					"event stream worker skipped append request that has already been processed",
 					telemetry.Int("response.begin_offset", res.BeginOffset),
 					telemetry.Int("response.end_offset", res.EndOffset),
@@ -198,7 +200,7 @@ func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) (er
 			if ok {
 				w.Telemetry.Info(
 					ctx,
-					"event-stream.worker.append-events-request.committed",
+					"event-stream.worker.append-request.committed",
 					"event stream worker appended new events to the partition",
 					telemetry.Int("partition.next_offset", w.nextOffset),
 					telemetry.Int("request.event_count", len(req.EventEnvelopes)),

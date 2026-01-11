@@ -59,6 +59,12 @@ func validateAppendRequest(req AppendRequest) error {
 		return xerrors.Bug("AppendRequest.EventEnvelopes is empty")
 	}
 
+	for i, env := range req.EventEnvelopes {
+		if err := env.Validate(); err != nil {
+			return xerrors.Bug("AppendRequest.EventEnvelopes[%d] is invalid: %w", i, err)
+		}
+	}
+
 	if req.Response == nil {
 		return xerrors.Bug("AppendRequest.Response is nil")
 	}

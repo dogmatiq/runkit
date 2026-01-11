@@ -112,11 +112,11 @@ func (s *Supervisor) tick(ctx context.Context) (bool, error) {
 	case x := <-s.workerStopped:
 		return true, s.handleWorkerStopped(ctx, x)
 	case req := <-s.AppendRequests:
-		return true, s.handleRequest(ctx, req)
+		return true, s.handleAppendRequest(ctx, req)
 	}
 }
 
-func (s *Supervisor) handleRequest(ctx context.Context, req AppendRequest) error {
+func (s *Supervisor) handleAppendRequest(ctx context.Context, req AppendRequest) error {
 	if err := validateAppendRequest(req); err != nil {
 		return err
 	}
