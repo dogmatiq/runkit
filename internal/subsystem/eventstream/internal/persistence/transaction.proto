@@ -1,5 +1,5 @@
 syntax = "proto3";
-package runkit.persistence.eventstream.v1;
+package runkit.eventstream.persistence.v1;
 
 option go_package = "github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence";
 

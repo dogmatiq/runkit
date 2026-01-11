@@ -49,7 +49,7 @@ func (w *worker) Run(ctx context.Context) error {
 	}()
 
 	var err error
-	w.journal, err = openJournal(ctx, w.Journals, w.PartitionID)
+	w.journal, err = persistence.OpenJournal(ctx, w.Journals, w.PartitionID)
 	if err != nil {
 		return err
 	}
