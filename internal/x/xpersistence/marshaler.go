@@ -1,4 +1,4 @@
-package persistence
+package xpersistence
 
 import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"

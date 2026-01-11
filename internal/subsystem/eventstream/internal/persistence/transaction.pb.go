@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.1
-// source: github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto
+// source: github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence/transaction.proto
 
-package transaction
+package persistence
 
 import (
 	envelopepb "github.com/dogmatiq/enginekit/protobuf/envelopepb"
@@ -39,7 +39,7 @@ type Transaction struct {
 
 func (x *Transaction) Reset() {
 	*x = Transaction{}
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[0]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -51,7 +51,7 @@ func (x *Transaction) String() string {
 func (*Transaction) ProtoMessage() {}
 
 func (x *Transaction) ProtoReflect() protoreflect.Message {
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[0]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -64,7 +64,7 @@ func (x *Transaction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Transaction.ProtoReflect.Descriptor instead.
 func (*Transaction) Descriptor() ([]byte, []int) {
-	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP(), []int{0}
+	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Transaction) GetMetaData() *Transaction_MetaData {
@@ -111,7 +111,7 @@ type AppendOperation struct {
 
 func (x *AppendOperation) Reset() {
 	*x = AppendOperation{}
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[1]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -123,7 +123,7 @@ func (x *AppendOperation) String() string {
 func (*AppendOperation) ProtoMessage() {}
 
 func (x *AppendOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[1]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -136,7 +136,7 @@ func (x *AppendOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppendOperation.ProtoReflect.Descriptor instead.
 func (*AppendOperation) Descriptor() ([]byte, []int) {
-	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP(), []int{1}
+	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *AppendOperation) GetEvents() []*envelopepb.Envelope {
@@ -163,7 +163,7 @@ type Transaction_MetaData struct {
 
 func (x *Transaction_MetaData) Reset() {
 	*x = Transaction_MetaData{}
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[2]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -175,7 +175,7 @@ func (x *Transaction_MetaData) String() string {
 func (*Transaction_MetaData) ProtoMessage() {}
 
 func (x *Transaction_MetaData) ProtoReflect() protoreflect.Message {
-	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[2]
+	mi := &file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -188,7 +188,7 @@ func (x *Transaction_MetaData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Transaction_MetaData.ProtoReflect.Descriptor instead.
 func (*Transaction_MetaData) Descriptor() ([]byte, []int) {
-	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP(), []int{0, 0}
+	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescGZIP(), []int{0, 0}
 }
 
 func (x *Transaction_MetaData) GetOffsetBefore() uint64 {
@@ -205,44 +205,44 @@ func (x *Transaction_MetaData) GetOffsetAfter() uint64 {
 	return 0
 }
 
-var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto protoreflect.FileDescriptor
+var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto protoreflect.FileDescriptor
 
-const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc = "" +
+const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto\x12!runkit.eventstream.transaction.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x9e\x02\n" +
+	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence/transaction.proto\x12!runkit.persistence.eventstream.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x9e\x02\n" +
 	"\vTransaction\x12T\n" +
-	"\tmeta_data\x18\x01 \x01(\v27.runkit.eventstream.transaction.v1.Transaction.MetaDataR\bmetaData\x12_\n" +
-	"\x10append_operation\x18\x02 \x01(\v22.runkit.eventstream.transaction.v1.AppendOperationH\x00R\x0fappendOperation\x1aR\n" +
+	"\tmeta_data\x18\x01 \x01(\v27.runkit.persistence.eventstream.v1.Transaction.MetaDataR\bmetaData\x12_\n" +
+	"\x10append_operation\x18\x02 \x01(\v22.runkit.persistence.eventstream.v1.AppendOperationH\x00R\x0fappendOperation\x1aR\n" +
 	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
 	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfterB\x04\n" +
 	"\x02op\"C\n" +
 	"\x0fAppendOperation\x120\n" +
-	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBPZNgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transactionb\x06proto3"
+	"\x06events\x18\x01 \x03(\v2\x18.dogma.protobuf.EnvelopeR\x06eventsBPZNgithub.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistenceb\x06proto3"
 
 var (
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescOnce sync.Once
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescData []byte
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescOnce sync.Once
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescData []byte
 )
 
-func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescGZIP() []byte {
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescOnce.Do(func() {
-		file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc), len(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc)))
+func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescGZIP() []byte {
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescOnce.Do(func() {
+		file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc), len(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc)))
 	})
-	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDescData
+	return file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDescData
 }
 
-var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_goTypes = []any{
-	(*Transaction)(nil),          // 0: runkit.eventstream.transaction.v1.Transaction
-	(*AppendOperation)(nil),      // 1: runkit.eventstream.transaction.v1.AppendOperation
-	(*Transaction_MetaData)(nil), // 2: runkit.eventstream.transaction.v1.Transaction.MetaData
+var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_goTypes = []any{
+	(*Transaction)(nil),          // 0: runkit.persistence.eventstream.v1.Transaction
+	(*AppendOperation)(nil),      // 1: runkit.persistence.eventstream.v1.AppendOperation
+	(*Transaction_MetaData)(nil), // 2: runkit.persistence.eventstream.v1.Transaction.MetaData
 	(*envelopepb.Envelope)(nil),  // 3: dogma.protobuf.Envelope
 }
-var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_depIdxs = []int32{
-	2, // 0: runkit.eventstream.transaction.v1.Transaction.meta_data:type_name -> runkit.eventstream.transaction.v1.Transaction.MetaData
-	1, // 1: runkit.eventstream.transaction.v1.Transaction.append_operation:type_name -> runkit.eventstream.transaction.v1.AppendOperation
-	3, // 2: runkit.eventstream.transaction.v1.AppendOperation.events:type_name -> dogma.protobuf.Envelope
+var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_depIdxs = []int32{
+	2, // 0: runkit.persistence.eventstream.v1.Transaction.meta_data:type_name -> runkit.persistence.eventstream.v1.Transaction.MetaData
+	1, // 1: runkit.persistence.eventstream.v1.Transaction.append_operation:type_name -> runkit.persistence.eventstream.v1.AppendOperation
+	3, // 2: runkit.persistence.eventstream.v1.AppendOperation.events:type_name -> dogma.protobuf.Envelope
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
@@ -251,30 +251,30 @@ var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_tran
 }
 
 func init() {
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_init()
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_init()
 }
-func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_init() {
-	if File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto != nil {
+func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_init() {
+	if File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto != nil {
 		return
 	}
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes[0].OneofWrappers = []any{
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes[0].OneofWrappers = []any{
 		(*Transaction_AppendOperation)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc), len(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc), len(file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_goTypes,
-		DependencyIndexes: file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_depIdxs,
-		MessageInfos:      file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_msgTypes,
+		GoTypes:           file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_goTypes,
+		DependencyIndexes: file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_depIdxs,
+		MessageInfos:      file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes,
 	}.Build()
-	File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto = out.File
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_goTypes = nil
-	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_transaction_transaction_proto_depIdxs = nil
+	File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto = out.File
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_goTypes = nil
+	file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_depIdxs = nil
 }

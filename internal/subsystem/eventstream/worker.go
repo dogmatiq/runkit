@@ -8,7 +8,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
@@ -26,7 +26,7 @@ type worker struct {
 	Shutdown       <-chan struct{}
 	AppendRequests chan AppendRequest
 
-	journal    journal.Journal[*transaction.Transaction]
+	journal    journal.Journal[*persistence.Transaction]
 	nextPos    journal.Position
 	nextOffset uint64
 }
@@ -242,13 +242,13 @@ func (w *worker) commit(ctx context.Context, req AppendRequest) (AppendResponse,
 	if err := w.journal.Append(
 		ctx,
 		w.nextPos,
-		transaction.
+		persistence.
 			NewTransactionBuilder().
-			WithMetaData(&transaction.Transaction_MetaData{
+			WithMetaData(&persistence.Transaction_MetaData{
 				OffsetBefore: begin,
 				OffsetAfter:  end,
 			}).
-			WithAppendOperation(&transaction.AppendOperation{
+			WithAppendOperation(&persistence.AppendOperation{
 				Events: req.EventEnvelopes,
 			}).
 			Build(),
@@ -318,8 +318,8 @@ func (w *worker) deduplicate(
 		func(
 			_ context.Context,
 			_ journal.Position,
-			txn *transaction.Transaction,
-		) (*transaction.Transaction, bool, error) {
+			txn *persistence.Transaction,
+		) (*persistence.Transaction, bool, error) {
 			events := txn.GetAppendOperation().GetEvents()
 			if len(events) == 0 {
 				return nil, false, nil

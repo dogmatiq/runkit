@@ -6,7 +6,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
-	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction"
+	"github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence"
 )
 
 // NewReader creates a new [Reader] that reads historical events from a stream
@@ -58,7 +58,7 @@ func NewReader(
 
 // Reader synchronously reads events from an event stream in order.
 type Reader struct {
-	journal journal.Journal[*transaction.Transaction]
+	journal journal.Journal[*persistence.Transaction]
 	pos     journal.Position
 	events  []*envelopepb.Envelope
 	offset  uint64
@@ -82,9 +82,9 @@ func (r *Reader) Read(ctx context.Context) (
 
 		r.pos++
 
-		transaction.MustSwitch_Transaction_Op(
+		persistence.MustSwitch_Transaction_Op(
 			txn,
-			func(op *transaction.AppendOperation) {
+			func(op *persistence.AppendOperation) {
 				r.events = op.Events
 			},
 		)

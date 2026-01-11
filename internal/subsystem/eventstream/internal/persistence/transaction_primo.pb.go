@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go-primo v
 // 	protoc              v6.33.1
-// source: github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction/transaction.proto
+// source: github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence/transaction.proto
 
-package transaction
+package persistence
 
 import (
 	envelopepb "github.com/dogmatiq/enginekit/protobuf/envelopepb"

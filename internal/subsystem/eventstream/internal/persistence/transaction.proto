@@ -1,7 +1,7 @@
 syntax = "proto3";
-package runkit.eventstream.transaction.v1;
+package runkit.persistence.eventstream.v1;
 
-option go_package = "github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/transaction";
+option go_package = "github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence";
 
 import "github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto";
 
