@@ -5,11 +5,8 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/marshaler"
 )
-
-// namespace is the a prefix used for naming persistence primitives such as
-// journals.
-const namespace = "runkit.eventstream.v1"
 
 // OpenTransactionJournal returns the journal for the specified stream partition.
 func OpenTransactionJournal(
@@ -17,9 +14,12 @@ func OpenTransactionJournal(
 	store journal.BinaryStore,
 	partitionID *uuidpb.UUID,
 ) (journal.Journal[*Transaction], error) {
-	name := namespace + "/" + partitionID.AsString()
+	name := "runkit.eventstream.v1/" + partitionID.AsString()
 
 	return journal.
 		NewMarshalingStore(store, transactionMarshaler).
 		Open(ctx, name)
 }
+
+// transactionMarshaler is a [marshaler.Marshaler] for [Transaction] values.
+var transactionMarshaler = marshaler.NewProto[*Transaction]()

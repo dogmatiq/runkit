@@ -209,10 +209,10 @@ var File_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_pers
 
 const file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_rawDesc = "" +
 	"\n" +
-	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence/transaction.proto\x12!runkit.persistence.eventstream.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x9e\x02\n" +
+	"`github.com/dogmatiq/runkit/internal/subsystem/eventstream/internal/persistence/transaction.proto\x12!runkit.eventstream.persistence.v1\x1a@github.com/dogmatiq/enginekit/protobuf/envelopepb/envelope.proto\"\x9e\x02\n" +
 	"\vTransaction\x12T\n" +
-	"\tmeta_data\x18\x01 \x01(\v27.runkit.persistence.eventstream.v1.Transaction.MetaDataR\bmetaData\x12_\n" +
-	"\x10append_operation\x18\x02 \x01(\v22.runkit.persistence.eventstream.v1.AppendOperationH\x00R\x0fappendOperation\x1aR\n" +
+	"\tmeta_data\x18\x01 \x01(\v27.runkit.eventstream.persistence.v1.Transaction.MetaDataR\bmetaData\x12_\n" +
+	"\x10append_operation\x18\x02 \x01(\v22.runkit.eventstream.persistence.v1.AppendOperationH\x00R\x0fappendOperation\x1aR\n" +
 	"\bMetaData\x12#\n" +
 	"\roffset_before\x18\x01 \x01(\x04R\foffsetBefore\x12!\n" +
 	"\foffset_after\x18\x02 \x01(\x04R\voffsetAfterB\x04\n" +
@@ -234,15 +234,15 @@ func file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_per
 
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_goTypes = []any{
-	(*Transaction)(nil),          // 0: runkit.persistence.eventstream.v1.Transaction
-	(*AppendOperation)(nil),      // 1: runkit.persistence.eventstream.v1.AppendOperation
-	(*Transaction_MetaData)(nil), // 2: runkit.persistence.eventstream.v1.Transaction.MetaData
+	(*Transaction)(nil),          // 0: runkit.eventstream.persistence.v1.Transaction
+	(*AppendOperation)(nil),      // 1: runkit.eventstream.persistence.v1.AppendOperation
+	(*Transaction_MetaData)(nil), // 2: runkit.eventstream.persistence.v1.Transaction.MetaData
 	(*envelopepb.Envelope)(nil),  // 3: dogma.protobuf.Envelope
 }
 var file_github_com_dogmatiq_runkit_internal_subsystem_eventstream_internal_persistence_transaction_proto_depIdxs = []int32{
-	2, // 0: runkit.persistence.eventstream.v1.Transaction.meta_data:type_name -> runkit.persistence.eventstream.v1.Transaction.MetaData
-	1, // 1: runkit.persistence.eventstream.v1.Transaction.append_operation:type_name -> runkit.persistence.eventstream.v1.AppendOperation
-	3, // 2: runkit.persistence.eventstream.v1.AppendOperation.events:type_name -> dogma.protobuf.Envelope
+	2, // 0: runkit.eventstream.persistence.v1.Transaction.meta_data:type_name -> runkit.eventstream.persistence.v1.Transaction.MetaData
+	1, // 1: runkit.eventstream.persistence.v1.Transaction.append_operation:type_name -> runkit.eventstream.persistence.v1.AppendOperation
+	3, // 2: runkit.eventstream.persistence.v1.AppendOperation.events:type_name -> dogma.protobuf.Envelope
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
