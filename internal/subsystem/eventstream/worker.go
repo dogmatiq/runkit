@@ -202,8 +202,6 @@ func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) err
 					ctx,
 					"event-stream.worker.append-request.committed",
 					"event stream worker appended new events to the partition",
-					telemetry.Int("partition.next_offset", w.nextOffset),
-					telemetry.Int("request.event_count", len(req.EventEnvelopes)),
 					telemetry.Int("response.begin_offset", res.BeginOffset),
 					telemetry.Int("response.end_offset", res.EndOffset),
 				)

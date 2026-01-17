@@ -8,7 +8,8 @@ import (
 	"github.com/dogmatiq/persistencekit/marshaler"
 )
 
-// OpenTransactionJournal returns the journal for the specified stream partition.
+// OpenTransactionJournal returns the journal that store's the transactions for
+// the specified stream partition.
 func OpenTransactionJournal(
 	ctx context.Context,
 	store journal.BinaryStore,
