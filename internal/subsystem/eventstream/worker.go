@@ -26,9 +26,9 @@ type worker struct {
 	Shutdown       <-chan struct{}
 	AppendRequests chan AppendRequest
 
-	journal    journal.Journal[*persistence.Transaction]
-	nextPos    journal.Position
-	nextOffset uint64
+	transactions journal.Journal[*persistence.Transaction]
+	nextPos      journal.Position
+	nextOffset   uint64
 }
 
 func (w *worker) Run(ctx context.Context) error {
@@ -49,11 +49,11 @@ func (w *worker) Run(ctx context.Context) error {
 	}()
 
 	var err error
-	w.journal, err = persistence.OpenJournal(ctx, w.Journals, w.PartitionID)
+	w.transactions, err = persistence.OpenTransactionJournal(ctx, w.Journals, w.PartitionID)
 	if err != nil {
 		return err
 	}
-	defer w.journal.Close()
+	defer w.transactions.Close()
 
 	if err := w.loadState(ctx, "event stream worker loaded partition state from the journal"); err != nil {
 		return err
@@ -81,7 +81,7 @@ func (w *worker) loadState(ctx context.Context, message string) error {
 		span.End()
 	}()
 
-	pos, txn, ok, err := journal.LastRecord(ctx, w.journal)
+	pos, txn, ok, err := journal.LastRecord(ctx, w.transactions)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func (w *worker) commit(ctx context.Context, req AppendRequest) (AppendResponse,
 	begin := w.nextOffset
 	end := begin + uint64(len(req.EventEnvelopes))
 
-	if err := w.journal.Append(
+	if err := w.transactions.Append(
 		ctx,
 		w.nextPos,
 		persistence.
@@ -309,7 +309,7 @@ func (w *worker) deduplicate(
 	// was produced this request ID.
 	txn, err := journal.ScanFromSearchResult(
 		ctx,
-		w.journal,
+		w.transactions,
 		journal.Interval{
 			Begin: 0,
 			End:   w.nextPos,

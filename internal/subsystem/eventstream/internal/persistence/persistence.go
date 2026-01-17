@@ -11,8 +11,8 @@ import (
 // journals.
 const namespace = "runkit.eventstream.v1"
 
-// OpenJournal returns the journal for the specified stream partition.
-func OpenJournal(
+// OpenTransactionJournal returns the journal for the specified stream partition.
+func OpenTransactionJournal(
 	ctx context.Context,
 	store journal.BinaryStore,
 	partitionID *uuidpb.UUID,

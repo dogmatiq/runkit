@@ -18,7 +18,7 @@ type Supervisor struct {
 	// It is used for telemetry purposes only.
 	ID *uuidpb.UUID
 
-	// Journals is the journal store used to persist events.
+	// Journals is the journal store used to persist events stream transactions.
 	Journals journal.BinaryStore
 
 	// BufferSize is the number of pending [AppendRequest] values that can be

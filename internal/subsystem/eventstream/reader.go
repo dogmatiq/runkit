@@ -17,7 +17,7 @@ func NewReader(
 	partitionID *uuidpb.UUID,
 	offset uint64,
 ) (_ *Reader, err error) {
-	j, err := persistence.OpenJournal(ctx, journals, partitionID)
+	j, err := persistence.OpenTransactionJournal(ctx, journals, partitionID)
 	if err != nil {
 		return nil, err
 	}
