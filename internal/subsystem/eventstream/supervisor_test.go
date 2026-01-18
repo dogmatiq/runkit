@@ -32,10 +32,7 @@ func TestSupervisor(t *testing.T) {
 			AppendRequests: requests,
 		}
 
-		var (
-			journals journal.BinaryStore = &subsystem.Journals
-		)
-
+		var journals journal.BinaryStore = &subsystem.Journals
 		telem := telemetry.NewTestProvider(t)
 
 		if testing.Verbose() {
@@ -54,9 +51,9 @@ func TestSupervisor(t *testing.T) {
 		// Run multiple supervisors in the background for the duration of the
 		// tests.
 		//
-		// Each supervisor represents a separate running instance of the event
-		// stream subsystem, as would normally be run on separate
-		// machines/containers in a production system.
+		// Each supervisor represents a separate running instance of the
+		// subsystem, as would normally be run on separate machines/containers
+		// in a production system.
 		var supervisors sync.WaitGroup
 
 		for idx := range 3 {
@@ -134,8 +131,10 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	}
 
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
-		BeginOffset: 0,
-		EndOffset:   uint64(len(req.EventEnvelopes)),
+		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
+		Ok:                  true,
+		BeginOffset:         0,
+		EndOffset:           uint64(len(req.EventEnvelopes)),
 	})
 }
 
@@ -155,8 +154,10 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	}
 
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
-		BeginOffset: part.NextOffset,
-		EndOffset:   part.NextOffset + uint64(len(req.EventEnvelopes)),
+		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
+		Ok:                  true,
+		BeginOffset:         part.NextOffset,
+		EndOffset:           part.NextOffset + uint64(len(req.EventEnvelopes)),
 	})
 }
 
@@ -175,8 +176,10 @@ func (s *state) ReappendPriorEvents(t *rapid.T) {
 	}
 
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
-		BeginOffset: offset,
-		EndOffset:   offset + uint64(len(prior.EventEnvelopes)),
+		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
+		Ok:                  true,
+		BeginOffset:         offset,
+		EndOffset:           offset + uint64(len(prior.EventEnvelopes)),
 	})
 }
 

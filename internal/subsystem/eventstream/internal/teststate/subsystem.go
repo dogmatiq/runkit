@@ -74,20 +74,24 @@ func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest,
 				t.Fatal("AppendResponse channel was closed")
 			}
 
-			if got.FirstEventMessageID == nil {
-				t.Fatal("AppendResponse does not have a request ID")
-			}
-
-			if !got.FirstEventMessageID.Equal(req.EventEnvelopes[0].MessageId) {
-				t.Fatalf("AppendResponse has unexpected request ID: got %s, want %s", got.FirstEventMessageID, req.EventEnvelopes[0].MessageId)
-			}
-
-			if !got.Ok {
-				t.Log("AppendResponse indicates request was rejected, retrying")
-				continue
-			}
-
 			t.Log("received AppendResponse")
+
+			if got.FirstEventMessageID == nil {
+				t.Fatal("AppendResponse does not have an event ID")
+			}
+
+			if !got.FirstEventMessageID.Equal(want.FirstEventMessageID) {
+				t.Fatalf("AppendResponse has unexpected event ID: got %s, want %s", got.FirstEventMessageID, want.FirstEventMessageID)
+			}
+
+			if got.Ok != want.Ok {
+				if want.Ok {
+					t.Log("AppendResponse indicates request was rejected, retrying")
+					continue
+				}
+
+				t.Fatalf("AppendResponse has unexpected Ok value: got %t, want %t", got.Ok, want.Ok)
+			}
 
 			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
 				t.Fatalf(
