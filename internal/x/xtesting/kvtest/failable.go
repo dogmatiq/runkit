@@ -1,25 +1,23 @@
-package settest
+package kvtest
 
 import (
 	"context"
 	"errors"
 	"sync"
 
-	"github.com/dogmatiq/persistencekit/driver/memory/memoryset"
-	"github.com/dogmatiq/persistencekit/set"
+	"github.com/dogmatiq/persistencekit/driver/memory/memorykv"
+	"github.com/dogmatiq/persistencekit/kv"
 )
 
-// FailurePoint is an enumeration of set operations that can be forced to fail
-// using a [FailableBinaryStore].
+// FailurePoint is an enumeration of key/value operations that can be
+// forced to fail using a [FailableStore].
 type FailurePoint string
 
 // Errors that can be induced.
 var (
-	BeforeOpen   FailurePoint = "before open"
-	BeforeAdd    FailurePoint = "before add"
-	AfterAdd     FailurePoint = "after add"
-	BeforeRemove FailurePoint = "before remove"
-	AfterRemove  FailurePoint = "after remove"
+	BeforeOpen FailurePoint = "before open"
+	BeforeSet  FailurePoint = "before set"
+	AfterSet   FailurePoint = "after set"
 )
 
 // IsInducedError returns true if the given error was induced by an
@@ -29,19 +27,19 @@ func IsInducedError(err error) bool {
 	return errors.As(err, &x)
 }
 
-// FailableBinaryStore is a [set.Store] that can be configured to induce errors
+// FailableBinaryStore is a [kv.Store] that can be configured to induce errors
 // on specific operations.
 type FailableBinaryStore struct {
-	NonFailing memoryset.BinaryStore
+	NonFailing memorykv.BinaryStore
 
-	in       set.BinaryInterceptor
+	in       kv.BinaryInterceptor
 	m        sync.Mutex
-	failable set.BinaryStore
+	failable kv.BinaryStore
 	counts   map[FailurePoint]uint64
 }
 
-// Open returns the set with the given name.
-func (s *FailableBinaryStore) Open(ctx context.Context, name string) (set.BinarySet, error) {
+// Open returns the keyspace with the given name.
+func (s *FailableBinaryStore) Open(ctx context.Context, name string) (kv.BinaryKeyspace, error) {
 	s.m.Lock()
 	s.init()
 	s.m.Unlock()
@@ -94,27 +92,18 @@ func (s *FailableBinaryStore) init() {
 		return
 	}
 
-	s.failable = set.WithInterceptor(&s.NonFailing, &s.in)
-	s.counts = map[FailurePoint]uint64{}
+	s.failable = kv.WithInterceptor(&s.NonFailing, &s.in)
 
 	s.in.BeforeOpen(func(string) error {
 		return s.fail(BeforeOpen)
 	})
 
-	s.in.BeforeAdd(func(string, []byte) error {
-		return s.fail(BeforeAdd)
+	s.in.BeforeSet(func(string, []byte, []byte, *uint64) error {
+		return s.fail(BeforeSet)
 	})
 
-	s.in.AfterAdd(func(string, []byte) error {
-		return s.fail(AfterAdd)
-	})
-
-	s.in.BeforeRemove(func(string, []byte) error {
-		return s.fail(BeforeRemove)
-	})
-
-	s.in.AfterRemove(func(string, []byte) error {
-		return s.fail(AfterRemove)
+	s.in.AfterSet(func(string, []byte, []byte, *uint64) error {
+		return s.fail(AfterSet)
 	})
 }
 
@@ -123,5 +112,5 @@ type inducedError struct {
 }
 
 func (e inducedError) Error() string {
-	return "induced set error: " + string(e.fp)
+	return "induced keyspace error: " + string(e.fp)
 }
