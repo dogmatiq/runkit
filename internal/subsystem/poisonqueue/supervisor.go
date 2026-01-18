@@ -129,7 +129,7 @@ func (s *Supervisor) handleEnqueueRequest(ctx context.Context, req EnqueueReques
 
 			s.telemetry.Info(
 				ctx,
-				"poison-queue.supervisor.append-request.deduplicated",
+				"poison-queue.supervisor.enqueue-request.deduplicated",
 				"poison queue supervisor deduplicated an enqueue request",
 			)
 		} else {
@@ -151,7 +151,7 @@ func (s *Supervisor) handleEnqueueRequest(ctx context.Context, req EnqueueReques
 	if xerrors.IsFatal(err) {
 		s.telemetry.Error(
 			ctx,
-			"poison-queue.supervisor.append-request.failed",
+			"poison-queue.supervisor.enqueue-request.failed",
 			"poison queue supervisor detected a fatal error, supervisor is shutting down",
 			err,
 			telemetry.Int("pending_requests", len(s.EnqueueRequests)),
@@ -165,7 +165,7 @@ func (s *Supervisor) handleEnqueueRequest(ctx context.Context, req EnqueueReques
 	if err != nil {
 		s.telemetry.Error(
 			ctx,
-			"poison-queue.supervisor.append-request.failed",
+			"poison-queue.supervisor.enqueue-request.failed",
 			"poison queue supervisor detected a non-fatal error",
 			err,
 			telemetry.Int("pending_requests", len(s.EnqueueRequests)),

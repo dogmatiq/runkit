@@ -11,7 +11,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Subsystem represents the state of the eventstream subsystem within a test.
+// Subsystem represents the state of the poison queue subsystem within a test.
 type Subsystem struct {
 	// Context is the context in which the subsystem is running.
 	Context context.Context
