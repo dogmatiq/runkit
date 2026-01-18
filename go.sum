@@ -12,8 +12,8 @@ github.com/dogmatiq/enginekit v0.19.19 h1:rvZWK51Fo0KvcscvwjND4DyhRDF5/QzPAmKRc8
 github.com/dogmatiq/enginekit v0.19.19/go.mod h1:4vyrXVe5VBmdhZDD2kCyXnOAZjngdJEd8KlxStXkrDk=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
-github.com/dogmatiq/persistencekit v0.13.0 h1:u0vnx3MJsnURfZfZ+KUjKBXtHr/HdhK3TiXEbyZgbDM=
-github.com/dogmatiq/persistencekit v0.13.0/go.mod h1:T/KeT/LDlvvdR8rDHXoX2IhFghDtvK7R/rLJ9tag+wQ=
+github.com/dogmatiq/persistencekit v0.14.0 h1:bt/Bgq+URze4mUkimt1n9fO6Wxe5jnSidYB2SpY6XHI=
+github.com/dogmatiq/persistencekit v0.14.0/go.mod h1:2N7BmBoNybeC5y+U43RDyFDzd1Ye1EUXqe/zhaxXNfU=
 github.com/dogmatiq/spruce v0.2.3 h1:sm5WLRYTtrNiIePLDXeElChI+/cXK3w4Wy1qL+quBQ0=
 github.com/dogmatiq/spruce v0.2.3/go.mod h1:za5ZdNvh+FRWg4B3DCn8jfNB2LVR/9Dk3fkuHVDJLrk=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
