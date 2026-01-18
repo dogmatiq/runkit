@@ -10,7 +10,7 @@ import (
 )
 
 // FailurePoint is an enumeration of journal operations that can be
-// forced to fail using a [FailableJournalStore].
+// forced to fail using a [FailableBinaryStore].
 type FailurePoint string
 
 // Errors that can be induced.
