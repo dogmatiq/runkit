@@ -111,7 +111,7 @@ func (s *state) EnqueueCommand(t *rapid.T) {
 }
 
 func (s *state) RenqueueExistingCommand(t *rapid.T) {
-	env := s.subsystem.MessagesGen(t).Draw(t, "exusting message")
+	env := s.subsystem.MessagesGen(t).Draw(t, "existing message")
 
 	s.subsystem.SendEnqueueRequest(
 		t,
