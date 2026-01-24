@@ -10,7 +10,7 @@ import (
 // Partition represents the state of a single partition of the event stream.
 type Partition struct {
 	ID             *uuidpb.UUID
-	NextOffset     uint64
+	NextOffset     eventstream.Offset
 	AppendRequests []eventstream.AppendRequest
 	Events         []*envelopepb.Envelope
 }
@@ -26,12 +26,18 @@ func (p *Partition) EventsGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelope]
 
 // OffsetsGen returns a generator that produces offsets of events on this
 // partition.
-func (p *Partition) OffsetsGen(t *rapid.T) *rapid.Generator[uint64] {
+func (p *Partition) OffsetsGen(t *rapid.T) *rapid.Generator[eventstream.Offset] {
 	if p.NextOffset == 0 {
 		t.Skip("stream partition is empty")
 	}
 
-	return rapid.Uint64Range(0, p.NextOffset-1)
+	return rapid.Custom(
+		func(t *rapid.T) eventstream.Offset {
+			limit := uint64(p.NextOffset) - 1
+			offset := rapid.Uint64Range(0, limit).Draw(t, "offset")
+			return eventstream.Offset(offset)
+		},
+	)
 }
 
 // AppendRequestsGen returns a generator that produces prior successful
@@ -46,10 +52,10 @@ func (p *Partition) AppendRequestsGen(t *rapid.T) *rapid.Generator[eventstream.A
 
 // FindOffset returns the offset of the event with the given message ID,
 // or false if the event is not present on this partition.
-func (p *Partition) FindOffset(messageID *uuidpb.UUID) (uint64, bool) {
+func (p *Partition) FindOffset(messageID *uuidpb.UUID) (eventstream.Offset, bool) {
 	for i, env := range p.Events {
 		if env.MessageId.Equal(messageID) {
-			return uint64(i), true
+			return eventstream.Offset(i), true
 		}
 	}
 
@@ -94,11 +100,11 @@ func (p *Partition) append(t *rapid.T, req eventstream.AppendRequest, res events
 			"appended %s to partition %s at offset %d",
 			env.MessageId,
 			p.ID,
-			res.BeginOffset+uint64(i),
+			res.BeginOffset+eventstream.Offset(i),
 		)
 	}
 
-	p.NextOffset += uint64(len(req.EventEnvelopes))
+	p.NextOffset += eventstream.Offset(len(req.EventEnvelopes))
 	p.AppendRequests = append(p.AppendRequests, req)
 	p.Events = append(p.Events, req.EventEnvelopes...)
 }

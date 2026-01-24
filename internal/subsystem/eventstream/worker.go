@@ -28,7 +28,7 @@ type worker struct {
 
 	transactions journal.Journal[*persistence.Transaction]
 	nextPos      journal.Position
-	nextOffset   uint64
+	nextOffset   Offset
 }
 
 func (w *worker) Run(ctx context.Context) error {
@@ -91,7 +91,7 @@ func (w *worker) loadState(ctx context.Context, message string) error {
 
 	if ok {
 		w.nextPos = pos + 1
-		w.nextOffset = txn.MetaData.OffsetAfter
+		w.nextOffset = Offset(txn.MetaData.OffsetAfter)
 	} else {
 		w.nextPos = 0
 		w.nextOffset = 0
@@ -235,7 +235,7 @@ func (w *worker) handleAppendRequest(ctx context.Context, req AppendRequest) err
 // [AppendRequest] to the stream partition.
 func (w *worker) commit(ctx context.Context, req AppendRequest) (AppendResponse, bool, error) {
 	begin := w.nextOffset
-	end := begin + uint64(len(req.EventEnvelopes))
+	end := begin + Offset(len(req.EventEnvelopes))
 
 	if err := w.transactions.Append(
 		ctx,
@@ -243,8 +243,8 @@ func (w *worker) commit(ctx context.Context, req AppendRequest) (AppendResponse,
 		persistence.
 			NewTransactionBuilder().
 			WithMetaData(&persistence.Transaction_MetaData{
-				OffsetBefore: begin,
-				OffsetAfter:  end,
+				OffsetBefore: uint64(begin),
+				OffsetAfter:  uint64(end),
 			}).
 			WithAppendOperation(&persistence.AppendOperation{
 				Events: req.EventEnvelopes,
@@ -351,7 +351,7 @@ func (w *worker) deduplicate(
 	return AppendResponse{
 		req.EventEnvelopes[0].MessageId,
 		true,
-		txn.MetaData.OffsetBefore,
-		txn.MetaData.OffsetAfter,
+		Offset(txn.MetaData.OffsetBefore),
+		Offset(txn.MetaData.OffsetAfter),
 	}, true, nil
 }

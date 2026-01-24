@@ -6,6 +6,10 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
+// Offset represents a position within an event stream partition. The first
+// event in the partition always has offset zero.
+type Offset uint64
+
 // AppendRequest is a request to append events to a specific partition of the
 // application's event stream.
 type AppendRequest struct {
@@ -22,7 +26,7 @@ type AppendRequest struct {
 	//
 	// Any events before this offset are not considered when deduplicating
 	// events.
-	LowestPossibleOffset uint64
+	LowestPossibleOffset Offset
 
 	// Response is the channel to which the corresponding [AppendResponse]
 	// is sent.
@@ -45,7 +49,7 @@ type AppendResponse struct {
 	// EndOffset is the offset after the last event in the [AppendRequest].
 	//
 	// The values are undefined if Ok is false.
-	BeginOffset, EndOffset uint64
+	BeginOffset, EndOffset Offset
 }
 
 // validateAppendRequest returns an error if the given request is malformed. Any

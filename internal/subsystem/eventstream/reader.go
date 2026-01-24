@@ -15,7 +15,7 @@ func NewReader(
 	ctx context.Context,
 	journals journal.BinaryStore,
 	partitionID *uuidpb.UUID,
-	offset uint64,
+	offset Offset,
 ) (_ *Reader, err error) {
 	j, err := persistence.OpenTransactionJournal(ctx, journals, partitionID)
 	if err != nil {
@@ -49,7 +49,8 @@ func NewReader(
 			return nil, err
 		}
 
-		r.events = txn.GetAppendOperation().Events[offset-txn.MetaData.OffsetBefore:]
+		index := uint64(offset) - txn.MetaData.OffsetBefore
+		r.events = txn.GetAppendOperation().Events[index:]
 		r.pos = pos + 1
 	}
 
@@ -61,12 +62,12 @@ type Reader struct {
 	journal journal.Journal[*persistence.Transaction]
 	pos     journal.Position
 	events  []*envelopepb.Envelope
-	offset  uint64
+	offset  Offset
 }
 
 // Read returns the next event from the stream.
 func (r *Reader) Read(ctx context.Context) (
-	offset uint64,
+	offset Offset,
 	env *envelopepb.Envelope,
 	ok bool,
 	err error,
