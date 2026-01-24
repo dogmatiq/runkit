@@ -4,6 +4,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
+	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
 )
 
@@ -30,14 +31,7 @@ func (p *Partition) OffsetsGen(t *rapid.T) *rapid.Generator[eventstream.Offset] 
 	if p.NextOffset == 0 {
 		t.Skip("stream partition is empty")
 	}
-
-	return rapid.Custom(
-		func(t *rapid.T) eventstream.Offset {
-			limit := uint64(p.NextOffset) - 1
-			offset := rapid.Uint64Range(0, limit).Draw(t, "offset")
-			return eventstream.Offset(offset)
-		},
-	)
+	return xrapid.Uint64Range(0, p.NextOffset-1)
 }
 
 // AppendRequestsGen returns a generator that produces prior successful
