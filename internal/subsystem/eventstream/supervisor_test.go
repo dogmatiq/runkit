@@ -19,7 +19,7 @@ import (
 
 func TestSupervisor(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		requests := make(chan AppendRequest)
+		appendRequests := make(chan AppendRequest)
 
 		// Create a context under which we execute the supervisors.
 		//
@@ -29,7 +29,7 @@ func TestSupervisor(t *testing.T) {
 
 		subsystem := &teststate.Subsystem{
 			Context:        ctx,
-			AppendRequests: requests,
+			AppendRequests: appendRequests,
 		}
 
 		var journals journal.BinaryStore = &subsystem.Journals
@@ -63,7 +63,7 @@ func TestSupervisor(t *testing.T) {
 					Journals:       journals,
 					BufferSize:     2, // small buffer size to increase chance of contention
 					Shutdown:       shutdown,
-					AppendRequests: requests,
+					AppendRequests: appendRequests,
 					Telemetry:      telem,
 				}
 
