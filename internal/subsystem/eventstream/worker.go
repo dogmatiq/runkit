@@ -16,9 +16,14 @@ import (
 // shutting down to conserve resources.
 const idleTimeout = 3 * time.Minute
 
+type workerStopped struct {
+	Worker *worker
+	Error  error
+}
+
 // A worker appends events to a specific partition of the event stream.
 type worker struct {
-	ID          uint
+	ID          *uuidpb.UUID
 	PartitionID *uuidpb.UUID
 	Journals    journal.BinaryStore
 	Telemetry   *telemetry.Recorder

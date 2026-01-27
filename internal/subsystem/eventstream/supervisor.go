@@ -38,7 +38,6 @@ type Supervisor struct {
 
 	telemetry *telemetry.Recorder
 
-	workerID      uint
 	workers       uuidpb.Map[*worker]
 	workerStopped chan workerStopped
 }
@@ -163,7 +162,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("partition.pending_requests", len(x.Worker.AppendRequests)),
-			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.UUID("worker.id", x.Worker.ID),
 		)
 
 		return x.Error
@@ -178,7 +177,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("partition.pending_requests", len(x.Worker.AppendRequests)),
-			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.UUID("worker.id", x.Worker.ID),
 		)
 	} else {
 		s.telemetry.Info(
@@ -188,7 +187,7 @@ func (s *Supervisor) handleWorkerStopped(ctx context.Context, x workerStopped) e
 			telemetry.Int("supervisor.workers", s.workers.Len()),
 			telemetry.UUID("partition.id", x.Worker.PartitionID),
 			telemetry.Int("partition.pending_requests", len(x.Worker.AppendRequests)),
-			telemetry.Int("worker.id", x.Worker.ID),
+			telemetry.UUID("worker.id", x.Worker.ID),
 		)
 	}
 
@@ -221,10 +220,10 @@ func (s *Supervisor) startWorker(
 	partitionID *uuidpb.UUID,
 	requests chan AppendRequest,
 ) *worker {
-	s.workerID++
+	id := uuidpb.Generate()
 
 	w := &worker{
-		ID:             s.workerID,
+		ID:             id,
 		PartitionID:    partitionID,
 		Journals:       s.Journals,
 		Shutdown:       s.Shutdown,
@@ -233,7 +232,7 @@ func (s *Supervisor) startWorker(
 			xtelemetry.ModulePath,
 			telemetry.UUID("supervisor.id", s.ID),
 			telemetry.UUID("partition.id", partitionID),
-			telemetry.Int("worker.id", s.workerID),
+			telemetry.UUID("worker.id", id),
 		),
 	}
 
@@ -260,13 +259,8 @@ func (s *Supervisor) startWorker(
 		telemetry.Int("supervisor.workers", s.workers.Len()),
 		telemetry.UUID("partition.id", w.PartitionID),
 		telemetry.Int("partition.pending_requests", len(w.AppendRequests)),
-		telemetry.Int("worker.id", w.ID),
+		telemetry.UUID("worker.id", w.ID),
 	)
 
 	return w
-}
-
-type workerStopped struct {
-	Worker *worker
-	Error  error
 }
