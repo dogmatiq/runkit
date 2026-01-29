@@ -3,8 +3,8 @@ package teststate
 import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
-	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
 )
 

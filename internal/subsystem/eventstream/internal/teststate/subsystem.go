@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/subsystem/eventstream"
-	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/journaltest"
 	"pgregory.net/rapid"
 )

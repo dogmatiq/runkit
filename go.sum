@@ -8,8 +8,8 @@ github.com/dogmatiq/dogma v0.19.0 h1:Mzagmk0z+PnnQUSGXtet7VZfm+8o3XgOsCOwlceVDKw
 github.com/dogmatiq/dogma v0.19.0/go.mod h1:BNKrZq9wm3jRu35XUWQXkMRhq4EzYK+rOVbGjrbCVyI=
 github.com/dogmatiq/dyad v1.0.0 h1:T50WQ9rAzCMcT941wVH5RW5+tAGRssuVlNog+ZMQR54=
 github.com/dogmatiq/dyad v1.0.0/go.mod h1:PrUQr7OCSEUjAkhi7ad8BjxFPKe0I9yP2f1kGimPcJE=
-github.com/dogmatiq/enginekit v0.19.19 h1:rvZWK51Fo0KvcscvwjND4DyhRDF5/QzPAmKRc8EjWoo=
-github.com/dogmatiq/enginekit v0.19.19/go.mod h1:4vyrXVe5VBmdhZDD2kCyXnOAZjngdJEd8KlxStXkrDk=
+github.com/dogmatiq/enginekit v0.20.0 h1:PlYlujziZ4QLGbww0P3VwVZq3yqNoPeRCt3zko4JBbA=
+github.com/dogmatiq/enginekit v0.20.0/go.mod h1:3Hr4I9jEwlv+COuzCDF96FZPKZOu1xhvqMjMCxEXYFw=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
 github.com/dogmatiq/persistencekit v0.14.0 h1:bt/Bgq+URze4mUkimt1n9fO6Wxe5jnSidYB2SpY6XHI=
@@ -49,8 +49,8 @@ go.opentelemetry.io/otel/trace v1.39.0 h1:2d2vfpEDmCJ5zVYz7ijaJdOF59xLomrvj7bjt6
 go.opentelemetry.io/otel/trace v1.39.0/go.mod h1:88w4/PnZSazkGzz/w84VHpQafiU4EtqqlVdxWy+rNOA=
 golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 h1:DHNhtq3sNNzrvduZZIiFyXWOL9IWaDPHqTnLJp+rCBY=
 golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39/go.mod h1:46edojNIoXTNOhySWIWdix628clX9ODXwPsQuG6hsK0=
-golang.org/x/net v0.46.1-0.20251013234738-63d1a5100f82 h1:6/3JGEh1C88g7m+qzzTbl3A0FtsLguXieqofVLU/JAo=
-golang.org/x/net v0.46.1-0.20251013234738-63d1a5100f82/go.mod h1:Q9BGdFy1y4nkUwiLvT5qtyhAnEHgnQ/zd8PfU6nc210=
+golang.org/x/net v0.47.0 h1:Mx+4dIFzqraBXUugkia1OOvlD6LemFo1ALMHjrXDOhY=
+golang.org/x/net v0.47.0/go.mod h1:/jNxtkgq5yWUGYkaZGqo27cfGZ1c5Nen03aYrrKpVRU=
 golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
 golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
 golang.org/x/text v0.31.0 h1:aC8ghyu4JhP8VojJ2lEHBnochRno1sgL6nEi9WGFGMM=

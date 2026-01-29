@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/x/xrapid"
 	. "github.com/dogmatiq/runkit/internal/partition"
-	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"pgregory.net/rapid"
 )
 

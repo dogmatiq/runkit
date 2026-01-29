@@ -5,8 +5,8 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/subsystem/poisonqueue"
-	"github.com/dogmatiq/runkit/internal/x/xrapid"
 	"github.com/dogmatiq/runkit/internal/x/xtesting/kvtest"
 	"pgregory.net/rapid"
 )
