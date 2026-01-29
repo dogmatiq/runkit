@@ -1,10 +1,11 @@
 package poisonqueue
 
 import (
+	"fmt"
+
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // EnqueueRequest is a request to add a command to the application's poison
@@ -31,20 +32,22 @@ type EnqueueResponse struct {
 	Ok bool
 }
 
-// validateEnqueueRequest returns an error if the given request is malformed. Any
-// error indicates a bug within the engine.
-func validateEnqueueRequest(req EnqueueRequest) error {
+func validateEnqueueRequest(req EnqueueRequest) {
 	if err := req.CommandEnvelope.Validate(); err != nil {
-		return xerrors.Bug("EnqueueRequest.CommandEnvelope is invalid: %w", err)
+		panic(fmt.Sprintf("EnqueueRequest.CommandEnvelope is invalid: %v", err))
 	}
 
 	if err := req.FailedHandler.Validate(); err != nil {
-		return xerrors.Bug("EnqueueRequest.FailedHandler is invalid: %w", err)
+		panic(fmt.Sprintf("EnqueueRequest.FailedHandler is invalid: %v", err))
 	}
 
 	if req.Response == nil {
-		return xerrors.Bug("EnqueueRequest.Response is nil")
+		panic("EnqueueRequest.Response is nil")
 	}
+}
 
-	return nil
+func validateEnqueueResponse(res EnqueueResponse) {
+	if err := res.CommandMessageID.Validate(); err != nil {
+		panic(fmt.Sprintf("EnqueueResponse.CommandMessageID is invalid: %v", err))
+	}
 }

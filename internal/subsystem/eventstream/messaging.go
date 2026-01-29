@@ -1,9 +1,10 @@
 package eventstream
 
 import (
+	"fmt"
+
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // Offset represents a position within an event stream partition. The first
@@ -52,26 +53,34 @@ type AppendResponse struct {
 	BeginOffset, EndOffset Offset
 }
 
-// validateAppendRequest returns an error if the given request is malformed. Any
-// error indicates a bug within the engine.
-func validateAppendRequest(req AppendRequest) error {
+func validateAppendRequest(req AppendRequest) {
 	if err := req.PartitionID.Validate(); err != nil {
-		return xerrors.Bug("AppendRequest.PartitionID is invalid: %w", err)
+		panic(fmt.Sprintf("AppendRequest.PartitionID is invalid: %v", err))
 	}
 
 	if len(req.EventEnvelopes) == 0 {
-		return xerrors.Bug("AppendRequest.EventEnvelopes is empty")
+		panic("AppendRequest.EventEnvelopes is empty")
 	}
 
 	for i, env := range req.EventEnvelopes {
 		if err := env.Validate(); err != nil {
-			return xerrors.Bug("AppendRequest.EventEnvelopes[%d] is invalid: %w", i, err)
+			panic(fmt.Sprintf("AppendRequest.EventEnvelopes[%d] is invalid: %v", i, err))
 		}
 	}
 
 	if req.Response == nil {
-		return xerrors.Bug("AppendRequest.Response is nil")
+		panic("AppendRequest.Response is nil")
+	}
+}
+
+func validateAppendResponse(res AppendResponse) {
+	if err := res.FirstEventMessageID.Validate(); err != nil {
+		panic(fmt.Sprintf("AppendResponse.FirstEventMessageID is invalid: %v", err))
 	}
 
-	return nil
+	if res.Ok {
+		if res.EndOffset <= res.BeginOffset {
+			panic("AppendResponse.EndOffset must be greater than BeginOffset when Ok is true")
+		}
+	}
 }

@@ -23,8 +23,8 @@ type Subsystem struct {
 	// appended.
 	Partitions uuidpb.Map[*Partition]
 
-	// AppendRequests is used to send [eventstream.AppendRequest] requests to a
-	// supervisor.
+	// AppendRequests is used to send [eventstream.AppendRequest] requests to
+	// [eventstream.Service] instances.
 	AppendRequests chan<- eventstream.AppendRequest
 }
 
@@ -37,8 +37,7 @@ func (s *Subsystem) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
 	return xrapid.SampledFromSeq(s.Partitions.Values())
 }
 
-// SendAppendRequest sends an [eventstream.AppendRequest] request to
-// the supervisor.
+// SendAppendRequest sends an [eventstream.AppendRequest] request to a service.
 func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest, want eventstream.AppendResponse) {
 	t.Helper()
 

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/telemetry"
 	"github.com/dogmatiq/enginekit/x/xrapid"
 	"github.com/dogmatiq/persistencekit/kv"
@@ -17,14 +16,14 @@ import (
 	"pgregory.net/rapid"
 )
 
-func TestSupervisor(t *testing.T) {
+func TestService(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		requests := make(chan EnqueueRequest)
 
-		// Create a context under which we execute the supervisors.
+		// Create a context under which we run the services.
 		//
-		// Note that it's NOT based on [testing.T.Context], so that we can
-		// execute the supervisor's graceful shutdown logic when the test ends.
+		// Note that it's NOT based on [testing.T.Context], so that we can stop
+		// the services' gracefully when the test ends.
 		ctx, cancel := context.WithCancelCause(context.Background())
 
 		subsystem := &teststate.Subsystem{
@@ -32,52 +31,51 @@ func TestSupervisor(t *testing.T) {
 			EnqueueRequests: requests,
 		}
 
-		var keyspaces kv.BinaryStore = &subsystem.Keyspaces
-		telem := telemetry.NewTestProvider(t)
+		// stop is used to signal all services to stop gracefully.
+		stop := make(chan struct{})
 
-		if testing.Verbose() {
-			keyspaces = kv.WithTelemetry(
-				keyspaces,
-				telem.TracerProvider,
-				telem.MeterProvider,
-				telem.LoggerProvider,
-			)
-		}
-
-		// shutdown is a channel used to signal all supervisors to shut down
-		// gracefully.
-		shutdown := make(chan struct{})
-
-		// Run multiple supervisors in the background for the duration of the
+		// Run multiple services in the background for the duration of the
 		// tests.
 		//
-		// Each supervisor represents a separate running instance of the
-		// subsystem, as would normally be run on separate machines/containers
-		// in a production system.
-		var supervisors sync.WaitGroup
+		// Each service represents a separate running instance of the subsystem,
+		// as would normally be run on separate machines/containers in a
+		// production system.
+		var services sync.WaitGroup
 
 		for idx := range 3 {
-			supervisors.Go(func() {
-				sup := &Supervisor{
-					ID:              uuidpb.Generate(),
+			services.Go(func() {
+				keyspaces := kv.BinaryStore(&subsystem.Keyspaces)
+				telem := telemetry.
+					NewTestProvider(t).
+					WithAttrs(telemetry.Int("service.id", idx))
+
+				if testing.Verbose() {
+					keyspaces = kv.WithTelemetry(
+						keyspaces,
+						telem.TracerProvider,
+						telem.MeterProvider,
+						telem.LoggerProvider,
+					)
+				}
+
+				svc := &Service{
 					Keyspaces:       keyspaces,
-					Shutdown:        shutdown,
+					Stop:            stop,
 					EnqueueRequests: requests,
 					Telemetry:       telem,
 				}
 
-				if err := sup.Run(ctx); err != nil {
-					t.Errorf("supervisor %d failed: %s", idx, err)
-					cancel(fmt.Errorf("supervisor %d failed: %w", idx, err))
+				if err := svc.Run(ctx); err != nil {
+					t.Errorf("service %d failed: %s", idx, err)
+					cancel(fmt.Errorf("service %d failed: %w", idx, err))
 				}
 			})
 		}
 
-		// When the test ends signal all supervisors to shut down gracefully
-		// and wait for them to stop.
+		// When the test ends signal all services to stop gracefully.
 		t.Cleanup(func() {
-			close(shutdown)
-			supervisors.Wait()
+			close(stop)
+			services.Wait()
 			cancel(errors.New("test completed"))
 		})
 
@@ -91,8 +89,7 @@ type state struct {
 	subsystem *teststate.Subsystem
 }
 
-func (s *state) Check(t *rapid.T) {
-}
+func (s *state) Check(t *rapid.T) {}
 
 func (s *state) EnqueueCommand(t *rapid.T) {
 	env := xrapid.Envelope().Draw(t, "command")

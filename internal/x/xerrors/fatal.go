@@ -14,16 +14,22 @@ type FatalError struct {
 }
 
 // Fatal returns an error that causes the engine to exit completely.
+//
+// Deprecated: panic
 func Fatal(format string, args ...any) error {
 	return FatalError{fmt.Errorf(format, args...)}
 }
 
 // Bug returns an [FatalError] error that indicates a bug in the engine.
+//
+// Deprecated: panic
 func Bug(format string, args ...any) error {
 	return Fatal("[DOGMA BUG] "+format, args...)
 }
 
 // IsFatal returns true if err is a [FatalError].
+//
+// Deprecated: Bugs should panic instead.
 func IsFatal(err error) bool {
 	var f FatalError
 	return errors.As(err, &f)

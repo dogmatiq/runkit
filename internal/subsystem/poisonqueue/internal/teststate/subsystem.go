@@ -24,7 +24,7 @@ type Subsystem struct {
 	Messages uuidpb.Map[*envelopepb.Envelope]
 
 	// EnqueueRequests is used to send [poisonqueue.EnqueueRequest] requests to
-	// a supervisor.
+	// [poisonqueue.Service] instances.
 	EnqueueRequests chan<- poisonqueue.EnqueueRequest
 }
 
@@ -37,8 +37,8 @@ func (s *Subsystem) MessagesGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelop
 	return xrapid.SampledFromSeq(s.Messages.Values())
 }
 
-// SendEnqueueRequest sends an [poisonqueue.EnqueueRequest] request to
-// the supervisor.
+// SendEnqueueRequest sends an [poisonqueue.EnqueueRequest] request to a
+// service.
 func (s *Subsystem) SendEnqueueRequest(t *rapid.T, req poisonqueue.EnqueueRequest, want poisonqueue.EnqueueResponse) {
 	t.Helper()
 
