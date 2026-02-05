@@ -18,7 +18,7 @@ func OpenTransactionJournal(
 ) (journal.Journal[*Transaction], error) {
 	name := fmt.Sprintf(
 		"runkit.eventstream.v1/%s/transactions",
-		partitionID.AsString(),
+		partitionID,
 	)
 
 	return journal.
