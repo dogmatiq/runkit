@@ -17,7 +17,7 @@ func OpenMessageKeyspace(
 ) (kv.Keyspace[*uuidpb.UUID, *QueueMessage], error) {
 	return kv.
 		NewMarshalingStore(store, xpersistence.UUIDMarshaler, messageMarshaler).
-		Open(ctx, "runkit.poisonqueue.v1")
+		Open(ctx, "runkit.poisonqueue.v1/messages")
 }
 
 // messageMarshaler is a [marshaler.Marshaler] for [QueueMessage] values.

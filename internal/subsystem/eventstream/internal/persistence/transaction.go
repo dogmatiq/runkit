@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/journal"
@@ -15,7 +16,10 @@ func OpenTransactionJournal(
 	store journal.BinaryStore,
 	partitionID *uuidpb.UUID,
 ) (journal.Journal[*Transaction], error) {
-	name := "runkit.eventstream.v1/" + partitionID.AsString()
+	name := fmt.Sprintf(
+		"runkit.eventstream.v1/%s/transactions",
+		partitionID.AsString(),
+	)
 
 	return journal.
 		NewMarshalingStore(store, transactionMarshaler).
