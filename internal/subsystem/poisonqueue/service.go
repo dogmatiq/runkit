@@ -95,50 +95,8 @@ func (s *Service) handleEnqueueRequest(ctx context.Context, req EnqueueRequest) 
 	)
 	defer span.End()
 
-	s.telemetry.Info(
-		ctx,
-		"poison-queue.enqueue-request-started",
-		"started processing enqueue request",
-	)
+	err := s.doEnqueue(ctx, req)
 
-	do := func() (EnqueueResponse, error) {
-		if err := s.messages.Set(
-			ctx,
-			req.CommandEnvelope.MessageId,
-			&persistence.QueueMessage{
-				CommandEnvelope: req.CommandEnvelope,
-				FailedHandler:   req.FailedHandler,
-				EnqueuedAt:      timestamppb.Now(),
-			},
-			0,
-		); err != nil {
-			if !kv.IsConflict(err) {
-				return EnqueueResponse{}, err
-			}
-
-			s.telemetry.Info(
-				ctx,
-				"poison-queue.enqueue-request-deduplicated",
-				"skipped request for command that is already in the poison queue",
-			)
-		} else {
-			s.telemetry.Info(
-				ctx,
-				"poison-queue.enqueue-request-committed",
-				"committed new command to the poison queue",
-			)
-		}
-
-		return EnqueueResponse{
-			CommandMessageID: req.CommandEnvelope.MessageId,
-			Ok:               true,
-		}, nil
-	}
-
-	res, err := do()
-
-	// In the case of an error, ensure we always send a correctly correlated,
-	// but otherwise empty response.
 	if err != nil {
 		s.telemetry.Error(
 			ctx,
@@ -146,10 +104,11 @@ func (s *Service) handleEnqueueRequest(ctx context.Context, req EnqueueRequest) 
 			"an error occurred while processing an enqueue request",
 			err,
 		)
+	}
 
-		res = EnqueueResponse{
-			CommandMessageID: req.CommandEnvelope.MessageId,
-		}
+	res := EnqueueResponse{
+		CommandMessageID: req.CommandEnvelope.MessageId,
+		Ok:               err == nil,
 	}
 
 	validateEnqueueResponse(res)
@@ -160,4 +119,41 @@ func (s *Service) handleEnqueueRequest(ctx context.Context, req EnqueueRequest) 
 	case req.Response <- res:
 		return nil
 	}
+}
+
+func (s *Service) doEnqueue(ctx context.Context, req EnqueueRequest) error {
+	s.telemetry.Info(
+		ctx,
+		"poison-queue.enqueue-request-started",
+		"started processing enqueue request",
+	)
+
+	if err := s.messages.Set(
+		ctx,
+		req.CommandEnvelope.MessageId,
+		&persistence.QueueMessage{
+			CommandEnvelope: req.CommandEnvelope,
+			FailedHandler:   req.FailedHandler,
+			EnqueuedAt:      timestamppb.Now(),
+		},
+		0,
+	); err != nil {
+		if !kv.IsConflict(err) {
+			return err
+		}
+
+		s.telemetry.Info(
+			ctx,
+			"poison-queue.enqueue-request-deduplicated",
+			"skipped request for command that is already in the poison queue",
+		)
+	} else {
+		s.telemetry.Info(
+			ctx,
+			"poison-queue.enqueue-request-committed",
+			"committed new command to the poison queue",
+		)
+	}
+
+	return nil
 }

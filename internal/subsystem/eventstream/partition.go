@@ -160,6 +160,15 @@ func (p *partition) handleAppendRequest(ctx context.Context, req AppendRequest) 
 
 	offsets, err := p.doAppend(ctx, req)
 
+	if err != nil {
+		p.Telemetry.Error(
+			ctx,
+			"event-stream.append-request-failed",
+			"an error occurred while processing an append request",
+			err,
+		)
+	}
+
 	res := AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  err == nil,
@@ -172,7 +181,7 @@ func (p *partition) handleAppendRequest(ctx context.Context, req AppendRequest) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case req.Response <- res:
-		return err
+		return nil
 	}
 }
 
