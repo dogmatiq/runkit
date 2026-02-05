@@ -39,7 +39,7 @@ func (s *state) ReadFromStream(t *rapid.T) {
 			t.Fatalf(
 				"unexpected end of partition %s at offset %d",
 				part,
-				gotOffset,
+				wantOffset,
 			)
 		}
 
