@@ -111,7 +111,7 @@ func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest,
 				s.Partitions.Set(req.PartitionID, part)
 			}
 
-			part.append(t, req, got)
+			part.update(t, req, got)
 
 			return
 		}

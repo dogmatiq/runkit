@@ -71,9 +71,9 @@ func (p *Partition) FindAppendRequest(messageID *uuidpb.UUID) (eventstream.Appen
 	return eventstream.AppendRequest{}, false
 }
 
-// append updates the partition's state to reflect the occurrence of the events
+// update updates the partition's state to reflect the occurrence of the events
 // described by the given request/response exchange.
-func (p *Partition) append(t *rapid.T, req eventstream.AppendRequest, res eventstream.AppendResponse) {
+func (p *Partition) update(t *rapid.T, req eventstream.AppendRequest, res eventstream.AppendResponse) {
 	if res.Offsets.Begin < p.NextOffset {
 		// This is a response to a retried request.
 		// We assume at this point that it's already been validated as expected.
