@@ -11,9 +11,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Subsystem represents the state of the poison queue subsystem within a test.
-type Subsystem struct {
-	// Context is the context in which the subsystem is running.
+// PoisonQueue represents the state of the poison queue within a test.
+type PoisonQueue struct {
+	// Context is the context in which the poison queue subsystem is running.
 	Context context.Context
 
 	// Keyspaces is the in-memory key/value  store used to persist the queue.
@@ -29,7 +29,7 @@ type Subsystem struct {
 }
 
 // MessagesGen returns a generator that yields existing messages.
-func (s *Subsystem) MessagesGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelope] {
+func (s *PoisonQueue) MessagesGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelope] {
 	if s.Messages.Len() == 0 {
 		t.Skip("queue is empty")
 	}
@@ -39,7 +39,7 @@ func (s *Subsystem) MessagesGen(t *rapid.T) *rapid.Generator[*envelopepb.Envelop
 
 // SendEnqueueRequest sends an [poisonqueue.EnqueueRequest] request to a
 // service.
-func (s *Subsystem) SendEnqueueRequest(t *rapid.T, req poisonqueue.EnqueueRequest, want poisonqueue.EnqueueResponse) {
+func (s *PoisonQueue) SendEnqueueRequest(t *rapid.T, req poisonqueue.EnqueueRequest, want poisonqueue.EnqueueResponse) {
 	t.Helper()
 
 	if req.Response != nil {

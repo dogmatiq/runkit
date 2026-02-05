@@ -26,7 +26,7 @@ func TestService(t *testing.T) {
 		// the services' gracefully when the test ends.
 		ctx, cancel := context.WithCancelCause(context.Background())
 
-		subsystem := &teststate.Subsystem{
+		queue := &teststate.PoisonQueue{
 			Context:         ctx,
 			EnqueueRequests: requests,
 		}
@@ -44,7 +44,7 @@ func TestService(t *testing.T) {
 
 		for idx := range 3 {
 			services.Go(func() {
-				keyspaces := kv.BinaryStore(&subsystem.Keyspaces)
+				keyspaces := kv.BinaryStore(&queue.Keyspaces)
 				telem := telemetry.
 					NewTestProvider(t).
 					WithAttrs(telemetry.Int("service.id", idx))
@@ -80,13 +80,13 @@ func TestService(t *testing.T) {
 		})
 
 		t.Repeat(
-			rapid.StateMachineActions(&state{subsystem}),
+			rapid.StateMachineActions(&state{queue}),
 		)
 	})
 }
 
 type state struct {
-	subsystem *teststate.Subsystem
+	queue *teststate.PoisonQueue
 }
 
 func (s *state) Check(t *rapid.T) {}
@@ -94,7 +94,7 @@ func (s *state) Check(t *rapid.T) {}
 func (s *state) EnqueueCommand(t *rapid.T) {
 	env := xrapid.Envelope().Draw(t, "command")
 
-	s.subsystem.SendEnqueueRequest(
+	s.queue.SendEnqueueRequest(
 		t,
 		EnqueueRequest{
 			CommandEnvelope: env,
@@ -108,9 +108,9 @@ func (s *state) EnqueueCommand(t *rapid.T) {
 }
 
 func (s *state) RenqueueExistingCommand(t *rapid.T) {
-	env := s.subsystem.MessagesGen(t).Draw(t, "existing message")
+	env := s.queue.MessagesGen(t).Draw(t, "existing message")
 
-	s.subsystem.SendEnqueueRequest(
+	s.queue.SendEnqueueRequest(
 		t,
 		EnqueueRequest{
 			CommandEnvelope: env,
@@ -124,9 +124,9 @@ func (s *state) RenqueueExistingCommand(t *rapid.T) {
 }
 
 func (s *state) InduceFailureBeforeNextKeyspaceSet(t *rapid.T) {
-	s.subsystem.Keyspaces.ScheduleFailure(kvtest.BeforeSet)
+	s.queue.Keyspaces.ScheduleFailure(kvtest.BeforeSet)
 }
 
 func (s *state) InduceFailureAfterNextKeyspaceSet(t *rapid.T) {
-	s.subsystem.Keyspaces.ScheduleFailure(kvtest.AfterSet)
+	s.queue.Keyspaces.ScheduleFailure(kvtest.AfterSet)
 }
