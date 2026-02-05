@@ -133,8 +133,10 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
-		BeginOffset:         0,
-		EndOffset:           Offset(len(req.EventEnvelopes)),
+		Offsets: OffsetRange{
+			Begin: 0,
+			End:   Offset(len(req.EventEnvelopes)),
+		},
 	})
 }
 
@@ -156,8 +158,10 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
-		BeginOffset:         part.NextOffset,
-		EndOffset:           part.NextOffset + Offset(len(req.EventEnvelopes)),
+		Offsets: OffsetRange{
+			Begin: part.NextOffset,
+			End:   part.NextOffset + Offset(len(req.EventEnvelopes)),
+		},
 	})
 }
 
@@ -178,8 +182,10 @@ func (s *state) ReappendPriorEvents(t *rapid.T) {
 	s.subsystem.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
-		BeginOffset:         offset,
-		EndOffset:           offset + Offset(len(prior.EventEnvelopes)),
+		Offsets: OffsetRange{
+			Begin: offset,
+			End:   offset + Offset(len(req.EventEnvelopes)),
+		},
 	})
 }
 

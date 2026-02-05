@@ -158,69 +158,12 @@ func (p *partition) handleAppendRequest(ctx context.Context, req AppendRequest) 
 		span.End()
 	}()
 
-	p.Telemetry.Info(
-		ctx,
-		"event-stream.append-request-started",
-		"started processing append request",
-	)
+	offsets, err := p.doAppend(ctx, req)
 
-	do := func() (AppendResponse, error) {
-		for {
-			res, ok, err := p.deduplicate(ctx, req)
-			if err != nil {
-				return AppendResponse{}, err
-			}
-
-			if ok {
-				p.Telemetry.Info(
-					ctx,
-					"event-stream.append-request-deduplicated",
-					"skipped request for events that are already in the event stream",
-					telemetry.Int("response.begin_offset", res.BeginOffset),
-					telemetry.Int("response.end_offset", res.EndOffset),
-				)
-
-				return res, nil
-			}
-
-			res, ok, err = p.commit(ctx, req)
-			if err != nil {
-				return AppendResponse{}, err
-			}
-
-			if ok {
-				p.Telemetry.Info(
-					ctx,
-					"event-stream.append-request-committed",
-					"committed new events to the partition",
-					telemetry.Int("response.begin_offset", res.BeginOffset),
-					telemetry.Int("response.end_offset", res.EndOffset),
-				)
-
-				return res, nil
-			}
-
-			if err := p.load(ctx, "reloaded partition due to a journal conflict"); err != nil {
-				return AppendResponse{}, err
-			}
-		}
-	}
-
-	res, err := do()
-
-	// In the case of an error, ensure we always send a correctly correlated,
-	// but otherwise empty response.
-	if err != nil {
-		p.Telemetry.Error(
-			ctx,
-			"event-stream.append-request-failed",
-			"an error occurred while processing an append request",
-			err,
-		)
-
-		res = AppendResponse{
-			FirstEventMessageID: req.EventEnvelopes[0].MessageId,
-		}
+	res := AppendResponse{
+		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
+		Ok:                  err == nil,
+		Offsets:             offsets,
 	}
 
 	validateAppendResponse(res)
@@ -229,15 +172,65 @@ func (p *partition) handleAppendRequest(ctx context.Context, req AppendRequest) 
 	case <-ctx.Done():
 		return ctx.Err()
 	case req.Response <- res:
-		return nil
+		return err
+	}
+}
+
+func (p *partition) doAppend(ctx context.Context, req AppendRequest) (OffsetRange, error) {
+	p.Telemetry.Info(
+		ctx,
+		"event-stream.append-request-started",
+		"started processing append request",
+	)
+
+	for {
+		offsets, err := p.deduplicate(ctx, req)
+		if err != nil {
+			return OffsetRange{}, err
+		}
+
+		if !offsets.IsEmpty() {
+			p.Telemetry.Info(
+				ctx,
+				"event-stream.append-request-deduplicated",
+				"skipped request to append events that have already been appended to the partition",
+				telemetry.Int("response.begin_offset", offsets.Begin),
+				telemetry.Int("response.end_offset", offsets.End),
+			)
+
+			return offsets, nil
+		}
+
+		offsets, err = p.commit(ctx, req)
+		if err == nil {
+			p.Telemetry.Info(
+				ctx,
+				"event-stream.append-request-committed",
+				"committed new events to the partition",
+				telemetry.Int("response.begin_offset", offsets.Begin),
+				telemetry.Int("response.end_offset", offsets.End),
+			)
+
+			return offsets, nil
+		}
+
+		if !journal.IsConflict(err) {
+			return OffsetRange{}, err
+		}
+
+		if err := p.load(ctx, "reloaded partition state due to a journal conflict"); err != nil {
+			return OffsetRange{}, err
+		}
 	}
 }
 
 // commit writes a transaction that appends the events in the given
 // [AppendRequest] to the stream partition.
-func (p *partition) commit(ctx context.Context, req AppendRequest) (AppendResponse, bool, error) {
-	begin := p.offset
-	end := begin + Offset(len(req.EventEnvelopes))
+func (p *partition) commit(ctx context.Context, req AppendRequest) (OffsetRange, error) {
+	offsets := OffsetRange{
+		Begin: p.offset,
+		End:   p.offset + Offset(len(req.EventEnvelopes)),
+	}
 
 	if err := p.transactions.Append(
 		ctx,
@@ -245,68 +238,59 @@ func (p *partition) commit(ctx context.Context, req AppendRequest) (AppendRespon
 		persistence.
 			NewTransactionBuilder().
 			WithMetaData(&persistence.Transaction_MetaData{
-				OffsetBefore: uint64(begin),
-				OffsetAfter:  uint64(end),
+				OffsetBefore: uint64(offsets.Begin),
+				OffsetAfter:  uint64(offsets.End),
 			}).
 			WithAppendOperation(&persistence.AppendOperation{
 				Events: req.EventEnvelopes,
 			}).
 			Build(),
 	); err != nil {
-		if journal.IsConflict(err) {
-			err = nil
-		}
-		return AppendResponse{}, false, err
+		return OffsetRange{}, err
 	}
 
 	p.transactionPos++
-	p.offset = end
+	p.offset = offsets.End
 
-	return AppendResponse{
-		req.EventEnvelopes[0].MessageId,
-		true,
-		begin,
-		end,
-	}, true, nil
+	return offsets, nil
 }
 
 // deduplicate searches the journal to find an existing transaction that appends
-// the events from the given [AppendRequest], if any.
+// the events from the given [AppendRequest], if any. It returns the
+// [OffsetRange] of the events if they have already been appended, otherwise the
+// returned range is empty.
 //
 // TODO: This is a brute-force approach that searches the journal directly
 // (though relatively efficiently). We could improve upon this approach by
 // keeping some in-memory state of recent request and/or event IDs (either
 // explicitly, or via a bloom filter, for example).
-func (p *partition) deduplicate(
-	ctx context.Context,
-	req AppendRequest,
-) (AppendResponse, bool, error) {
-	// Assuming the request is well-formed, if its "lowest possible offset" is
-	// greater than the next offset, we assume our knowledge of the parititon is
-	// stale and reload from the journal.
+func (p *partition) deduplicate(ctx context.Context, req AppendRequest) (OffsetRange, error) {
+	// If the request's "lowest possible offset" is greater than the next
+	// offset, we must assume our knowledge of the parititon is stale.
 	if req.LowestPossibleOffset > p.offset {
-		if err := p.load(ctx, "reloaded partition because the request's lowest possible offset implies stale in-memory state"); err != nil {
-			return AppendResponse{}, false, err
+		if err := p.load(ctx, "reloaded partition state because the append request's lowest possible offset implies stale in-memory state"); err != nil {
+			return OffsetRange{}, err
 		}
 
-		// If the deduplication hint is _still_ greater than the next offset,
-		// then the request is malformed.
+		// If the request's "lowest possible offset" is _still_ greater than the
+		// next offset, then the request is malformed.
 		if req.LowestPossibleOffset > p.offset {
-			panic("AppendRequest.LowestPossibleOffset is greater than the partition's next offset")
+			panic("eventstream.AppendRequest.LowestPossibleOffset is greater than the partition's next offset")
 		}
 	}
 
 	// The events can't be duplicates if the only place they could be is at the
 	// end of the partition.
 	if req.LowestPossibleOffset == p.offset {
-		return AppendResponse{}, false, nil
+		return OffsetRange{}, nil
 	}
 
-	// Find the prior [eventstreamjournal.Transaction] for this request.
+	// Otherwise, we attempt to find an existing [persistence.Transaction] for
+	// this request.
 	//
-	// We first find the transaction that appends the event at the deduplication
-	// hint offset, then scan forward from there to find the transaction that
-	// was produced this request ID.
+	// We first find the transaction that appended the event at
+	// [LowestPossibleOffset], then scan forward from there to find the
+	// transaction that appended the events in the request, if any.
 	txn, err := journal.ScanFromSearchResult(
 		ctx,
 		p.transactions,
@@ -329,8 +313,11 @@ func (p *partition) deduplicate(
 				return txn, false, nil
 			}
 
+			// Sanity check: if we found a transaction with the same first event
+			// ID, it must contain the exact same events as the request. If not,
+			// either the request is malformed, or the journal is corrupted.
 			if len(events) != len(req.EventEnvelopes) {
-				panic(fmt.Sprintf("AppendRequest contains different number of events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId))
+				panic(fmt.Sprintf("eventstream.AppendRequest contains different number of events to the persistence.Transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId))
 			}
 
 			for idx := range events {
@@ -338,7 +325,7 @@ func (p *partition) deduplicate(
 				want := req.EventEnvelopes[idx].MessageId
 
 				if !got.Equal(want) {
-					panic(fmt.Sprintf("AppendRequest contains different events to the transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId))
+					panic(fmt.Sprintf("eventstream.AppendRequest contains different events to the persistence.Transaction with the same first event ID (%s)", req.EventEnvelopes[0].MessageId))
 				}
 			}
 
@@ -347,13 +334,11 @@ func (p *partition) deduplicate(
 	)
 
 	if err != nil {
-		return AppendResponse{}, false, journal.IgnoreNotFound(err)
+		return OffsetRange{}, journal.IgnoreNotFound(err)
 	}
 
-	return AppendResponse{
-		req.EventEnvelopes[0].MessageId,
-		true,
-		Offset(txn.MetaData.OffsetBefore),
-		Offset(txn.MetaData.OffsetAfter),
-	}, true, nil
+	return OffsetRange{
+		Begin: Offset(txn.MetaData.OffsetBefore),
+		End:   Offset(txn.MetaData.OffsetAfter),
+	}, nil
 }

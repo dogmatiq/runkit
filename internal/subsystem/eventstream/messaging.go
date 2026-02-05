@@ -7,9 +7,24 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
-// Offset represents a position within an event stream partition. The first
-// event in the partition always has offset zero.
+// Offset is the position of an event within a stream partition. The first event
+// in the partition is always at offset zero.
 type Offset uint64
+
+// OffsetRange describes a contiguous range of offsets within an event stream
+// partition as a half-open interval [begin, end).
+type OffsetRange struct {
+	// Begin is the offset of the first event in the range.
+	Begin Offset
+
+	// End is the offset after the last event in the range.
+	End Offset
+}
+
+// IsEmpty returns true if the range contains no offsets.
+func (r OffsetRange) IsEmpty() bool {
+	return r.End <= r.Begin
+}
 
 // AppendRequest is a request to append events to a specific partition of the
 // application's event stream.
@@ -43,44 +58,37 @@ type AppendResponse struct {
 	// Ok is true if the events were appended successfully.
 	Ok bool
 
-	// [BeginOffset, EndOffset) is the half-open range describing the offsets of
-	// the appended events within the stream.
-	//
-	// BeginOffset is the offset of the first event in the [AppendRequest], and
-	// EndOffset is the offset after the last event in the [AppendRequest].
-	//
-	// The values are undefined if Ok is false.
-	BeginOffset, EndOffset Offset
+	// Offsets describes the offsets of the appended events within the stream
+	// partition. The values are undefined if Ok is false.
+	Offsets OffsetRange
 }
 
 func validateAppendRequest(req AppendRequest) {
 	if err := req.PartitionID.Validate(); err != nil {
-		panic(fmt.Sprintf("AppendRequest.PartitionID is invalid: %v", err))
+		panic(fmt.Sprintf("eventstream.AppendRequest.PartitionID is invalid: %v", err))
 	}
 
 	if len(req.EventEnvelopes) == 0 {
-		panic("AppendRequest.EventEnvelopes is empty")
+		panic("eventstream.AppendRequest.EventEnvelopes is empty")
 	}
 
 	for i, env := range req.EventEnvelopes {
 		if err := env.Validate(); err != nil {
-			panic(fmt.Sprintf("AppendRequest.EventEnvelopes[%d] is invalid: %v", i, err))
+			panic(fmt.Sprintf("eventstream.AppendRequest.EventEnvelopes[%d] is invalid: %v", i, err))
 		}
 	}
 
 	if req.Response == nil {
-		panic("AppendRequest.Response is nil")
+		panic("eventstream.AppendRequest.Response is nil")
 	}
 }
 
 func validateAppendResponse(res AppendResponse) {
 	if err := res.FirstEventMessageID.Validate(); err != nil {
-		panic(fmt.Sprintf("AppendResponse.FirstEventMessageID is invalid: %v", err))
+		panic(fmt.Sprintf("eventstream.AppendResponse.FirstEventMessageID is invalid: %v", err))
 	}
 
-	if res.Ok {
-		if res.EndOffset <= res.BeginOffset {
-			panic("AppendResponse.EndOffset must be greater than BeginOffset when Ok is true")
-		}
+	if res.Ok && res.Offsets.IsEmpty() {
+		panic("eventstream.AppendResponse.Offsets must not be empty if Ok is true")
 	}
 }

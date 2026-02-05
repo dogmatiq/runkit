@@ -74,17 +74,17 @@ func (p *Partition) FindAppendRequest(messageID *uuidpb.UUID) (eventstream.Appen
 // append updates the partition's state to reflect the occurrence of the events
 // described by the given request/response exchange.
 func (p *Partition) append(t *rapid.T, req eventstream.AppendRequest, res eventstream.AppendResponse) {
-	if res.BeginOffset < p.NextOffset {
+	if res.Offsets.Begin < p.NextOffset {
 		// This is a response to a retried request.
 		// We assume at this point that it's already been validated as expected.
 		return
 	}
 
-	if res.BeginOffset > p.NextOffset {
+	if res.Offsets.Begin > p.NextOffset {
 		t.Fatalf(
 			"cannot append to partition %s at offset %d, partition is at offset %d",
 			p.ID,
-			res.BeginOffset,
+			res.Offsets.Begin,
 			p.NextOffset,
 		)
 	}
@@ -94,7 +94,7 @@ func (p *Partition) append(t *rapid.T, req eventstream.AppendRequest, res events
 			"appended %s to partition %s at offset %d",
 			env.MessageId,
 			p.ID,
-			res.BeginOffset+eventstream.Offset(i),
+			res.Offsets.Begin+eventstream.Offset(i),
 		)
 	}
 

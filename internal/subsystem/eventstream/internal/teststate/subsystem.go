@@ -92,13 +92,13 @@ func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest,
 				t.Fatalf("AppendResponse has unexpected Ok value: got %t, want %t", got.Ok, want.Ok)
 			}
 
-			if got.BeginOffset != want.BeginOffset || got.EndOffset != want.EndOffset {
+			if got.Offsets.Begin != want.Offsets.Begin || got.Offsets.End != want.Offsets.End {
 				t.Fatalf(
 					"AppendResponse has unexpected offset range: got [%d, %d), want [%d, %d)",
-					got.BeginOffset,
-					got.EndOffset,
-					want.BeginOffset,
-					want.EndOffset,
+					got.Offsets.Begin,
+					got.Offsets.End,
+					want.Offsets.Begin,
+					want.Offsets.End,
 				)
 			}
 
