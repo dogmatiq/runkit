@@ -10,12 +10,12 @@ import (
 )
 
 func (s *state) ReadFromStream(t *rapid.T) {
-	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
+	part := s.stream.PartitionsGen(t).Draw(t, "stream partition")
 	wantOffset := part.OffsetsGen(t).Draw(t, "start offset")
 
 	r, err := NewReader(
 		t.Context(),
-		&s.subsystem.Journals.NonFailing,
+		&s.stream.Journals.NonFailing,
 		part.ID,
 		wantOffset,
 	)

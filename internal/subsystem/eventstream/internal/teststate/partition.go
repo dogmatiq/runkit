@@ -108,7 +108,7 @@ func (p *Partition) String() string {
 }
 
 // GoString returns a string representation of the partition ID. This produces
-// friendlier log messages when drawing a partition from [Subsystem.Partitions].
+// friendlier log messages when drawing a partition from [EventStream.Partitions].
 func (p *Partition) GoString() string {
 	return p.ID.AsString()
 }

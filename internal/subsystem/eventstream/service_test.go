@@ -27,7 +27,7 @@ func TestService(t *testing.T) {
 		// the services' gracefully when the test ends.
 		ctx, cancel := context.WithCancelCause(context.Background())
 
-		subsystem := &teststate.Subsystem{
+		stream := &teststate.EventStream{
 			Context:        ctx,
 			AppendRequests: appendRequests,
 		}
@@ -49,7 +49,7 @@ func TestService(t *testing.T) {
 					NewTestProvider(t).
 					WithAttrs(telemetry.Int("service.id", idx))
 
-				journals := journal.BinaryStore(&subsystem.Journals)
+				journals := journal.BinaryStore(&stream.Journals)
 
 				if testing.Verbose() {
 					journals = journal.WithTelemetry(
@@ -83,13 +83,13 @@ func TestService(t *testing.T) {
 		})
 
 		t.Repeat(
-			rapid.StateMachineActions(&state{subsystem}),
+			rapid.StateMachineActions(&state{stream}),
 		)
 	})
 }
 
 type state struct {
-	subsystem *teststate.Subsystem
+	stream *teststate.EventStream
 }
 
 func (s *state) Check(t *rapid.T) {
@@ -97,7 +97,7 @@ func (s *state) Check(t *rapid.T) {
 }
 
 func (s *state) guardAgainstDuplicateEvents(t *rapid.T) {
-	for part := range s.subsystem.Partitions.Values() {
+	for part := range s.stream.Partitions.Values() {
 		if part.NextOffset == 0 {
 			t.Fatalf("invariant violated: stream partition %q exists with no events", part)
 		}
@@ -130,7 +130,7 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendRequest(t, req, AppendResponse{
+	s.stream.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
 		Offsets: OffsetRange{
@@ -141,7 +141,7 @@ func (s *state) AppendEventsToNewStream(t *rapid.T) {
 }
 
 func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
-	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
+	part := s.stream.PartitionsGen(t).Draw(t, "stream partition")
 
 	req := AppendRequest{
 		PartitionID:          part.ID,
@@ -155,7 +155,7 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 		)
 	}
 
-	s.subsystem.SendAppendRequest(t, req, AppendResponse{
+	s.stream.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
 		Offsets: OffsetRange{
@@ -166,7 +166,7 @@ func (s *state) AppendMoreEventsToAnExistingStream(t *rapid.T) {
 }
 
 func (s *state) ReappendPriorEvents(t *rapid.T) {
-	part := s.subsystem.PartitionsGen(t).Draw(t, "stream partition")
+	part := s.stream.PartitionsGen(t).Draw(t, "stream partition")
 	prior := part.AppendRequestsGen(t).Draw(t, "prior request")
 	offset, ok := part.FindOffset(prior.EventEnvelopes[0].MessageId)
 	if !ok {
@@ -179,7 +179,7 @@ func (s *state) ReappendPriorEvents(t *rapid.T) {
 		LowestPossibleOffset: xrapid.Uint64Range(0, offset).Draw(t, "deduplication hint"),
 	}
 
-	s.subsystem.SendAppendRequest(t, req, AppendResponse{
+	s.stream.SendAppendRequest(t, req, AppendResponse{
 		FirstEventMessageID: req.EventEnvelopes[0].MessageId,
 		Ok:                  true,
 		Offsets: OffsetRange{
@@ -190,13 +190,13 @@ func (s *state) ReappendPriorEvents(t *rapid.T) {
 }
 
 func (s *state) InduceFailureOnNextJournalOpen(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeOpen)
+	s.stream.Journals.ScheduleFailure(journaltest.BeforeOpen)
 }
 
 func (s *state) InduceFailureBeforeNextJournalAppend(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.BeforeAppend)
+	s.stream.Journals.ScheduleFailure(journaltest.BeforeAppend)
 }
 
 func (s *state) InduceFailureAfterNextJournalAppend(t *rapid.T) {
-	s.subsystem.Journals.ScheduleFailure(journaltest.AfterAppend)
+	s.stream.Journals.ScheduleFailure(journaltest.AfterAppend)
 }

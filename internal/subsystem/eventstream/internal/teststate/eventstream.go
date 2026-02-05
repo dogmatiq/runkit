@@ -10,9 +10,9 @@ import (
 	"pgregory.net/rapid"
 )
 
-// Subsystem represents the state of the eventstream subsystem within a test.
-type Subsystem struct {
-	// Context is the context in which the subsystem is running.
+// EventStream represents the state of the eventstream within a test.
+type EventStream struct {
+	// Context is the context in which the eventstream subsystem is running.
 	Context context.Context
 
 	// Journals is the in-memory journal store used to persist events.
@@ -29,7 +29,7 @@ type Subsystem struct {
 }
 
 // PartitionsGen returns a generator that yields existing partitions.
-func (s *Subsystem) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
+func (s *EventStream) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
 	if s.Partitions.Len() == 0 {
 		t.Skip("stream is empty (has no partitions)")
 	}
@@ -38,7 +38,7 @@ func (s *Subsystem) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
 }
 
 // SendAppendRequest sends an [eventstream.AppendRequest] request to a service.
-func (s *Subsystem) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest, want eventstream.AppendResponse) {
+func (s *EventStream) SendAppendRequest(t *rapid.T, req eventstream.AppendRequest, want eventstream.AppendResponse) {
 	t.Helper()
 
 	if req.Response != nil {
