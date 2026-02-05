@@ -76,7 +76,6 @@ func (p *Partition) FindAppendRequest(messageID *uuidpb.UUID) (eventstream.Appen
 func (p *Partition) update(t *rapid.T, req eventstream.AppendRequest, res eventstream.AppendResponse) {
 	if res.Offsets.Begin < p.NextOffset {
 		// This is a response to a retried request.
-		// We assume at this point that it's already been validated as expected.
 		return
 	}
 

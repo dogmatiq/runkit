@@ -31,7 +31,7 @@ type EventStream struct {
 // PartitionsGen returns a generator that yields existing partitions.
 func (s *EventStream) PartitionsGen(t *rapid.T) *rapid.Generator[*Partition] {
 	if s.Partitions.Len() == 0 {
-		t.Skip("stream is empty (has no partitions)")
+		t.Skip("no partitions available")
 	}
 
 	return xrapid.SampledFromSeq(s.Partitions.Values())
