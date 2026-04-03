@@ -3,18 +3,19 @@ module github.com/dogmatiq/runkit
 go 1.25.0
 
 require (
-	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/dogmatiq/dapper v0.6.0
 	github.com/dogmatiq/enginekit v0.20.0
 	github.com/dogmatiq/persistencekit v0.14.0
-	google.golang.org/protobuf v1.36.11
-	pgregory.net/rapid v1.2.0
 )
 
 require (
-	github.com/dogmatiq/dogma v0.19.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
+	pgregory.net/rapid v1.2.0 // indirect
+)
+
+require (
+	github.com/dogmatiq/dogma v0.19.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
-	github.com/dogmatiq/jumble v0.1.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
