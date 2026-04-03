@@ -360,17 +360,64 @@ Everything else is scoped to `(app, ...)` or `(app, subsystem, ...)`.
 
 ## Phased Implementation
 
-### Phase 1 — Application Configuration
+### Phase 1 — Engine Skeleton
 
-Package `internal/config`.
+Package root (`github.com/dogmatiq/runkit`).
 
-Wraps `enginekit/config` to produce a stable, queryable internal representation of one or more
-`dogma.Application` instances: handler identities, message routes, message type → handler
-mappings. Pure computation; no I/O. Prerequisite for all routing logic in every subsequent
-phase.
+Establish the public API surface that all subsequent phases will fill in. At this stage the
+engine compiles and can be instantiated, but `Run()` returns `nil` immediately (no-op stub).
 
-Multi-application: accepts a slice of `dogma.Application`; produces a map keyed by application
-UUID.
+**Constructor:**
+
+```go
+func New(opts ...Option) *Engine
+```
+
+**Engine methods:**
+
+```go
+// ExecutorFor returns a CommandExecutor for the given application.
+// Panics if app was not registered with WithApplication.
+// Commands submitted before Run() is called are queued internally and
+// drained once the engine starts.
+func (e *Engine) ExecutorFor(app dogma.Application) dogma.CommandExecutor
+
+// Run starts the engine and blocks until ctx is cancelled or a fatal error
+// occurs. All runtime and environmental failures are returned here.
+func (e *Engine) Run(ctx context.Context) error
+```
+
+**Option type and built-in options:**
+
+```go
+type Option func(*engine)
+
+// WithApplication registers an application with the engine.
+// Panics if app is nil or already registered.
+func WithApplication(app dogma.Application) Option
+
+// FromEnvironment configures infrastructure from environment variables.
+// Records intent only; env vars are read and resources constructed during
+// Run(). Any slot already set by an explicit With* option is skipped.
+func FromEnvironment() Option
+
+// WithNodeID sets the stable node UUID for this engine instance.
+// If not set, FromEnvironment() checks the RUNKIT_NODE_ID env var.
+// If still unset, Run() assigns a random ephemeral UUID.
+func WithNodeID(id uuid.UUID) Option
+```
+
+Persistence options (`WithJournals`, `WithKeyspaces`, `WithSets`) are **not** defined here;
+they are introduced in Phase 2 when the first storage-backed subsystem is built.
+
+**Error convention:**
+
+- Programmer mistakes (nil app, duplicate registration, unregistered app in `ExecutorFor`) → panic.
+- Runtime and environmental failures → returned by `Run()`.
+
+No internal config-wrapping package is created speculatively. Each subsystem defines what it
+needs from `dogma.Application` when it is built; shared abstractions emerge from that rather
+than being pre-designed.
 
 ---
 
@@ -582,11 +629,11 @@ engine supplies a `ProjectionCompactScope`; the handler decides what to prune.
 
 Package `internal/subsystem/poisonqueue`.
 
-Exists already (`internal/subsystem/poisonqueue`). Global per application; no partition assignment.
-Any node may enqueue a failed command. Keyed by command message UUID.
+A reference implementation exists in `_internal/subsystem/poisonqueue`. Global per application;
+no partition assignment. Any node may enqueue a failed command. Keyed by command message UUID.
 
-Review the existing implementation for consistency with the patterns established in subsequent
-phases before considering it final.
+Review the archived implementation for consistency with the patterns established in earlier
+phases before writing the new implementation.
 
 ---
 
@@ -622,46 +669,57 @@ service is required.
 
 ---
 
-### Phase 10 — Engine Entry Point
+### Phase 10 — Engine Wiring
 
-Exported `Engine` type at the module root (or `internal/engine` if no public API is exposed at
-this stage).
+Complete the `Engine` skeleton from Phase 1 by wiring all subsystems together.
 
-Responsibilities:
+**Startup sequence inside `Run()`:**
 
-- Accept `[]dogma.Application`; delegate to Phase 1 config resolution.
-- Obtain node identity from the pluggable identity provider (persistent UUID or ephemeral random
-  UUID).
-- Start background heartbeat refresh goroutine (writes `updated_at` every N seconds).
-- Start background membership refresh goroutine (reads heartbeat keyspace; recomputes rendezvous
-  hash; notifies subsystems of topology changes).
-- Construct all subsystems and wire their in-process channels.
-- Start all subsystems under a shared `errgroup`.
-- Implement `dogma.CommandExecutor`:
-  - Identify target handler via appconfig message type routing.
-  - If aggregate: route via rendezvous over live node set; forward locally or via
-    CommandForwardingService gRPC.
-  - If integration: routing depends on `ConcurrencyPreference` (see Phase 4).
-- Implement graceful shutdown: drain in-flight commands; flush checkpoints; remove heartbeat
-  entry.
+1. **Resolve node identity**: use `WithNodeID` value if set; otherwise check the `RUNKIT_NODE_ID`
+   env var (if `FromEnvironment()` was applied); otherwise assign a random ephemeral UUID.
+2. **Resolve persistence stores**: use values from explicit `With*` options; for any slot still
+   unset and `FromEnvironment()` was applied, construct a store from the corresponding DSN env
+   var.
+3. Start background **heartbeat** goroutine: writes `{ gRPC_address, updated_at }` to the node
+   registry keyspace every N seconds.
+4. Start background **membership refresh** goroutine: reads the heartbeat keyspace periodically;
+   recomputes rendezvous hashes; notifies subsystems of topology changes.
+5. **Construct all subsystems** and wire their in-process channels.
+6. **Start all subsystems** under a shared `errgroup`.
+7. **Drain the pre-startup command queue**: replay any commands submitted via `ExecutorFor`
+   before `Run()` was called into the live execution path.
+
+**`dogma.CommandExecutor` implementation** (wired here, callable from Phase 1):
+
+- Identify target handler via message-type routing over registered applications.
+- If aggregate: route via rendezvous over live node set; forward locally or via
+  `CommandForwardingService` gRPC.
+- If integration: routing depends on `ConcurrencyPreference` (see Phase 4).
+
+**Graceful shutdown** (on ctx cancellation):
+
+- Drain in-flight commands.
+- Flush subsystem checkpoints.
+- Remove this node's heartbeat entry.
 
 ---
 
 ## Build Order
 
 ```
-Phase 1 (config)
-  └─→ Phase 2 (node registry)
-        ├─→ Phase 3 (aggregate)
-        │     └─→ Phase 5 (event fan-out)
-        │           ├─→ Phase 6 (process + timeouts)
-        │           └─→ Phase 7 (projection)
-        └─→ Phase 4 (integration)
-              └─→ Phase 5 (event fan-out) [shared dependency]
+Phase 1 (engine skeleton) — establishes public API; compiles immediately
 
-Phase 8 (poison queue) — exists; review when Phase 3/4 are implemented
-Phase 9 (inter-node gRPC) — can be developed in parallel with Phases 3–7
-Phase 10 (engine entry point) — last; wires everything
+Phase 2 (node registry)
+  ├─→ Phase 3 (aggregate)
+  │     └─→ Phase 5 (event fan-out)
+  │           ├─→ Phase 6 (process + timeouts)
+  │           └─→ Phase 7 (projection)
+  └─→ Phase 4 (integration)
+        └─→ Phase 5 (event fan-out) [shared dependency]
+
+Phase 8 (poison queue) — implement when Phase 3/4 patterns are established
+Phase 9 (inter-node gRPC) — can be developed in parallel with Phases 2–7
+Phase 10 (engine wiring) — last; wires all subsystems into the Phase 1 skeleton
 ```
 
 ---
@@ -759,22 +817,24 @@ The first option is preferred. Resolve before Phase 5 work begins.
 
 ## Existing Code: Status and Role
 
-The following packages exist in the repository. Their role relative to this plan:
+Previous implementation attempts have been archived to `_internal/` (excluded from the build
+by Go's `_`-prefix convention). Only the stable helper packages under `internal/x/` remain active.
 
-| Package                          | Status         | Role                                                                                                                                                                                                               |
-| -------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `internal/partition`             | Exists; extend | Rendezvous hash core. Needs extension to support `derive_uuid(string instanceID)` as input (string instance IDs are not UUIDs).                                                                                    |
-| `internal/subsystem/eventstream` | Exists; review | Journal-backed event stream. Internally uses "partition" for each stream segment (= dogma `StreamID`). UUID is externally supplied — architecturally correct. Implementation style is a reference, not a template. |
-| `internal/subsystem/poisonqueue` | Exists; review | Global kv-backed failed-command store. Review for consistency before finalising.                                                                                                                                   |
-| `internal/x/xtelemetry`          | Exists; stable | Telemetry constants.                                                                                                                                                                                               |
-| `internal/x/xpersistence`        | Exists; stable | Protobuf marshaling helpers.                                                                                                                                                                                       |
-| `internal/x/xtesting`            | Exists; stable | Failable stores for property-based chaos testing.                                                                                                                                                                  |
-| `internal/x/xerrors`             | Exists; review | `FatalError` and helpers marked deprecated in source.                                                                                                                                                              |
+**Active packages:**
 
-The existing subsystems are **reference implementations** demonstrating the channel-based service
-pattern and the property-based test approach (`pgregory.net/rapid` state machines, N concurrent
-instances per test, failable stores). They are not guaranteed to be the canonical style for
-future subsystems.
+| Package                   | Status         | Role                                              |
+| ------------------------- | -------------- | ------------------------------------------------- |
+| `internal/x/xtelemetry`   | Exists; stable | Telemetry constants.                              |
+| `internal/x/xpersistence` | Exists; stable | Protobuf marshaling helpers.                      |
+| `internal/x/xtesting`     | Exists; stable | Failable stores for property-based chaos testing. |
+
+**Archived in `_internal/`** (reference only — do not import):
+
+| Package                           | Notes                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_internal/partition`             | Rendezvous hash core. Accepts `*uuidpb.UUID` for both partitions and workloads. Each subsystem derives a UUID from its own inputs before calling `SelectPartition`. |
+| `_internal/subsystem/eventstream` | Journal-backed event stream. Implementation style is a reference, not a template.                                                                                   |
+| `_internal/subsystem/poisonqueue` | Global kv-backed failed-command store. Review for consistency when implementing Phase 8.                                                                            |
 
 ---
 
