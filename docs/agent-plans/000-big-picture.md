@@ -22,7 +22,7 @@ runkit is a horizontally scalable, multi-node Dogma engine. Key properties:
 
 - **Distributed**: nodes share a persistence backend; no single point of coordination or
   failure. All nodes are peers; workload is assigned via rendezvous hashing over the
-  live node set. See [ADR-0002](../adr/0002-rendezvous-hashing-for-work-assignment.md).
+  live node set. See [ADR-0002](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
 - **Cloud-native persistence**: all state passes through `persistencekit` abstractions (journal,
   kv, set), making the engine backend-agnostic (PostgreSQL, DynamoDB, S3, in-memory).
 - **OCC as the correctness primitive**: optimistic concurrency control on journal `Append`
@@ -68,7 +68,7 @@ before the restart.
 ### Two orthogonal routing domains
 
 **Command routing** assigns commands to nodes by handler instance. The routing key depends on
-the handler type — see [ADR-0002](../adr/0002-rendezvous-hashing-for-work-assignment.md).
+the handler type — see [ADR-0002](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
 
 **Partition ownership** assigns event-side work to nodes by partition UUID. The two domains
 scale independently.
@@ -322,7 +322,7 @@ once the new node's heartbeat propagates. No cluster-wide coordination is requir
 
 ### ~~2. Stable node identity mechanism~~ _(resolved)_
 
-`WithNodeID(id uuid.UUID)` / `DOGMA_NODE_ID`. See [ADR-0002](../adr/0002-rendezvous-hashing-for-work-assignment.md).
+`WithNodeID(id uuid.UUID)` / `DOGMA_NODE_ID`. See [ADR-0002](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
 
 ### 3. Handler metadata retention for removed handlers
 

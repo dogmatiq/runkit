@@ -6,6 +6,8 @@ Date: 2026-04-04
 
 Accepted
 
+- Referenced by [3. Optimistic conflict resolution](0003-optimistic-conflict-resolution.md)
+
 ## Context
 
 We need a way to assign workloads - such as aggregate instances or stream

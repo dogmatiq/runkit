@@ -19,16 +19,17 @@ Relationship annotations (bullets below the status value; add the counterpart to
   - References [N. Title](NNNN-title-with-dashes.md)     <-> - Referenced by [N. Title](NNNN-title-with-dashes.md)
 
 For Proposed ADRs, add after this section:
-  > [!NOTE]
-  > This decision is proposed and has not yet been accepted. It is not currently in force.
+> [!NOTE]
+> This decision has not yet been accepted and is subject to change.
 
 For Superseded ADRs, add after this section:
-  > [!WARNING]
-  > This decision has been superseded and is no longer in force. Refer to the replacement ADR(s) listed in the status section above.
+> [!WARNING]
+> This decision has been superseded. Refer to the replacement ADR(s) listed
+> above.
 
 For Deprecated ADRs, add after this section:
-  > [!WARNING]
-  > This decision has been deprecated and is no longer applicable. No replacement exists.
+> [!WARNING]
+> This decision has been deprecated and is no longer applicable.
 -->
 
 ## Context

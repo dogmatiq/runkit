@@ -2,7 +2,7 @@
 name: write-adr
 description:
   "Write, draft, review, or edit an Architecture Decision Record (ADR)
-  for the runkit project. Use when recording a new architectural decision, revising
+  for this repository. Use when recording a new architectural decision, revising
   an existing ADR, or checking an ADR against project style rules. Triggers: write
   ADR, draft ADR, new ADR, create ADR, review ADR, architecture decision record."
 argument-hint: "the decision to document, e.g., 'use gRPC for inter-service communication'"
@@ -11,7 +11,7 @@ argument-hint: "the decision to document, e.g., 'use gRPC for inter-service comm
 # Write ADR
 
 Guides drafting, reviewing, and editing Architecture Decision Records for the
-runkit project. All ADRs follow the Nygard format with the project-specific
+repository. All ADRs follow the Nygard format with the project-specific
 style rules defined in this skill.
 
 The reference exemplar for this project is
@@ -55,27 +55,30 @@ below the status value.
 
 ADRs with status `Proposed`, `Superseded`, or `Deprecated` must include a
 GitHub-style admonition immediately after the `## Status` section (before
-`## Context`), using the exact copy below:
+`## Context`). Copy the admonition blocks exactly as shown below, including
+whitespace and line breaks, because GitHub can render them incorrectly
+otherwise:
 
 **Proposed:**
 
 ```
 > [!NOTE]
-> This decision is proposed and has not yet been accepted. It is not currently in force.
+> This decision has not yet been accepted and is subject to change.
 ```
 
 **Superseded:**
 
 ```
 > [!WARNING]
-> This decision has been superseded and is no longer in force. Refer to the replacement ADR(s) listed in the status section above.
+> This decision has been superseded. Refer to the replacement ADR(s) listed
+> above.
 ```
 
 **Deprecated:**
 
 ```
 > [!WARNING]
-> This decision has been deprecated and is no longer applicable. No replacement exists.
+> This decision has been deprecated and is no longer applicable.
 ```
 
 ### Relationship annotations
@@ -124,6 +127,8 @@ decision.
 
 Copy [adr-template.md](./assets/adr-template.md) and fill it in.
 
+Wrap regular paragraph text at 80 characters per line.
+
 **Context** -- one to three paragraphs:
 
 - State the problem or constraint that motivates the decision.
@@ -155,7 +160,8 @@ Copy [adr-template.md](./assets/adr-template.md) and fill it in.
 - Link external concepts to a well-regarded source on first use. Prefer
   Wikipedia for general concepts; use a more authoritative source (RFC, spec,
   official docs) when one exists.
-- Link code identifiers to pkg.go.dev.
+- Link code identifiers to pkg.go.dev only when they are defined in other
+  repositories.
 - Link RFCs to rfc-editor.org.
 - Use markdown reference-style links. Collect them at the bottom of the file
   inside a `<!-- references -->` comment block. Keep the list alphabetized.
@@ -177,7 +183,7 @@ breaks, and suggest a corrected version.
 - [ ] Status value is one of the four allowed values; no other text on the same line
 - [ ] Relationship annotations are bullets below the status value, using only the six allowed verbs
 - [ ] Every relationship annotation has its counterpart added to the linked ADR
-- [ ] `Proposed`, `Superseded`, and `Deprecated` ADRs include the exact required admonition after `## Status`
+- [ ] `Proposed`, `Superseded`, and `Deprecated` ADRs include the exact required admonition after `## Status`, including whitespace and line breaks
 - [ ] Title is a decision noun phrase, not a question or problem statement
 - [ ] Exactly three top-level sections: Context, Decision, Consequences
 - [ ] No extra top-level sections (no "Options", "Alternatives", "Background")
@@ -189,6 +195,7 @@ breaks, and suggest a corrected version.
 
 - [ ] First-person plural throughout ("We will...", "We considered...")
 - [ ] Conversational tone, not academic
+- [ ] Regular paragraph text is wrapped at 80 characters per line
 - [ ] No non-ASCII characters in prose: no em dashes, en dashes, or curly quotes
 - [ ] ASCII punctuation only; hyphens, not dashes
 - [ ] Non-ASCII characters in code blocks and formulas are acceptable
@@ -211,7 +218,7 @@ breaks, and suggest a corrected version.
 ### References
 
 - [ ] External concepts linked to a well-regarded source on first use (Wikipedia, RFC, spec, or official docs)
-- [ ] Code identifiers linked to pkg.go.dev
+- [ ] Code identifiers from other repositories linked to pkg.go.dev
 - [ ] RFCs linked to rfc-editor.org
 - [ ] Reference-style links used throughout
 - [ ] References collected at the bottom in a `<!-- references -->` comment block
