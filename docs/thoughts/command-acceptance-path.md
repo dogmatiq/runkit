@@ -1,78 +1,328 @@
-# CommandExecutor: Acceptance Path to `nil` (without `WithEventObserver`)
+# Command acceptance path
 
-This document records the research into what phases and steps are needed for
-`ExecuteCommand` to return `nil` when called without `WithEventObserver`. It
-refines the Phase 3 description in [000-big-picture.md](000-big-picture.md)
-and is intended as the planning input for the agent that implements Phases 2,
-3 (acceptance portion), and the partial Phase 10 wiring needed to support it.
+This document records decisions about the command acceptance path -- the
+synchronous sequence from `ExecuteCommand()` to returning `nil` (without
+`WithEventObserver`). It refines the Phase 3 description in
+[000-big-picture.md](000-big-picture.md).
 
----
-
-## The key insight: acceptance, not completion
-
-The big-picture plan lists "Append to command journal at position 0 --
-Acceptance point" as step 3 of 9 in the Phase 3 command lifecycle. Without
-`WithEventObserver`, `ExecuteCommand` should return `nil` at that acceptance
-point. The remaining six steps -- routing to the instance-owning node,
-loading instance state, calling `HandleCommand()`, OCC journal write, event
-commit, and finalization -- all happen asynchronously in background goroutines.
-The caller never waits for them.
-
-This means the synchronous path from `ExecuteCommand` to `nil` is very short:
-write two persistence stores, then return. All subsystem complexity is async.
-
-Contrast with `WithEventObserver`: in that case, the caller additionally waits
-for a specific event to be produced by the causal chain. That is a separate
-problem (Open Question 8 in the big-picture plan) and is explicitly out of
-scope here.
+These decisions will be captured as formal ADRs. See the [ADR plan] at the
+end of this document.
 
 ---
 
-## The acceptance sequence (order is load-bearing)
+## Acceptance, not completion
 
-Two nodes are involved (or one, when the producer and handler are the same):
+Without `WithEventObserver`, `ExecuteCommand` returns `nil` at the acceptance
+point. The remaining lifecycle steps -- loading instance state, calling
+`HandleCommand()`, OCC journal write, event commit, and finalization -- all
+happen asynchronously in background goroutines. The caller never waits for
+them.
 
-- **Producer node**: the node on which `ExecuteCommand()` was called.
-- **Handler node**: the node selected by applying the application-level and
-  cluster-level routing rules as understood by the producer. This is the node
-  that will write the backlog entry and command journal and, asynchronously,
-  run `HandleCommand`. Until Phase 9 (inter-node gRPC) is built, the handler
-  node is always the producer itself (fallback-to-self).
+The synchronous path is short: one or two persistence writes (depending on
+whether the command has an idempotency key), then return. All subsystem
+complexity is async.
 
-**On the producer node (synchronous):**
+`WithEventObserver` is a separate problem (Open Question 8 in the big-picture
+plan) and is out of scope here.
 
-0. Identify the handler node using ranked iteration with fallback to self
-   (see the Instruction routing section of the big-picture plan). This is a
-   pure in-memory control-plane operation -- no disk I/O. Until Phase 9 is
-   built, self is always selected.
+---
 
-**On the handler node (synchronous, before nil is returned to the producer):**
+## Instruction routing: ranked iteration with fallback to self
 
-All of the following happen on the handler node.
+Instructions are routed using a general algorithm. The sending node (the
+gateway) computes rendezvous scores for all live nodes
+against the instruction's routing key, then iterates nodes in descending
+score order, asking each whether it accepts responsibility. The first node
+that agrees becomes the acceptor. If no other node accepts, the gateway
+handles the instruction itself (fallback to self).
 
-1. Add `command_uuid` to command backlog Set keyed `(node, app, command_uuid)`.
-   Using the handler node's UUID as part of the key ensures that on restart,
-   each node finds its own backlog naturally.
+This algorithm requires no disk I/O on the gateway -- it is a pure
+control-plane operation. The ranked iteration naturally handles membership
+disagreements during transitions: if the top-scored node has a stale
+membership view and declines, the next-best candidate is tried. The fallback
+to self guarantees liveness -- work is never dropped even if routing views
+are transiently inconsistent across the cluster.
 
-2. Append the command envelope to the command journal keyed `(app, command_uuid)`
-   at position 0. A `ConflictError` here means the command was already accepted
-   (same UUID, different submission); treat as a no-op success. This is the
+The second-ranked node is a good fallback candidate because rendezvous
+scoring is stable: a node that is currently ranked #2 was likely recently
+ranked #1 (or will be again after the next membership change), so it may
+already have warm state for the workload.
+
+The primary routing goal is to keep state warm on the node that will handle
+work for a given routing key, so that the common path involves zero storage
+reads and OCC is never exercised. For aggregates, the routing key is derived
+from the instance ID:
+
+```
+owner = rendezvous_hash(uuid5(app_key, instance_id), live_node_uuids)
+```
+
+For integrations, the routing key depends on the handler's concurrency
+preference. With `MinimizeConcurrency`, all commands for a handler funnel
+to one node (routing key = handler key). With `MaximizeConcurrency`,
+commands spread across nodes (routing key = command UUID). The concurrency
+preference can change across deployments; see the routing validation
+section for how this is handled.
+
+Two orthogonal routing domains use the same algorithm. Command routing
+assigns commands to nodes by handler (or instance). Partition ownership
+assigns event-side work to nodes by partition UUID. The two domains scale
+independently.
+
+---
+
+## Acceptance path: with vs without idempotency key
+
+All commands are idempotent (or should be). The question is not whether a
+command is idempotent, but how idempotency is enforced: by the caller
+(via an idempotency key) or by the engine (via internal mechanisms).
+
+When the caller provides an idempotency key via `WithIdempotencyKey`, they
+are supplying a stable identifier that the engine uses for cluster-wide
+duplicate detection. The caller commits to retrying on failure using the
+same key.
+
+When no idempotency key is provided, the engine enforces idempotency
+internally:
+
+1. **UUIDv4 command IDs don't collide.** External commands without an
+   idempotency key receive a fresh UUIDv4. Two nodes receiving the same
+   UUIDv4 is not a realistic scenario. No cluster-wide dedup is needed.
+
+2. **Process-produced commands have dedup already.** The process journal's
+   OCC ensures only one execution wins. No cluster-wide dedup needed.
+
+3. **Factspace OCC.** At execution time, the handler's factspace
+   positional OCC prevents duplicate side effects even if the same
+   command is dispatched twice (e.g., during recovery).
+
+The acceptance path differs based on which strategy applies.
+
+### Factspace keying
+
+Each handler type has a factspace that records command processing state.
+The factspace key determines the granularity of OCC and idempotency
+checks, and is therefore an acceptance-path concern.
+
+- **Aggregates:** keyed by `(app, handler_key, instance_id)`. Multiple
+  commands may target the same instance, so the factspace tracks the
+  full instance lifecycle. OCC contention is per-instance.
+
+- **Integrations:** keyed by `(app, handler_key, command_uuid)`. Each
+  command gets its own factspace. This avoids OCC contention between
+  concurrent commands (important for MaximizeConcurrency), and makes
+  the idempotency check a simple existence/position check on the
+  command's own factspace. The key does not include the routing key or
+  the node, so a command accepted under one concurrency preference and
+  executed after a change hits the same factspace either way.
+  Concurrency preference is purely an ephemeral routing concern.
+
+The internal structure of each factspace (what records are stored, how
+compaction works, snapshot strategy) is a handler-subsystem concern.
+
+This design covers both aggregates and integrations. Aggregates have
+instances and use `RouteCommandToInstance()` to derive an instance ID.
+Integrations do not have instances; they route by handler key or command
+UUID depending on the concurrency preference. The acceptance path is the
+same for both -- only the routing key derivation and backlog value differ.
+
+### Without an idempotency key: per-node backlog (1 sync write)
+
+**On the gateway node (synchronous):**
+
+0. Identify the handler node using ranked iteration with fallback to self.
+   Pure in-memory, no disk I/O.
+
+**On the handler node (synchronous):**
+
+1. Determine the handler for this command type using the application's
+   routing configuration. For aggregates, call `RouteCommandToInstance()`
+   to determine the instance ID.
+
+2. Write a backlog KV entry keyed `(node, app, command_uuid)` with a value
+   containing the handler key, the command envelope, and (for aggregates)
+   the instance ID. The handler node's UUID is part of the key so that on
+   restart, each node finds its own backlog naturally.
+
+3. Dispatch the command to the handler subsystem (in-memory handoff to the
+   handler's goroutine/channel).
+
+4. Return `nil` to the gateway (and on to the original caller). This is the
    formal acceptance point.
 
-3. Return `nil` to the producer (and on to the original caller).
+**Why backlog is a KV keyspace, not a Set.** The backlog must store routing
+decisions and the full command envelope, not just a UUID. Sets have no
+value payload.
 
-**Why backlog first?** If the handler node crashes between write 1 and
-write 2, the orphaned backlog entry survives in durable storage. Recovery
-logic (on restart or from another node) can detect that the backlog entry has
-no corresponding command journal and discard it safely. The reverse order --
-journal first, then backlog -- creates a window where a durably accepted
-command has no backlog entry: it is invisible to all recovery passes and
-silently lost.
+**Why per-node keying.** The persistencekit `Range()` method enumerates all
+entries with no pagination -- cost is linear in entry count. Per-node keying
+bounds the recovery enumeration cost to one node's workload. Cluster-wide
+keying would make recovery cost proportional to all nodes' combined workload.
+Per-node keying also gives the persistence backend a natural partitioning
+boundary (separate tables, separate partition key prefixes, etc.).
 
 **What is async.** After returning `nil`, the handler node runs the
 remaining command lifecycle steps (load state, call `HandleCommand`, OCC
 write, event commit, finalization) entirely in background goroutines. These
 do not block the caller.
+
+### With an idempotency key: command journal (1 sync write, no backlog)
+
+When the caller provides an idempotency key, the acceptance path uses a
+cluster-wide command journal instead of the per-node backlog.
+
+**On the handler node (synchronous):**
+
+1. Append the command envelope to the command journal keyed
+   `(app, idempotency_key)` at position 0. A `ConflictError` here means
+   the command was already accepted (same key, different submission);
+   treat as a no-op success.
+
+2. Dispatch the command to the handler subsystem.
+
+3. Return `nil` to the gateway. This is the formal acceptance point.
+
+No backlog entry is written. The caller has committed to retrying on
+failure by providing an idempotency key (see the caller retry contract
+discussion below). The engine does not need its own tracking for these
+commands -- the caller IS the recovery mechanism.
+
+**Orphaned CJ entries.** If the caller provides an idempotency key but
+never retries after a failure, the CJ entry may be orphaned. This is
+accepted as a tradeoff.
+
+**Integrations.** Integration handlers follow the same CJ path as
+aggregates when an idempotency key is provided. The idempotency key
+provides cluster-wide identity; the handler type determines only how the
+command is dispatched after acceptance.
+
+### Why the per-command journal was eliminated for commands without an idempotency key
+
+The original design (earlier in this document's history) wrote two stores
+synchronously for every command: a per-node backlog Set + a cluster-wide
+per-command journal. This meant every command paid for two round-trips on
+the synchronous acceptance path.
+
+The command journal served three purposes, none of which require a
+separate store for commands without an idempotency key:
+
+1. **Durable envelope storage.** Now moved into the backlog KV value.
+   The backlog needed to exist anyway; making it a KV (not a Set)
+   eliminates the need for a second store.
+2. **Cluster-wide dedup** (append at position 0, `ConflictError` =
+   duplicate). Unnecessary for UUIDv4 commands -- two nodes will never
+   independently generate the same UUID. Only needed when the caller
+   supplies an idempotency key.
+3. **Recovery source** (any node can read the CJ). The per-node backlog
+   now provides this, with dead-node adoption for the case where the
+   accepting node dies.
+
+With all three purposes covered, the per-command journal adds only
+latency. Eliminating it cuts the synchronous path from two writes to one.
+
+---
+
+## Recovery
+
+### Restart: own-backlog enumeration
+
+On startup, each node opens its own backlog keyspace `(self, app, *)` and
+iterates all entries. For each entry:
+
+1. Check the handler's factspace to determine whether this command was
+   already processed. For aggregates, look up
+   `(app, handler_key, instance_id)`; for integrations, look up
+   `(app, handler_key, command_uuid)`. Both checks are uniform: read
+   the factspace and check for a completion marker.
+   - If processed: delete the backlog entry (cleanup). Done.
+2. Otherwise: dispatch the command to the handler subsystem for execution.
+   This goes through the routing validation path described below.
+
+### Dead-node adoption (commands without an idempotency key only)
+
+When a node is detected as dead via the heartbeat system, a surviving node
+opens the dead node's backlog keyspace `(dead_node, app, *)` and iterates
+all entries. For each entry:
+
+1. Check the handler's factspace to determine whether this command was
+   already processed (same check as own-backlog enumeration).
+   - If processed: delete the backlog entry (cleanup). Done.
+2. Re-route the command through the current application configuration. This
+   goes through the same routing validation path, including the reroute
+   mechanism if the routing decision has changed.
+
+**Why dead-node adoption is not needed for commands with an idempotency
+key.** The caller committed to retrying. If the accepting node dies, the
+caller eventually times out and resubmits. The CJ dedup catches the
+duplicate.
+
+### Idempotency key recovery: caller retry
+
+For commands with an idempotency key, the caller is the recovery
+mechanism. If `ExecuteCommand` returns an error, the caller resubmits with
+the same idempotency key. The CJ catches the duplicate and the command
+proceeds.
+
+---
+
+## Routing validation at handler load time
+
+When the handler subsystem picks up a command and does not already have the
+handler (or, for aggregates, the instance) hot in memory, it validates the
+stored routing decision against the current application configuration
+before execution. This is a "fresh load."
+
+Application-layer configuration -- routing rules, concurrency preferences,
+handler registrations -- can change across deployments. Since these changes
+require a new binary and therefore a restart, every handler goes through
+fresh load on restart. There is no window where a command executes under
+stale configuration.
+
+The general contract: on fresh load, the handler subsystem must verify that
+the command can still be executed by the handler recorded in the backlog
+entry. If the handler no longer accepts the command type, or if the
+handler no longer exists, the command is moved to the poison backlog.
+
+The specifics of how each handler type validates and (for aggregates)
+reroutes commands are an internal concern of each handler subsystem and
+will be captured in their respective ADRs. Key considerations:
+
+- **Aggregates:** `RouteCommandToInstance()` can change across deployments.
+  A command stored against one instance ID may now route to a different
+  instance. This requires an OCC drain of the old instance's factspace
+  before rerouting. See the aggregate subsystem design.
+
+- **Integrations:** concurrency preference can change across deployments,
+  which affects node assignment. However, concurrency is a preference, not
+  a correctness constraint -- the command can safely execute on whichever
+  node currently holds it. The integration factspace is keyed by command
+  UUID, not by routing key or node, so the idempotency check works
+  identically regardless of which node runs the command or which
+  preference was active at acceptance time. See the integration subsystem
+  design.
+
+### Unroutable commands
+
+If a command's handler no longer exists in the current application config
+and no other handler accepts that command type, the command is moved to the
+poison backlog. Trickle-back on future restart re-checks routing, so the
+command recovers if the handler is re-added in a future deployment.
+
+---
+
+## Caller retry contract (dogma-level change)
+
+The current dogma docs say callers "should retry" on error and "pass
+`WithIdempotencyKey` when retrying." This is advice, not a contract.
+
+In this design, the engine relies on caller retry as the sole recovery
+mechanism for commands with an idempotency key. This strengthens
+"should retry" to a contractual guarantee: by providing an idempotency
+key, the caller accepts responsibility for retrying failed submissions.
+Without caller retry, a command that fails mid-acceptance may be silently
+lost.
+
+This requires an ADR in the dogma repository (see the ADR plan below).
 
 ---
 
@@ -81,9 +331,10 @@ do not block the caller.
 ### Phase 2 (persistence options only)
 
 The persistence store options -- `WithJournals`, `WithKeyspaces`, `WithSets`
--- introduced in Phase 2 are required so the engine can open the backlog Set
-and command journal. The rest of Phase 2 (heartbeat keyspace, live node set)
-is NOT on the synchronous path and can be deferred.
+-- introduced in Phase 2 are required so the engine can open the backlog
+keyspace and (for idempotency-keyed commands) the command journal. The rest
+of Phase 2 (heartbeat keyspace, live node set) is NOT on the synchronous
+path and can be deferred.
 
 For a single-node implementation, the live node set can be initialised as
 `[self]` inside the Phase 10 wiring without any cross-process heartbeat
@@ -91,10 +342,8 @@ plumbing. Phase 2 heartbeat work is only needed when multi-node is in scope.
 
 ### Phase 3 -- acceptance portion
 
-Write the backlog entry, write the command journal, return `nil`. The
-implementation lives in `internal/subsystem/aggregate` (and later
-`internal/subsystem/integration`, which shares the same stores). For the
-first working milestone, aggregate-only is sufficient.
+Write the backlog entry (or CJ entry for idempotency-keyed commands),
+dispatch to the handler subsystem, return `nil`.
 
 ### Phase 10 -- partial wiring
 
@@ -103,7 +352,8 @@ Connect the persistence stores to the acceptance logic and replace
 
 1. Resolve node identity (`WithNodeID` / `DOGMA_NODE_ID` / random UUID).
 2. Resolve persistence stores from options (or environment fallback).
-3. Wire the acceptance path (backlog Set opener + command journal opener).
+3. Wire the acceptance path (backlog keyspace opener + command journal
+   opener).
 4. Signal readiness by storing the real executor into `executor.future`
    (currently stores `noopExecutor{}`), which unblocks any callers already
    waiting in `executor.ExecuteCommand`.
@@ -115,17 +365,33 @@ implemented and does not change. Only the value stored by `Run()` changes.
 
 ## Phases NOT needed for this goal
 
-| Phase | Why deferred |
-| ----- | ------------ |
+| Phase                             | Why deferred                                                 |
+| --------------------------------- | ------------------------------------------------------------ |
 | Phase 2 heartbeat / live node set | Not on the synchronous path; single-node needs only `[self]` |
-| Phase 3 background execution | Async; does not block return |
-| Phase 4 Integration subsystem | Aggregate-only is sufficient for the first milestone |
-| Phase 5 Event stream | Async; only needed by background Phase 3 event commit |
-| Phase 6 Process subsystem | Async consumer of the event stream |
-| Phase 7 Projection subsystem | Async consumer of the event stream |
-| Phase 8 Poison backlog | Failure path; deferred |
-| Phase 9 Inter-node gRPC | Single-node first |
-| `WithEventObserver` V1/V2/V3 | Separate problem; Open Question 8 |
+| Phase 3 background execution      | Async; does not block return                                 |
+| Phase 4 Integration subsystem     | Aggregate-only is sufficient for the first milestone         |
+| Phase 5 Event stream              | Async; only needed by background Phase 3 event commit        |
+| Phase 6 Process subsystem         | Async consumer of the event stream                           |
+| Phase 7 Projection subsystem      | Async consumer of the event stream                           |
+| Phase 8 Poison backlog            | Failure path; deferred                                       |
+| Phase 9 Inter-node gRPC           | Single-node first                                            |
+| `WithEventObserver` V1/V2/V3      | Separate problem; Open Question 8                            |
+
+---
+
+## Storage summary
+
+This table covers the stores used by the acceptance path, including
+factspaces whose keying is an acceptance-path concern (they determine
+how idempotency and recovery checks work). The internal structure of
+each factspace is a handler-subsystem concern.
+
+| Store                 | Key                                | Type    | Used by                 | Lifetime              |
+| --------------------- | ---------------------------------- | ------- | ----------------------- | --------------------- |
+| Command backlog       | `(node, app, command_uuid)`        | KV      | Without idempotency key | Until completion      |
+| Command journal       | `(app, idempotency_key)`           | Journal | With idempotency key    | Until completion      |
+| Aggregate factspace   | `(app, handler_key, instance_id)`  | Journal | Aggregates              | Permanent (compacted) |
+| Integration factspace | `(app, handler_key, command_uuid)` | Journal | Integrations            | Until completion      |
 
 ---
 
@@ -152,19 +418,70 @@ path, but it must be made before the background execution code is written.
 
 ### OQ-C: Aggregate-only or aggregate + integration for the first milestone?
 
-The command backlog and command journal are shared between the aggregate and
-integration subsystems. If aggregate-only is the first milestone, the
-acceptance code can be scoped to commands routed to aggregate handlers.
-Integration can be layered in as Phase 4 without touching the acceptance path.
+The acceptance path is the same for both aggregates and integrations --
+only the routing key derivation differs. If aggregate-only is the first
+implementation milestone, the acceptance code can be scoped to commands
+routed to aggregate handlers. Integration can be layered in as Phase 4
+without changing the acceptance path design.
+
+---
+
+## ADR plan
+
+The decisions in this document will be captured as formal ADRs. ADR numbers
+will be assigned at authoring time (next sequential number in each repo).
+
+Some of these decisions are tightly coupled -- the acceptance path, backlog
+design, dedup strategy, and recovery model are all facets of one coherent
+design. Splitting them too finely would make the design impossible to
+understand. The grouping below reflects natural boundaries: the routing
+algorithm is general-purpose and applies beyond commands; everything else
+about the acceptance path is one cohesive unit.
+
+### Runkit ADRs
+
+**Ranked iteration with fallback to self for instruction routing.** The
+general routing algorithm described in the "Instruction routing" section.
+Applies to all instruction types. References ADR-2.
+
+**Command acceptance and recovery.** The core ADR. Covers: the split
+acceptance path (with vs without idempotency key), per-node backlog KV
+design (key scheme, value contents, why KV over Set, why per-node over
+cluster-wide), command journal for idempotency-keyed commands, recovery
+(own-backlog enumeration, dead-node adoption, caller retry), and the
+general principle that routing decisions are validated on fresh load.
+The poison backlog is referenced as a destination for unroutable commands
+but its full specification is deferred. Handler-type-specific routing
+validation rules are captured in each handler subsystem's own ADR.
+References ADR-2, ADR-3, the dogma caller retry ADR (by title).
+
+### Dogma ADR
+
+**Caller retry contract for commands with idempotency keys.**
+Strengthens the documented contract: providing an idempotency key signals
+that the caller accepts responsibility for retrying. The engine may rely
+on caller retry as the sole recovery mechanism. References dogma ADR-29.
+
+### Articles of faith
+
+The articles-of-faith document should be updated to link pending decisions
+to the ADRs above once they are written. In particular:
+
+- **Durability (article 1):** the "acceptance journaling" and "backlog
+  design" decisions are resolved by the command acceptance/recovery/
+  validation ADR.
+- **Idempotency (article 3):** the "journal dedup at acceptance" decision
+  is resolved differently depending on whether the caller provides an
+  idempotency key (CJ) or not (backlog + handler OCC). Integration
+  idempotency store specifics are deferred to the integration subsystem
+  design.
 
 ---
 
 ## Relationship to the big-picture plan
 
-The numbered steps in the big-picture Phase 3 description remain correct as
-a description of the full command lifecycle. This document only clarifies
-**where `nil` is returned** within that lifecycle (after step 3) and what is
-therefore on vs. off the synchronous path for the specific goal of supporting
-`ExecuteCommand` without `WithEventObserver`.
-
-No changes to the big-picture plan are required as a result of this research.
+The state inventory tables in the big-picture plan will need updating to
+reflect the revised storage design (backlog type change from Set to KV,
+command journal scope narrowed to idempotency-keyed commands only,
+adoption of factspace terminology, handler-subsystem stores moved to
+their respective designs).
