@@ -51,21 +51,42 @@ but never lost or corrupted.
 In-process serialisation (one goroutine per active instance) eliminates the retry loop when
 routing is stable, turning OCC from a recovery mechanism into a rarely-exercised safety net.
 
-### Routing goal: warm in-memory instance state
+### Instruction routing: ranked iteration with fallback to self
 
-The primary routing goal is to keep aggregate instance state warm on the node that will execute
-commands for that instance, so that the common path involves zero storage reads and OCC is never
-exercised. This is achieved by routing directly and consistently by instance UUID:
+Instructions are routed using a general algorithm that applies to all instruction types. The
+sending node (the gateway) computes rendezvous scores for all live nodes against the
+instruction's routing key, then iterates nodes in descending score order, asking each whether it
+accepts responsibility. The first node that agrees becomes the acceptor. If no other node
+accepts, the gateway handles the instruction itself.
+
+This algorithm requires no disk I/O on the gateway — it is a pure control plane operation. The
+ranked iteration naturally handles membership disagreements during transitions: if the top-scored
+node has a stale membership view and declines, the next-best candidate is tried. The fallback to
+self guarantees liveness — work is never dropped even if routing views are transiently
+inconsistent across the cluster.
+
+The second-ranked node is a good fallback candidate because rendezvous scoring is stable: a node
+that is currently ranked #2 was likely recently ranked #1 (or will be again after the next
+membership change), so it may already have warm state for the workload.
+
+### Routing goal: warm in-memory state
+
+The primary routing goal is to keep state warm on the node that will handle work for a given
+routing key, so that the common path involves zero storage reads and OCC is never exercised.
+For aggregates, this means routing by instance:
 
 ```
 owner = rendezvous_hash(uuid5(app_key, instance_id), live_node_uuids)
 ```
 
 Providing a stable node UUID (via `WithNodeID` / `DOGMA_NODE_ID`) ensures that a restarting node
-re-enters the live set with the same UUID and thus continues to own the same instances it warmed
+re-enters the live set with the same UUID and thus continues to own the same workloads it warmed
 before the restart.
 
 ### Two orthogonal routing domains
+
+Both routing domains use the same ranked-iteration algorithm described above. They differ only
+in what the routing key represents.
 
 **Command routing** assigns commands to nodes by handler instance. The routing key depends on
 the handler type — see [ADR-0002](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
@@ -96,7 +117,7 @@ to `(app, ...)`.
 
 | Store                      | Key                               | Type        | Lifetime                   |
 | -------------------------- | --------------------------------- | ----------- | -------------------------- |
-| Command backlog            | `(app, partition, command_uuid)`  | `Set[UUID]` | Until completion           |
+| Command backlog            | `(node, app, command_uuid)`       | `Set[UUID]` | Until completion           |
 | Poison backlog             | `(app, partition, command_uuid)`  | `Set[UUID]` | Until restart trickle-back |
 | Command journal            | `(app, command_uuid)`             | Journal     | Until completion           |
 | Aggregate instance journal | `(app, handler_key, instance_id)` | Journal     | Permanent (truncated)      |
@@ -105,12 +126,12 @@ to `(app, ...)`.
 
 ### Integration command path
 
-| Store           | Key                     | Type        | Lifetime                             |
-| --------------- | ----------------------- | ----------- | ------------------------------------ |
-| Command backlog | (shared with aggregate) | `Set[UUID]` | Until completion                     |
-| Command journal | (shared with aggregate) | Journal     | Until completion                     |
-| Handler journal | `(app, handler_key)`    | Journal     | Permanent (MinimizeConcurrency only) |
-| Idempotency     | `(app, command_uuid)`   | KV          | Configurable retention               |
+| Store           | Key                                     | Type        | Lifetime                             |
+| --------------- | --------------------------------------- | ----------- | ------------------------------------ |
+| Command backlog | (shared with aggregate, same key shape) | `Set[UUID]` | Until completion                     |
+| Command journal | (shared with aggregate)                 | Journal     | Until completion                     |
+| Handler journal | `(app, handler_key)`                    | Journal     | Permanent (MinimizeConcurrency only) |
+| Idempotency     | `(app, command_uuid)`                   | KV          | Configurable retention               |
 
 ### Event-side (per partition)
 
@@ -165,7 +186,8 @@ Implements the aggregate command lifecycle.
 
 **Execution per command:**
 
-1. Router forwards command to accepting node.
+1. Gateway node receives command and routes it to an accepting node using ranked iteration
+   (see [Instruction routing](#instruction-routing-ranked-iteration-with-fallback-to-self)).
 2. Add `command_uuid` to command backlog (self-affinity partition).
 3. Append to command journal at position 0 (dedup). **Acceptance point.**
 4. Dispatch to instance-owning node.
@@ -264,8 +286,9 @@ back to the command backlog. A reference implementation exists in
 Runkit-specific proto service definitions live in `internal/grpc/`. `enginekit` is for
 engine-agnostic abstractions.
 
-- **CommandForwardingService** — routes commands from router to accepting node, and from
-  accepting node to instance-owning node.
+- **CommandForwardingService** — implements ranked iteration for command routing: gateway
+  iterates nodes by rendezvous score until one accepts, then forwards to the instance-owning
+  node.
 - **ConsumeAPI** — serves event streams, proxied to partition owner.
 - **Stream append** — executing node sends `AppendRequest` to partition owner.
 
@@ -359,6 +382,17 @@ Two approaches are possible:
   introduces a consistency window while the keyspace propagates.
 
 Resolve before Phase 5.
+
+### 9. Node role terminology for instruction routing
+
+Several informal terms are in use across planning documents for the two nodes
+involved when a command crosses a node boundary: "producer", "handler node",
+"destination", "gateway", "executing node". These terms have not been formally
+agreed and do not yet appear in the glossary.
+
+Decide the canonical names for each role and add them to the glossary before
+Phase 3 implementation begins, so that code, comments, and planning documents
+use consistent vocabulary.
 
 ### 8. WithEventObserver completion detection
 
