@@ -6,12 +6,12 @@ Date: 2026-04-04
 
 Accepted
 
-- Referenced by [3. Optimistic conflict resolution](0003-optimistic-conflict-resolution.md)
+- Referenced by [3. Optimistic conflict resolution][ADR-3]
 
 ## Context
 
-We need a way to assign workloads - such as aggregate instances or stream
-partitions - to one of a set of candidate cluster nodes.
+We need a way to assign workloads — such as aggregate instances or stream
+partitions — to one of a set of candidate cluster nodes.
 
 The assignment must be deterministic so that any node aware of the same work and
 the same set of nodes independently reaches the same conclusion, without relying
@@ -111,12 +111,14 @@ The algorithm is generic. It operates on UUIDs and is not specific to any
 particular type of work or candidate. We are free to apply it to specific
 domains such as command routing and partition ownership.
 
-This ADR introduces two terms to the [glossary](../glossary.md):
+This ADR introduces two terms to the [glossary]:
 **rendezvous hashing** and **self-affinity**.
 
 <!-- references -->
 
+[ADR-3]: 0003-optimistic-conflict-resolution.md
 [consistent hashing]: https://en.wikipedia.org/wiki/Consistent_hashing
+[glossary]: ../glossary.md
 [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
 [rfc 9562]: https://www.rfc-editor.org/rfc/rfc9562.html
 [`uuidpb.Validate()`]: https://pkg.go.dev/github.com/dogmatiq/enginekit/protobuf/uuidpb#Validate

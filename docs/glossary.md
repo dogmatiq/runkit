@@ -1,20 +1,18 @@
 # Runkit glossary
 
-This glossary defines terms specific to the runkit [engine]. Terms already
+This glossary defines terms specific to the runkit engine. Terms already
 defined in the [Dogma glossary] are not redefined here. Each term links back to
 the ADR that introduced it.
 
-[Dogma glossary]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md
-
-A •
+[A](#a) •
 B •
-C •
+[C](#c) •
 D •
 E •
 F •
 G •
 H •
-I •
+[I](#i) •
 J •
 K •
 L •
@@ -33,6 +31,46 @@ X •
 Y •
 Z
 
+## A
+
+### Application plane
+
+The layer of the engine where application-defined [handler] logic executes.
+[Dogma messages] — [commands], [events], and [timeouts] — exist in the
+application plane.
+
+See [control plane].
+
+## C
+
+### Confirmation
+
+A [control message] sent in reply to an [instruction], carrying either a
+positive or negative outcome. For example, the result of a command execution
+attempt, which may succeed or fail.
+
+### Control message
+
+A message exchanged between engine components to coordinate work within the
+[control plane]. [Instructions] and [confirmations] are control messages.
+Distinct from [Dogma messages], which exist in the [application plane].
+
+### Control plane
+
+The layer of the engine responsible for coordination: workload assignment,
+[instruction] routing, node discovery, conflict resolution, and failover.
+Control plane components decide _where_ and _when_ work happens.
+
+## I
+
+### Instruction
+
+A [control message] sent from one engine component to another to request that
+work be performed. For example, a request to execute a command on a specific
+handler instance.
+
+See [confirmation].
+
 ## R
 
 ### Rendezvous hashing
@@ -42,7 +80,7 @@ a set of candidates. Any participant with the same input and candidate set
 independently computes the same result. When candidates are added or removed,
 only the inputs assigned to the affected candidate are reassigned.
 
-See also [self-affinity], [ADR-0002].
+See [self-affinity], [ADR-2].
 
 ## S
 
@@ -55,14 +93,46 @@ knowing it will always select itself while it remains in the candidate set. If
 the candidate leaves the set, another candidate inherits ownership through
 normal rendezvous selection.
 
-See also [ADR-0002].
+See [ADR-2].
 
 <!-- anchors -->
 
-[engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
+[application plane]: #application-plane
+[command]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
+[commands]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
+[confirmation]: #confirmation
+[confirmations]: #confirmation
+[control message]: #control-message
+[control messages]: #control-message
+[control plane]: #control-plane
+[Dogma message]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
+[Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
+[event]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
+[events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
+[handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
+[instruction]: #instruction
+[instructions]: #instruction
 [rendezvous hashing]: #rendezvous-hashing
 [self-affinity]: #self-affinity
+[timeout]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
+[timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 
 <!-- ADRs -->
 
-[ADR-0002]: adr/0002-rendezvous-hashing-for-workload-assignment.md
+[ADR-2]: adr/0002-rendezvous-hashing-for-workload-assignment.md
+
+<!-- references -->
+
+[Dogma glossary]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md
+
+<!-- project-specific rules
+
+These notes capture conventions specific to this glossary. Agents should check
+these rules in addition to the general glossary skill.
+
+- Do not link "engine" to the Dogma glossary. This repository is the engine;
+  the word is self-evident in context. Use it as plain text.
+- Do not use bare [message] or [messages] references. Dogma messages must be
+  written as [Dogma message] or [Dogma messages] to avoid ambiguity with
+  control messages.
+-->

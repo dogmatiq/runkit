@@ -210,8 +210,7 @@ handler awareness.
 
 - Any node accepts `ConsumeAPI` requests and proxies to the partition owner.
 - Server-side event type filtering.
-- Consumers maintain their own checkpoints; the stream subsystem tracks only a per-partition
-  watermark (last dispatched offset).
+- Consumers maintain their own checkpoints.
 
 ---
 
