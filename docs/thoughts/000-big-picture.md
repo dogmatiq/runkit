@@ -9,6 +9,12 @@ resolved.
 > in user-facing documentation (godoc comments, README, error messages) unless its use in that
 > context has been explicitly agreed.
 
+> **Naming style**: unconventional or whimsical names are welcome in internal vocabulary when
+> they drive understanding and uniqueness. A distinctive name that captures a concept precisely
+> is better than a generic name that could mean anything. For example, "factspace" vs
+> "scratchspace" immediately conveys the difference in durability and authority; "state store"
+> would not.
+
 **Related documents:**
 
 - [Glossary](../glossary.md) — definitions of runkit-specific terms
