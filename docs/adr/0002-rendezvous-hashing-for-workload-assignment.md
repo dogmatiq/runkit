@@ -29,6 +29,7 @@ workload, we compute a score against every candidate and select the highest:
 ```
 score(workload, candidate) = hash(workload_uuid, candidate_uuid)
 winner                     = candidate with highest score
+                             (ties broken by lowest UUID)
 ```
 
 This gives us:
@@ -40,6 +41,10 @@ This gives us:
   workloads that were mapped to the affected candidate.
 - **Uniform distribution.** workloads distribute evenly across candidates
   without tuning parameters.
+- **Order independence.** The result is the same regardless of the order in
+  which candidates are presented. Ties (equal scores) are broken
+  deterministically by selecting the candidate with the lowest UUID, so the
+  winner is a function of the set of candidates, not a sequence.
 
 Assignment is a pure function of the workload and the current candidate set, so
 any participant can recompute it independently.

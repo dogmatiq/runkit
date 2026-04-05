@@ -5,12 +5,15 @@ go 1.25.0
 require (
 	github.com/dogmatiq/enginekit v0.20.0
 	github.com/dogmatiq/persistencekit v0.14.0
+	github.com/zeebo/xxh3 v1.1.0
+	pgregory.net/rapid v1.2.0
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	pgregory.net/rapid v1.2.0 // indirect
 )
 
 require (
