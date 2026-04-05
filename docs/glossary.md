@@ -8,7 +8,7 @@ B •
 [C](#c) •
 D •
 E •
-F •
+[F](#f) •
 G •
 H •
 [I](#i) •
@@ -31,6 +31,12 @@ Y •
 Z
 
 ## A
+
+### Aggregate factspace
+
+The [factspace] for an [aggregate instance]. It holds the operational
+metadata needed to reload the instance and detect conflicts; event data
+itself lives in the stream.
 
 ### Application plane
 
@@ -60,6 +66,16 @@ The layer of the engine responsible for coordination: workload assignment,
 [instruction] routing, node discovery, conflict resolution, and failover.
 Control plane components decide _where_ and _when_ work happens.
 
+## F
+
+### Factspace
+
+A private, authoritative store for a specific entity, with a permanent
+lifetime. A factspace is not tied to a particular storage primitive — it
+may be backed by a journal, key-value entries, or a combination.
+
+See [aggregate factspace], [scratchspace].
+
 ## I
 
 ### Instruction
@@ -83,6 +99,12 @@ See [self-affinity], [ADR-2].
 
 ## S
 
+### Scratchspace
+
+A private, transient store that exists for the duration of a specific
+operation or unit of work. Like a [factspace], a scratchspace is not tied
+to a particular storage primitive.
+
 ### Self-affinity
 
 A property of the [rendezvous hashing] implementation that guarantees a
@@ -96,6 +118,8 @@ See [ADR-2].
 
 <!-- anchors -->
 
+[aggregate factspace]: #aggregate-factspace
+[aggregate instance]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#aggregate-instance
 [application plane]: #application-plane
 [commands]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [confirmation]: #confirmation
@@ -104,10 +128,12 @@ See [ADR-2].
 [control plane]: #control-plane
 [Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
 [events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
+[factspace]: #factspace
 [handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
 [instruction]: #instruction
 [instructions]: #instruction
 [rendezvous hashing]: #rendezvous-hashing
+[scratchspace]: #scratchspace
 [self-affinity]: #self-affinity
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 
