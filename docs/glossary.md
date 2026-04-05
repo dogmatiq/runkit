@@ -1,8 +1,7 @@
 # Runkit glossary
 
 This glossary defines terms specific to the runkit engine. Terms already
-defined in the [Dogma glossary] are not redefined here. Each term links back to
-the ADR that introduced it.
+defined in the [Dogma glossary] are not redefined here.
 
 [A](#a) •
 B •
@@ -98,23 +97,18 @@ See [ADR-2].
 <!-- anchors -->
 
 [application plane]: #application-plane
-[command]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [commands]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [confirmation]: #confirmation
 [confirmations]: #confirmation
 [control message]: #control-message
-[control messages]: #control-message
 [control plane]: #control-plane
-[Dogma message]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
 [Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
-[event]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
 [events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
 [handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
 [instruction]: #instruction
 [instructions]: #instruction
 [rendezvous hashing]: #rendezvous-hashing
 [self-affinity]: #self-affinity
-[timeout]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 
 <!-- ADRs -->
