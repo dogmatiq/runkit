@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/dogmatiq/enginekit v0.20.0
+	github.com/dogmatiq/ferrite v1.5.1
 	github.com/dogmatiq/persistencekit v0.14.0
 	github.com/zeebo/xxh3 v1.1.0
 	pgregory.net/rapid v1.2.0
@@ -11,13 +12,16 @@ require (
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dogmatiq/iago v0.4.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 require (
-	github.com/dogmatiq/dogma v0.19.1
+	github.com/dogmatiq/dogma v0.20.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
