@@ -6,14 +6,14 @@ defined in the [Dogma glossary] are not redefined here.
 [A](#a) •
 B •
 [C](#c) •
-D •
+[D](#d) •
 E •
 [F](#f) •
 G •
 H •
 [I](#i) •
 J •
-K •
+[K](#k) •
 L •
 M •
 N •
@@ -23,7 +23,7 @@ Q •
 [R](#r) •
 [S](#s) •
 T •
-U •
+[U](#u) •
 V •
 W •
 X •
@@ -34,9 +34,9 @@ Z
 
 ### Aggregate factspace
 
-The [factspace] for an [aggregate instance]. It holds the operational
-metadata needed to reload the instance and detect conflicts; event data
-itself lives in the stream.
+A [factspace] that holds the operational metadata needed to reload an
+[aggregate instance] and detect conflicts; event data itself lives in
+the stream.
 
 ### Application plane
 
@@ -66,6 +66,14 @@ The layer of the engine responsible for coordination: workload assignment,
 [instruction] routing, node discovery, conflict resolution, and failover.
 Control plane components decide _where_ and _when_ work happens.
 
+## D
+
+### Dead-node adoption
+
+The process by which a surviving node takes ownership of resources
+belonging to a node that is no longer alive. [Self-affinity] makes the
+dead node's resources naturally discoverable.
+
 ## F
 
 ### Factspace
@@ -74,7 +82,7 @@ A private, authoritative store for a specific entity, with a permanent
 lifetime. A factspace is not tied to a particular storage primitive — it
 may be backed by a journal, key-value entries, or a combination.
 
-See [aggregate factspace], [scratchspace].
+See [aggregate factspace], [integration factspace], [scratchspace].
 
 ## I
 
@@ -85,6 +93,27 @@ work be performed. For example, a request to execute a command on a specific
 handler instance.
 
 See [confirmation].
+
+### Integration factspace
+
+A [factspace] that holds the idempotency and completion state for a
+single [command] handled by an [integration].
+
+## K
+
+### Keyed command
+
+A [command] executed with an application-defined [idempotency key] via
+[`WithIdempotencyKey`].
+
+See [unkeyed command].
+
+### Keyed command factspace
+
+A [factspace] that records acceptance of a [keyed command] and guards
+against duplicate submission.
+
+See [unkeyed command scratchspace].
 
 ## R
 
@@ -116,26 +145,51 @@ normal rendezvous selection.
 
 See [ADR-2].
 
+## U
+
+### Unkeyed command
+
+A [command] executed without an application-defined [idempotency key].
+
+See [keyed command].
+
+### Unkeyed command scratchspace
+
+A [scratchspace] that tracks unkeyed commands until they complete and serves as
+the recovery source on restart or [dead-node adoption].
+
+See [keyed command factspace].
+
 <!-- anchors -->
 
 [aggregate factspace]: #aggregate-factspace
 [aggregate instance]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#aggregate-instance
 [application plane]: #application-plane
+[command]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [commands]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [confirmation]: #confirmation
 [confirmations]: #confirmation
 [control message]: #control-message
 [control plane]: #control-plane
+[dead-node adoption]: #dead-node-adoption
 [Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
 [events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
 [factspace]: #factspace
 [handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
+[idempotency key]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#idempotency-key
 [instruction]: #instruction
 [instructions]: #instruction
+[integration]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#integration
+[integration factspace]: #integration-factspace
+[keyed command]: #keyed-command
+[keyed command factspace]: #keyed-command-factspace
 [rendezvous hashing]: #rendezvous-hashing
 [scratchspace]: #scratchspace
 [self-affinity]: #self-affinity
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
+[`WithIdempotencyKey`]: https://pkg.go.dev/github.com/dogmatiq/dogma#WithIdempotencyKey
+[unkeyed command]: #unkeyed-command
+[unkeyed command scratchspace]: #unkeyed-command-scratchspace
 
 <!-- ADRs -->
 

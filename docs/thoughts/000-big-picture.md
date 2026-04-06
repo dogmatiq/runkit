@@ -39,7 +39,7 @@ runkit is a horizontally scalable, multi-node Dogma engine. Key properties:
   unit of work.
 - **Multi-application**: multiple `dogma.Application` instances may be hosted by a single
   engine cluster; all storage is namespaced by application key.
-- **Full durability**: every command is recorded in a per-command journal before execution. The
+- **Full durability**: every command is durably recorded before execution. The
   engine provides ACID-like guarantees at the command level.
 - **Inter-node gRPC**: command forwarding and event streaming use gRPC services.
 
@@ -60,12 +60,12 @@ routing is stable, turning OCC from a recovery mechanism into a rarely-exercised
 ### Instruction routing: ranked iteration with fallback to self
 
 Instructions are routed using a general algorithm that applies to all instruction types. The
-sending node (the gateway) computes rendezvous scores for all live nodes against the
-instruction's routing key, then iterates nodes in descending score order, asking each whether it
-accepts responsibility. The first node that agrees becomes the acceptor. If no other node
-accepts, the gateway handles the instruction itself.
+source node computes rendezvous scores for all live nodes against the instruction's routing key,
+then iterates nodes in descending score order, asking each whether it accepts responsibility.
+The first node that agrees becomes the acceptor. If no other node accepts, the source node
+handles the instruction itself.
 
-This algorithm requires no disk I/O on the gateway — it is a pure control plane operation. The
+This algorithm requires no disk I/O on the source node — it is a pure control plane operation. The
 ranked iteration naturally handles membership disagreements during transitions: if the top-scored
 node has a stale membership view and declines, the next-best candidate is tried. The fallback to
 self guarantees liveness — work is never dropped even if routing views are transiently
@@ -121,23 +121,23 @@ to `(app, ...)`.
 
 ### Aggregate command path
 
-| Store                      | Key                               | Type        | Lifetime                   |
-| -------------------------- | --------------------------------- | ----------- | -------------------------- |
-| Command backlog            | `(node, app, command_uuid)`       | `Set[UUID]` | Until completion           |
-| Poison backlog             | `(app, partition, command_uuid)`  | `Set[UUID]` | Until restart trickle-back |
-| Command journal            | `(app, command_uuid)`             | Journal     | Until completion           |
-| Aggregate instance journal | `(app, handler_key, instance_id)` | Journal     | Permanent (truncated)      |
-| Snapshot                   | `(app, handler_key, instance_id)` | KV          | Until superseded           |
-| Stream                     | `(app, stream_partition)`         | Journal     | Permanent                  |
+| Store                        | Key                               | Type        | Lifetime                   |
+| ---------------------------- | --------------------------------- | ----------- | -------------------------- |
+| Unkeyed command scratchspace | `(node, app, command_uuid)`       | KV          | Until completion           |
+| Poison backlog               | `(app, partition, command_uuid)`  | `Set[UUID]` | Until restart trickle-back |
+| Keyed command factspace      | `(app, idempotency_key)`          | Journal     | Until completion           |
+| Aggregate instance journal   | `(app, handler_key, instance_id)` | Journal     | Permanent (truncated)      |
+| Snapshot                     | `(app, handler_key, instance_id)` | KV          | Until superseded           |
+| Stream                       | `(app, stream_partition)`         | Journal     | Permanent                  |
 
 ### Integration command path
 
-| Store           | Key                                     | Type        | Lifetime                             |
-| --------------- | --------------------------------------- | ----------- | ------------------------------------ |
-| Command backlog | (shared with aggregate, same key shape) | `Set[UUID]` | Until completion                     |
-| Command journal | (shared with aggregate)                 | Journal     | Until completion                     |
-| Handler journal | `(app, handler_key)`                    | Journal     | Permanent (MinimizeConcurrency only) |
-| Idempotency     | `(app, command_uuid)`                   | KV          | Configurable retention               |
+| Store                        | Key                                     | Type    | Lifetime                             |
+| ---------------------------- | --------------------------------------- | ------- | ------------------------------------ |
+| Unkeyed command scratchspace | (shared with aggregate, same key shape) | KV      | Until completion                     |
+| Keyed command factspace      | (shared with aggregate)                 | Journal | Until completion                     |
+| Handler journal              | `(app, handler_key)`                    | Journal | Permanent (MinimizeConcurrency only) |
+| Idempotency                  | `(app, command_uuid)`                   | KV      | Configurable retention               |
 
 ### Event-side (per partition)
 
@@ -166,7 +166,7 @@ func (e *Engine) ExecutorFor(app dogma.Application) dogma.CommandExecutor
 func (e *Engine) Run(ctx context.Context) error
 ```
 
-Options: `WithApplication`, `FromEnvironment`, `WithNodeID`.
+Options: `WithApplication`, `FromEnvironment`, `WithSiteID`, `WithNodeID`.
 
 Persistence options (`WithJournals`, `WithKeyspaces`, `WithSets`) are introduced in Phase 2.
 
@@ -192,22 +192,22 @@ Implements the aggregate command lifecycle.
 
 **Execution per command:**
 
-1. Gateway node receives command and routes it to an accepting node using ranked iteration
+1. Source node receives command and routes it to an accepting node using ranked iteration
    (see [Instruction routing](#instruction-routing-ranked-iteration-with-fallback-to-self)).
-2. Add `command_uuid` to command backlog (self-affinity partition).
-3. Append to command journal at position 0 (dedup). **Acceptance point.**
-4. Dispatch to instance-owning node.
-5. Load instance: read aggregate instance journal tail → binding + offset hint + expected
+2. Write unkeyed command scratchspace entry (or keyed command factspace entry).
+   **Acceptance point.**
+3. Dispatch to instance-owning node.
+4. Load instance: read aggregate instance journal tail → binding + offset hint + expected
    position. Read snapshot → application state. Read stream from offset hint → catch up.
-6. Execute `HandleCommand()`.
-7. Append to aggregate instance journal at expected position (OCC). `ConflictError` → retry
-   from step 5.
-8. Commit events to stream partition owner.
-9. Finalize: truncate instance journal, write snapshot, delete command journal, remove from
-   command backlog.
+5. Execute `HandleCommand()`.
+6. Append to aggregate instance journal at expected position (OCC). `ConflictError` → retry
+   from step 4.
+7. Commit events to stream partition owner.
+8. Finalize: truncate instance journal, write snapshot, delete keyed command factspace entry
+   (if keyed), remove unkeyed command scratchspace entry (if unkeyed).
 
 **Failure path:** in-memory retry counter, backoff. After N consecutive failures → move to
-poison backlog. On restart → trickle poison backlog back to command backlog.
+poison backlog. On restart → trickle poison backlog back to unkeyed command scratchspace.
 
 **Serialisation:** one goroutine per active instance with channel queue.
 
@@ -217,8 +217,9 @@ poison backlog. On restart → trickle poison backlog back to command backlog.
 
 Package `internal/subsystem/integration`.
 
-Shares the command backlog and command journal with the aggregate subsystem. The distinction
-between `MaximizeConcurrency` and `MinimizeConcurrency` is purely about routing and ordering.
+Shares the unkeyed command scratchspace and keyed command factspace with the aggregate
+subsystem. The distinction between `MaximizeConcurrency` and `MinimizeConcurrency` is purely
+about routing and ordering.
 
 | Preference            | Routing key                                            | Ordering        |
 | --------------------- | ------------------------------------------------------ | --------------- |
@@ -281,8 +282,8 @@ duplicates.
 
 Package `internal/subsystem/poisonqueue`.
 
-Partitioned `Set[UUID]` with the same shape as the command backlog. On startup, entries trickle
-back to the command backlog. A reference implementation exists in
+Partitioned `Set[UUID]` with the same shape as the unkeyed command scratchspace. On startup,
+entries trickle back to the scratchspace. A reference implementation exists in
 `_internal/subsystem/poisonqueue` — review for consistency with current patterns.
 
 ---
@@ -292,7 +293,7 @@ back to the command backlog. A reference implementation exists in
 Runkit-specific proto service definitions live in `internal/grpc/`. `enginekit` is for
 engine-agnostic abstractions.
 
-- **CommandForwardingService** — implements ranked iteration for command routing: gateway
+- **CommandForwardingService** — implements ranked iteration for command routing: source node
   iterates nodes by rendezvous score until one accepts, then forwards to the instance-owning
   node.
 - **ConsumeAPI** — serves event streams, proxied to partition owner.
@@ -308,14 +309,15 @@ Complete the `Engine` skeleton from Phase 1 by wiring all subsystems together.
 
 **Startup sequence:**
 
-1. Resolve node identity (`WithNodeID` / `DOGMA_NODE_ID` / random).
-2. Discover partition set.
-3. Resolve persistence stores (`With*` options / environment).
-4. Start heartbeat goroutine.
-5. Start membership refresh goroutine.
-6. Construct and wire all subsystems.
-7. Start all subsystems under shared `errgroup`.
-8. Drain pre-startup command queue.
+1. Resolve site identity (`WithSiteID` / `DOGMA_SITE_ID`). Required.
+2. Resolve node identity (`WithNodeID` / `DOGMA_NODE_ID` / random).
+3. Discover partition set.
+4. Resolve persistence stores (`With*` options / environment).
+5. Start heartbeat goroutine.
+6. Start membership refresh goroutine.
+7. Construct and wire all subsystems.
+8. Start all subsystems under shared `errgroup`.
+9. Drain pre-startup command queue.
 
 **Graceful shutdown:** drain in-flight commands, flush checkpoints, remove heartbeat entry.
 
@@ -361,9 +363,8 @@ AND its journals are fully idle. The exact GC policy is deferred.
 ### 4. Idempotency key and Dogma ADR-29
 
 Dogma ADR-29 proposes removing `WithIdempotencyKey()` on scalability grounds. In runkit's design
-this concern may not apply: the command journal is already keyed by command UUID, and supporting
-an idempotency key could be as simple as using the key as the journal key instead. Assess before
-Phase 4.
+this concern may not apply: the keyed command factspace is keyed by the idempotency key, and
+the cost is limited to commands that opt in. Assess before Phase 4.
 
 ### 5. MinimizeConcurrency strictness during membership transitions
 
@@ -391,14 +392,14 @@ Resolve before Phase 5.
 
 ### 9. Node role terminology for instruction routing
 
-Several informal terms are in use across planning documents for the two nodes
-involved when a command crosses a node boundary: "producer", "handler node",
-"destination", "gateway", "executing node". These terms have not been formally
-agreed and do not yet appear in the glossary.
+The node that receives an instruction from its originator and routes it to an
+accepting node is the **source node**, by analogy with the `Source*` fields on
+message envelopes. "Handler node" is used informally for the node that
+accepts and executes the instruction. These terms are defined in context
+within the relevant ADRs but are not yet in the glossary.
 
-Decide the canonical names for each role and add them to the glossary before
-Phase 3 implementation begins, so that code, comments, and planning documents
-use consistent vocabulary.
+Decide whether to add glossary entries before Phase 3 implementation begins,
+so that code, comments, and planning documents use consistent vocabulary.
 
 ### 8. WithEventObserver completion detection
 
@@ -409,6 +410,38 @@ chain. Completion detection is incremental:
 - **V1**: client timeout (`ErrEventObserverNotSatisfied`).
 - **V2**: heuristic (no process routes → chain exhausted → notify immediately).
 - **V3**: full causal tree tracking (commands spawned / completed counters).
+
+### 10. Site identity and multi-site event consumption
+
+enginekit's `Envelope` has a `SourceSite` field (`*identitypb.Identity`) that identifies the
+deployment/installation that produced a message. This disambiguates messages from different
+installations of the same application.
+
+**Settled:**
+
+- A site is an engine-level identity. One engine = one site. All applications hosted by that
+  engine share its site identity.
+- Sites have independent clusters and independent persistence -- they never share either.
+- Storage keys include the site, going from `(app, ...)` to `(site, app, ...)`.
+- The primary use case is cross-site event consumption: a projection or process in site A
+  consuming events produced by site B (the same application running elsewhere).
+- Configuration: `WithSiteID(key)` option and/or `DOGMA_SITE_ID` environment variable.
+  The key is a canonical RFC 9562 UUID string. A site identity is required -- runkit always
+  populates `SourceSite` on envelopes, even though enginekit allows it to be nil.
+  User guidance: generate a fresh v4 UUID and hardcode it if unsure.
+
+**Resolved sub-questions:**
+
+**10a. Event transport between sites.** gRPC (site A connects to site B's `ConsumeAPI`).
+Discovery and consumer-side configuration are out of scope for now.
+
+**10b. Site identity is required.** Although enginekit's `Envelope.Validate()` allows `SourceSite`
+to be nil, runkit requires a site identity (`WithSiteID(key)` or `DOGMA_SITE_ID`). This avoids
+a data migration if a site is assigned later -- storage keys are always `(site, app, ...)` with
+a real UUID. runkit is stricter than the wire format; it always populates `SourceSite`.
+
+**10d. Storage key scope.** No special case needed -- a site is always configured, so `(site, app, ...)`
+always uses a real UUID.
 
 ---
 
