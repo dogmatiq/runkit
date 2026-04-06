@@ -5,9 +5,6 @@ synchronous sequence from `ExecuteCommand()` to returning `nil` (without
 `WithEventObserver`). It refines the Phase 3 description in
 [000-big-picture.md](000-big-picture.md).
 
-These decisions will be captured as formal ADRs. See the [ADR plan] at the
-end of this document.
-
 ---
 
 ## Acceptance, not completion
@@ -26,31 +23,27 @@ plan) and is out of scope here.
 
 ---
 
-## Instruction routing: ranked iteration with fallback to self
+## Ratified foundations
 
-Instructions are routed using a general algorithm. The source node
-computes rendezvous scores for all live nodes against the instruction's
-routing key, then iterates nodes in descending score order, asking each
-whether it accepts responsibility. The first node that agrees becomes
-the acceptor. If no other node accepts, the source node handles the
-instruction itself (fallback to self).
+The command acceptance path depends on three ratified ADRs:
 
-This algorithm requires no disk I/O on the source node -- it is a pure
-control-plane operation. The ranked iteration naturally handles membership
-disagreements during transitions: if the top-scored node has a stale
-membership view and declines, the next-best candidate is tried. The fallback
-to self guarantees liveness -- work is never dropped even if routing views
-are transiently inconsistent across the cluster.
+- [0002-rendezvous-hashing-for-workload-assignment.md](../adr/0002-rendezvous-hashing-for-workload-assignment.md)
+- [0003-optimistic-conflict-resolution.md](../adr/0003-optimistic-conflict-resolution.md)
+- [0004-ranked-instruction-routing.md](../adr/0004-ranked-instruction-routing.md)
 
-The second-ranked node is a good fallback candidate because rendezvous
-scoring is stable: a node that is currently ranked #2 was likely recently
-ranked #1 (or will be again after the next membership change), so it may
-already have warm state for the workload.
+This document does not restate those ADRs. It only captures
+acceptance-path-specific consequences.
 
-The primary routing goal is to keep state warm on the node that will handle
-work for a given routing key, so that the common path involves zero storage
-reads and OCC is never exercised. For aggregates, the routing key is derived
-from the instance ID:
+### Routing consequences for command acceptance
+
+Command delivery uses the ranked offering protocol from
+[0004-ranked-instruction-routing.md](../adr/0004-ranked-instruction-routing.md),
+with workload assignment based on
+[0002-rendezvous-hashing-for-workload-assignment.md](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
+The primary goal is warm-state affinity so the common path avoids storage
+reads and minimizes OCC pressure.
+
+For aggregates, the routing key is derived from the instance ID:
 
 ```
 owner = rendezvous_hash(uuid5(app_key, instance_id), live_node_uuids)
@@ -62,11 +55,6 @@ to one node (routing key = handler key). With `MaximizeConcurrency`,
 commands spread across nodes (routing key = command UUID). The concurrency
 preference can change across deployments; see the routing validation
 section for how this is handled.
-
-Two orthogonal routing domains use the same algorithm. Command routing
-assigns commands to nodes by handler (or instance). Partition ownership
-assigns event-side work to nodes by partition UUID. The two domains scale
-independently.
 
 ---
 
@@ -94,7 +82,8 @@ enforces idempotency internally:
 
 3. **Factspace OCC.** At execution time, the handler's factspace
    positional OCC prevents duplicate side effects even if the same
-   command is dispatched twice (e.g., during recovery).
+   command is dispatched twice (e.g., during recovery), as required by
+   [0003-optimistic-conflict-resolution.md](../adr/0003-optimistic-conflict-resolution.md).
 
 The acceptance path differs based on which strategy applies.
 
@@ -131,8 +120,9 @@ differ.
 
 **On the source node (synchronous):**
 
-0. Identify the handler node using ranked iteration with fallback to self.
-   Pure in-memory, no disk I/O.
+0. Identify the handler node using the ranked routing protocol from
+   [0004-ranked-instruction-routing.md](../adr/0004-ranked-instruction-routing.md).
+   This is pure in-memory routing with no disk I/O.
 
 **On the handler node (synchronous):**
 
@@ -325,7 +315,8 @@ contractual guarantee: by providing an idempotency key, the caller
 accepts responsibility for retrying failed submissions. Without caller
 retry, a command that fails mid-acceptance may be silently lost.
 
-This requires an ADR in the dogma repository (see the ADR plan below).
+This decision has been ratified as
+[dogma/ADR-31](https://github.com/dogmatiq/dogma/blob/main/docs/adr/0031-require-retries-for-idempotency-keyed-commands.md).
 
 ---
 
@@ -389,12 +380,12 @@ factspaces whose keying is an acceptance-path concern (they determine
 how idempotency and recovery checks work). The internal structure of
 each factspace is a handler-subsystem concern.
 
-| Store                          | Key                                | Type    | Used by           | Lifetime              |
-| ------------------------------ | ---------------------------------- | ------- | ----------------- | --------------------- |
-| Unkeyed command scratchspace  | `(node, app, command_uuid)`        | KV      | Unkeyed command   | Until completion      |
-| Keyed command factspace        | `(app, idempotency_key)`           | Journal | Keyed command     | Until completion      |
-| Aggregate factspace            | `(app, handler_key, instance_id)`  | Journal | Aggregates        | Permanent (compacted) |
-| Integration factspace          | `(app, handler_key, command_uuid)` | Journal | Integrations      | Until completion      |
+| Store                        | Key                                | Type    | Used by         | Lifetime              |
+| ---------------------------- | ---------------------------------- | ------- | --------------- | --------------------- |
+| Unkeyed command scratchspace | `(node, app, command_uuid)`        | KV      | Unkeyed command | Until completion      |
+| Keyed command factspace      | `(app, idempotency_key)`           | Journal | Keyed command   | Until completion      |
+| Aggregate factspace          | `(app, handler_key, instance_id)`  | Journal | Aggregates      | Permanent (compacted) |
+| Integration factspace        | `(app, handler_key, command_uuid)` | Journal | Integrations    | Until completion      |
 
 ---
 
@@ -429,62 +420,22 @@ without changing the acceptance path design.
 
 ---
 
-## ADR plan
+## ADR status
 
-The decisions in this document will be captured as formal ADRs. ADR numbers
-will be assigned at authoring time (next sequential number in each repo).
+The following foundations referenced by this document are already ratified:
 
-Some of these decisions are tightly coupled -- the acceptance path,
-scratchspace/factspace design, dedup strategy, and recovery model are all
-facets of one coherent design. Splitting them too finely would make the
-design impossible to understand. The grouping below reflects natural
-boundaries: the routing algorithm is general-purpose and applies beyond
-commands; everything else about the acceptance path is one cohesive unit.
+- [0002-rendezvous-hashing-for-workload-assignment.md](../adr/0002-rendezvous-hashing-for-workload-assignment.md)
+- [0003-optimistic-conflict-resolution.md](../adr/0003-optimistic-conflict-resolution.md)
+- [0004-ranked-instruction-routing.md](../adr/0004-ranked-instruction-routing.md)
+- [dogma/ADR-31](https://github.com/dogmatiq/dogma/blob/main/docs/adr/0031-require-retries-for-idempotency-keyed-commands.md) (caller retry contract for commands with idempotency keys)
 
-### Runkit ADRs
+The main runkit ADR described by this document is still pending:
 
-**Ranked iteration with fallback to self for instruction routing.** The
-general routing algorithm described in the "Instruction routing" section.
-Applies to all instruction types. References ADR-2.
+- **Command acceptance and recovery.** Covers keyed vs unkeyed acceptance,
+  scratchspace/factspace design, recovery (restart/adoption/caller retry), and
+  routing validation at handler load time.
 
-**Command acceptance and recovery.** The core ADR. Covers: the split
-acceptance path (keyed vs unkeyed commands), unkeyed command
-scratchspace design (key scheme, value contents, why KV over Set, why
-per-node over cluster-wide), keyed command factspace for keyed commands,
-recovery (scratchspace enumeration, dead-node adoption, caller retry),
-and the general principle that routing decisions are validated on load.
-The poison backlog is referenced as a destination for unroutable commands
-but its full specification is deferred. Handler-type-specific routing
-validation rules are captured in each handler subsystem's own ADR.
-References ADR-2, ADR-3, the dogma caller retry ADR (by title).
-
-### Dogma ADR
-
-**Caller retry contract for commands with idempotency keys.**
-Strengthens the documented contract: providing an idempotency key signals
-that the caller accepts responsibility for retrying. The engine may rely
-on caller retry as the sole recovery mechanism. References dogma ADR-29.
-
-### Articles of faith
-
-The articles-of-faith document should be updated to link pending decisions
-to the ADRs above once they are written. In particular:
-
-- **Durability (article 1):** the "acceptance journaling" and
-  "scratchspace/factspace design" decisions are resolved by the command
-  acceptance/recovery/validation ADR.
-- **Idempotency (article 3):** the "dedup at acceptance" decision
-  is resolved differently depending on whether the command is keyed
-  (keyed command factspace) or unkeyed (scratchspace + handler OCC).
-  Integration idempotency store specifics are deferred to the
-  integration subsystem design.
+This thought document intentionally keeps non-ratified design content needed to
+author that ADR, while referring to ratified material instead of restating it.
 
 ---
-
-## Relationship to the big-picture plan
-
-The state inventory tables in the big-picture plan will need updating to
-reflect the revised storage design (adoption of unkeyed command
-scratchspace / keyed command factspace terminology, scratchspace type as
-KV, factspace scope, handler-subsystem stores moved to their respective
-designs).
