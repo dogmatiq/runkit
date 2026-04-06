@@ -126,6 +126,15 @@ only the inputs assigned to the affected candidate are reassigned.
 
 See [self-affinity], [ADR-2].
 
+### Ranked instruction routing
+
+The procedure by which a source node selects a destination node for an
+[instruction]. Candidates are ranked by [rendezvous hashing] score; the source
+node offers the instruction to each in descending order until one accepts,
+falling back to itself if none do.
+
+See [ADR-4].
+
 ## S
 
 ### Scratchspace
@@ -183,6 +192,7 @@ See [keyed command factspace].
 [integration factspace]: #integration-factspace
 [keyed command]: #keyed-command
 [keyed command factspace]: #keyed-command-factspace
+[ranked instruction routing]: #ranked-instruction-routing
 [rendezvous hashing]: #rendezvous-hashing
 [scratchspace]: #scratchspace
 [self-affinity]: #self-affinity
@@ -194,6 +204,7 @@ See [keyed command factspace].
 <!-- ADRs -->
 
 [ADR-2]: adr/0002-rendezvous-hashing-for-workload-assignment.md
+[ADR-4]: adr/0004-ranked-instruction-routing.md
 
 <!-- references -->
 

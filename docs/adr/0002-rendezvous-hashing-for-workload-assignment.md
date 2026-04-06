@@ -7,6 +7,7 @@ Date: 2026-04-04
 Accepted
 
 - Referenced by [3. Optimistic conflict resolution][ADR-3]
+- Referenced by [4. Ranked instruction routing][ADR-4]
 
 ## Context
 
@@ -122,6 +123,7 @@ This ADR introduces two terms to the [glossary]:
 <!-- references -->
 
 [ADR-3]: 0003-optimistic-conflict-resolution.md
+[ADR-4]: 0004-ranked-instruction-routing.md
 [consistent hashing]: https://en.wikipedia.org/wiki/Consistent_hashing
 [glossary]: ../glossary.md
 [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
