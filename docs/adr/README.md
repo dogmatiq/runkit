@@ -15,3 +15,4 @@ manipulate the ADR documents.
 * [2. Rendezvous hashing for workload assignment](0002-rendezvous-hashing-for-workload-assignment.md)
 * [3. Optimistic conflict resolution](0003-optimistic-conflict-resolution.md)
 * [4. Ranked instruction routing](0004-ranked-instruction-routing.md)
+* [5. Homogeneous cluster nodes](0005-homogeneous-cluster-nodes.md)

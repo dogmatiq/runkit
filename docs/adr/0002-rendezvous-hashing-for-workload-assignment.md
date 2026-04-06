@@ -8,6 +8,7 @@ Accepted
 
 - Referenced by [3. Optimistic conflict resolution][ADR-3]
 - Referenced by [4. Ranked instruction routing][ADR-4]
+- Referenced by [5. Homogeneous cluster nodes][ADR-5]
 
 ## Context
 
@@ -124,6 +125,7 @@ This ADR introduces two terms to the [glossary]:
 
 [ADR-3]: 0003-optimistic-conflict-resolution.md
 [ADR-4]: 0004-ranked-instruction-routing.md
+[ADR-5]: 0005-homogeneous-cluster-nodes.md
 [consistent hashing]: https://en.wikipedia.org/wiki/Consistent_hashing
 [glossary]: ../glossary.md
 [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing

@@ -7,6 +7,7 @@ Date: 2026-04-06
 Accepted
 
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
+- Referenced by [5. Homogeneous cluster nodes][ADR-5]
 
 ## Context
 
@@ -117,6 +118,7 @@ This ADR introduces one term to the [glossary]:
 
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-3]: 0003-optimistic-conflict-resolution.md
+[ADR-5]: 0005-homogeneous-cluster-nodes.md
 [control plane]: ../glossary.md#control-plane
 [glossary]: ../glossary.md
 [instruction]: ../glossary.md#instruction

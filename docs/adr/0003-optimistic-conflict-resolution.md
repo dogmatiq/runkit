@@ -7,6 +7,7 @@ Date: 2026-04-05
 Accepted
 
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
+- Referenced by [5. Homogeneous cluster nodes][ADR-5]
 
 ## Context
 
@@ -110,3 +111,4 @@ stable operations.
 <!-- references -->
 
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
+[ADR-5]: 0005-homogeneous-cluster-nodes.md

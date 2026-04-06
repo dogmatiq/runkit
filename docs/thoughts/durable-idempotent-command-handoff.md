@@ -8,6 +8,7 @@ Proposed
 
 - References [3. Optimistic conflict resolution][ADR-3]
 - References [4. Ranked instruction routing][ADR-4]
+- References [5. Homogeneous cluster nodes][ADR-5]
 
 > [!NOTE]
 > This decision has not yet been accepted and is subject to change.
@@ -18,11 +19,12 @@ The Dogma API describes [`CommandExecutor.ExecuteCommand()`] as returning once
 the engine has taken ownership of the command, not necessarily when handling is
 complete.
 
-Runkit always handles commands asynchronously. Ownership is confirmed to the
-caller before execution begins, and execution may happen on a different node
-entirely. That means a crash or node loss between ownership confirmation and
-completion will silently drop the command unless the engine takes explicit steps
-to prevent it. The design must therefore guarantee three properties:
+Runkit always handles commands asynchronously, as established by [ADR-5].
+Ownership is confirmed to the caller before execution begins, and execution may
+happen on a different node entirely. That means a crash or node loss between
+ownership confirmation and completion will silently drop the command unless the
+engine takes explicit steps to prevent it. The design must therefore guarantee
+three properties:
 
 - **Durability.** The command must be persisted so that it survives a node
   restart or permanent failure.
@@ -171,6 +173,7 @@ asynchronous execution.
 
 [ADR-3]: 0003-optimistic-conflict-resolution.md
 [ADR-4]: 0004-ranked-instruction-routing.md
+[ADR-5]: 0005-homogeneous-cluster-nodes.md
 [`CommandExecutor.ExecuteCommand()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor.ExecuteCommand
 [`WithIdempotencyKey()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#WithIdempotencyKey
 [factspace]: ../glossary.md#factspace
