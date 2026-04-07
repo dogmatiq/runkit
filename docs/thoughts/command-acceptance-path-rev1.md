@@ -130,11 +130,11 @@ differ.
    routing configuration. For aggregates, call `RouteCommandToInstance()`
    to determine the instance ID.
 
-2. Write an unkeyed command scratchspace entry keyed
+2. Write a per-node acceptance entry keyed
    `(node, app, command_uuid)` with a value containing the handler key,
    the command envelope, and (for aggregates) the instance ID. The
    handler node's UUID is part of the key so that on restart, each node
-   finds its own scratchspace naturally.
+   finds its own entries naturally.
 
 3. Dispatch the command to the handler subsystem (in-memory handoff to the
    handler's goroutine/channel).
@@ -142,7 +142,7 @@ differ.
 4. Return `nil` to the source node (and on to the original caller). This
    is the formal acceptance point.
 
-**Why the scratchspace is a KV keyspace, not a Set.** The scratchspace
+**Why the acceptance keyspace is a KV keyspace, not a Set.** The entry
 must store routing decisions and the full command envelope, not just a
 UUID. Sets have no value payload.
 
@@ -161,12 +161,12 @@ do not block the caller.
 ### Keyed commands (1 sync write)
 
 When the caller provides an idempotency key (a keyed command), the
-acceptance path uses the keyed command factspace instead of the unkeyed
-command scratchspace.
+acceptance path uses an idempotency journal instead of the per-node
+acceptance keyspace.
 
 **On the handler node (synchronous):**
 
-1. Append the command envelope to the keyed command factspace keyed
+1. Append the command envelope to the idempotency journal keyed
    `(app, idempotency_key)` at position 0. A `ConflictError` here means
    the command was already accepted (same key, different submission);
    treat as a no-op success.
@@ -175,13 +175,13 @@ command scratchspace.
 
 3. Return `nil` to the source node. This is the formal acceptance point.
 
-No scratchspace entry is written. The caller has committed to retrying on
-failure by providing an idempotency key (see the caller retry contract
+No per-node acceptance entry is written. The caller has committed to retrying
+on failure by providing an idempotency key (see the caller retry contract
 discussion below). The engine does not need its own tracking for keyed
 commands -- the caller IS the recovery mechanism.
 
-**Orphaned factspace entries.** If the caller provides an idempotency key
-but never retries after a failure, the factspace entry may be orphaned.
+**Orphaned journal entries.** If the caller provides an idempotency key
+but never retries after a failure, the journal entry may be orphaned.
 This is accepted as a tradeoff.
 
 **Integrations.** Integration handlers follow the same keyed command path
@@ -189,37 +189,37 @@ as aggregates when an idempotency key is provided. The idempotency key
 provides cluster-wide identity; the handler type determines only how the
 command is dispatched after acceptance.
 
-### Why unkeyed commands need only the scratchspace
+### Why unkeyed commands need only the per-node acceptance keyspace
 
 The original design (earlier in this document's history) wrote two stores
-synchronously for every command: a per-node scratchspace + a cluster-wide
-per-command factspace. This meant every command paid for two round-trips
+synchronously for every command: a per-node acceptance keyspace + a cluster-wide
+per-command journal. This meant every command paid for two round-trips
 on the synchronous acceptance path.
 
-The per-command factspace served three purposes, none of which require a
+The per-command journal served three purposes, none of which require a
 separate store for unkeyed commands:
 
-1. **Durable envelope storage.** Now moved into the scratchspace value.
-   The scratchspace needed to exist anyway; making it a KV (not a Set)
+1. **Durable envelope storage.** Now moved into the per-node acceptance entry.
+   The keyspace needed to exist anyway; making it a KV (not a Set)
    eliminates the need for a second store.
 2. **Cluster-wide dedup** (append at position 0, `ConflictError` =
    duplicate). Unnecessary for UUIDv4 commands -- two nodes will never
    independently generate the same UUID. Only needed when the caller
    supplies an idempotency key.
-3. **Recovery source** (any node can read the factspace). The per-node
-   scratchspace now provides this, with dead-node adoption for the case
+3. **Recovery source** (any node can read the journal). The per-node
+   acceptance keyspace now provides this, with dead-node adoption for the case
    where the accepting node dies.
 
-With all three purposes covered, the per-command factspace adds only
+With all three purposes covered, the per-command journal adds only
 latency. Eliminating it cuts the synchronous path from two writes to one.
 
 ---
 
 ## Recovery
 
-### Restart: scratchspace enumeration
+### Restart: per-node acceptance enumeration
 
-On startup, each node opens its own scratchspace `(self, app, *)` and
+On startup, each node opens its own per-node acceptance keyspace `(self, app, *)` and
 iterates all entries. For each entry:
 
 1. Check the handler's factspace to determine whether this command was
@@ -227,33 +227,33 @@ iterates all entries. For each entry:
    `(app, handler_key, instance_id)`; for integrations, look up
    `(app, handler_key, command_uuid)`. Both checks are uniform: read
    the factspace and check for a completion marker.
-   - If processed: delete the scratchspace entry (cleanup). Done.
+   - If processed: delete the acceptance entry (cleanup). Done.
 2. Otherwise: dispatch the command to the handler subsystem for execution.
    This goes through the routing validation path described below.
 
 ### Dead-node adoption (unkeyed commands only)
 
 When a node is detected as dead via the heartbeat system, a surviving node
-opens the dead node's scratchspace `(dead_node, app, *)` and iterates
+opens the dead node's per-node acceptance keyspace `(dead_node, app, *)` and iterates
 all entries. For each entry:
 
 1. Check the handler's factspace to determine whether this command was
-   already processed (same check as scratchspace enumeration).
-   - If processed: delete the scratchspace entry (cleanup). Done.
+   already processed (same check as restart enumeration).
+   - If processed: delete the acceptance entry (cleanup). Done.
 2. Re-route the command through the current application configuration. This
    goes through the same routing validation path, including the reroute
    mechanism if the routing decision has changed.
 
 **Why dead-node adoption is not needed for keyed commands.** The caller
 committed to retrying. If the accepting node dies, the caller eventually
-times out and resubmits. The keyed command factspace catches the
+times out and resubmits. The idempotency journal catches the
 duplicate.
 
 ### Keyed command recovery: caller retry
 
 For keyed commands, the caller is the recovery mechanism. If
 `ExecuteCommand` returns an error, the caller resubmits with the same
-idempotency key. The keyed command factspace catches the duplicate and
+idempotency key. The idempotency journal catches the duplicate and
 the command proceeds.
 
 ---
@@ -273,7 +273,7 @@ under stale configuration.
 
 The general contract: on load, the handler subsystem must verify that
 the command can still be executed by the handler recorded in the
-scratchspace entry. If the handler no longer accepts the command type,
+acceptance entry. If the handler no longer accepts the command type,
 or if the handler no longer exists, the command is moved to the poison
 backlog.
 
@@ -326,8 +326,8 @@ This decision has been ratified as
 
 The persistence store options -- `WithJournals`, `WithKeyspaces`, `WithSets`
 -- introduced in Phase 2 are required so the engine can open the
-unkeyed command scratchspace and (for keyed commands) the keyed command
-factspace. The rest of Phase 2 (heartbeat keyspace, live node set) is
+per-node acceptance keyspace and (for keyed commands) the idempotency
+journal. The rest of Phase 2 (heartbeat keyspace, live node set) is
 NOT on the synchronous path and can be deferred.
 
 For a single-node implementation, the live node set can be initialised as
@@ -336,7 +336,7 @@ plumbing. Phase 2 heartbeat work is only needed when multi-node is in scope.
 
 ### Phase 3 -- acceptance portion
 
-Write the scratchspace entry (or factspace entry for keyed commands),
+Write the per-node acceptance entry (or journal entry for keyed commands),
 dispatch to the handler subsystem, return `nil`.
 
 ### Phase 10 -- partial wiring
@@ -346,8 +346,8 @@ Connect the persistence stores to the acceptance logic and replace
 
 1. Resolve node identity (`WithNodeID` / `DOGMA_NODE_ID` / random UUID).
 2. Resolve persistence stores from options (or environment fallback).
-3. Wire the acceptance path (unkeyed command scratchspace opener +
-   keyed command factspace opener).
+3. Wire the acceptance path (per-node acceptance keyspace opener +
+   idempotency journal opener).
 4. Signal readiness by storing the real executor into `executor.future`
    (currently stores `noopExecutor{}`), which unblocks any callers already
    waiting in `executor.ExecuteCommand`.
@@ -382,8 +382,8 @@ each factspace is a handler-subsystem concern.
 
 | Store                        | Key                                | Type    | Used by         | Lifetime              |
 | ---------------------------- | ---------------------------------- | ------- | --------------- | --------------------- |
-| Unkeyed command scratchspace | `(node, app, command_uuid)`        | KV      | Unkeyed command | Until completion      |
-| Keyed command factspace      | `(app, idempotency_key)`           | Journal | Keyed command   | Until completion      |
+| Per-node acceptance keyspace | `(node, app, command_uuid)`        | KV      | Unkeyed command | Until completion      |
+| Idempotency journal          | `(app, idempotency_key)`           | Journal | Keyed command   | Until completion      |
 | Aggregate factspace          | `(app, handler_key, instance_id)`  | Journal | Aggregates      | Permanent (compacted) |
 | Integration factspace        | `(app, handler_key, command_uuid)` | Journal | Integrations    | Until completion      |
 
@@ -429,13 +429,13 @@ The following foundations referenced by this document are already ratified:
 - [0004-ranked-instruction-routing.md](../adr/0004-ranked-instruction-routing.md)
 - [dogma/ADR-31](https://github.com/dogmatiq/dogma/blob/main/docs/adr/0031-require-retries-for-idempotency-keyed-commands.md) (caller retry contract for commands with idempotency keys)
 
-The main runkit ADR described by this document is still pending:
+The main runkit ADR described by this document has been filed:
 
-- **Command acceptance and recovery.** Covers keyed vs unkeyed acceptance,
-  scratchspace/factspace design, recovery (restart/adoption/caller retry), and
-  routing validation at handler load time.
+- [6. Command acceptance and recovery](../adr/0006-command-acceptance-and-recovery.md)
+  — covers keyed vs unkeyed acceptance, factspace keying, recovery
+  (restart/adoption/caller retry), and routing validation at handler load time.
 
-This thought document intentionally keeps non-ratified design content needed to
-author that ADR, while referring to ratified material instead of restating it.
+This thought document records the detailed reasoning and open questions that
+informed that ADR.
 
 ---

@@ -123,9 +123,9 @@ to `(app, ...)`.
 
 | Store                        | Key                               | Type        | Lifetime                   |
 | ---------------------------- | --------------------------------- | ----------- | -------------------------- |
-| Unkeyed command scratchspace | `(node, app, command_uuid)`       | KV          | Until completion           |
+| Per-node acceptance keyspace | `(node, app, command_uuid)`       | KV          | Until completion           |
 | Poison backlog               | `(app, partition, command_uuid)`  | `Set[UUID]` | Until restart trickle-back |
-| Keyed command factspace      | `(app, idempotency_key)`          | Journal     | Until completion           |
+| Idempotency journal          | `(app, idempotency_key)`          | Journal     | Until completion           |
 | Aggregate instance journal   | `(app, handler_key, instance_id)` | Journal     | Permanent (truncated)      |
 | Snapshot                     | `(app, handler_key, instance_id)` | KV          | Until superseded           |
 | Stream                       | `(app, stream_partition)`         | Journal     | Permanent                  |
@@ -134,8 +134,8 @@ to `(app, ...)`.
 
 | Store                        | Key                                     | Type    | Lifetime                             |
 | ---------------------------- | --------------------------------------- | ------- | ------------------------------------ |
-| Unkeyed command scratchspace | (shared with aggregate, same key shape) | KV      | Until completion                     |
-| Keyed command factspace      | (shared with aggregate)                 | Journal | Until completion                     |
+| Per-node acceptance keyspace | (shared with aggregate, same key shape) | KV      | Until completion                     |
+| Idempotency journal          | (shared with aggregate)                 | Journal | Until completion                     |
 | Handler journal              | `(app, handler_key)`                    | Journal | Permanent (MinimizeConcurrency only) |
 | Idempotency                  | `(app, command_uuid)`                   | KV      | Configurable retention               |
 
@@ -194,7 +194,7 @@ Implements the aggregate command lifecycle.
 
 1. Source node receives command and routes it to an accepting node using ranked iteration
    (see [Instruction routing](#instruction-routing-ranked-iteration-with-fallback-to-self)).
-2. Write unkeyed command scratchspace entry (or keyed command factspace entry).
+2. Write per-node acceptance entry (or idempotency-journal entry).
    **Acceptance point.**
 3. Dispatch to instance-owning node.
 4. Load instance: read aggregate instance journal tail → binding + offset hint + expected
@@ -203,11 +203,11 @@ Implements the aggregate command lifecycle.
 6. Append to aggregate instance journal at expected position (OCC). `ConflictError` → retry
    from step 4.
 7. Commit events to stream partition owner.
-8. Finalize: truncate instance journal, write snapshot, delete keyed command factspace entry
-   (if keyed), remove unkeyed command scratchspace entry (if unkeyed).
+8. Finalize: truncate instance journal, write snapshot, delete idempotency-journal entry
+  (if keyed), remove per-node acceptance entry (if unkeyed).
 
 **Failure path:** in-memory retry counter, backoff. After N consecutive failures → move to
-poison backlog. On restart → trickle poison backlog back to unkeyed command scratchspace.
+poison backlog. On restart → trickle poison backlog back to the per-node acceptance keyspace.
 
 **Serialisation:** one goroutine per active instance with channel queue.
 
@@ -217,7 +217,7 @@ poison backlog. On restart → trickle poison backlog back to unkeyed command sc
 
 Package `internal/subsystem/integration`.
 
-Shares the unkeyed command scratchspace and keyed command factspace with the aggregate
+Shares the per-node acceptance keyspace and idempotency journal with the aggregate
 subsystem. The distinction between `MaximizeConcurrency` and `MinimizeConcurrency` is purely
 about routing and ordering.
 
@@ -282,8 +282,8 @@ duplicates.
 
 Package `internal/subsystem/poisonqueue`.
 
-Partitioned `Set[UUID]` with the same shape as the unkeyed command scratchspace. On startup,
-entries trickle back to the scratchspace. A reference implementation exists in
+Partitioned `Set[UUID]` with the same shape as the per-node acceptance keyspace. On startup,
+entries trickle back to that keyspace. A reference implementation exists in
 `_internal/subsystem/poisonqueue` — review for consistency with current patterns.
 
 ---
@@ -363,7 +363,7 @@ AND its journals are fully idle. The exact GC policy is deferred.
 ### 4. Idempotency key and Dogma ADR-29
 
 Dogma ADR-29 proposes removing `WithIdempotencyKey()` on scalability grounds. In runkit's design
-this concern may not apply: the keyed command factspace is keyed by the idempotency key, and
+this concern may not apply: the idempotency journal is keyed by the idempotency key, and
 the cost is limited to commands that opt in. Assess before Phase 4.
 
 ### 5. MinimizeConcurrency strictness during membership transitions

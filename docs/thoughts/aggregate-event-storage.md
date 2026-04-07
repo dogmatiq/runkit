@@ -207,13 +207,13 @@ compatible). The index is additive -- the factspace doesn't need to change.
 
 ## Revised State Inventory (Aggregate Command Path)
 
-| Store               | Key                               | Type    | Lifetime              |
-| ------------------- | --------------------------------- | ------- | --------------------- |
-| Command backlog     | `(node, app, command_uuid)`       | Set     | Until completion      |
-| Poison backlog      | `(app, partition, command_uuid)`  | Set     | Until restart trickle |
-| Command journal     | `(app, command_uuid)`             | Journal | Until completion      |
-| Aggregate factspace | `(app, handler_key, instance_id)` | Journal | Permanent (compacted) |
-| Stream              | `(app, stream_partition)`         | Journal | Permanent             |
+| Store                        | Key                               | Type    | Lifetime              |
+| ---------------------------- | --------------------------------- | ------- | --------------------- |
+| Per-node acceptance keyspace | `(node, app, command_uuid)`       | KV      | Until completion      |
+| Poison backlog               | `(app, partition, command_uuid)`  | Set     | Until restart trickle |
+| Idempotency journal          | `(app, idempotency_key)`          | Journal | Until completion      |
+| Aggregate factspace          | `(app, handler_key, instance_id)` | Journal | Permanent (compacted) |
+| Stream                       | `(app, stream_partition)`         | Journal | Permanent             |
 
 Compared to the naive two-journal approach, there is no separate per-instance
 event journal and no separate snapshot KV store. The snapshot lives inside the

@@ -108,13 +108,6 @@ A [command] executed with an application-defined [idempotency key] via
 
 See [unkeyed command].
 
-### Keyed command factspace
-
-A [factspace] that records acceptance of a [keyed command] and guards
-against duplicate submission.
-
-See [unkeyed command scratchspace].
-
 ## R
 
 ### Rendezvous hashing
@@ -162,13 +155,6 @@ A [command] executed without an application-defined [idempotency key].
 
 See [keyed command].
 
-### Unkeyed command scratchspace
-
-A [scratchspace] that tracks unkeyed commands until they complete and serves as
-the recovery source on restart or [dead-node adoption].
-
-See [keyed command factspace].
-
 <!-- anchors -->
 
 [aggregate factspace]: #aggregate-factspace
@@ -191,7 +177,6 @@ See [keyed command factspace].
 [integration]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#integration
 [integration factspace]: #integration-factspace
 [keyed command]: #keyed-command
-[keyed command factspace]: #keyed-command-factspace
 [ranked instruction routing]: #ranked-instruction-routing
 [rendezvous hashing]: #rendezvous-hashing
 [scratchspace]: #scratchspace
@@ -199,7 +184,6 @@ See [keyed command factspace].
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 [`WithIdempotencyKey`]: https://pkg.go.dev/github.com/dogmatiq/dogma#WithIdempotencyKey
 [unkeyed command]: #unkeyed-command
-[unkeyed command scratchspace]: #unkeyed-command-scratchspace
 
 <!-- ADRs -->
 
