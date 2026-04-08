@@ -103,16 +103,44 @@ never crosses the network) should propagate as a hard failure.
 > Consider whether a context cancellation should still abort the loop. Answer:
 > yes -- `ctx.Err() != nil` should break out unconditionally.
 
+## Circuit breaker
+
+The error-handling policy above skips a failing candidate for a single routing
+attempt, but it does not prevent the next routing attempt from trying the same
+failing candidate again. For a dead peer this means every routing attempt burns
+a gRPC round-trip (connection refused or timeout) before falling through to the
+next candidate. A per-peer circuit breaker eliminates those wasted round-trips.
+
+Each `Router` maintains a circuit breaker per peer UUID. When `Offerer.Offer`
+returns a network error (not a decline), the breaker for that peer trips open.
+Subsequent `Route` calls skip that peer's offer attempt for the duration of the
+open interval, then move to half-open to probe once, then close on success.
+
+**Critical constraint: the circuit breaker must only gate offer attempts. It
+must never filter the candidate set passed to rendezvous hashing.** The
+candidate set must always be the full live set from the node presence system
+(Phase 2). If nodes filtered the candidate set by their local breaker state,
+different nodes would hash the same workload to different winners, producing
+persistent OCC contention for the lifetime of the breaker rather than the
+bounded window guaranteed by the presence refresh interval.
+
+The correct mental model: the candidate list is "nodes that exist"; the circuit
+breaker is "nodes I'm currently willing to make a round-trip to." `Route`
+iterates the full ranked candidate list, but skips the offer call for peers
+whose breaker is open. If all higher-ranked peers are skipped (either by breaker
+or by decline), the source node handles the instruction itself as usual.
+
 ## Relationship to rendezvous
 
-`Route` calls a new helper `internal/rendezvous.RankAbove` rather than the
-existing `Rank`. The distinction:
+`Route` calls `internal/rendezvous.RankAbove(w, c, candidates)`, which is
+implemented in the rendezvous package. The distinction from `Rank`:
 
 - `Rank(w, candidates)` -- returns all candidates ranked, with the
   self-affinity winner (where `w == c` in the candidate set) placed first.
 - `RankAbove(w, c, candidates)` -- returns only the candidates that rank
   strictly above `c` for `w`, in descending score order. `c` itself and
-  any lower-ranked candidates are omitted entirely.
+  any lower-ranked candidates are omitted. If `w == c` (self-affinity),
+  returns nil immediately -- nothing can rank above an unconditional winner.
 
 `RankAbove` simplifies the routing loop: the result is exactly the sequence of
 candidates to offer to before the caller handles the workload itself. There is
