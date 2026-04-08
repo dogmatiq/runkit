@@ -9,6 +9,7 @@ Accepted
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
 - References [3. Optimistic conflict resolution][ADR-3]
 - References [4. Ranked instruction routing][ADR-4]
+- Referenced by [6. Durable command executor][ADR-6]
 
 ## Context
 
@@ -103,5 +104,6 @@ transactions appear anywhere.
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-3]: 0003-optimistic-conflict-resolution.md
 [ADR-4]: 0004-ranked-instruction-routing.md
+[ADR-6]: 0006-durable-command-executor.md
 [`persistencekit`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit
 [Verity]: https://github.com/dogmatiq/verity

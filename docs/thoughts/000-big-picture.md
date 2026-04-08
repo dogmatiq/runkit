@@ -443,6 +443,15 @@ a real UUID. runkit is stricter than the wire format; it always populates `Sourc
 **10d. Storage key scope.** No special case needed -- a site is always configured, so `(site, app, ...)`
 always uses a real UUID.
 
+### 11. Dead-node work discovery
+
+When a node is permanently lost, surviving nodes need to find and adopt its
+unfinished work. ADR-6 currently attributes this to self-affinity (ADR-2), but
+it's unclear whether rendezvous hashing is actually the right mechanism for
+discovering which recovery index entries belong to the dead node. The question
+is: how does a surviving node locate and enumerate the dead node's outstanding
+work?
+
 ---
 
 ## Existing Code: Status and Role

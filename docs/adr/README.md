@@ -11,8 +11,9 @@ manipulate the ADR documents.
 
 ## Index
 
-- [1. Record architecture decisions](0001-record-architecture-decisions.md)
-- [2. Rendezvous hashing for workload assignment](0002-rendezvous-hashing-for-workload-assignment.md)
-- [3. Optimistic conflict resolution](0003-optimistic-conflict-resolution.md)
-- [4. Ranked instruction routing](0004-ranked-instruction-routing.md)
-- [5. Homogeneous cluster nodes](0005-homogeneous-cluster-nodes.md)
+* [1. Record architecture decisions](0001-record-architecture-decisions.md)
+* [2. Rendezvous hashing for workload assignment](0002-rendezvous-hashing-for-workload-assignment.md)
+* [3. Optimistic conflict resolution](0003-optimistic-conflict-resolution.md)
+* [4. Ranked instruction routing](0004-ranked-instruction-routing.md)
+* [5. Homogeneous cluster nodes](0005-homogeneous-cluster-nodes.md)
+* [6. Durable command executor](0006-durable-command-executor.md)

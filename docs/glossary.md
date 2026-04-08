@@ -8,7 +8,7 @@ B •
 [C](#c) •
 [D](#d) •
 E •
-[F](#f) •
+F •
 G •
 H •
 [I](#i) •
@@ -31,12 +31,6 @@ Y •
 Z
 
 ## A
-
-### Aggregate factspace
-
-A [factspace] that holds the operational metadata needed to reload an
-[aggregate instance] and detect conflicts; event data itself lives in
-the stream.
 
 ### Application plane
 
@@ -74,16 +68,6 @@ The process by which a surviving node takes ownership of resources
 belonging to a node that is no longer alive. [Self-affinity] makes the
 dead node's resources naturally discoverable.
 
-## F
-
-### Factspace
-
-A private, authoritative store for a specific entity, with a permanent
-lifetime. A factspace is not tied to a particular storage primitive — it
-may be backed by a journal, key-value entries, or a combination.
-
-See [aggregate factspace], [integration factspace], [scratchspace].
-
 ## I
 
 ### Instruction
@@ -93,11 +77,6 @@ work be performed. For example, a request to execute a command on a specific
 handler instance.
 
 See [confirmation].
-
-### Integration factspace
-
-A [factspace] that holds the idempotency and completion state for a
-single [command] handled by an [integration].
 
 ## K
 
@@ -128,13 +107,16 @@ falling back to itself if none do.
 
 See [ADR-4].
 
+### Recovery index
+
+A per-node index that records which aggregate instances and integration handlers
+currently have work in progress on that node. On startup, a node iterates its
+recovery index to locate unfinished work without scanning every handler's data
+store in the cluster.
+
+See [ADR-6].
+
 ## S
-
-### Scratchspace
-
-A private, transient store that exists for the duration of a specific
-operation or unit of work. Like a [factspace], a scratchspace is not tied
-to a particular storage primitive.
 
 ### Self-affinity
 
@@ -157,8 +139,6 @@ See [keyed command].
 
 <!-- anchors -->
 
-[aggregate factspace]: #aggregate-factspace
-[aggregate instance]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#aggregate-instance
 [application plane]: #application-plane
 [command]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
 [commands]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#command
@@ -166,20 +146,14 @@ See [keyed command].
 [confirmations]: #confirmation
 [control message]: #control-message
 [control plane]: #control-plane
-[dead-node adoption]: #dead-node-adoption
 [Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
 [events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
-[factspace]: #factspace
 [handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
 [idempotency key]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#idempotency-key
 [instruction]: #instruction
 [instructions]: #instruction
-[integration]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#integration
-[integration factspace]: #integration-factspace
 [keyed command]: #keyed-command
-[ranked instruction routing]: #ranked-instruction-routing
 [rendezvous hashing]: #rendezvous-hashing
-[scratchspace]: #scratchspace
 [self-affinity]: #self-affinity
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
 [`WithIdempotencyKey`]: https://pkg.go.dev/github.com/dogmatiq/dogma#WithIdempotencyKey
@@ -189,6 +163,7 @@ See [keyed command].
 
 [ADR-2]: adr/0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-4]: adr/0004-ranked-instruction-routing.md
+[ADR-6]: adr/0006-durable-command-executor.md
 
 <!-- references -->
 
