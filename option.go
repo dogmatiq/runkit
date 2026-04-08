@@ -5,13 +5,14 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
 // Option is a function that configures an [Engine].
 type Option func(*Engine)
 
-// WithSiteID returns an [Option] that sets the site identity for the engine.
+// WithSite returns an [Option] that sets the site identity for the engine.
 //
 // A site represents a distinct installation of the same set of applications.
 // Separate sites are used when running independent deployments, for example:
@@ -23,21 +24,22 @@ type Option func(*Engine)
 // Each site has its own persisted state; two sites never share data. The site
 // identity is included in every message envelope the engine produces.
 //
-// id is a canonical RFC 9562 UUID string. If you're unsure, generate a new
-// random (v4) UUID and hardcode it.
+// name is a human-readable label for the site. key is a canonical RFC 9562
+// UUID string that uniquely identifies the site. If you're unsure, generate a
+// new random (v4) UUID and hardcode it.
 //
 // If [FromEnvironment] is also used, this option takes precedence over the
-// value of the DOGMA_SITE_ID environment variable.
+// values of the DOGMA_SITE_NAME and DOGMA_SITE_KEY environment variables.
 //
-// It panics if id is not a valid UUID.
-func WithSiteID(id string) Option {
-	parsed, err := uuidpb.Parse(id)
+// It panics if name is empty or if key is not a valid UUID.
+func WithSite(name, key string) Option {
+	site, err := identitypb.Parse(name, key)
 	if err != nil {
-		panic(fmt.Sprintf("runkit: invalid site ID: %s", err))
+		panic(fmt.Sprintf("runkit: invalid site identity: %s", err))
 	}
 
 	return func(e *Engine) {
-		e.siteID = parsed
+		e.site = site
 	}
 }
 
@@ -99,24 +101,25 @@ func WithApplication(app dogma.Application) Option {
 //
 // It reads the following environment variables:
 //
-//   - DOGMA_SITE_ID (see [WithSiteID])
+//   - DOGMA_SITE_NAME (see [WithSite])
+//   - DOGMA_SITE_KEY (see [WithSite])
 //   - DOGMA_NODE_ID (see [WithNodeID])
 //
 // Explicit options always take precedence over environment variables, regardless
 // of the order in which options are specified.
 func FromEnvironment() Option {
 	return func(e *Engine) {
-		if e.siteID == nil {
-			if v, ok := siteIDVar.Value(); ok {
-				id, err := uuidpb.Parse(v)
+		if e.site == nil {
+			if key, ok := envSiteKey.Value(); ok {
+				site, err := identitypb.Parse(envSiteName.Value(), key)
 				if err != nil {
-					panic(fmt.Sprintf("runkit: invalid DOGMA_SITE_ID: %s", err))
+					panic(fmt.Sprintf("runkit: invalid site identity from environment: %s", err))
 				}
-				e.siteID = id
+				e.site = site
 			}
 		}
 		if e.nodeID == nil {
-			if v, ok := nodeIDVar.Value(); ok {
+			if v, ok := envNodeID.Value(); ok {
 				id, err := uuidpb.Parse(v)
 				if err != nil {
 					panic(fmt.Sprintf("runkit: invalid DOGMA_NODE_ID: %s", err))

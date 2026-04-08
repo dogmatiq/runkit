@@ -5,12 +5,14 @@ import (
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
 // Engine runs one or more Dogma applications.
 type Engine struct {
-	siteID, nodeID *uuidpb.UUID
+	site   *identitypb.Identity
+	nodeID *uuidpb.UUID
 	apps           []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
 	appsByKey      map[string]struct{}
 	executors      map[dogma.Application]*executor
@@ -40,8 +42,8 @@ func (e *Engine) Run(context.Context) error {
 		panic("runkit: Run() has already been called")
 	}
 
-	if e.siteID == nil {
-		panic("runkit: a site identity is required, use WithSiteID() or FromEnvironment()")
+	if e.site == nil {
+		panic("runkit: a site identity is required, use WithSite() or FromEnvironment()")
 	}
 
 	if e.nodeID == nil {

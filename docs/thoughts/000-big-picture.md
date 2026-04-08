@@ -89,6 +89,13 @@ Providing a stable node UUID (via `WithNodeID` / `DOGMA_NODE_ID`) ensures that a
 re-enters the live set with the same UUID and thus continues to own the same workloads it warmed
 before the restart.
 
+Because the routing key omits the handler key, instances of different aggregate types that share
+the same instance ID gravitate to the same node. For example, `Customer` and `CustomerProfile`
+instances with ID `customer-7` will tend to be co-located. This is intentional — related
+aggregate types often share IDs by domain design, and co-location keeps their warm state on the
+same node. Whether a similar property applies to process handlers — whose execution is tied to
+partition ownership rather than instance routing — is not yet decided.
+
 ### Two orthogonal routing domains
 
 Both routing domains use the same ranked-iteration algorithm described above. They differ only
@@ -165,7 +172,7 @@ func (e *Engine) ExecutorFor(app dogma.Application) dogma.CommandExecutor
 func (e *Engine) Run(ctx context.Context) error
 ```
 
-Options: `WithApplication`, `FromEnvironment`, `WithSiteID`, `WithNodeID`.
+Options: `WithApplication`, `FromEnvironment`, `WithSite`, `WithNodeID`.
 
 Persistence options (`WithJournals`, `WithKeyspaces`, `WithSets`) are introduced in Phase 2.
 
@@ -299,7 +306,7 @@ Complete the `Engine` skeleton from Phase 1 by wiring all subsystems together.
 
 **Startup sequence:**
 
-1. Resolve site identity (`WithSiteID` / `DOGMA_SITE_ID`). Required.
+1. Resolve site identity (`WithSite` / `DOGMA_SITE_NAME` + `DOGMA_SITE_KEY`). Required.
 2. Resolve node identity (`WithNodeID` / `DOGMA_NODE_ID` / random).
 3. Discover partition set.
 4. Resolve persistence stores (`With*` options / environment).
@@ -417,7 +424,7 @@ installations of the same application.
   discriminator to storage keys.
 - The primary use case is cross-site event consumption: a projection or process in site A
   consuming events produced by site B (the same application running elsewhere).
-- Configuration: `WithSiteID(key)` option and/or `DOGMA_SITE_ID` environment variable.
+- Configuration: `WithSite(name, key)` option and/or `DOGMA_SITE_NAME` + `DOGMA_SITE_KEY` environment variables.
   The key is a canonical RFC 9562 UUID string. A site identity is required -- runkit always
   populates `SourceSite` on envelopes, even though enginekit allows it to be nil.
   User guidance: generate a fresh v4 UUID and hardcode it if unsure.
@@ -428,7 +435,7 @@ installations of the same application.
 Discovery and consumer-side configuration are out of scope for now.
 
 **10b. Site identity is required.** Although enginekit's `Envelope.Validate()` allows `SourceSite`
-to be nil, runkit requires a site identity (`WithSiteID(key)` or `DOGMA_SITE_ID`). This avoids
+to be nil, runkit requires a site identity (`WithSite(name, key)` or `DOGMA_SITE_NAME` + `DOGMA_SITE_KEY`). This avoids
 a data migration if a site is assigned later -- storage keys are always `(site, app, ...)` with
 a real UUID. runkit is stricter than the wire format; it always populates `SourceSite`.
 

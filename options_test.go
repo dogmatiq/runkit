@@ -8,15 +8,25 @@ import (
 	. "github.com/dogmatiq/runkit"
 )
 
-func TestWithSiteID(t *testing.T) {
-	t.Run("it panics if the ID is not a valid UUID", func(t *testing.T) {
+func TestWithSite(t *testing.T) {
+	t.Run("it panics if the name is empty", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
 				t.Fatal("expected panic, got none")
 			}
 		}()
 
-		WithSiteID("not-a-uuid")
+		WithSite("", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d")
+	})
+
+	t.Run("it panics if the key is not a valid UUID", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic, got none")
+			}
+		}()
+
+		WithSite("my-site", "not-a-uuid")
 	})
 }
 

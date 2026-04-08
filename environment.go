@@ -13,17 +13,24 @@ var FerriteRegistry = ferrite.NewRegistry(
 	"Runkit",
 )
 
+var envSiteKey = ferrite.
+	String("DOGMA_SITE_KEY", "the UUID that uniquely identifies this site").
+	WithConstraint("must be a UUID", isUUID).
+	Optional(ferrite.WithRegistry(FerriteRegistry))
+
+var envSiteName = ferrite.
+	String("DOGMA_SITE_NAME", "the human-readable name of this site").
+	Required(
+		ferrite.RelevantIf(envSiteKey),
+		ferrite.WithRegistry(FerriteRegistry),
+	)
+
+var envNodeID = ferrite.
+	String("DOGMA_NODE_ID", "the UUID that uniquely identifies this node").
+	WithConstraint("must be a UUID", isUUID).
+	Optional(ferrite.WithRegistry(FerriteRegistry))
+
 func isUUID(v string) bool {
 	_, err := uuidpb.Parse(v)
 	return err == nil
 }
-
-var siteIDVar = ferrite.
-	String("DOGMA_SITE_ID", "the UUID that uniquely identifies this site").
-	WithConstraint("must be a UUID", isUUID).
-	Optional(ferrite.WithRegistry(FerriteRegistry))
-
-var nodeIDVar = ferrite.
-	String("DOGMA_NODE_ID", "the UUID that uniquely identifies this node").
-	WithConstraint("must be a UUID", isUUID).
-	Optional(ferrite.WithRegistry(FerriteRegistry))
