@@ -209,3 +209,89 @@ func TestRendezvous(t *testing.T) {
 		})
 	})
 }
+
+func TestRankAbove(t *testing.T) {
+	t.Run("empty candidate set", func(t *testing.T) {
+		work := uuidpb.Generate()
+		cand := uuidpb.Generate()
+		if got := RankAbove(work, cand, nil); got != nil {
+			t.Fatalf("RankAbove() returned non-nil for empty candidates: %v", got)
+		}
+	})
+
+	t.Run("self-affinity: workload equals candidate", func(t *testing.T) {
+		work := uuidpb.Generate()
+		candidates := []*uuidpb.UUID{work, uuidpb.Generate(), uuidpb.Generate()}
+		if got := RankAbove(work, work, candidates); got != nil {
+			t.Fatalf("RankAbove() returned non-nil when w == c: %v", got)
+		}
+	})
+
+	rapid.Check(t, func(t *rapid.T) {
+		n := rapid.IntRange(1, 10).Draw(t, "n")
+		candidates := make([]*uuidpb.UUID, n)
+		for i := range candidates {
+			candidates[i] = uuidpb.Generate()
+		}
+
+		work := uuidpb.Generate()
+		ranked := Rank(work, candidates)
+
+		t.Repeat(map[string]func(*rapid.T){
+			"candidate is a member": func(t *rapid.T) {
+				i := rapid.IntRange(0, len(ranked)-1).Draw(t, "rank index")
+				cand := ranked[i]
+
+				got := RankAbove(work, cand, candidates)
+
+				// Must be exactly the prefix of Rank before cand.
+				if len(got) != i {
+					t.Fatalf("RankAbove() returned %d candidates, want %d", len(got), i)
+				}
+				for j, c := range got {
+					if !c.Equal(ranked[j]) {
+						t.Fatalf("RankAbove()[%d] = %q, want %q", j, c, ranked[j])
+					}
+				}
+			},
+
+			"candidate is not a member": func(t *rapid.T) {
+				nonMember := uuidpb.Generate()
+
+				got := RankAbove(work, nonMember, candidates)
+
+				// Must equal the full Rank output.
+				if len(got) != len(ranked) {
+					t.Fatalf("RankAbove() returned %d candidates for non-member, want %d", len(got), len(ranked))
+				}
+				for i, c := range got {
+					if !c.Equal(ranked[i]) {
+						t.Fatalf("RankAbove()[%d] = %q, want %q", i, c, ranked[i])
+					}
+				}
+			},
+
+			"result is independent of candidate slice order": func(t *rapid.T) {
+				cand := ranked[rapid.IntRange(0, len(ranked)-1).Draw(t, "rank index")]
+
+				shuffled := make([]*uuidpb.UUID, len(candidates))
+				copy(shuffled, candidates)
+				rand.Shuffle(len(shuffled), func(i, j int) {
+					shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+				})
+
+				want := RankAbove(work, cand, candidates)
+				got := RankAbove(work, cand, shuffled)
+
+				if len(got) != len(want) {
+					t.Fatalf("RankAbove() returned %d candidates after shuffle, want %d", len(got), len(want))
+				}
+				for i, c := range got {
+					if !c.Equal(want[i]) {
+						t.Fatalf("RankAbove()[%d] = %q after shuffle, want %q", i, c, want[i])
+					}
+				}
+			},
+		})
+	})
+}
