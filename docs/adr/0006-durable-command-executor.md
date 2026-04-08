@@ -71,7 +71,32 @@ returns:
 6. Send a [confirmation] to the source node, completing the `ExecuteCommand()`
    call.
 
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Src as Source Node
+    participant Dst as Destination Node
+    participant P as Persistence
+
+    App->>Src: ExecuteCommand()
+    Src->>Src: identify target handler
+    Src->>Src: select destination via rendezvous hash
+    Src->>Dst: instruction
+
+    opt handler not yet active on this node
+        Dst->>P: write recovery index entry
+    end
+
+    Dst->>P: append command to handler's data store
+    Dst->>Src: confirmation
+    Src->>App: return nil
+
+    Note over Dst,P: execution continues asynchronously
+```
+
 ### Handler node selection
+
+#### Aggregate handlers
 
 For aggregates, every command targets a specific instance. Any node can
 independently apply [rendezvous hashing][ADR-2] to select the same destination
@@ -81,6 +106,11 @@ node, hashing the instance ID:
 routing_key = uuid5(app_key, instance_id)
 destination = rendezvous_hash(routing_key, available_nodes)
 ```
+
+> [!NOTE]
+> The handler key is intentionally absent from the inputs to the hash.
+
+#### Integration handlers
 
 For integrations, the handler has no instance dimension, but it may declare a
 concurrency preference via [`IntegrationConfigurer.ConcurrencyPreference()`].
@@ -216,6 +246,13 @@ bookkeeping is needed.
 Routing changes are caught at restart. Every prior routing decision is
 re-validated against the current application configuration before the command
 executes.
+
+Because the aggregate handler routing key is derived from the instance ID — not
+the handler key — instances of different types with the same ID will gravitate
+to the same node. For example, instances of `Customer` and `CustomerProfile`
+aggregates with instance ID `customer-7` will tend to be co-located. This
+co-location is intentional, and may apply to process handlers as well. The full
+routing strategy across handler types is outside the scope of this ADR.
 
 This ADR introduces three terms to the [glossary]: **recovery index**,
 **orphaned workload adoption**, and **rerouting**.
