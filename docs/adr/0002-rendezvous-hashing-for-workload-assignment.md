@@ -11,6 +11,7 @@ Accepted
 - Referenced by [5. Homogeneous cluster nodes][ADR-5]
 - Referenced by [6. Durable command executor][ADR-6]
 - Referenced by [7. Node heartbeat][ADR-7]
+- Referenced by [8. Persistence isolation][ADR-8]
 
 ## Context
 
@@ -130,6 +131,7 @@ This ADR introduces two terms to the [glossary]:
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-6]: 0006-durable-command-executor.md
 [ADR-7]: 0007-node-heartbeat.md
+[ADR-8]: 0008-persistence-isolation.md
 [consistent hashing]: https://en.wikipedia.org/wiki/Consistent_hashing
 [glossary]: ../glossary.md
 [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing

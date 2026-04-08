@@ -411,8 +411,10 @@ installations of the same application.
 
 - A site is an engine-level identity. One engine = one site. All applications hosted by that
   engine share its site identity.
-- Sites have independent clusters and independent persistence -- they never share either.
-- Storage keys include the site, going from `(app, ...)` to `(site, app, ...)`.
+- Sites may contain multiple independent clusters. Isolation between clusters is the
+  operator's responsibility via persistence configuration (separate database, schema,
+  key prefix, etc.) -- see ADR-0008. The engine does not add a site or cluster
+  discriminator to storage keys.
 - The primary use case is cross-site event consumption: a projection or process in site A
   consuming events produced by site B (the same application running elsewhere).
 - Configuration: `WithSiteID(key)` option and/or `DOGMA_SITE_ID` environment variable.
