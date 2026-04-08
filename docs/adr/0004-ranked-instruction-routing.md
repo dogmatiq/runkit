@@ -42,6 +42,31 @@ turn, starting with the highest-scored. The first node that accepts becomes the
 destination node. If no remote node accepts, the source node handles the
 instruction itself.
 
+```mermaid
+sequenceDiagram
+    participant Src as Source Node
+    participant N1 as Rank-1 Node
+    participant Nn as Rank-N Node
+
+    Src->>Src: rank candidates by rendezvous score
+
+    alt stable membership
+        Src->>N1: offer instruction
+        N1->>Src: accept
+    else membership transition
+        Src->>N1: offer instruction
+        N1->>Src: decline
+        Src->>Nn: offer instruction
+        Nn->>Src: accept
+    else all remote nodes decline
+        Src->>N1: offer instruction
+        N1->>Src: decline
+        Src->>Nn: offer instruction
+        Nn->>Src: decline
+        Src->>Src: handle instruction
+    end
+```
+
 This gives us several properties:
 
 - **No disk I/O on the source.** Routing is a pure [control plane] operation.
