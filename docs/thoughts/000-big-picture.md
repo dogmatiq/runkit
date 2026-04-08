@@ -121,23 +121,22 @@ to `(app, ...)`.
 
 ### Aggregate command path
 
-| Store                        | Key                               | Type        | Lifetime                   |
-| ---------------------------- | --------------------------------- | ----------- | -------------------------- |
-| Per-node acceptance keyspace | `(node, app, command_uuid)`       | KV          | Until completion           |
-| Poison backlog               | `(app, partition, command_uuid)`  | `Set[UUID]` | Until restart trickle-back |
-| Idempotency journal          | `(app, idempotency_key)`          | Journal     | Until completion           |
-| Aggregate instance journal   | `(app, handler_key, instance_id)` | Journal     | Permanent (truncated)      |
-| Snapshot                     | `(app, handler_key, instance_id)` | KV          | Until superseded           |
-| Stream                       | `(app, stream_partition)`         | Journal     | Permanent                  |
+| Store                      | Key                                            | Type        | Lifetime                                                                        |
+| -------------------------- | ---------------------------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| Recovery index             | `(node, app_key, handler_key, instance_id)`    | KV          | Until no pending work (see [ADR-0006](../adr/0006-durable-command-executor.md)) |
+| Poison backlog             | `(app, partition, command_uuid)`               | `Set[UUID]` | Until restart trickle-back                                                      |
+| Idempotency journal        | `(app, idempotency_key)`                       | Journal     | Until completion                                                                |
+| Aggregate instance journal | `(app, handler_key, instance_id)` (data store) | Journal     | Permanent (truncated)                                                           |
+| Snapshot                   | `(app, handler_key, instance_id)`              | KV          | Until superseded                                                                |
+| Stream                     | `(app, stream_partition)`                      | Journal     | Permanent                                                                       |
 
 ### Integration command path
 
-| Store                        | Key                                     | Type    | Lifetime                             |
-| ---------------------------- | --------------------------------------- | ------- | ------------------------------------ |
-| Per-node acceptance keyspace | (shared with aggregate, same key shape) | KV      | Until completion                     |
-| Idempotency journal          | (shared with aggregate)                 | Journal | Until completion                     |
-| Handler journal              | `(app, handler_key)`                    | Journal | Permanent (MinimizeConcurrency only) |
-| Idempotency                  | `(app, command_uuid)`                   | KV      | Configurable retention               |
+| Store               | Key                            | Type    | Lifetime                                                                        |
+| ------------------- | ------------------------------ | ------- | ------------------------------------------------------------------------------- |
+| Recovery index      | `(node, app_key, handler_key)` | KV      | Until no pending work (see [ADR-0006](../adr/0006-durable-command-executor.md)) |
+| Idempotency journal | (shared with aggregate)        | Journal | Until completion                                                                |
+| Handler journal     | `(app, handler_key)`           | Journal | Permanent (MinimizeConcurrency only)                                            |
 
 ### Event-side (per partition)
 
@@ -192,22 +191,20 @@ Implements the aggregate command lifecycle.
 
 **Execution per command:**
 
-1. Source node receives command and routes it to an accepting node using ranked iteration
-   (see [Instruction routing](#instruction-routing-ranked-iteration-with-fallback-to-self)).
-2. Write per-node acceptance entry (or idempotency-journal entry).
+1. Route command to destination node via ranked iteration and durably commit it there
+   (recovery index entry + append to instance's data store — see [ADR-0006](../adr/0006-durable-command-executor.md)).
    **Acceptance point.**
-3. Dispatch to instance-owning node.
-4. Load instance: read aggregate instance journal tail → binding + offset hint + expected
+2. Load instance: read aggregate instance journal tail → binding + offset hint + expected
    position. Read snapshot → application state. Read stream from offset hint → catch up.
-5. Execute `HandleCommand()`.
-6. Append to aggregate instance journal at expected position (OCC). `ConflictError` → retry
-   from step 4.
-7. Commit events to stream partition owner.
-8. Finalize: truncate instance journal, write snapshot, delete idempotency-journal entry
-  (if keyed), remove per-node acceptance entry (if unkeyed).
+3. Execute `HandleCommand()`.
+4. Append to aggregate instance journal at expected position (OCC). `ConflictError` → retry
+   from step 2.
+5. Commit events to stream partition owner.
+6. Finalize: truncate instance journal, write snapshot, delete idempotency-journal entry
+   (if keyed), remove recovery index entry if no pending commands remain (see [ADR-0006](../adr/0006-durable-command-executor.md)).
 
 **Failure path:** in-memory retry counter, backoff. After N consecutive failures → move to
-poison backlog. On restart → trickle poison backlog back to the per-node acceptance keyspace.
+poison backlog. On restart → trickle poison backlog back into the handler's data store.
 
 **Serialisation:** one goroutine per active instance with channel queue.
 
@@ -217,16 +214,9 @@ poison backlog. On restart → trickle poison backlog back to the per-node accep
 
 Package `internal/subsystem/integration`.
 
-Shares the per-node acceptance keyspace and idempotency journal with the aggregate
-subsystem. The distinction between `MaximizeConcurrency` and `MinimizeConcurrency` is purely
-about routing and ordering.
-
-| Preference            | Routing key                                            | Ordering        |
-| --------------------- | ------------------------------------------------------ | --------------- |
-| `MaximizeConcurrency` | `rendezvous(uuid5(app_key, command_uuid), live_nodes)` | None            |
-| `MinimizeConcurrency` | `rendezvous(uuid5(app_key, handler_key), live_nodes)`  | Handler journal |
-
-An idempotency kv prevents double-execution during preference transitions and after restarts.
+Handler node selection and the durability commitment follow [ADR-0006](../adr/0006-durable-command-executor.md), covering all three
+concurrency configurations (no preference, `MaximizeConcurrency`, `MinimizeConcurrency`).
+For `MinimizeConcurrency`, the handler journal enforces sequential execution.
 
 ---
 
@@ -282,9 +272,9 @@ duplicates.
 
 Package `internal/subsystem/poisonqueue`.
 
-Partitioned `Set[UUID]` with the same shape as the per-node acceptance keyspace. On startup,
-entries trickle back to that keyspace. A reference implementation exists in
-`_internal/subsystem/poisonqueue` — review for consistency with current patterns.
+Partitioned `Set[UUID]` keyed by `(app, partition, command_uuid)`. On startup, entries
+trickle back into the handler's data store for re-execution. A reference implementation
+exists in `_internal/subsystem/poisonqueue` — review for consistency with current patterns.
 
 ---
 
