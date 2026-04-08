@@ -9,6 +9,7 @@ Accepted
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
 - Referenced by [5. Homogeneous cluster nodes][ADR-5]
 - Referenced by [6. Durable command executor][ADR-6]
+- Referenced by [7. Node heartbeat][ADR-7]
 
 ## Context
 
@@ -121,6 +122,7 @@ This ADR introduces one term to the [glossary]:
 [ADR-3]: 0003-optimistic-conflict-resolution.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-6]: 0006-durable-command-executor.md
+[ADR-7]: 0007-node-heartbeat.md
 [control plane]: ../glossary.md#control-plane
 [glossary]: ../glossary.md
 [instruction]: ../glossary.md#instruction

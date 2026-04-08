@@ -10,6 +10,7 @@ Accepted
 - References [3. Optimistic conflict resolution][ADR-3]
 - References [4. Ranked instruction routing][ADR-4]
 - Referenced by [6. Durable command executor][ADR-6]
+- Referenced by [7. Node heartbeat][ADR-7]
 
 ## Context
 
@@ -105,5 +106,6 @@ transactions appear anywhere.
 [ADR-3]: 0003-optimistic-conflict-resolution.md
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-6]: 0006-durable-command-executor.md
+[ADR-7]: 0007-node-heartbeat.md
 [`persistencekit`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit
 [Verity]: https://github.com/dogmatiq/verity

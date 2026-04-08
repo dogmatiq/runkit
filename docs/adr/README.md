@@ -17,3 +17,4 @@ manipulate the ADR documents.
 * [4. Ranked instruction routing](0004-ranked-instruction-routing.md)
 * [5. Homogeneous cluster nodes](0005-homogeneous-cluster-nodes.md)
 * [6. Durable command executor](0006-durable-command-executor.md)
+* [7. Node heartbeat](0007-node-heartbeat.md)

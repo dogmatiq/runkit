@@ -148,10 +148,10 @@ On startup, each node iterates its own recovery index. For each entry:
 3. If no pending commands remain after processing, delete the recovery index
    entry.
 
-When a node is detected as permanently failed, a surviving node iterates the
-dead node's recovery index entries and follows the same steps. How a surviving
-node gains access to a dead node's recovery index is outside the scope of this
-ADR.
+A surviving node that takes ownership of a dead node's in-progress work follows
+the same steps, iterating the dead node's recovery index entries in place of its
+own. We call this process **orphaned workload adoption**. How a surviving node
+gains access to a dead node's recovery index is outside the scope of this ADR.
 
 ### Rerouting
 
@@ -217,7 +217,8 @@ Routing changes are caught at restart. Every prior routing decision is
 re-validated against the current application configuration before the command
 executes.
 
-This ADR introduces one term to the [glossary]: **recovery index**.
+This ADR introduces three terms to the [glossary]: **recovery index**,
+**orphaned workload adoption**, and **rerouting**.
 
 ### Quarantine
 
@@ -230,6 +231,7 @@ indefinitely. The design of the quarantine is outside the scope of this ADR.
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
+[ADR-7]: 0007-node-heartbeat.md
 [`AggregateMessageHandler.RouteCommandToInstance()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#AggregateMessageHandler.RouteCommandToInstance
 [`CommandExecutor.ExecuteCommand()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor.ExecuteCommand
 [confirmation]: ../glossary.md#confirmation

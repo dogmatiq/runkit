@@ -6,18 +6,18 @@ defined in the [Dogma glossary] are not redefined here.
 [A](#a) •
 B •
 [C](#c) •
-[D](#d) •
+D •
 E •
 F •
 G •
-H •
+[H](#h) •
 [I](#i) •
 J •
 [K](#k) •
-L •
+[L](#l) •
 M •
 N •
-O •
+[O](#o) •
 P •
 Q •
 [R](#r) •
@@ -25,7 +25,7 @@ Q •
 T •
 [U](#u) •
 V •
-W •
+[W](#w) •
 X •
 Y •
 Z
@@ -60,13 +60,14 @@ The layer of the engine responsible for coordination: workload assignment,
 [instruction] routing, node discovery, conflict resolution, and failover.
 Control plane components decide _where_ and _when_ work happens.
 
-## D
+## H
 
-### Dead-node adoption
+### Heartbeat record
 
-The process by which a surviving node takes ownership of resources
-belonging to a node that is no longer alive. [Self-affinity] makes the
-dead node's resources naturally discoverable.
+A record written periodically by each node to signal that it is still active
+and to publish its network address.
+
+See [live node set], [ADR-7].
 
 ## I
 
@@ -86,6 +87,25 @@ A [command] executed with an application-defined [idempotency key] via
 [`WithIdempotencyKey`].
 
 See [unkeyed command].
+
+## L
+
+### Live node set
+
+The set of cluster nodes currently considered active. It is the source of
+network addresses used for [ranked instruction routing].
+
+See [heartbeat record], [ADR-7].
+
+## O
+
+### Orphaned workload adoption
+
+The process by which a surviving node takes ownership of workloads
+belonging to a node that is no longer alive. The [recovery index]
+makes those workloads naturally discoverable.
+
+See [live node set], [ADR-6], [ADR-7].
 
 ## R
 
@@ -116,6 +136,13 @@ store in the cluster.
 
 See [ADR-6].
 
+### Rerouting
+
+The process of moving a pending [command] from one handler's data store to
+another in response to a change in the application's routing configuration.
+
+See [ADR-6].
+
 ## S
 
 ### Self-affinity
@@ -137,6 +164,13 @@ A [command] executed without an application-defined [idempotency key].
 
 See [keyed command].
 
+## W
+
+### Workload
+
+A discrete unit of processing that the engine assigns to a cluster node using
+[rendezvous hashing].
+
 <!-- anchors -->
 
 [application plane]: #application-plane
@@ -149,10 +183,14 @@ See [keyed command].
 [Dogma messages]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#message
 [events]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event
 [handler]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#handler
+[heartbeat record]: #heartbeat-record
 [idempotency key]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#idempotency-key
 [instruction]: #instruction
 [instructions]: #instruction
 [keyed command]: #keyed-command
+[live node set]: #live-node-set
+[ranked instruction routing]: #ranked-instruction-routing
+[recovery index]: #recovery-index
 [rendezvous hashing]: #rendezvous-hashing
 [self-affinity]: #self-affinity
 [timeouts]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#timeout
@@ -164,6 +202,7 @@ See [keyed command].
 [ADR-2]: adr/0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-4]: adr/0004-ranked-instruction-routing.md
 [ADR-6]: adr/0006-durable-command-executor.md
+[ADR-7]: adr/0007-node-heartbeat.md
 
 <!-- references -->
 

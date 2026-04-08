@@ -9,7 +9,7 @@ plan.
 
 The recovery index is a per-node KV store that records which aggregate instances
 and integration handlers have pending work on a given node. It is the mechanism
-by which a restarting node (or a node adopting a dead peer's work) locates all
+by which a restarting node (or a node performing [orphaned workload adoption]) locates all
 unfinished handler executions without scanning every handler's data store in the
 cluster.
 
@@ -22,7 +22,7 @@ An entry is written before the first command is appended to the handler's data
 store and removed when no pending commands remain. One entry covers all pending
 commands for a handler instance -- there is no per-command tracking in the index.
 
-Index entries must be written *before* the corresponding data store write. A
+Index entries must be written _before_ the corresponding data store write. A
 crash between the two leaves an index entry with no pending work behind it, which
 is safe to clean up on recovery. The reverse order would leave pending work with
 no index entry pointing to it.
@@ -102,14 +102,14 @@ entry, drives the handler's data store scan. This is the responsibility of the
 aggregate and integration subsystems, not the recovery index package itself --
 the index package only provides storage.
 
-Dead-node adoption (surviving node iterates a dead peer's index) uses the same
+Orphaned workload adoption (surviving node iterates a dead peer's index) uses the same
 `IterateNode` call with the dead node's UUID. The adoption mechanism itself is
 out of scope for this package.
 
 ## Out of scope
 
 - Handler data store scanning (aggregate/integration subsystems)
-- Dead-node detection and adoption trigger (node registry / failover)
+- Dead-node detection and the orphaned workload adoption trigger (node registry / failover)
 - Rerouting and quarantine (each handler subsystem)
 - Any per-command tracking -- the index is per-handler-instance
 

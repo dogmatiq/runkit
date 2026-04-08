@@ -8,6 +8,7 @@ Accepted
 
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
 - Referenced by [5. Homogeneous cluster nodes][ADR-5]
+- Referenced by [7. Node heartbeat][ADR-7]
 
 ## Context
 
@@ -112,3 +113,4 @@ stable operations.
 
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
+[ADR-7]: 0007-node-heartbeat.md
