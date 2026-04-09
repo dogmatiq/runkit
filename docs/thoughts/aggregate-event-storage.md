@@ -1,14 +1,11 @@
 # Aggregate Event Storage: Single-Copy Events
 
-This document captures the design direction for aggregate event storage. A
-future ADR will formalize these decisions.
+This document captures the design direction for aggregate event storage.
+A future ADR will formalize these decisions.
 
-> **Naming**: a "factspace" is a private, authoritative, compactable store for
-> a specific entity. It is not tied to a particular storage primitive -- a
-> factspace may be backed by a journal, KV entries, or a combination. The name
-> conveys durability and authority -- in contrast with a "scratchspace," which
-> would imply disposability. The pattern may apply to other handler types. The
-> aggregate's factspace is the "aggregate factspace."
+> **Terminology note**: early drafts of this document used the term "factspace"
+> for the per-instance private store. That term has been dropped. The settled
+> name for the store will be decided in the ADR.
 
 ## Design Tension
 
@@ -26,24 +23,27 @@ exist in the stream.
 ## Decision: Single-Copy Events in the Stream
 
 Events are stored exactly once, in the stream partition journal. Each aggregate
-instance has a per-instance journal that stores operational metadata but never
-stores event data. The stream is the sole source of truth for events.
+instance has a per-instance journal that stores operational metadata but
+never stores event data. The stream is the sole source of truth for events.
 
-## Aggregate Factspace
+## Per-Instance Journal
 
-Each aggregate instance has a factspace keyed by
+Each aggregate instance has a private journal keyed by
 `(app, handler_key, instance_id)`. It is private to the aggregate subsystem and
-its record format can evolve freely without affecting other subsystems. In this
-design the aggregate factspace is backed by a journal, but the factspace
-concept is not tied to a particular storage primitive.
+its record format can evolve freely without affecting other subsystems. This is
+the aggregate handler's data store introduced in ADR-6; the ADR will settle its
+name.
 
-The aggregate factspace stores:
+The per-instance journal stores:
 
 - **OCC state**: append at expected position remains the conflict detection
   primitive.
 - **In-flight command tracking**: which command is being handled.
 - **Stream binding**: the partition this instance is bound to (permanent, set
-  on first event-producing command).
+  on first event-producing command). The binding is written to the per-instance
+  journal before the first stream append; a crash after writing the binding but
+  before the stream append leaves the instance in a valid, empty state on
+  recovery. The reverse -- stream events without a binding -- cannot occur.
 - **First-event offset**: the stream partition offset of the instance's first
   event, set at binding time (permanent). Useful metadata even if not directly
   used in the current implementation -- essentially cost-free to record.
@@ -56,7 +56,7 @@ The aggregate factspace stores:
   snapshot or clean unload. Always written at finalization/clean-unload
   regardless of whether a snapshot was also produced.
 
-The factspace is compactable. After compaction it contains the offset hint,
+The per-instance journal is compactable. After compaction it contains the offset hint,
 binding, first-event offset, and snapshot (if one was produced).
 
 ## Stream Partition Journal
@@ -70,10 +70,10 @@ events into the stream but do not consume from it.
 
 ## State Reconstruction
 
-On reload, the engine reads the factspace and reacts to what it finds. Snapshot
-availability is per-attempt -- `AggregateRoot.MarshalBinary()` can return
-`ErrNotSupported` or valid data on any given call -- so the factspace records
-the outcome of each attempt rather than classifying the instance.
+On reload, the engine reads the per-instance journal and reacts to what it
+finds. Snapshot availability is per-attempt -- `AggregateRoot.MarshalBinary()`
+can return `ErrNotSupported` or valid data on any given call -- so the journal
+records the outcome of each attempt rather than classifying the instance.
 
 ### With a snapshot present
 
@@ -83,7 +83,7 @@ Three cases, ordered by likelihood:
 
 When an instance is unloaded cleanly -- graceful shutdown, membership
 transition, idle eviction -- the engine attempts a snapshot. If
-`MarshalBinary()` succeeds, the snapshot is written to the aggregate factspace
+`MarshalBinary()` succeeds, the snapshot is written to the per-instance journal
 with the current stream offset. An offset hint is always written regardless.
 If the snapshot is marked as reflecting the newest events for this instance, no
 stream scan is necessary on reload.
@@ -126,10 +126,10 @@ Extensibility below).
 ## No Stream-Side Per-Instance Index
 
 A per-instance index on the stream (e.g. last-offset-per-instance in a KV
-store) was considered but is unnecessary. The aggregate factspace is upstream
-of the stream -- by the time events reach the stream, the factspace has already
-gone through the OCC append. Offset hints stored in the factspace accomplish
-the same goal without additional writes or infrastructure.
+store) was considered but is unnecessary. The per-instance journal is upstream
+of the stream -- by the time events reach the stream, the journal has already
+gone through the OCC append. Offset hints stored in the journal accomplish the
+same goal without additional writes or infrastructure.
 
 If a stream-side index were added in the future, it would be derived data --
 rebuildable from the stream at any time -- and could be maintained
@@ -158,7 +158,7 @@ volume, snapshot size, etc.
 The scan-based reconstruction when no snapshot is available is accepted as the
 initial approach. If scan cost becomes a problem in practice -- particularly
 for the formerly-high-traffic-now-quiet scenario described above -- a
-per-instance offset index can be introduced without changing the factspace.
+per-instance offset index can be introduced without changing the per-instance journal.
 
 The offset index would store event offset ranges for an instance, enabling
 targeted reads at known stream positions rather than scanning and skipping.
@@ -170,9 +170,10 @@ For example, an instance producing events in bursts:
 Two storage approaches were considered:
 
 - **Journal-based offset index**: a per-instance append-only journal storing
-  offset ranges. Compactable via the same mechanics as factspace compaction:
-  read all records, build merged range list, write summary record, truncate
-  prefix. The more natural storage primitive for ordered, unbounded data.
+  offset ranges. Compactable via the same mechanics as per-instance journal
+  compaction: read all records, build merged range list, write summary
+  record, truncate prefix. The more natural storage primitive for ordered,
+  unbounded data.
 
 - **KV-based offset index**: a single KV entry per instance, updated in place
   on every write until it hits a size cap -- providing incremental compaction
@@ -184,7 +185,8 @@ Two storage approaches were considered:
 
 Either approach eliminates scanning by enabling targeted reads at known
 offsets. Instances without an index fall back to scan behavior (backward
-compatible). The index is additive -- the factspace doesn't need to change.
+compatible). The index is additive -- the per-instance journal does not need
+to change.
 
 ## Trade-offs
 
@@ -198,9 +200,9 @@ compatible). The index is additive -- the factspace doesn't need to change.
 
 ### Costs
 
-- State reconstruction after a crash requires both a factspace read and a
-  stream scan. Mitigated by aggressive snapshotting and warm routing making
-  cold starts rare.
+- State reconstruction after a crash requires both a per-instance journal read
+  and a stream scan. Mitigated by aggressive snapshotting and warm routing
+  making cold starts rare.
 - Crash recovery scan traverses potentially irrelevant events in the stream
   partition. Per-event cost is low (read and skip), but I/O can be significant
   on a high-throughput partition.
@@ -212,12 +214,12 @@ compatible). The index is additive -- the factspace doesn't need to change.
 | Per-node acceptance keyspace | `(node, app, command_uuid)`       | KV      | Until completion      |
 | Poison backlog               | `(app, partition, command_uuid)`  | Set     | Until restart trickle |
 | Idempotency journal          | `(app, idempotency_key)`          | Journal | Until completion      |
-| Aggregate factspace          | `(app, handler_key, instance_id)` | Journal | Permanent (compacted) |
+| Per-instance journal         | `(app, handler_key, instance_id)` | Journal | Permanent (compacted) |
 | Stream                       | `(app, stream_partition)`         | Journal | Permanent             |
 
 Compared to the naive two-journal approach, there is no separate per-instance
 event journal and no separate snapshot KV store. The snapshot lives inside the
-aggregate factspace.
+per-instance journal.
 
 ---
 
@@ -226,7 +228,7 @@ aggregate factspace.
 This section contains guidance for drafting the ADR that formalizes these
 decisions. Remove this section from the ADR itself.
 
-- Use the `write-adr` skill. Do not eagerly assign an ADR number; determine
+- This ADR has not yet been drafted. Do not pre-allocate a number; determine
   the next available number at draft time.
 - **Framing**: This is a greenfield design choice, not a migration. Use "We
   will..." not "We will replace..." There is no existing implementation.
@@ -239,10 +241,10 @@ decisions. Remove this section from the ADR itself.
   - _Offset-only event history journal_: a second per-instance journal storing
     only stream offsets instead of event data. Smaller data but still a second
     journal, adds read roundtrips, increases snapshot dependency.
-  - _Stream-side per-instance index_: unnecessary because the factspace is
-    upstream of the stream. Would be derived data, rebuildable, and
-    async-maintained -- but adds infrastructure for a problem already solved by
-    offset hints in the factspace.
+  - _Stream-side per-instance index_: unnecessary because the aggregate
+    instance journal is upstream of the stream. Would be derived data,
+    rebuildable, and async-maintained -- but adds infrastructure for a problem
+    already solved by offset hints in the journal.
   - _Requiring snapshot support_: would reject valid Dogma aggregates using
     `NoSnapshotBehavior`. No stricter contract than Dogma mandates. Also
     ignores that snapshot availability is per-attempt -- even aggregates that
@@ -266,25 +268,28 @@ decisions. Remove this section from the ADR itself.
   call). `NoSnapshotBehavior` is the most common reason but not the only one.
   The engine reacts to the outcome of each attempt rather than classifying
   the aggregate type.
-- **Relationship**: References ADR-3 (OCC remains the correctness primitive).
-  Add counterpart annotation to ADR-3.
-- **Glossary**: Introduce two terms: "factspace" (the general pattern of a
-  private, authoritative, compactable store -- not tied to a specific storage
-  primitive) and "aggregate factspace" (the specific factspace for an aggregate
-  instance).
-- **Update 000-big-picture.md**: State Inventory table (replace "Aggregate
-  instance journal" + "Snapshot KV" rows with one "Aggregate factspace" row)
-  and Phase 3 steps 5, 7, 9 to reflect the new flow.
+- **Relationships**: References ADR-3 (OCC), ADR-5 (no cross-store atomics,
+  relevant to binding write ordering), ADR-6 (fills in the internal structure
+  of the data store introduced there). Add `Referenced by` back-annotations
+  to each.
+- **Glossary**: Introduce a term for the per-instance journal (keyed by
+  `(app, handler_key, instance_id)`, storing OCC state, stream binding, offset
+  hint, and inline snapshot). The name is decided in the ADR itself.
+- **Update 000-big-picture.md**: Remove the separate "Snapshot" KV row from
+  the Aggregate command path state inventory table; the snapshot is stored
+  inline in the aggregate instance journal. Review Phase 3 execution steps
+  to ensure they reflect the finalization flow (offset hint + snapshot written
+  together at clean unload).
 
 ## Open Questions
 
-### Integrations and factspaces
+### Integration handler data store
 
 Integrations produce events into the stream but do not have instances or
-event-sourced state. They may still need a factspace of some sort -- for
-example to track idempotency keys or handler-level OCC state. This is out of
-scope for this document but should be revisited when the integration subsystem
-is designed.
+event-sourced state. They may still need a per-handler private store of some
+sort -- for example to track idempotency keys or handler-level OCC state. This
+is out of scope for this ADR but should be revisited when the integration
+subsystem is designed.
 
 ### Aggregates without snapshot support
 

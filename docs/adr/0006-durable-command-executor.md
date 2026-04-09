@@ -9,6 +9,7 @@ Accepted
 - References [2. Rendezvous hashing for workload assignment][ADR-2]
 - References [4. Ranked instruction routing][ADR-4]
 - References [5. Homogeneous cluster nodes][ADR-5]
+- Amended by [9. Handler-keyed aggregate routing][ADR-9]
 
 ## Context
 
@@ -108,7 +109,8 @@ destination = rendezvous_hash(routing_key, available_nodes)
 ```
 
 > [!NOTE]
-> The handler key is intentionally absent from the inputs to the hash.
+> The handler key is intentionally absent from the inputs to the hash. This
+> decision was later reversed by [ADR-9].
 
 #### Integration handlers
 
@@ -247,6 +249,9 @@ Routing changes are caught at restart. Every prior routing decision is
 re-validated against the current application configuration before the command
 executes.
 
+> [!IMPORTANT]
+> The behavior described below has been amended by [ADR-9].
+
 Because the aggregate handler routing key is derived from the instance ID — not
 the handler key — instances of different types with the same ID will gravitate
 to the same node. For example, instances of `Customer` and `CustomerProfile`
@@ -269,6 +274,7 @@ indefinitely. The design of the quarantine is outside the scope of this ADR.
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-7]: 0007-node-heartbeat.md
+[ADR-9]: 0009-handler-keyed-aggregate-routing.md
 [`AggregateMessageHandler.RouteCommandToInstance()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#AggregateMessageHandler.RouteCommandToInstance
 [`CommandExecutor.ExecuteCommand()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor.ExecuteCommand
 [confirmation]: ../glossary.md#confirmation
