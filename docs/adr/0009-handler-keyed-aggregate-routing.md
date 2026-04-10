@@ -41,10 +41,8 @@ a correctness or liveness guarantee.
 
 We will include the handler key in the aggregate routing key:
 
-```
-routing_key = uuid5(app_key, handler_key, instance_id)
-destination = rendezvous_hash(routing_key, available_nodes)
-```
+$$\text{routing\_key} = \text{uuid5}(\text{app\_key}, \text{handler\_key}, \text{instance\_id})$$
+$$\text{destination} = \text{rendezvous}(\text{routing\_key}, \text{available\_nodes})$$
 
 This amends the formula established in [ADR-6]. Each aggregate type routes
 independently. Instances of `Customer` and `CustomerProfile` with the same

@@ -78,16 +78,18 @@ another candidate using the regular rendezvous scoring.
 
 We considered several alternatives:
 
-- **[Consistent hashing]** offers O(log n) lookup compared to rendezvous
-  hashing's O(n), but with a small candidate set (cluster nodes, not thousands
+- **[Consistent hashing]** offers $O(\log n)$ lookup compared to rendezvous
+  hashing's $O(n)$, but with a small candidate set (cluster nodes, not thousands
   of endpoints) the difference is negligible. It adds structural complexity with
   no practical benefit for our use case.
-- **XOR distance** scores candidates by `workload XOR candidate`, selecting the
-  closest. Self-affinity falls out naturally since `X XOR X = 0` is the minimum,
+
+- **XOR distance** scores candidates by $w \oplus c$, selecting the
+  closest. Self-affinity falls out naturally since $X \oplus X = 0$ is the minimum,
   removing the need for an explicit special case.
+
 - **Numeric distance** (`|workload - candidate|` treating UUIDs as 128-bit
   integers) produces a [Voronoi partition] of the UUID number line. Like XOR,
-  self-affinity is natural since `|X - X| = 0`.
+  self-affinity is natural since $|X - X| = 0$.
 
 The XOR and numeric distance approaches are appealing because they provide
 self-affinity without a special case. However, similar UUIDs produce similar

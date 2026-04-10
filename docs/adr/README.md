@@ -20,3 +20,4 @@ manipulate the ADR documents.
 - [7. Node heartbeat](0007-node-heartbeat.md)
 - [8. Persistence isolation](0008-persistence-isolation.md)
 - [9. Handler-keyed aggregate routing](0009-handler-keyed-aggregate-routing.md)
+- [10. Event stream model](0010-event-stream-model.md)

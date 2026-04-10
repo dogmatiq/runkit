@@ -103,10 +103,8 @@ For aggregates, every command targets a specific instance. Any node can
 independently apply [rendezvous hashing][ADR-2] to select the same destination
 node, hashing the instance ID:
 
-```
-routing_key = uuid5(app_key, instance_id)
-destination = rendezvous_hash(routing_key, available_nodes)
-```
+$$\text{routing\_key} = \text{uuid5}(\text{app\_key}, \text{instance\_id})$$
+$$\text{destination} = \text{rendezvous}(\text{routing\_key}, \text{available\_nodes})$$
 
 > [!NOTE]
 > The handler key is intentionally absent from the inputs to the hash. This
@@ -123,21 +121,18 @@ There are three potential configurations:
   `ConcurrencyPreference()`. The engine performs no routing of its own;
   distribution is left to the infrastructure (such as a load balancer). Whatever
   node `ExecuteCommand()` is called on handles the command locally.
+
 - **[`MinimizeConcurrency`]:** all commands for the handler are funneled to a
   single node:
 
-  ```
-  routing_key = uuid5(app_key, handler_key)
-  destination = rendezvous_hash(routing_key, available_nodes)
-  ```
+  $$\text{routing\_key} = \text{uuid5}(\text{app\_key}, \text{handler\_key})$$
+  $$\text{destination} = \text{rendezvous}(\text{routing\_key}, \text{available\_nodes})$$
 
 - **[`MaximizeConcurrency`]:** commands are spread across nodes to maximize
   throughput:
 
-  ```
-  routing_key = command_uuid
-  destination = rendezvous_hash(routing_key, available_nodes)
-  ```
+  $$\text{routing\_key} = \text{command\_uuid}$$
+  $$\text{destination} = \text{rendezvous}(\text{routing\_key}, \text{available\_nodes})$$
 
 In all cases, the command is delivered using [ranked instruction routing][ADR-4].
 
@@ -273,7 +268,6 @@ indefinitely. The design of the quarantine is outside the scope of this ADR.
 [ADR-2]: 0002-rendezvous-hashing-for-workload-assignment.md
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
-[ADR-7]: 0007-node-heartbeat.md
 [ADR-9]: 0009-handler-keyed-aggregate-routing.md
 [`AggregateMessageHandler.RouteCommandToInstance()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#AggregateMessageHandler.RouteCommandToInstance
 [`CommandExecutor.ExecuteCommand()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor.ExecuteCommand

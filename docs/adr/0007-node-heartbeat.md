@@ -113,8 +113,11 @@ threshold through configuration alone.
 - **Grace period** (10s) — Extra time beyond the heartbeat interval before a
   record expires.
 
-Each write sets `expires_at = now + heartbeat_interval + grace_period`, giving a
-retry window of 10s and a maximum detection lag of 20 seconds.
+Each write sets the expiry time as:
+
+$$\text{expires\_at} = \text{now} + \text{heartbeat\_interval} + \text{grace\_period}$$
+
+This gives a retry window of 10s and a maximum detection lag of 20 seconds.
 
 These values are a judgment call. Five-second intervals are frequent enough to
 detect failures within a human-noticeable timeframe without generating excessive
