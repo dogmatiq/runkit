@@ -7,6 +7,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	. "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit/internal/memdriver"
 )
 
 func TestExecutorFor(t *testing.T) {
@@ -76,7 +77,7 @@ func TestExecuteCommand(t *testing.T) {
 	t.Run("it blocks until Run() is called, then returns nil", func(t *testing.T) {
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistence(PersistenceStores{}),
+			WithPersistence(&memdriver.Driver{}),
 			WithApplication(app),
 		)
 		x := e.ExecutorFor(app)
