@@ -15,7 +15,7 @@ import (
 // interface. Its zero value is ready to use.
 type Driver struct {
 	kv  memorykv.BinaryStore
-	j   memoryjournal.Store[[]byte]
+	j   memoryjournal.BinaryStore
 	set memoryset.BinaryStore
 }
 
