@@ -6,6 +6,7 @@ Date: 2026-04-15
 
 Accepted
 
+- References [4. Ranked instruction routing][ADR-4]
 - References [6. Durable command executor][ADR-6]
 
 ## Context
@@ -44,7 +45,7 @@ Each stream has its own identity and lifetime, decoupled from any particular
 handler or aggregate instance. The engine places no constraint on the number
 of streams an application may use.
 
-Streams come into existence when the first **append request** targeting its
+Streams come into existence when the first **append instruction** targeting its
 stream ID succeeds; no separate stream creation operation is required. The
 decision about how to choose a stream ID is outside the scope of this ADR. There
 is no mechanism within the engine that truncates or deletes streams.
@@ -93,20 +94,22 @@ offset. If a new operation type is introduced, a transaction may exist without
 appending any events. This does not change the definition of `[begin, end)` —
 they are both equal to the `end` offset of the prior transaction.
 
-### Append requests
+### Append instructions
 
-An append request is an atomic, idempotent assertion that a specific sequence of
-events exists on the stream. Each request carries an ordered sequence of
-[`envelopepb.Envelope`] values containing events recorded as a result of a
-single Dogma command message.
+An append instruction is an atomic, idempotent [instruction] sent by an event
+producer to the node responsible for a given stream, asserting that a specific
+sequence of events exists on the stream. Each instruction carries an ordered
+sequence of [`envelopepb.Envelope`] values containing events recorded as the
+result of a single Dogma command message. The stream ID is the routing key for
+[ranked instruction routing][ADR-4].
 
-All envelopes in the request must have the same `causation_id` — the message ID
-of the command that produced them. We use this as a deduplication key, allowing
-at most one append operation per `causation_id` per stream. A producer must not
-submit requests carrying the same `causation_id` to different streams; the
-implementation cannot detect duplicates across streams.
+All envelopes in the instruction must have the same `causation_id` — the message
+ID of the command that produced them. We use this as a deduplication key,
+allowing at most one append operation per `causation_id` per stream. A producer
+must not submit instructions carrying the same `causation_id` to different
+streams; the implementation cannot detect duplicates across streams.
 
-To support safe retries in the presence of transient errors, each request
+To support safe retries in the presence of transient errors, each instruction
 carries two fields:
 
 - **Search floor** — the lowest stream offset at which a prior attempt to append
@@ -124,24 +127,23 @@ journal conflict, the implementation performs duplicate detection:
 
 1. Find the transaction whose header range contains the search floor.
 2. Scan forward through transactions to find an append operation with the same
-   `causation_id` as the append request.
+   `causation_id` as the append instruction.
 
-If the request is found to be a duplicate, it succeeds but is treated as a
+If the instruction is found to be a duplicate, it succeeds but is treated as a
 no-op. Otherwise, a new append operation is committed, either in its own
 transaction or combined with other operations in a single transaction.
 
-Events from the request are appended to the stream in the order they appear in
-the request as a contiguous block. The response to an append request is always
-the `[begin, end)` range of the events in the request, regardless of whether the
-request resulted in a new append or was deduplicated. Because the events are
-contiguous, the producer can determine the offset of every event in the request
-from this range.
+Events are appended to the stream in the order they appear in the instruction,
+as a contiguous block. The [confirmation] always carries the `[begin, end)`
+range of the events, regardless of whether the instruction resulted in a new
+append or was deduplicated. Because the events are contiguous, the producer can
+determine the offset of every event from this range.
 
 ### Reading events
 
 To read events from a stream, we must locate the transaction whose header range
 contains a specific target offset. During duplicate detection, this target is
-the search floor provided in the append request.
+the search floor provided in the append instruction.
 
 We will use a [search algorithm] to find the transaction that contains the event
 at the target offset. This transaction becomes the starting point for a forward
@@ -272,8 +274,8 @@ operation without changing the journal structure or requiring a migration of
 existing data.
 
 Deduplication correctness depends on the producer satisfying the obligations
-set out in the [append requests section]. A producer that violates any of them
-risks appending duplicate events to the stream.
+set out in the [append instructions] section. A producer that violates any of
+them risks appending duplicate events to the stream.
 
 There is no mechanism to truncate or delete streams. Storage grows monotonically
 with the number of events appended.
@@ -285,15 +287,19 @@ would become a write bottleneck at scale; the model supports any number of
 streams to avoid this. This ADR places no constraint on how stream IDs are
 assigned.
 
-The response to every append request includes the `[begin, end)` range of the
-events, even when the request was deduplicated. A producer can always determine
-the offset of every event it has appended without performing a separate read.
+The [confirmation] of every append instruction includes the `[begin, end)` range
+of the events, even when the instruction was deduplicated. A producer can always
+determine the offset of every event it has appended without performing a
+separate read.
 
 <!-- references -->
 
+[ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-6]: 0006-durable-command-executor.md
-[append requests section]: #append-requests
+[append instructions]: #append-instructions
+[confirmation]: ../glossary.md#confirmation
 [`envelopepb.Envelope`]: https://pkg.go.dev/github.com/dogmatiq/enginekit/protobuf/envelopepb#Envelope
+[instruction]: ../glossary.md#instruction
 [event sourcing]: https://en.wikipedia.org/wiki/Event_sourcing
 [event stream]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#event-stream
 [interpolation search]: https://en.wikipedia.org/wiki/Interpolation_search

@@ -10,6 +10,7 @@ Accepted
 - Referenced by [5. Homogeneous cluster nodes][ADR-5]
 - Referenced by [6. Durable command executor][ADR-6]
 - Referenced by [7. Node heartbeat][ADR-7]
+- Referenced by [10. Event streams][ADR-10]
 
 ## Context
 
@@ -148,6 +149,7 @@ This ADR introduces one term to the [glossary]:
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-6]: 0006-durable-command-executor.md
 [ADR-7]: 0007-node-heartbeat.md
+[ADR-10]: 0010-event-streams.md
 [control plane]: ../glossary.md#control-plane
 [glossary]: ../glossary.md
 [instruction]: ../glossary.md#instruction
