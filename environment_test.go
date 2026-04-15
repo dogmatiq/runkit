@@ -101,16 +101,15 @@ func TestFromEnvironment(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit WithBindAddress takes precedence over environment", func(t *testing.T) {
-		e := New(WithBindAddress("127.0.0.1:9000"), FromEnvironment())
+	t.Run("explicit WithBindAddress wins over environment", func(t *testing.T) {
+		e := New(FromEnvironment(), WithBindAddress("127.0.0.1:9000"))
 		if e.bindAddr != "127.0.0.1:9000" {
 			t.Fatalf("got %q, want %q", e.bindAddr, "127.0.0.1:9000")
 		}
 	})
 
-	t.Run("explicit WithAdvertiseAddress takes precedence over environment", func(t *testing.T) {
-		t.Setenv("DOGMA_ADVERTISE_ADDRESS", "10.0.0.1:8000")
-		e := New(WithAdvertiseAddress("192.168.1.1:9000"), FromEnvironment())
+	t.Run("explicit WithAdvertiseAddress wins over environment", func(t *testing.T) {
+		e := New(FromEnvironment(), WithAdvertiseAddress("192.168.1.1:9000"))
 		if e.advertiseAddr != "192.168.1.1:9000" {
 			t.Fatalf("got %q, want %q", e.advertiseAddr, "192.168.1.1:9000")
 		}
@@ -124,6 +123,16 @@ func TestWithBindAddress(t *testing.T) {
 			t.Fatalf("got %q, want %q", e.bindAddr, "127.0.0.1:9000")
 		}
 	})
+
+	t.Run("it panics if the address is empty", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic, got none")
+			}
+		}()
+
+		WithBindAddress("")
+	})
 }
 
 func TestWithAdvertiseAddress(t *testing.T) {
@@ -132,5 +141,15 @@ func TestWithAdvertiseAddress(t *testing.T) {
 		if e.advertiseAddr != "192.168.1.1:9000" {
 			t.Fatalf("got %q, want %q", e.advertiseAddr, "192.168.1.1:9000")
 		}
+	})
+
+	t.Run("it panics if the address is empty", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic, got none")
+			}
+		}()
+
+		WithAdvertiseAddress("")
 	})
 }

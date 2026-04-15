@@ -114,7 +114,12 @@ func WithPersistence(p PersistenceProvider) Option {
 //
 // If [FromEnvironment] is also used, this option takes precedence over
 // DOGMA_BIND_ADDRESS.
+//
+// It panics if addr is empty.
 func WithBindAddress(addr string) Option {
+	if addr == "" {
+		panic("runkit: bind address must not be empty")
+	}
 	return func(e *Engine) {
 		e.bindAddr = addr
 	}
@@ -128,7 +133,12 @@ func WithBindAddress(addr string) Option {
 //
 // If [FromEnvironment] is also used, this option takes precedence over
 // DOGMA_ADVERTISE_ADDRESS.
+//
+// It panics if addr is empty.
 func WithAdvertiseAddress(addr string) Option {
+	if addr == "" {
+		panic("runkit: advertise address must not be empty")
+	}
 	return func(e *Engine) {
 		e.advertiseAddr = addr
 	}
