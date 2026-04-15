@@ -82,11 +82,9 @@ We considered several alternatives:
   hashing's $O(n)$, but with a small candidate set (cluster nodes, not thousands
   of endpoints) the difference is negligible. It adds structural complexity with
   no practical benefit for our use case.
-
 - **XOR distance** scores candidates by $w \oplus c$, selecting the
   closest. Self-affinity falls out naturally since $X \oplus X = 0$ is the minimum,
   removing the need for an explicit special case.
-
 - **Numeric distance** (`|workload - candidate|` treating UUIDs as 128-bit
   integers) produces a [Voronoi partition] of the UUID number line. Like XOR,
   self-affinity is natural since $|X - X| = 0$.

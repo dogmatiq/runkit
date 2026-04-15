@@ -82,5 +82,5 @@ If the engine defers or retries a command, idempotency handling must absorb the 
 ## Possibly related
 
 - [Durable command executor (ADR-6)](../adr/0006-durable-command-executor.md) — per-node acceptance keyspace
-- [Event stream model (ADR-10)](../adr/0010-event-stream-model.md) — stream as sink
+- [Event stream model (ADR-10)](../adr/0010-event-streams.md) — stream as sink
 - [Big picture thought](./000-big-picture.md) — overall flow

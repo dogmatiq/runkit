@@ -104,14 +104,18 @@ in what the routing key represents.
 **Command routing** assigns commands to nodes by handler instance. The routing key depends on
 the handler type — see [ADR-0002](../adr/0002-rendezvous-hashing-for-workload-assignment.md).
 
-**Partition ownership** assigns event-side work to nodes by partition UUID. The two domains
+**Stream ownership** assigns event-side work to nodes by stream ID. The two domains
 scale independently.
 
 ### Instance–stream binding is permanent
 
-An aggregate instance is bound to a stream partition on the first successful event-producing
-command and the binding never changes, guaranteeing that all events from the same aggregate
-instance are delivered to consumers in order on the same stream.
+An aggregate instance is bound to a stream on the first successful event-producing command and
+the binding never changes, guaranteeing that all events from the same aggregate instance are
+delivered to consumers in order on the same stream.
+
+Integration handlers use a different model: the stream binding is command-scoped and ephemeral.
+Each command selects a stream owned by the executing node at the time of execution, avoiding a
+cross-node hop to a remote stream owner. No binding persists after the command completes.
 
 ---
 
@@ -131,11 +135,11 @@ to `(app, ...)`.
 | Store                      | Key                                            | Type        | Lifetime                                                                        |
 | -------------------------- | ---------------------------------------------- | ----------- | ------------------------------------------------------------------------------- |
 | Recovery index             | `(node, app_key, handler_key, instance_id)`    | KV          | Until no pending work (see [ADR-0006](../adr/0006-durable-command-executor.md)) |
-| Poison backlog             | `(app, partition, command_uuid)`               | `Set[UUID]` | Until restart trickle-back                                                      |
+| Poison backlog             | `(app_key, stream_id, command_uuid)`           | `Set[UUID]` | Until restart trickle-back                                                      |
 | Idempotency journal        | `(app, idempotency_key)`                       | Journal     | Until completion                                                                |
 | Aggregate instance journal | `(app, handler_key, instance_id)` (data store) | Journal     | Permanent (truncated)                                                           |
 | Snapshot                   | `(app, handler_key, instance_id)`              | KV          | Until superseded                                                                |
-| Stream                     | `(app, stream_partition)`                      | Journal     | Permanent                                                                       |
+| Stream                     | `(app_key, stream_id)`                         | Journal     | Permanent                                                                       |
 
 ### Integration command path
 
@@ -145,14 +149,14 @@ to `(app, ...)`.
 | Idempotency journal | (shared with aggregate)        | Journal | Until completion                                                                |
 | Handler journal     | `(app, handler_key)`           | Journal | Permanent (MinimizeConcurrency only)                                            |
 
-### Event-side (per partition)
+### Event-side (per stream)
 
-| Store                 | Key                                  | Type    | Lifetime      |
-| --------------------- | ------------------------------------ | ------- | ------------- |
-| Stream                | `(app, stream_partition)`            | Journal | Permanent     |
-| Process state         | `(app, handler_key, instance_id)`    | KV      | Until `End()` |
-| Timeout journal       | `(app, handler_key, partition_uuid)` | Journal | Until `End()` |
-| Projection checkpoint | handler's own store                  | —       | Permanent     |
+| Store                 | Key                                 | Type    | Lifetime      |
+| --------------------- | ----------------------------------- | ------- | ------------- |
+| Stream                | `(app_key, stream_id)`              | Journal | Permanent     |
+| Process state         | `(app, handler_key, instance_id)`   | KV      | Until `End()` |
+| Timeout journal       | `(app_key, handler_key, stream_id)` | Journal | Until `End()` |
+| Projection checkpoint | handler's own store                 | —       | Permanent     |
 
 ---
 
@@ -234,7 +238,7 @@ Package `internal/subsystem/eventstream`.
 The event stream is a data layer: it owns stream journals and serves `ConsumeAPI`. It has no
 handler awareness.
 
-- Any node accepts `ConsumeAPI` requests and proxies to the partition owner.
+- Any node accepts `ConsumeAPI` requests and proxies to the stream owner.
 - Server-side event type filtering.
 - Consumers maintain their own checkpoints.
 
@@ -244,8 +248,8 @@ handler awareness.
 
 Package `internal/subsystem/process`.
 
-Process handlers execute on the partition-owning node (the node that owns the stream). There is
-no per-instance routing for processes — event delivery is always local to the stream owner.
+Process handlers execute on the stream-owning node. There is no per-instance routing
+for processes — event delivery is always local to the stream owner.
 
 **Execution per event:**
 
@@ -253,12 +257,12 @@ no per-instance routing for processes — event delivery is always local to the 
 2. Load process state from kv.
 3. Call `HandleEvent()` or `HandleTimeout()`.
 4. Execute produced commands via normal command forwarding (may cross nodes).
-5. Append produced timeouts to timeout journal `(app, handler_key, partition_uuid)`.
+5. Append produced timeouts to timeout journal `(app_key, handler_key, stream_id)`.
 6. Persist updated process state via CAS write.
 
-**Timeout scheduler:** runs on partition-owning node. Timeout journals are keyed by
-`(app, handler_key, partition_uuid)` — same partition UUID as the stream. On partition
-reassignment the new owner inherits the timeout journals.
+**Timeout scheduler:** runs on the stream-owning node. Timeout journals are keyed by
+`(app_key, handler_key, stream_id)`. On stream reassignment the new owner inherits the
+timeout journals.
 
 ---
 
@@ -269,8 +273,8 @@ Package `internal/subsystem/projection`.
 No engine-side storage. Checkpoint offsets are owned by the projection handler via the Dogma OCC
 contract.
 
-Each node subscribes to the partitions it owns via rendezvous. Each
-`(projection_handler, partition)` pair is processed by exactly one node at a time. OCC prevents
+Each node subscribes to the streams it owns via rendezvous. Each
+`(projection_handler, stream)` pair is processed by exactly one node at a time. OCC prevents
 duplicates.
 
 ---
@@ -279,7 +283,7 @@ duplicates.
 
 Package `internal/subsystem/poisonqueue`.
 
-Partitioned `Set[UUID]` keyed by `(app, partition, command_uuid)`. On startup, entries
+`Set[UUID]` keyed by `(app_key, stream_id, command_uuid)`. On startup, entries
 trickle back into the handler's data store for re-execution. A reference implementation
 exists in `_internal/subsystem/poisonqueue` — review for consistency with current patterns.
 
@@ -293,7 +297,7 @@ engine-agnostic abstractions.
 - **CommandForwardingService** — implements ranked iteration for command routing: source node
   iterates nodes by rendezvous score until one accepts, then forwards to the instance-owning
   node.
-- **ConsumeAPI** — serves event streams, proxied to partition owner.
+- **ConsumeAPI** — serves event streams, proxied to stream owner.
 - **Stream append** — executing node sends `AppendRequest` to partition owner.
 
 Node discovery: gRPC addresses are read from the heartbeat store.

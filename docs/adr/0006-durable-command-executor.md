@@ -10,6 +10,7 @@ Accepted
 - References [4. Ranked instruction routing][ADR-4]
 - References [5. Homogeneous cluster nodes][ADR-5]
 - Amended by [9. Handler-keyed aggregate routing][ADR-9]
+- Referenced by [10. Event streams][ADR-10]
 
 ## Context
 
@@ -269,6 +270,7 @@ indefinitely. The design of the quarantine is outside the scope of this ADR.
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-9]: 0009-handler-keyed-aggregate-routing.md
+[ADR-10]: 0010-event-streams.md
 [`AggregateMessageHandler.RouteCommandToInstance()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#AggregateMessageHandler.RouteCommandToInstance
 [`CommandExecutor.ExecuteCommand()`]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor.ExecuteCommand
 [confirmation]: ../glossary.md#confirmation

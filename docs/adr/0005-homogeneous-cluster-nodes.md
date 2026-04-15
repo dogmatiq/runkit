@@ -11,10 +11,11 @@ Accepted
 - References [4. Ranked instruction routing][ADR-4]
 - Referenced by [6. Durable command executor][ADR-6]
 - Referenced by [7. Node heartbeat][ADR-7]
+- Referenced by [10. Event stream model][ADR-10]
 
 ## Context
 
-Runkit needs a cluster model: a description of how nodes relate to each other,
+`runkit` needs a cluster model: a description of how nodes relate to each other,
 what each node is responsible for, and how they share work and state.
 
 [Verity], the predecessor engine, ran each application on a single node. All
@@ -31,15 +32,15 @@ same database. Scaling storage meant scaling one database, not distributing data
 independently.
 
 [`persistencekit`] was designed as an external constraint to prevent these
-problems from recurring in Runkit. It exposes three isolated, backend-agnostic
+problems from recurring in `runkit`. It exposes three isolated, backend-agnostic
 primitives: append-only journals with positional [OCC][ADR-3] on writes,
 key-value keyspaces, and sets. There is deliberately no cross-store transaction
 primitive. Any engine built on `persistencekit` is forced to decompose state
 into independent stores, because the abstraction provides no other option.
 
-Runkit's cluster model must be compatible with these constraints and, where
-possible, exploit them. [ADR-2], [ADR-3], and [ADR-4] were written assuming this
-model was already in place; this ADR formalizes that assumption.
+The cluster model must be compatible with these constraints and, where possible,
+exploit them. [ADR-2], [ADR-3], and [ADR-4] were written assuming this model was
+already in place; this ADR formalizes that assumption.
 
 ## Decision
 
@@ -51,7 +52,7 @@ For example, any node may receive a command from application code. That node
 uses [ranked instruction routing][ADR-4] to forward the command to a target
 node for execution. The application is not blocked waiting for execution to
 complete. This pattern — accept work, then route it to a target node — applies
-to all workloads, not just commands. Runkit handles all work asynchronously.
+to all workloads, not just commands. `runkit` handles all work asynchronously.
 
 State is decomposed into isolated `persistencekit` stores. Work is partitioned
 across nodes so that each node handles a subset of the total workload, with
@@ -107,5 +108,6 @@ transactions appear anywhere.
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-6]: 0006-durable-command-executor.md
 [ADR-7]: 0007-node-heartbeat.md
+[ADR-10]: 0010-event-stream-model.md
 [`persistencekit`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit
 [Verity]: https://github.com/dogmatiq/verity

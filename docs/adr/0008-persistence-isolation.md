@@ -11,7 +11,7 @@ Accepted
 
 ## Context
 
-Runkit may be deployed in a variety of configurations. A single operator may
+`runkit` may be deployed in a variety of configurations. A single operator may
 run multiple independent clusters — for example, one per application, one per
 region, or one per environment — and those clusters may share physical
 persistence infrastructure such as a database server. Without isolation,

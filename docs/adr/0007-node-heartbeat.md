@@ -97,7 +97,7 @@ for this problem and provide TTL-based membership management with
 well-understood operational properties. However, requiring one would impose
 additional operational complexity on every deployment. Operators who want to use
 such a system can do so via a [`persistencekit`] driver, without any first-class
-support in Runkit.
+support in `runkit`.
 
 **Recording the write timestamp** rather than an expiry time was also
 considered. Under that design, each reader would apply its own expiry threshold
