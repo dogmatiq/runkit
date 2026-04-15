@@ -107,6 +107,14 @@ func TestFromEnvironment(t *testing.T) {
 			t.Fatalf("got %q, want %q", e.bindAddr, "127.0.0.1:9000")
 		}
 	})
+
+	t.Run("explicit WithAdvertiseAddress takes precedence over environment", func(t *testing.T) {
+		t.Setenv("DOGMA_ADVERTISE_ADDRESS", "10.0.0.1:8000")
+		e := New(WithAdvertiseAddress("192.168.1.1:9000"), FromEnvironment())
+		if e.advertiseAddr != "192.168.1.1:9000" {
+			t.Fatalf("got %q, want %q", e.advertiseAddr, "192.168.1.1:9000")
+		}
+	})
 }
 
 func TestWithBindAddress(t *testing.T) {
