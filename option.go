@@ -109,6 +109,31 @@ func WithPersistence(p PersistenceProvider) Option {
 	}
 }
 
+// WithBindAddress returns an [Option] that sets the TCP address the engine
+// listens on, in "host:port" format (e.g. "0.0.0.0:7831").
+//
+// If [FromEnvironment] is also used, this option takes precedence over
+// DOGMA_BIND_ADDRESS.
+func WithBindAddress(addr string) Option {
+	return func(e *Engine) {
+		e.bindAddr = addr
+	}
+}
+
+// WithAdvertiseAddress returns an [Option] that sets the address the engine
+// advertises to peers, in "host:port" format.
+//
+// If unset, the advertise address is derived from the bind address and network
+// interface introspection at startup.
+//
+// If [FromEnvironment] is also used, this option takes precedence over
+// DOGMA_ADVERTISE_ADDRESS.
+func WithAdvertiseAddress(addr string) Option {
+	return func(e *Engine) {
+		e.advertiseAddr = addr
+	}
+}
+
 // FromEnvironment returns an [Option] that configures the engine using
 // environment variables.
 //
@@ -117,6 +142,8 @@ func WithPersistence(p PersistenceProvider) Option {
 //   - DOGMA_SITE_NAME (see [WithSite])
 //   - DOGMA_SITE_KEY (see [WithSite])
 //   - DOGMA_NODE_ID (see [WithNodeID])
+//   - DOGMA_BIND_ADDRESS (see [WithBindAddress])
+//   - DOGMA_ADVERTISE_ADDRESS (see [WithAdvertiseAddress])
 //
 // Explicit options always take precedence over environment variables, regardless
 // of the order in which options are specified.
@@ -138,6 +165,16 @@ func FromEnvironment() Option {
 					panic(fmt.Sprintf("runkit: invalid DOGMA_NODE_ID: %s", err))
 				}
 				e.nodeID = id
+			}
+		}
+		if e.bindAddr == "" {
+			if addr, ok := envBindAddress.Value(); ok {
+				e.bindAddr = addr
+			}
+		}
+		if e.advertiseAddr == "" {
+			if addr, ok := envAdvertiseAddress.Value(); ok {
+				e.advertiseAddr = addr
 			}
 		}
 	}

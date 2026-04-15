@@ -9,11 +9,17 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
 
+// defaultPort is the default TCP port for the engine listener.
+// TODO: replace with an assigned IANA port before shipping.
+const defaultPort = 0
+
 // Engine runs one or more Dogma applications.
 type Engine struct {
-	site        *identitypb.Identity
-	nodeID      *uuidpb.UUID
-	persistence PersistenceProvider
+	site          *identitypb.Identity
+	nodeID        *uuidpb.UUID
+	bindAddr      string
+	advertiseAddr string
+	persistence   PersistenceProvider
 	apps        []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
 	appsByKey   map[string]struct{}
 	executors   map[dogma.Application]*executor

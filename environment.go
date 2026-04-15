@@ -30,6 +30,14 @@ var envNodeID = ferrite.
 	WithConstraint("must be a UUID", isUUID).
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
+var envBindAddress = ferrite.
+	String("DOGMA_BIND_ADDRESS", "the TCP address the engine listens on (host:port)").
+	Optional(ferrite.WithRegistry(FerriteRegistry))
+
+var envAdvertiseAddress = ferrite.
+	String("DOGMA_ADVERTISE_ADDRESS", "the address peers use to connect to this node (host:port)").
+	Optional(ferrite.WithRegistry(FerriteRegistry))
+
 func isUUID(v string) bool {
 	_, err := uuidpb.Parse(v)
 	return err == nil
