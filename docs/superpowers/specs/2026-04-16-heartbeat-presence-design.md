@@ -39,15 +39,18 @@ Out of scope:
 
 ```go
 type PersistenceProvider interface {
-    KVStore()      kv.BinaryStore
-    JournalStore() journal.BinaryStore
-    SetStore()     set.BinaryStore
+    KVStore(ctx context.Context)      (kv.BinaryStore, error)
+    JournalStore(ctx context.Context) (journal.BinaryStore, error)
+    SetStore(ctx context.Context)     (set.BinaryStore, error)
 }
 ```
 
-The engine calls these methods during `Run()` to obtain stores. The interface
-is satisfied implicitly — persistence driver packages implement the three
-methods on their own types without importing or referencing runkit.
+The engine calls these methods during `Run()` to obtain stores, passing its
+root context. Methods may return an error if the provider cannot produce the
+store — for example, if it needs to establish a connection or validate
+configuration. The interface is satisfied implicitly — persistence driver
+packages implement the three methods on their own types without importing or
+referencing runkit.
 
 ### `PersistenceStores` struct
 
@@ -58,9 +61,9 @@ type PersistenceStores struct {
     Set     set.BinaryStore
 }
 
-func (s PersistenceStores) KVStore()      kv.BinaryStore      { return s.KV }
-func (s PersistenceStores) JournalStore() journal.BinaryStore { return s.Journal }
-func (s PersistenceStores) SetStore()     set.BinaryStore     { return s.Set }
+func (s PersistenceStores) KVStore(_ context.Context)      (kv.BinaryStore, error)      { return s.KV, nil }
+func (s PersistenceStores) JournalStore(_ context.Context) (journal.BinaryStore, error) { return s.Journal, nil }
+func (s PersistenceStores) SetStore(_ context.Context)     (set.BinaryStore, error)     { return s.Set, nil }
 ```
 
 This is a convenience type for operators who want to assemble stores from
@@ -106,7 +109,9 @@ with the existing pattern.
 
 ### Default port
 
-TODO: assign a default port number. Must be an unregistered IANA port.
+Open question: assign a default port number. It must be an unregistered IANA
+port. The value is a constant in the codebase; agree on it before implementation
+begins.
 
 ### Advertise address resolution
 
@@ -119,9 +124,6 @@ The resolved advertise address is computed at `Run()` time in this order:
    Combine with the bind port to form the advertise address.
 3. If interface introspection yields no suitable address, `Run()` returns a
    fatal error.
-4. If the resolved port is `0` at any point, `Run()` panics — dynamic ports
-   are not supported in this milestone (they require the RPC listener to bind
-   first, which is wired in a future milestone).
 
 ## Stub TCP listener
 
@@ -211,7 +213,7 @@ expired record may delete it. This is not implemented in this milestone.
 ## Updated `Engine.Run()` startup sequence
 
 1. Validate configuration: site identity present, persistence provider
-   present, bind address valid (port not `0`).
+   present.
 2. Open the `"heartbeats"` KV keyspace from the persistence driver.
 3. Start the stub TCP listener; get the resolved advertise address.
 4. Write the initial heartbeat record (with the resolved address). Block
