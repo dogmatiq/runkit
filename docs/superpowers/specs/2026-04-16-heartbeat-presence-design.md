@@ -158,7 +158,7 @@ with no changes to the startup sequence.
 
 ## Heartbeat record proto schema
 
-A new proto file, e.g. `internal/proto/heartbeatpb/heartbeat.proto`:
+A new proto file at `internal/heartbeat/internal/heartbeatpb/heartbeat.proto`:
 
 ```proto
 syntax = "proto3";
@@ -171,8 +171,9 @@ message HeartbeatRecord {
 }
 ```
 
-The generated Go code lives in `internal/proto/heartbeatpb/`. The project's
-existing protoc makefile setup handles generation via `make generate`.
+The generated Go code lives alongside the proto source in
+`internal/heartbeat/internal/heartbeatpb/`. The project's existing protoc
+makefile setup handles generation via `make generate`.
 
 ## Heartbeat writer
 
@@ -247,15 +248,15 @@ windows.
 ```
 internal/
   heartbeat/
+    internal/
+      heartbeatpb/
+        heartbeat.proto
+        heartbeat.pb.go        -- generated
+        heartbeat_primo.pb.go  -- generated (primo plugin)
     writer.go       -- Writer type and write loop
     writer_test.go
   memdriver/
     driver.go       -- In-memory PersistenceProvider implementation
-  proto/
-    heartbeatpb/
-      heartbeat.proto
-      heartbeat.pb.go        -- generated
-      heartbeat_primo.pb.go  -- generated (primo plugin)
 persistence.go      -- PersistenceProvider interface, PersistenceStores struct
 option.go           -- WithPersistence, WithBindAddress, WithAdvertiseAddress
 environment.go      -- DOGMA_BIND_ADDRESS, DOGMA_ADVERTISE_ADDRESS ferrite vars
@@ -274,16 +275,28 @@ three embedded OTel providers default to no-ops — so the `Engine` struct can
 carry a `*telemetry.Provider` field from day one and pass it through to
 components without any observable effect until they are actually instrumented.
 
-Two new options will be introduced at that time:
+The `Engine` struct will carry a `*telemetry.Provider` field internally (from
+`enginekit/telemetry`), but that type must not appear in runkit's public API.
+The public options take the raw OTel interfaces directly:
 
 ```go
-// WithTelemetry configures the engine to use the given provider.
-func WithTelemetry(p *telemetry.Provider) Option
+// WithTracerProvider configures the engine to use the given tracer provider.
+func WithTracerProvider(tp trace.TracerProvider) Option
+
+// WithMeterProvider configures the engine to use the given meter provider.
+func WithMeterProvider(mp metric.MeterProvider) Option
+
+// WithLoggerProvider configures the engine to use the given logger provider.
+func WithLoggerProvider(lp log.LoggerProvider) Option
 
 // WithGlobalTelemetry configures the engine to use the OTel global providers,
 // captured at option-apply time.
 func WithGlobalTelemetry() Option
 ```
+
+At `Run()` time these are assembled into a `*telemetry.Provider` for internal
+use. `enginekit/telemetry` remains an implementation detail — it does not appear
+in any exported type or function signature.
 
 `WithGlobalTelemetry()` is intentionally not a package-level global itself — it
 captures the global providers as an explicit dependency at call time and injects
