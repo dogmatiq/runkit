@@ -99,8 +99,11 @@ func WithApplication(app dogma.Application) Option {
 // WithPersistence returns an [Option] that configures the persistence provider
 // for the engine.
 //
-// A persistence provider is required. [Run] panics if none is configured.
+// A persistence provider is required. [Engine.Run] panics if none is configured.
 func WithPersistence(p PersistenceProvider) Option {
+	if p == nil {
+		panic("runkit: persistence provider must not be nil")
+	}
 	return func(e *Engine) {
 		e.persistence = p
 	}
