@@ -51,6 +51,19 @@ func TestRun(t *testing.T) {
 		e := New()
 		e.Run(t.Context())
 	})
+
+	t.Run("it panics if no persistence provider is configured", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic, got none")
+			}
+		}()
+
+		e := New(
+			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+		)
+		e.Run(t.Context())
+	})
 }
 
 func TestExecuteCommand(t *testing.T) {
@@ -63,6 +76,7 @@ func TestExecuteCommand(t *testing.T) {
 	t.Run("it blocks until Run() is called, then returns nil", func(t *testing.T) {
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+			WithPersistence(PersistenceStores{}),
 			WithApplication(app),
 		)
 		x := e.ExecutorFor(app)

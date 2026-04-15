@@ -96,6 +96,16 @@ func WithApplication(app dogma.Application) Option {
 	}
 }
 
+// WithPersistence returns an [Option] that configures the persistence provider
+// for the engine.
+//
+// A persistence provider is required. [Run] panics if none is configured.
+func WithPersistence(p PersistenceProvider) Option {
+	return func(e *Engine) {
+		e.persistence = p
+	}
+}
+
 // FromEnvironment returns an [Option] that configures the engine using
 // environment variables.
 //

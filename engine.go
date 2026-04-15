@@ -11,12 +11,13 @@ import (
 
 // Engine runs one or more Dogma applications.
 type Engine struct {
-	site      *identitypb.Identity
-	nodeID    *uuidpb.UUID
-	apps      []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
-	appsByKey map[string]struct{}
-	executors map[dogma.Application]*executor
-	running   atomic.Bool
+	site        *identitypb.Identity
+	nodeID      *uuidpb.UUID
+	persistence PersistenceProvider
+	apps        []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
+	appsByKey   map[string]struct{}
+	executors   map[dogma.Application]*executor
+	running     atomic.Bool
 }
 
 // New returns an [Engine] configured by the given options.
@@ -44,6 +45,10 @@ func (e *Engine) Run(context.Context) error {
 
 	if e.site == nil {
 		panic("runkit: a site identity is required, use WithSite() or FromEnvironment()")
+	}
+
+	if e.persistence == nil {
+		panic("runkit: a persistence provider is required, use WithPersistence()")
 	}
 
 	if e.nodeID == nil {
