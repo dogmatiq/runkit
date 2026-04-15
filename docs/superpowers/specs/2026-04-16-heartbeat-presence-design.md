@@ -32,6 +32,11 @@ Out of scope:
 - The heartbeat reader and live node set construction
 - Real gRPC serving
 - Real command routing (executor still resolves to `noopExecutor`)
+- TLS — the stub listener accepts no connections, so there is nothing to
+  secure; the real listener must default to TLS, but that design is deferred
+- Observability — telemetry instrumentation (spans, metrics, logging) and
+  the associated naming standards are deferred to a follow-up milestone (see
+  [Future phases](#future-phases) below)
 
 ## Persistence injection
 
@@ -256,6 +261,48 @@ option.go           -- WithPersistence, WithBindAddress, WithAdvertiseAddress
 environment.go      -- DOGMA_BIND_ADDRESS, DOGMA_ADVERTISE_ADDRESS ferrite vars
 engine.go           -- updated Run() sequence
 ```
+
+## Future phases
+
+### Observability
+
+Instrumentation will be added in a follow-up milestone once naming conventions
+and attribution standards are established.
+
+The mechanism is `enginekit/telemetry.Provider`. Its zero value is safe — all
+three embedded OTel providers default to no-ops — so the `Engine` struct can
+carry a `*telemetry.Provider` field from day one and pass it through to
+components without any observable effect until they are actually instrumented.
+
+Two new options will be introduced at that time:
+
+```go
+// WithTelemetry configures the engine to use the given provider.
+func WithTelemetry(p *telemetry.Provider) Option
+
+// WithGlobalTelemetry configures the engine to use the OTel global providers,
+// captured at option-apply time.
+func WithGlobalTelemetry() Option
+```
+
+`WithGlobalTelemetry()` is intentionally not a package-level global itself — it
+captures the global providers as an explicit dependency at call time and injects
+them. This matches the project convention: no code reads globals directly;
+options exist to "use the globals" and then pass them as dependencies.
+
+`internal/x/xtelemetry` currently holds only the `ModulePath` constant, which
+will be used to construct `Recorder` instances (`provider.Recorder(ModulePath,
+...)`). It will grow to house provider-setup helpers and runkit-specific
+attribute helpers in phase 2.
+
+Persistence stores may also be wrapped with `kv.WithTelemetry()` at that time,
+propagating the same provider down to the persistence layer.
+
+### TLS
+
+The real gRPC listener must default to TLS. The design — whether to use
+operator-provided certificates, SPIFFE/SPIRE, or auto-generated self-signed
+certificates — is deferred until the real listener is implemented.
 
 <!-- references -->
 
