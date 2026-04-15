@@ -39,3 +39,26 @@ filter's false positive rate is approximately $(1 - e^{-kn/m})^k$ where $k$ is
 the number of hash functions, $n$ is the number of inserted elements, and $m$
 is the bit array size. Monitoring $n/m$ gives a direct signal for when to roll
 over.
+
+### UUID-aware bit extraction
+
+Because `causation_id` values are UUIDs (v4 or v5), their bytes are already
+uniformly distributed. The hash computation normally required by a bloom filter
+can be eliminated entirely: instead of hashing the key to produce $k$ bit
+indices, slice non-overlapping $b$-bit windows directly from the UUID bytes and
+use each as an array index.
+
+v4 and v5 UUIDs both have 6 fixed bits — a 4-bit version nibble (bits 48-51)
+and a 2-bit variant field (bits 64-65). Windows that span those positions have
+reduced entropy. The simplest avoidance strategy is to draw windows only from
+the two clean ranges: bits 0-47 (48 bits) and bits 66-127 (62 bits), giving
+110 usable bits. That supports $k = 5$ windows at $b = 20$ ($m = 2^{20}$,
+1 Mbit) or $k = 6$ windows at $b \leq 18$.
+
+In practice, even including the fixed bits causes only a marginal increase in
+false positive rate — and false positives in this filter are already safe (they
+trigger an unnecessary scan, not a correctness failure). The meaningful
+optimization is eliminating the hash call, not the precise window layout.
+
+This optimization does not apply to v7 UUIDs, whose high 48 bits encode a
+millisecond timestamp and are neither uniform nor independent across entries.
