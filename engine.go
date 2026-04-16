@@ -97,7 +97,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	select {
 	case advertiseAddr = <-addrCh:
 	case <-gctx.Done():
-		return g.Wait()
+		if err := g.Wait(); ctx.Err() == nil {
+			return err
+		}
+		return nil
 	}
 
 	w := &heartbeat.Writer{

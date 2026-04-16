@@ -89,8 +89,6 @@ func TestRun_starts_and_stops_cleanly(t *testing.T) {
 		done <- e.Run(ctx)
 	}()
 
-	// Wait for the engine to start, then cancel.
-	time.Sleep(100 * time.Millisecond)
 	cancel()
 
 	select {
