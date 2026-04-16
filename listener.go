@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 )
 
 // listener manages the lifecycle of the network listener.
@@ -68,7 +69,7 @@ func resolveAdvertiseAddr(bound *net.TCPAddr, configured string) (string, error)
 		host = found
 	}
 
-	return net.JoinHostPort(host, fmt.Sprintf("%d", bound.Port)), nil
+	return net.JoinHostPort(host, strconv.Itoa(bound.Port)), nil
 }
 
 // firstRoutableIPv4 returns the first non-loopback, non-link-local IPv4
@@ -82,6 +83,8 @@ func firstRoutableIPv4() (string, error) {
 	for _, iface := range ifaces {
 		addrs, err := iface.Addrs()
 		if err != nil {
+			// Skip interfaces we can't inspect; fall through to the
+			// "no address found" error if none succeed.
 			continue
 		}
 

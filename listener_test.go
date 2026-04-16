@@ -8,8 +8,8 @@ import (
 
 func TestStubListener_binds_and_returns_advertise_address(t *testing.T) {
 	s := &stubListener{
-		bindAddr:      "127.0.0.1:0", // port 0: OS picks a free port
-		advertiseAddr: "",             // resolved from bind addr
+		bindAddr:      "0.0.0.0:0", // wildcard: triggers firstRoutableIPv4 path
+		advertiseAddr: "",          // resolved from bind addr
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
