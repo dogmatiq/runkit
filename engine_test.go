@@ -1,6 +1,7 @@
 package runkit_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -67,6 +68,41 @@ func TestRun(t *testing.T) {
 	})
 }
 
+func TestRun_starts_and_stops_cleanly(t *testing.T) {
+	app := &stubs.ApplicationStub{
+		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+			c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
+		},
+	}
+
+	e := New(
+		WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+		WithPersistence(&memdriver.Driver{}),
+		WithBindAddress("127.0.0.1:0"),
+		WithApplication(app),
+	)
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- e.Run(ctx)
+	}()
+
+	// Wait for the engine to start, then cancel.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run() returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return after context cancellation")
+	}
+}
+
 func TestExecuteCommand(t *testing.T) {
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
@@ -75,16 +111,20 @@ func TestExecuteCommand(t *testing.T) {
 	}
 
 	t.Run("it blocks until Run() is called, then returns nil", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
 			WithPersistence(&memdriver.Driver{}),
+			WithBindAddress("127.0.0.1:0"),
 			WithApplication(app),
 		)
 		x := e.ExecutorFor(app)
 
 		result := make(chan error, 1)
 		go func() {
-			result <- x.ExecuteCommand(t.Context(), stubs.CommandA1)
+			result <- x.ExecuteCommand(ctx, stubs.CommandA1)
 		}()
 
 		select {
@@ -93,12 +133,18 @@ func TestExecuteCommand(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 
-		if err := e.Run(t.Context()); err != nil {
-			t.Error(err)
-		}
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- e.Run(ctx)
+		}()
 
 		if err := <-result; err != nil {
 			t.Fatal(err)
+		}
+
+		cancel()
+		if err := <-runDone; err != nil {
+			t.Error(err)
 		}
 	})
 }

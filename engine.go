@@ -2,11 +2,14 @@ package runkit
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/heartbeat"
+	"golang.org/x/sync/errgroup"
 )
 
 // defaultPort is the default TCP port for the engine listener.
@@ -44,7 +47,7 @@ func New(opts ...Option) *Engine {
 // occurs.
 //
 // It panics if called more than once on the same engine.
-func (e *Engine) Run(context.Context) error {
+func (e *Engine) Run(ctx context.Context) error {
 	if !e.running.CompareAndSwap(false, true) {
 		panic("runkit: Run() has already been called")
 	}
@@ -61,12 +64,56 @@ func (e *Engine) Run(context.Context) error {
 		e.nodeID = uuidpb.Generate()
 	}
 
-	// Phase 1 stub: signal readiness immediately with a no-op executor.
-	// Phase 10 replaces this with real startup work before resolving.
+	bindAddr := e.bindAddr
+	if bindAddr == "" {
+		if addr, ok := envBindAddress.Value(); ok {
+			bindAddr = addr
+		} else {
+			bindAddr = fmt.Sprintf("0.0.0.0:%d", defaultPort)
+		}
+	}
+
+	configuredAdvertiseAddr := e.advertiseAddr
+	if configuredAdvertiseAddr == "" {
+		if addr, ok := envAdvertiseAddress.Value(); ok {
+			configuredAdvertiseAddr = addr
+		}
+	}
+
+	kvStore, err := e.persistence.KVStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	l := &stubListener{bindAddr: bindAddr, advertiseAddr: configuredAdvertiseAddr}
+	addrCh := make(chan string, 1)
+	g.Go(func() error {
+		return l.ListenAndServe(gctx, func(addr string) { addrCh <- addr })
+	})
+
+	var advertiseAddr string
+	select {
+	case advertiseAddr = <-addrCh:
+	case <-gctx.Done():
+		return g.Wait()
+	}
+
+	w := &heartbeat.Writer{
+		NodeID:        e.nodeID,
+		KVStore:       kvStore,
+		AdvertiseAddr: advertiseAddr,
+	}
+	g.Go(func() error { return w.Run(gctx) })
+
 	for _, ex := range e.executors {
 		ex.future.Store(noopExecutor{})
 	}
 
+	if err := g.Wait(); ctx.Err() == nil {
+		return err
+	}
 	return nil
 }
 

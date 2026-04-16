@@ -7,6 +7,8 @@ require (
 	github.com/dogmatiq/ferrite v1.6.1
 	github.com/dogmatiq/persistencekit v0.14.0
 	github.com/zeebo/xxh3 v1.1.0
+	golang.org/x/sync v0.20.0
+	google.golang.org/protobuf v1.36.11
 	pgregory.net/rapid v1.2.0
 )
 
@@ -19,7 +21,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 require (
