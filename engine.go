@@ -1,13 +1,14 @@
 package runkit
 
 import (
+	"cmp"
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/persistencekit/kv"
 	"github.com/dogmatiq/runkit/internal/heartbeat"
 	"golang.org/x/sync/errgroup"
 )
@@ -20,13 +21,15 @@ const defaultPort = 0
 type Engine struct {
 	site          *identitypb.Identity
 	nodeID        *uuidpb.UUID
-	bindAddr      string
+	listenAddr    string
 	advertiseAddr string
 	persistence   PersistenceProvider
 	apps          []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
 	appsByKey     map[string]struct{}
 	executors     map[dogma.Application]*executor
 	running       atomic.Bool
+	kvStore       kv.BinaryStore
+	wg            *errgroup.Group
 }
 
 // New returns an [Engine] configured by the given options.
@@ -64,64 +67,35 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.nodeID = uuidpb.Generate()
 	}
 
-	bindAddr := e.bindAddr
-	if bindAddr == "" {
-		bindAddr = fmt.Sprintf("0.0.0.0:%d", defaultPort)
+	if e.persistence == nil {
+		panic("runkit: a persistence provider is required, use WithPersistence()")
 	}
 
-	configuredAdvertiseAddr := e.advertiseAddr
+	if e.advertiseAddr != "" && e.listenAddr == "" {
+		panic("runkit: WithAdvertiseAddress requires WithListenAddress or DOGMA_LISTEN_ADDRESS")
+	}
 
-	kvStore, err := e.persistence.KVStore(ctx)
+	kvStore, err := e.persistence.NewKVStore(ctx)
 	if err != nil {
 		return err
 	}
+	e.kvStore = kvStore
 
-	g, gctx := errgroup.WithContext(ctx)
+	e.wg, ctx = errgroup.WithContext(ctx)
 
-	l := &stubListener{bindAddr: bindAddr, advertiseAddr: configuredAdvertiseAddr}
-	addrCh := make(chan string, 1)
-	g.Go(func() error {
-		return l.ListenAndServe(gctx, func(addr string) { addrCh <- addr })
-	})
-
-	var advertiseAddr string
-	select {
-	case advertiseAddr = <-addrCh:
-	case <-gctx.Done():
-		if err := g.Wait(); ctx.Err() == nil {
-			return err
-		}
-		return nil
+	if e.listenAddr != "" {
+		e.startListener(ctx)
+	} else {
+		// TODO: remove once startExecutors() adds real goroutines to the group;
+		// until then this prevents wg.Wait() from returning immediately.
+		e.wg.Go(func() error {
+			<-ctx.Done()
+			return ctx.Err()
+		})
 	}
+	e.startExecutors()
 
-	w := &heartbeat.Writer{
-		NodeID:        e.nodeID,
-		KVStore:       kvStore,
-		AdvertiseAddr: advertiseAddr,
-	}
-	g.Go(func() error { return w.Run(gctx) })
-
-	for _, ex := range e.executors {
-		ex.future.Store(noopExecutor{})
-	}
-
-	if err := g.Wait(); ctx.Err() == nil {
-		return err
-	}
-	return nil
-}
-
-// noopExecutor is a [dogma.CommandExecutor] that discards all commands. It is
-// stored in an [executor]'s future by the Phase 1 Run() stub and replaced with
-// real routing logic in Phase 10.
-type noopExecutor struct{}
-
-func (noopExecutor) ExecuteCommand(
-	context.Context,
-	dogma.Command,
-	...dogma.ExecuteCommandOption,
-) error {
-	return nil
+	return e.wg.Wait()
 }
 
 // ExecutorFor returns a [dogma.CommandExecutor] for app.
@@ -137,4 +111,44 @@ func (e *Engine) ExecutorFor(app dogma.Application) dogma.CommandExecutor {
 	}
 
 	return ex
+}
+
+func (e *Engine) startListener(ctx context.Context) {
+	e.wg.Go(func() error {
+		listenAddr := cmp.Or(e.listenAddr, defaultListenAddr)
+		lis := &stubListener{listenAddr: listenAddr}
+
+		addr, err := lis.Listen()
+		if err != nil {
+			return err
+		}
+
+		addrs, err := resolveAdvertiseAddrs(addr, listenAddr, e.advertiseAddr)
+		if err != nil {
+			return err
+		}
+
+		// Start the heartbeat writer now that we know which addresses to
+		// advertise. errgroup.Go is safe to call from within a running goroutine.
+		e.startHeartbeatWriter(ctx, addrs)
+
+		return lis.Serve(ctx)
+	})
+}
+
+func (e *Engine) startHeartbeatWriter(ctx context.Context, advertiseAddrs []string) {
+	e.wg.Go(func() error {
+		w := &heartbeat.Writer{
+			NodeID:         e.nodeID,
+			KVStore:        e.kvStore,
+			AdvertiseAddrs: advertiseAddrs,
+		}
+		return w.Run(ctx)
+	})
+}
+
+func (e *Engine) startExecutors() {
+	for _, ex := range e.executors {
+		ex.future.Store(noopExecutor{})
+	}
 }

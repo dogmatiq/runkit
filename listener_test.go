@@ -6,84 +6,146 @@ import (
 	"testing"
 )
 
-func TestStubListener_binds_and_returns_advertise_address(t *testing.T) {
-	s := &stubListener{
-		bindAddr:      "0.0.0.0:0", // wildcard: triggers firstRoutableIPv4 path
-		advertiseAddr: "",          // resolved from bind addr
-	}
+func TestStubListener(t *testing.T) {
+	t.Run("it returns the bound address", func(t *testing.T) {
+		s := &stubListener{listenAddr: "127.0.0.1:0"}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		addr, err := s.Listen()
+		if err != nil {
+			t.Fatalf("Listen returned unexpected error: %v", err)
+		}
+		defer s.listener.Close()
 
-	var gotAddr string
-	done := make(chan error, 1)
-	go func() {
-		done <- s.ListenAndServe(ctx, func(addr string) {
-			gotAddr = addr
-			cancel() // signal we have the address; triggers clean shutdown
-		})
-	}()
+		tcp, ok := addr.(*net.TCPAddr)
+		if !ok {
+			t.Fatalf("expected *net.TCPAddr, got %T", addr)
+		}
+		if tcp.Port == 0 || tcp.IP == nil {
+			t.Fatalf("expected a bound address, got %v", tcp)
+		}
+	})
 
-	if err := <-done; err != nil {
-		t.Fatalf("ListenAndServe returned error: %v", err)
-	}
+	t.Run("it stops serving when the context is cancelled", func(t *testing.T) {
+		s := &stubListener{listenAddr: "127.0.0.1:0"}
 
-	if gotAddr == "" {
-		t.Fatal("onReady was never called")
-	}
+		if _, err := s.Listen(); err != nil {
+			t.Fatalf("Listen returned unexpected error: %v", err)
+		}
 
-	// Address should be host:port with a specific host (not 0.0.0.0).
-	host, _, err := net.SplitHostPort(gotAddr)
-	if err != nil {
-		t.Fatalf("invalid address %q: %v", gotAddr, err)
-	}
-	if host == "" || host == "0.0.0.0" {
-		t.Fatalf("expected a non-unspecified host, got %q", host)
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.Serve(ctx) }()
+
+		cancel()
+
+		if err := <-done; err != context.Canceled {
+			t.Fatalf("Serve returned unexpected error after cancel: %v", err)
+		}
+	})
 }
 
-func TestStubListener_uses_explicit_advertise_address(t *testing.T) {
-	s := &stubListener{
-		bindAddr:      "127.0.0.1:0",
-		advertiseAddr: "10.0.0.1:9000",
-	}
+func TestResolveAdvertiseAddrs(t *testing.T) {
+	t.Run("it uses the configured advertise address", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to bind: %v", err)
+		}
+		defer ln.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		addrs, err := resolveAdvertiseAddrs(ln.Addr(), "127.0.0.1:0", "10.0.0.1:9000")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
-	var gotAddr string
-	done := make(chan error, 1)
-	go func() {
-		done <- s.ListenAndServe(ctx, func(addr string) {
-			gotAddr = addr
-			cancel()
-		})
-	}()
+		if len(addrs) != 1 || addrs[0] != "10.0.0.1:9000" {
+			t.Fatalf("got advertise addresses %v, want [%q]", addrs, "10.0.0.1:9000")
+		}
+	})
 
-	if err := <-done; err != nil {
-		t.Fatalf("ListenAndServe returned error: %v", err)
-	}
+	t.Run("it discovers IPv4 addresses when bound to 0.0.0.0", func(t *testing.T) {
+		ln, err := net.Listen("tcp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatalf("failed to bind: %v", err)
+		}
+		defer ln.Close()
 
-	if gotAddr != "10.0.0.1:9000" {
-		t.Fatalf("got advertise address %q, want %q", gotAddr, "10.0.0.1:9000")
-	}
-}
+		addrs, err := resolveAdvertiseAddrs(ln.Addr(), "0.0.0.0:0", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
-func TestStubListener_closes_on_context_cancel(t *testing.T) {
-	s := &stubListener{bindAddr: "127.0.0.1:0"}
+		if len(addrs) == 0 {
+			t.Fatal("expected at least one address")
+		}
 
-	ctx, cancel := context.WithCancel(context.Background())
+		for _, addr := range addrs {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				t.Fatalf("invalid address %q: %v", addr, err)
+			}
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				t.Fatalf("expected a non-unspecified host, got %q", host)
+			}
+			if net.ParseIP(host).To4() == nil {
+				t.Fatalf("expected an IPv4 address, got %q", host)
+			}
+		}
+	})
 
-	ready := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		done <- s.ListenAndServe(ctx, func(string) { close(ready) })
-	}()
+	t.Run("it discovers both families when bound to all interfaces", func(t *testing.T) {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatalf("failed to bind: %v", err)
+		}
+		defer ln.Close()
 
-	<-ready
-	cancel()
+		addrs, err := resolveAdvertiseAddrs(ln.Addr(), ":0", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
-	if err := <-done; err != nil {
-		t.Fatalf("ListenAndServe returned error after cancel: %v", err)
-	}
+		if len(addrs) == 0 {
+			t.Fatal("expected at least one address")
+		}
+
+		for _, addr := range addrs {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				t.Fatalf("invalid address %q: %v", addr, err)
+			}
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				t.Fatalf("expected a non-unspecified host, got %q", host)
+			}
+		}
+	})
+
+	t.Run("it uses an explicit listen IP as the advertise address", func(t *testing.T) {
+		ln, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to bind: %v", err)
+		}
+		defer ln.Close()
+
+		addr := ln.Addr()
+		addrs, err := resolveAdvertiseAddrs(addr, "127.0.0.1:0", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantHost := "127.0.0.1"
+		if len(addrs) != 1 {
+			t.Fatalf("expected exactly one address, got %v", addrs)
+		}
+		host, port, err := net.SplitHostPort(addrs[0])
+		if err != nil {
+			t.Fatalf("invalid address %q: %v", addrs[0], err)
+		}
+		if host != wantHost {
+			t.Fatalf("got host %q, want %q", host, wantHost)
+		}
+		_, wantPort, _ := net.SplitHostPort(addr.String())
+		if port != wantPort {
+			t.Fatalf("got port %q, want %s", port, wantPort)
+		}
+	})
 }

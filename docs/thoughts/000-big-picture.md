@@ -455,6 +455,25 @@ discovering which recovery index entries belong to the dead node. The question
 is: how does a surviving node locate and enumerate the dead node's outstanding
 work?
 
+### 12. Event stream ownership handoff during consumer tailing
+
+When a consumer is live-tailing a stream via a server-streaming RPC and the stream-owning node
+leaves the cluster (graceful or crash), the RPC breaks. The consumer must reconnect to the new
+owner.
+
+Two options:
+
+- **Consumer-responsibility, stateless server** — the consumer tracks its own last offset and,
+  on any RPC failure, re-hashes the stream ID against the updated live node set to find the new
+  owner and reconnects. The server imposes no handoff protocol. This path covers both crash and
+  graceful shutdown uniformly.
+- **Coordinated handoff on graceful shutdown** — the departing node notifies the new owner
+  and/or consuming nodes before stopping. More complex; only helps the graceful case; the crash
+  path still requires consumer-responsibility recovery.
+
+The consumer-responsibility approach handles both cases, avoids server-side coordination state,
+and is consistent with the offset-based consumer-driven model. Resolve before Phase 9.
+
 ---
 
 ## Existing Code: Status and Role

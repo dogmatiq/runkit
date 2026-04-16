@@ -25,9 +25,10 @@ const (
 // HeartbeatRecord stores the presence information for a single node.
 type HeartbeatRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// address is the advertise address of the node (host:port).
-	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	// expires_at is the time after which this record may be considered stale.
+	// Addresses are the network addresses advertised to the other nodes in the
+	// cluster.
+	Addresses []string `protobuf:"bytes,1,rep,name=addresses,proto3" json:"addresses,omitempty"`
+	// ExpiresAt is the time after which this record may be considered stale.
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -63,11 +64,11 @@ func (*HeartbeatRecord) Descriptor() ([]byte, []int) {
 	return file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *HeartbeatRecord) GetAddress() string {
+func (x *HeartbeatRecord) GetAddresses() []string {
 	if x != nil {
-		return x.Address
+		return x.Addresses
 	}
-	return ""
+	return nil
 }
 
 func (x *HeartbeatRecord) GetExpiresAt() *timestamppb.Timestamp {
@@ -81,9 +82,9 @@ var File_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_hear
 
 const file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_rawDesc = "" +
 	"\n" +
-	"Rgithub.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb/heartbeat.proto\x12\x16dogma.runkit.heartbeat\x1a\x1fgoogle/protobuf/timestamp.proto\"f\n" +
-	"\x0fHeartbeatRecord\x12\x18\n" +
-	"\aaddress\x18\x01 \x01(\tR\aaddress\x129\n" +
+	"Rgithub.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb/heartbeat.proto\x12\x16dogma.runkit.heartbeat\x1a\x1fgoogle/protobuf/timestamp.proto\"j\n" +
+	"\x0fHeartbeatRecord\x12\x1c\n" +
+	"\taddresses\x18\x01 \x03(\tR\taddresses\x129\n" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAtBDZBgithub.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpbb\x06proto3"
 

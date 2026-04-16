@@ -30,14 +30,22 @@ var envNodeID = ferrite.
 	WithConstraint("must be a UUID", isUUID).
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
-var envBindAddress = ferrite.
-	String("DOGMA_BIND_ADDRESS", "the TCP address the engine listens on (host:port)").
+var envListenAddress = ferrite.
+	String("DOGMA_LISTEN_ADDRESS", "the TCP address the engine listens on").
+	WithConstraint("must be a host:port address", isHostPort).
+	WithExample("0.0.0.0:7831", "listen on all IPv4 interfaces").
+	WithExample("192.168.0.10:7831", "listen on a specific interface").
+	WithExample("[2001:db8::1]:7831", "listen on a specific IPv6 address").
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
 var envAdvertiseAddress = ferrite.
-	String("DOGMA_ADVERTISE_ADDRESS", "the address peers use to connect to this node (host:port)").
+	String("DOGMA_ADVERTISE_ADDRESS", "the address other nodes use to connect to this node").
+	WithConstraint("must be a host:port address", isHostPort).
+	WithExample("192.168.0.10:7831", "advertise a specific IPv4 address").
+	WithExample("[2001:db8::1]:7831", "advertise a specific IPv6 address").
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
+// isUUID returns true if v is a valid UUID string.
 func isUUID(v string) bool {
 	_, err := uuidpb.Parse(v)
 	return err == nil

@@ -1,5 +1,4 @@
 syntax = "proto3";
-
 package dogma.runkit.heartbeat;
 
 option go_package = "github.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb";
@@ -8,9 +7,10 @@ import "google/protobuf/timestamp.proto";
 
 // HeartbeatRecord stores the presence information for a single node.
 message HeartbeatRecord {
-    // address is the advertise address of the node (host:port).
-    string address = 1;
+    // Addresses are the network addresses advertised to the other nodes in the
+    // cluster.
+    repeated string addresses = 1;
 
-    // expires_at is the time after which this record may be considered stale.
+    // ExpiresAt is the time after which this record may be considered stale.
     google.protobuf.Timestamp expires_at = 2;
 }

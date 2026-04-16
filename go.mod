@@ -1,6 +1,6 @@
 module github.com/dogmatiq/runkit
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/dogmatiq/enginekit v0.22.0

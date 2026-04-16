@@ -14,9 +14,11 @@ import (
 
 type fakePersistenceProvider struct{}
 
-func (fakePersistenceProvider) KVStore(_ context.Context) (kv.BinaryStore, error)          { return nil, nil }
-func (fakePersistenceProvider) JournalStore(_ context.Context) (journal.BinaryStore, error) { return nil, nil }
-func (fakePersistenceProvider) SetStore(_ context.Context) (set.BinaryStore, error)         { return nil, nil }
+func (fakePersistenceProvider) KVStore(_ context.Context) (kv.BinaryStore, error) { return nil, nil }
+func (fakePersistenceProvider) JournalStore(_ context.Context) (journal.BinaryStore, error) {
+	return nil, nil
+}
+func (fakePersistenceProvider) SetStore(_ context.Context) (set.BinaryStore, error) { return nil, nil }
 
 func TestWithSite(t *testing.T) {
 	t.Run("it panics if the name is empty", func(t *testing.T) {
@@ -53,14 +55,6 @@ func TestWithNodeID(t *testing.T) {
 }
 
 func TestWithPersistence(t *testing.T) {
-	t.Run("it stores the provider", func(t *testing.T) {
-		provider := &fakePersistenceProvider{}
-		option := WithPersistence(provider)
-		if option == nil {
-			t.Fatal("expected non-nil option")
-		}
-	})
-
 	t.Run("it panics if the provider is nil", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {

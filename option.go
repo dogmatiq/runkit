@@ -2,6 +2,7 @@ package runkit
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
@@ -109,24 +110,24 @@ func WithPersistence(p PersistenceProvider) Option {
 	}
 }
 
-// WithBindAddress returns an [Option] that sets the TCP address the engine
+// WithListenAddress returns an [Option] that sets the TCP address the engine
 // listens on, in "host:port" format (e.g. "0.0.0.0:7831").
 //
 // If [FromEnvironment] is also used, this option takes precedence over
-// DOGMA_BIND_ADDRESS.
+// DOGMA_LISTEN_ADDRESS.
 //
-// It panics if addr is empty.
-func WithBindAddress(addr string) Option {
-	if addr == "" {
-		panic("runkit: bind address must not be empty")
+// It panics if addr is not a valid host:port address.
+func WithListenAddress(addr string) Option {
+	if !isHostPort(addr) {
+		panic("runkit: listen address must be a valid host:port address")
 	}
 	return func(e *Engine) {
-		e.bindAddr = addr
+		e.listenAddr = addr
 	}
 }
 
 // WithAdvertiseAddress returns an [Option] that sets the address the engine
-// advertises to peers, in "host:port" format.
+// advertises to other nodes, in "host:port" format.
 //
 // If unset, the advertise address is derived from the bind address and network
 // interface introspection at startup.
@@ -134,14 +135,20 @@ func WithBindAddress(addr string) Option {
 // If [FromEnvironment] is also used, this option takes precedence over
 // DOGMA_ADVERTISE_ADDRESS.
 //
-// It panics if addr is empty.
+// It panics if addr is not a valid host:port address.
 func WithAdvertiseAddress(addr string) Option {
-	if addr == "" {
-		panic("runkit: advertise address must not be empty")
+	if !isHostPort(addr) {
+		panic("runkit: advertise address must be a valid host:port address")
 	}
 	return func(e *Engine) {
 		e.advertiseAddr = addr
 	}
+}
+
+// isHostPort returns true if v is a valid host:port address.
+func isHostPort(v string) bool {
+	_, _, err := net.SplitHostPort(v)
+	return err == nil
 }
 
 // FromEnvironment returns an [Option] that configures the engine using
@@ -152,7 +159,7 @@ func WithAdvertiseAddress(addr string) Option {
 //   - DOGMA_SITE_NAME (see [WithSite])
 //   - DOGMA_SITE_KEY (see [WithSite])
 //   - DOGMA_NODE_ID (see [WithNodeID])
-//   - DOGMA_BIND_ADDRESS (see [WithBindAddress])
+//   - DOGMA_LISTEN_ADDRESS (see [WithListenAddress])
 //   - DOGMA_ADVERTISE_ADDRESS (see [WithAdvertiseAddress])
 //
 // Explicit options always take precedence over environment variables, regardless
@@ -168,6 +175,7 @@ func FromEnvironment() Option {
 				e.site = site
 			}
 		}
+
 		if e.nodeID == nil {
 			if v, ok := envNodeID.Value(); ok {
 				id, err := uuidpb.Parse(v)
@@ -177,11 +185,13 @@ func FromEnvironment() Option {
 				e.nodeID = id
 			}
 		}
-		if e.bindAddr == "" {
-			if addr, ok := envBindAddress.Value(); ok {
-				e.bindAddr = addr
+
+		if e.listenAddr == "" {
+			if addr, ok := envListenAddress.Value(); ok {
+				e.listenAddr = addr
 			}
 		}
+
 		if e.advertiseAddr == "" {
 			if addr, ok := envAdvertiseAddress.Value(); ok {
 				e.advertiseAddr = addr

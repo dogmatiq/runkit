@@ -8,73 +8,102 @@ import (
 	"strconv"
 )
 
-// listener manages the lifecycle of the network listener.
-//
-// The stub implementation holds a TCP port open without accepting connections.
-// The future gRPC implementation will replace it with no changes to the startup
-// sequence in Run().
-type listener interface {
-	// ListenAndServe binds to the configured address and begins serving.
-	// onReady is called with the resolved advertise address once the listener is
-	// bound. ListenAndServe then blocks until ctx is cancelled or a fatal error
-	// occurs.
-	ListenAndServe(ctx context.Context, onReady func(advertiseAddr string)) error
-}
+// defaultListenAddr is the default address the engine listens on if no listen
+// address is configured. It uses port 0 to let the OS choose an available port.
+const defaultListenAddr = ":0"
 
 // stubListener binds a TCP port but never accepts connections.
 type stubListener struct {
-	// bindAddr is the local address to bind (e.g. "0.0.0.0:7831").
-	bindAddr string
-	// advertiseAddr is the address to report to peers. If empty, it is derived
-	// from bindAddr and network interface introspection.
-	advertiseAddr string
+	// listenAddr is the local address to listen on (e.g. "0.0.0.0:7831").
+	listenAddr string
+	listener   net.Listener
 }
 
-func (s *stubListener) ListenAndServe(ctx context.Context, onReady func(string)) error {
-	ln, err := net.Listen("tcp", s.bindAddr)
+// Listen binds the configured address and returns the bound address.
+func (s *stubListener) Listen() (net.Addr, error) {
+	ln, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
-		return fmt.Errorf("binding listener: %w", err)
+		return nil, fmt.Errorf("binding listener: %w", err)
 	}
-	defer ln.Close()
+	s.listener = ln
+	return ln.Addr(), nil
+}
 
-	addr, err := resolveAdvertiseAddr(ln.Addr().(*net.TCPAddr), s.advertiseAddr)
-	if err != nil {
-		return err
-	}
-
-	onReady(addr)
-
+// Serve blocks until ctx is canceled, then closes the listener.
+func (s *stubListener) Serve(ctx context.Context) error {
+	defer s.listener.Close()
 	<-ctx.Done()
-	return nil
+	return ctx.Err()
 }
 
-// resolveAdvertiseAddr determines the address to advertise to peers.
+// resolveAdvertiseAddrs determines the addresses to advertise to peers.
 //
-// If configured is non-empty, it is used verbatim.
-// Otherwise, the host from bound is used. If bound's IP is unspecified
-// (0.0.0.0 or ::), the first non-loopback non-link-local IPv4 address found
-// on any network interface is used instead.
-func resolveAdvertiseAddr(bound *net.TCPAddr, configured string) (string, error) {
-	if configured != "" {
-		return configured, nil
+// If advertiseAddr is non-empty, it is used as the sole address. Otherwise,
+// listenAddr determines which address families to discover:
+//
+//   - host ""        - bound to all interfaces on both families (e.g. net.Listen("tcp", ":0"))
+//   - host "0.0.0.0" - bound to all IPv4 interfaces
+//   - host "::"      - bound to all IPv6 interfaces
+//   - other host     - bound to a specific IP; that IP is advertised directly
+func resolveAdvertiseAddrs(
+	bound net.Addr,
+	listenAddr, advertiseAddr string,
+) ([]string, error) {
+	if advertiseAddr != "" {
+		return []string{advertiseAddr}, nil
 	}
 
-	host := bound.IP.String()
+	tcp, ok := bound.(*net.TCPAddr)
+	if !ok {
+		return nil, fmt.Errorf("resolveAdvertiseAddrs: expected *net.TCPAddr, got %T", bound)
+	}
 
-	if bound.IP.IsUnspecified() {
-		found, err := firstRoutableIPv4()
-		if err != nil {
-			return "", err
+	port := strconv.Itoa(tcp.Port)
+
+	listenHost, _, _ := net.SplitHostPort(listenAddr)
+
+	// Normalize listenHost to its canonical form (e.g. "0" -> "0.0.0.0").
+	if ip := net.ParseIP(listenHost); ip != nil {
+		listenHost = ip.String()
+	}
+
+	switch listenHost {
+	case "": // both families
+		var addrs []string
+		if ipv4, err := firstRoutableAddr(false); err == nil {
+			addrs = append(addrs, net.JoinHostPort(ipv4, port))
 		}
-		host = found
-	}
+		if ipv6, err := firstRoutableAddr(true); err == nil {
+			addrs = append(addrs, net.JoinHostPort(ipv6, port))
+		}
+		if len(addrs) == 0 {
+			return nil, errors.New("no routable address found; set DOGMA_ADVERTISE_ADDRESS explicitly")
+		}
+		return addrs, nil
 
-	return net.JoinHostPort(host, strconv.Itoa(bound.Port)), nil
+	case "0.0.0.0": // IPv4 only
+		addr, err := firstRoutableAddr(false)
+		if err != nil {
+			return nil, err
+		}
+		return []string{net.JoinHostPort(addr, port)}, nil
+
+	case "::": // IPv6 only
+		addr, err := firstRoutableAddr(true)
+		if err != nil {
+			return nil, err
+		}
+		return []string{net.JoinHostPort(addr, port)}, nil
+
+	default: // explicit IP
+		return []string{net.JoinHostPort(listenHost, port)}, nil
+	}
 }
 
-// firstRoutableIPv4 returns the first non-loopback, non-link-local IPv4
-// address found on any network interface.
-func firstRoutableIPv4() (string, error) {
+// firstRoutableAddr returns the first non-loopback, non-link-local address of
+// the appropriate family found on any network interface. If ipv6 is true, it
+// looks for a global IPv6 address; otherwise it looks for an IPv4 address.
+func firstRoutableAddr(ipv6 bool) (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", fmt.Errorf("enumerating network interfaces: %w", err)
@@ -97,7 +126,12 @@ func firstRoutableIPv4() (string, error) {
 				ip = v.IP
 			}
 
-			if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+
+			isIPv4 := ip.To4() != nil
+			if ipv6 == isIPv4 {
 				continue
 			}
 
@@ -105,7 +139,12 @@ func firstRoutableIPv4() (string, error) {
 		}
 	}
 
-	return "", errors.New(
-		"no routable IPv4 address found; set DOGMA_ADVERTISE_ADDRESS explicitly",
+	family := "IPv4"
+	if ipv6 {
+		family = "IPv6"
+	}
+	return "", fmt.Errorf(
+		"no routable %s address found; set DOGMA_ADVERTISE_ADDRESS explicitly",
+		family,
 	)
 }

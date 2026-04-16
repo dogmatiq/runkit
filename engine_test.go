@@ -8,7 +8,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	. "github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/memdriver"
+	"github.com/dogmatiq/runkit/internal/persistence/driver/memory"
 )
 
 func TestExecutorFor(t *testing.T) {
@@ -66,78 +66,52 @@ func TestRun(t *testing.T) {
 		)
 		e.Run(t.Context())
 	})
-}
 
-func TestRun_starts_and_stops_cleanly(t *testing.T) {
-	app := &stubs.ApplicationStub{
-		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-			c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
-		},
-	}
-
-	e := New(
-		WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-		WithPersistence(&memdriver.Driver{}),
-		WithBindAddress("127.0.0.1:0"),
-		WithApplication(app),
-	)
-
-	ctx, cancel := context.WithCancel(t.Context())
-
-	done := make(chan error, 1)
-	go func() {
-		done <- e.Run(ctx)
-	}()
-
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run() returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not return after context cancellation")
-	}
-}
-
-func TestExecuteCommand(t *testing.T) {
-	app := &stubs.ApplicationStub{
-		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-			c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
-		},
-	}
-
-	t.Run("it blocks until Run() is called, then returns nil", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
+	t.Run("it panics if an advertise address is configured without a listen address", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic, got none")
+			}
+		}()
 
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistence(&memdriver.Driver{}),
-			WithBindAddress("127.0.0.1:0"),
-			WithApplication(app),
+			WithPersistence(memory.Driver),
+			WithAdvertiseAddress("10.0.0.1:7831"),
 		)
-		x := e.ExecutorFor(app)
+		e.Run(t.Context())
+	})
 
-		result := make(chan error, 1)
-		go func() {
-			result <- x.ExecuteCommand(ctx, stubs.CommandA1)
-		}()
-
-		select {
-		case err := <-result:
-			t.Fatalf("ExecuteCommand() returned before Run() was called: %v", err)
-		case <-time.After(10 * time.Millisecond):
+	t.Run("it starts and stops cleanly", func(t *testing.T) {
+		app := &stubs.ApplicationStub{
+			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+				c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
+			},
 		}
 
-		runDone := make(chan error, 1)
+		e := New(
+			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+			WithPersistence(memory.Driver),
+			WithListenAddress("127.0.0.1:0"),
+			WithApplication(app),
+		)
+
+		ctx, cancel := context.WithCancel(t.Context())
+
+		done := make(chan error, 1)
 		go func() {
-			runDone <- e.Run(ctx)
+			done <- e.Run(ctx)
 		}()
 
-		if err := <-result; err != nil {
-			t.Fatal(err)
+		cancel()
+
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Fatalf("Run() returned unexpected error: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run() did not return after context cancellation")
 		}
 
 		cancel()
