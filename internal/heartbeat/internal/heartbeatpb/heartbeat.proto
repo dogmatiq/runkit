@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package dogmatiq.runkit.heartbeat;
+package dogma.runkit.heartbeat;
 
 option go_package = "github.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb";
 

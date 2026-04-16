@@ -81,7 +81,7 @@ var File_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_hear
 
 const file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_rawDesc = "" +
 	"\n" +
-	"Rgithub.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb/heartbeat.proto\x12\x19dogmatiq.runkit.heartbeat\x1a\x1fgoogle/protobuf/timestamp.proto\"f\n" +
+	"Rgithub.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb/heartbeat.proto\x12\x16dogma.runkit.heartbeat\x1a\x1fgoogle/protobuf/timestamp.proto\"f\n" +
 	"\x0fHeartbeatRecord\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x129\n" +
 	"\n" +
@@ -101,11 +101,11 @@ func file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_hea
 
 var file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_goTypes = []any{
-	(*HeartbeatRecord)(nil),       // 0: dogmatiq.runkit.heartbeat.HeartbeatRecord
+	(*HeartbeatRecord)(nil),       // 0: dogma.runkit.heartbeat.HeartbeatRecord
 	(*timestamppb.Timestamp)(nil), // 1: google.protobuf.Timestamp
 }
 var file_github_com_dogmatiq_runkit_internal_heartbeat_internal_heartbeatpb_heartbeat_proto_depIdxs = []int32{
-	1, // 0: dogmatiq.runkit.heartbeat.HeartbeatRecord.expires_at:type_name -> google.protobuf.Timestamp
+	1, // 0: dogma.runkit.heartbeat.HeartbeatRecord.expires_at:type_name -> google.protobuf.Timestamp
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
