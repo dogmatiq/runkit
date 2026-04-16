@@ -66,19 +66,10 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	bindAddr := e.bindAddr
 	if bindAddr == "" {
-		if addr, ok := envBindAddress.Value(); ok {
-			bindAddr = addr
-		} else {
-			bindAddr = fmt.Sprintf("0.0.0.0:%d", defaultPort)
-		}
+		bindAddr = fmt.Sprintf("0.0.0.0:%d", defaultPort)
 	}
 
 	configuredAdvertiseAddr := e.advertiseAddr
-	if configuredAdvertiseAddr == "" {
-		if addr, ok := envAdvertiseAddress.Value(); ok {
-			configuredAdvertiseAddr = addr
-		}
-	}
 
 	kvStore, err := e.persistence.KVStore(ctx)
 	if err != nil {

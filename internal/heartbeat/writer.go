@@ -85,7 +85,7 @@ func (w *Writer) Run(ctx context.Context) error {
 		}
 
 		if kv.IsConflict(err) {
-			return fmt.Errorf("heartbeat: UUID collision detected for node %v — another node is using the same ID: %w", w.NodeID, err)
+			return fmt.Errorf("heartbeat: UUID collision detected for node %v - another node is using the same ID: %w", w.NodeID, err)
 		}
 
 		select {
