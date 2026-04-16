@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const keyspaceName = "heartbeats"
+
 // Writer writes heartbeat records to a KV store, periodically refreshing them
 // until the context is cancelled.
 type Writer struct {
@@ -53,16 +55,16 @@ func (w *Writer) Run(ctx context.Context) error {
 		marshaler.NewProto[*heartbeatpb.HeartbeatRecord, heartbeatpb.HeartbeatRecord](),
 	)
 
-	ks, err := store.Open(ctx, "heartbeats")
+	ks, err := store.Open(ctx, keyspaceName)
 	if err != nil {
 		return err
 	}
 	defer ks.Close()
 
-	newRecord := func() *heartbeatpb.HeartbeatRecord {
+	newRecord := func(now time.Time) *heartbeatpb.HeartbeatRecord {
 		return &heartbeatpb.HeartbeatRecord{
 			Address:   w.AdvertiseAddr,
-			ExpiresAt: timestamppb.New(time.Now().Add(interval + gracePeriod)),
+			ExpiresAt: timestamppb.New(now.Add(interval + gracePeriod)),
 		}
 	}
 
@@ -73,14 +75,17 @@ func (w *Writer) Run(ctx context.Context) error {
 	}
 
 	// Write the initial heartbeat record at revision 0 (key must not exist).
+	var expiry time.Time
 	for {
-		err := ks.Set(ctx, w.NodeID, newRecord(), 0)
+		now := time.Now()
+		err := ks.Set(ctx, w.NodeID, newRecord(now), 0)
 		if err == nil {
+			expiry = now.Add(interval + gracePeriod)
 			break
 		}
 
 		if kv.IsConflict(err) {
-			return fmt.Errorf("heartbeat: UUID collision detected, possible duplicate node ID: %w", err)
+			return fmt.Errorf("heartbeat: UUID collision detected for node %v — another node is using the same ID: %w", w.NodeID, err)
 		}
 
 		select {
@@ -90,7 +95,6 @@ func (w *Writer) Run(ctx context.Context) error {
 		}
 	}
 
-	expiry := time.Now().Add(interval + gracePeriod)
 	rev := uint64(1)
 
 	ticker := time.NewTicker(interval)
@@ -104,10 +108,11 @@ func (w *Writer) Run(ctx context.Context) error {
 
 		case <-ticker.C:
 			for {
-				err := ks.Set(ctx, w.NodeID, newRecord(), rev)
+				now := time.Now()
+				err := ks.Set(ctx, w.NodeID, newRecord(now), rev)
 				if err == nil {
 					rev++
-					expiry = time.Now().Add(interval + gracePeriod)
+					expiry = now.Add(interval + gracePeriod)
 					break
 				}
 

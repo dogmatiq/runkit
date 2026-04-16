@@ -45,19 +45,45 @@ func openTestKeyspace(
 	return ks
 }
 
+func waitForRecord(t *testing.T, ks kv.Keyspace[*uuidpb.UUID, *heartbeatpb.HeartbeatRecord], nodeID *uuidpb.UUID) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ok, err := ks.Has(context.Background(), nodeID)
+		if err != nil {
+			t.Fatalf("checking key existence: %v", err)
+		}
+		if ok {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for heartbeat record to be written")
+}
+
 func TestWriter_writes_initial_record(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	kvStore := &memorykv.BinaryStore{}
 	w := newTestWriter(t, kvStore)
+	ks := openTestKeyspace(t, ctx, kvStore)
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- w.Run(ctx)
 	}()
 
-	time.Sleep(5 * time.Millisecond)
+	waitForRecord(t, ks, w.NodeID)
+
+	record, _, err := ks.Get(ctx, w.NodeID)
+	if err != nil {
+		t.Fatalf("reading record: %v", err)
+	}
+	if record.Address != w.AdvertiseAddr {
+		t.Fatalf("expected Address %q, got %q", w.AdvertiseAddr, record.Address)
+	}
+
 	cancel()
 
 	if err := <-errCh; err != nil {
@@ -71,6 +97,7 @@ func TestWriter_refreshes_record(t *testing.T) {
 
 	kvStore := &memorykv.BinaryStore{}
 	w := newTestWriter(t, kvStore)
+	ks := openTestKeyspace(t, ctx, kvStore)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -79,6 +106,16 @@ func TestWriter_refreshes_record(t *testing.T) {
 
 	// Run for ~3 intervals to verify multiple refreshes succeed without OCC.
 	time.Sleep(3 * w.Interval)
+
+	// Verify the record still exists after multiple refresh intervals.
+	ok, err := ks.Has(ctx, w.NodeID)
+	if err != nil {
+		t.Fatalf("checking record existence: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected record to still exist after refreshes, but it was not found")
+	}
+
 	cancel()
 
 	if err := <-errCh; err != nil {
@@ -114,6 +151,7 @@ func TestWriter_graceful_shutdown_deletes_record(t *testing.T) {
 
 	kvStore := &memorykv.BinaryStore{}
 	w := newTestWriter(t, kvStore)
+	ks := openTestKeyspace(t, context.Background(), kvStore)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -121,7 +159,7 @@ func TestWriter_graceful_shutdown_deletes_record(t *testing.T) {
 	}()
 
 	// Wait for the initial record to be written, then cancel.
-	time.Sleep(5 * time.Millisecond)
+	waitForRecord(t, ks, w.NodeID)
 	cancel()
 
 	if err := <-errCh; err != nil {
@@ -129,7 +167,6 @@ func TestWriter_graceful_shutdown_deletes_record(t *testing.T) {
 	}
 
 	// Verify the record was deleted during graceful shutdown.
-	ks := openTestKeyspace(t, context.Background(), kvStore)
 	ok, err := ks.Has(context.Background(), w.NodeID)
 	if err != nil {
 		t.Fatal(err)
