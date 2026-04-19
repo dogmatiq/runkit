@@ -114,35 +114,36 @@ func (e *Engine) startListener(ctx context.Context) {
 		}
 		defer listener.Close()
 
+		g, ctx := errgroup.WithContext(ctx)
+
 		stop := context.AfterFunc(ctx, func() {
 			listener.Close()
 		})
 		defer stop()
 
-		e.startHeartbeatWriter(ctx, advertiseAddrs)
-
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return fmt.Errorf("unable to accept connection: %w", err)
+		g.Go(func() error {
+			w := &heartbeat.Writer{
+				NodeID:         e.nodeID,
+				KVStore:        e.kvStore,
+				AdvertiseAddrs: advertiseAddrs,
 			}
+			return w.Run(ctx)
+		})
 
-			conn.Close()
-		}
-	})
-}
+		g.Go(func() error {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					return fmt.Errorf("unable to accept connection: %w", err)
+				}
+				conn.Close()
+			}
+		})
 
-func (e *Engine) startHeartbeatWriter(ctx context.Context, advertiseAddrs []string) {
-	e.wg.Go(func() error {
-		w := &heartbeat.Writer{
-			NodeID:         e.nodeID,
-			KVStore:        e.kvStore,
-			AdvertiseAddrs: advertiseAddrs,
-		}
-		return w.Run(ctx)
+		return g.Wait()
 	})
 }
 
