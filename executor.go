@@ -28,3 +28,16 @@ func (ex *executor) ExecuteCommand(
 	}
 	return inner.ExecuteCommand(ctx, cmd, opts...)
 }
+
+// noopExecutor is a [dogma.CommandExecutor] that discards all commands. It is
+// stored in an [executor]'s future by the Phase 1 Run() stub and replaced with
+// real routing logic in Phase 10.
+type noopExecutor struct{}
+
+func (noopExecutor) ExecuteCommand(
+	context.Context,
+	dogma.Command,
+	...dogma.ExecuteCommandOption,
+) error {
+	return nil
+}

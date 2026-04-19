@@ -26,7 +26,7 @@ func NewHeartbeatRecordBuilder() *HeartbeatRecordBuilder {
 // It performs a shallow copy of x, such that any changes made via the builder
 // do not modify x. It does not make a copy of the field values themselves.
 func (b *HeartbeatRecordBuilder) From(x *HeartbeatRecord) *HeartbeatRecordBuilder {
-	b.prototype.Address = x.Address
+	b.prototype.Addresses = x.Addresses
 	b.prototype.ExpiresAt = x.ExpiresAt
 	return b
 }
@@ -37,15 +37,15 @@ func (b *HeartbeatRecordBuilder) From(x *HeartbeatRecord) *HeartbeatRecordBuilde
 // not modify previously constructed messages.
 func (b *HeartbeatRecordBuilder) Build() *HeartbeatRecord {
 	return &HeartbeatRecord{
-		Address:   b.prototype.Address,
+		Addresses: b.prototype.Addresses,
 		ExpiresAt: b.prototype.ExpiresAt,
 	}
 }
 
-// WithAddress configures the builder to set the Address field to v,
+// WithAddresses configures the builder to set the Addresses field to v,
 // then returns b.
-func (b *HeartbeatRecordBuilder) WithAddress(v string) *HeartbeatRecordBuilder {
-	b.prototype.Address = v
+func (b *HeartbeatRecordBuilder) WithAddresses(v []string) *HeartbeatRecordBuilder {
+	b.prototype.Addresses = v
 	return b
 }
 
@@ -72,9 +72,9 @@ func (x *HeartbeatRecord) UnmarshalBinary(data []byte) error {
 	return proto.Unmarshal(data, x)
 }
 
-// SetAddress sets the x.Address field to v, then returns x.
-func (x *HeartbeatRecord) SetAddress(v string) {
-	x.Address = v
+// SetAddresses sets the x.Addresses field to v, then returns x.
+func (x *HeartbeatRecord) SetAddresses(v []string) {
+	x.Addresses = v
 }
 
 // SetExpiresAt sets the x.ExpiresAt field to v, then returns x.

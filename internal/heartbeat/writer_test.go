@@ -2,7 +2,9 @@ package heartbeat_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -18,11 +20,9 @@ import (
 func newTestWriter(t *testing.T, kvStore kv.BinaryStore) *heartbeat.Writer {
 	t.Helper()
 	return &heartbeat.Writer{
-		NodeID:        uuidpb.Generate(),
-		KVStore:       kvStore,
-		AdvertiseAddr: "127.0.0.1:9000",
-		Interval:      20 * time.Millisecond,
-		GracePeriod:   40 * time.Millisecond,
+		NodeID:         uuidpb.Generate(),
+		KVStore:        kvStore,
+		AdvertiseAddrs: []string{"127.0.0.1:9000", "[::1]:9000"},
 	}
 }
 
@@ -35,7 +35,7 @@ func openTestKeyspace(
 	store := kv.NewMarshalingStore(
 		kvStore,
 		xpersistence.UUIDMarshaler,
-		marshaler.NewProto[*heartbeatpb.HeartbeatRecord, heartbeatpb.HeartbeatRecord](),
+		marshaler.NewProto[*heartbeatpb.HeartbeatRecord](),
 	)
 	ks, err := store.Open(ctx, "heartbeats")
 	if err != nil {
@@ -45,133 +45,146 @@ func openTestKeyspace(
 	return ks
 }
 
-func waitForRecord(t *testing.T, ks kv.Keyspace[*uuidpb.UUID, *heartbeatpb.HeartbeatRecord], nodeID *uuidpb.UUID) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		ok, err := ks.Has(context.Background(), nodeID)
-		if err != nil {
-			t.Fatalf("checking key existence: %v", err)
-		}
-		if ok {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("timed out waiting for heartbeat record to be written")
-}
+func TestWriter(t *testing.T) {
+	t.Run("it writes the initial heartbeat record", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-func TestWriter_writes_initial_record(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+			kvStore := &memorykv.BinaryStore{}
+			w := newTestWriter(t, kvStore)
+			ks := openTestKeyspace(t, ctx, kvStore)
 
-	kvStore := &memorykv.BinaryStore{}
-	w := newTestWriter(t, kvStore)
-	ks := openTestKeyspace(t, ctx, kvStore)
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- w.Run(ctx)
+			}()
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- w.Run(ctx)
-	}()
+			// Wait for the goroutine to block (record written, now waiting on ticker).
+			synctest.Wait()
 
-	waitForRecord(t, ks, w.NodeID)
+			record, _, err := ks.Get(ctx, w.NodeID)
+			if err != nil {
+				t.Fatalf("reading record: %v", err)
+			}
+			if len(record.Addresses) != len(w.AdvertiseAddrs) {
+				t.Fatalf("expected Addresses %v, got %v", w.AdvertiseAddrs, record.Addresses)
+			}
+			for i, want := range w.AdvertiseAddrs {
+				if record.Addresses[i] != want {
+					t.Fatalf("expected Addresses[%d] %q, got %q", i, want, record.Addresses[i])
+				}
+			}
 
-	record, _, err := ks.Get(ctx, w.NodeID)
-	if err != nil {
-		t.Fatalf("reading record: %v", err)
-	}
-	if record.Address != w.AdvertiseAddr {
-		t.Fatalf("expected Address %q, got %q", w.AdvertiseAddr, record.Address)
-	}
+			cancel()
+			synctest.Wait()
 
-	cancel()
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
+			}
+		})
+	})
 
-	if err := <-errCh; err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-}
+	t.Run("it refreshes the record on each interval", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-func TestWriter_refreshes_record(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+			kvStore := &memorykv.BinaryStore{}
+			w := newTestWriter(t, kvStore)
+			ks := openTestKeyspace(t, ctx, kvStore)
 
-	kvStore := &memorykv.BinaryStore{}
-	w := newTestWriter(t, kvStore)
-	ks := openTestKeyspace(t, ctx, kvStore)
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- w.Run(ctx)
+			}()
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- w.Run(ctx)
-	}()
+			// Advance through 3 intervals to verify multiple refreshes succeed without OCC.
+			for range 3 {
+				synctest.Wait()
+				time.Sleep(heartbeat.Interval)
+				synctest.Wait()
+			}
 
-	// Run for ~3 intervals to verify multiple refreshes succeed without OCC.
-	time.Sleep(3 * w.Interval)
+			// Verify the record still exists after multiple refresh intervals.
+			ok, err := ks.Has(ctx, w.NodeID)
+			if err != nil {
+				t.Fatalf("checking record existence: %v", err)
+			}
+			if !ok {
+				t.Fatal("expected record to still exist after refreshes, but it was not found")
+			}
 
-	// Verify the record still exists after multiple refresh intervals.
-	ok, err := ks.Has(ctx, w.NodeID)
-	if err != nil {
-		t.Fatalf("checking record existence: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected record to still exist after refreshes, but it was not found")
-	}
+			cancel()
+			synctest.Wait()
 
-	cancel()
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
+			}
+		})
+	})
 
-	if err := <-errCh; err != nil {
-		t.Fatalf("expected nil error after refreshes, got: %v", err)
-	}
-}
+	t.Run("it returns a fatal error when the initial write has an OCC conflict", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
 
-func TestWriter_returns_fatal_error_on_OCC_conflict(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+			kvStore := &memorykv.BinaryStore{}
+			w := newTestWriter(t, kvStore)
 
-	kvStore := &memorykv.BinaryStore{}
-	w := newTestWriter(t, kvStore)
+			// Pre-write the node's key so the writer's initial Set(ctx, k, v, 0) conflicts.
+			ks := openTestKeyspace(t, ctx, kvStore)
+			if err := ks.SetUnconditional(ctx, w.NodeID, &heartbeatpb.HeartbeatRecord{
+				Addresses: []string{"10.0.0.1:9000"},
+				ExpiresAt: timestamppb.New(time.Now().Add(time.Minute)),
+			}); err != nil {
+				t.Fatal(err)
+			}
 
-	// Pre-write the node's key so the writer's initial Set(ctx, k, v, 0) conflicts.
-	ks := openTestKeyspace(t, ctx, kvStore)
-	if err := ks.SetUnconditional(ctx, w.NodeID, &heartbeatpb.HeartbeatRecord{
-		Address:   "10.0.0.1:9000",
-		ExpiresAt: timestamppb.New(time.Now().Add(time.Minute)),
-	}); err != nil {
-		t.Fatal(err)
-	}
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- w.Run(ctx)
+			}()
 
-	err := w.Run(ctx)
-	if err == nil {
-		t.Fatal("expected non-nil error due to OCC conflict, got nil")
-	}
-}
+			synctest.Wait()
 
-func TestWriter_graceful_shutdown_deletes_record(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+			err := <-errCh
+			if err == nil {
+				t.Fatal("expected non-nil error due to OCC conflict, got nil")
+			}
+		})
+	})
 
-	kvStore := &memorykv.BinaryStore{}
-	w := newTestWriter(t, kvStore)
-	ks := openTestKeyspace(t, context.Background(), kvStore)
+	t.Run("it deletes the record on graceful shutdown", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- w.Run(ctx)
-	}()
+			kvStore := &memorykv.BinaryStore{}
+			w := newTestWriter(t, kvStore)
+			ks := openTestKeyspace(t, context.Background(), kvStore)
 
-	// Wait for the initial record to be written, then cancel.
-	waitForRecord(t, ks, w.NodeID)
-	cancel()
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- w.Run(ctx)
+			}()
 
-	if err := <-errCh; err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
+			// Wait for initial record to be written, then cancel.
+			synctest.Wait()
+			cancel()
+			synctest.Wait()
 
-	// Verify the record was deleted during graceful shutdown.
-	ok, err := ks.Has(context.Background(), w.NodeID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("expected record to be deleted after graceful shutdown, but it still exists")
-	}
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
+			}
+
+			ok, err := ks.Has(context.Background(), w.NodeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok {
+				t.Fatal("expected record to be deleted after graceful shutdown, but it still exists")
+			}
+		})
+	})
 }
