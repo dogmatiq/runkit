@@ -113,7 +113,17 @@ func Listen(listenAddr, advertiseAddr string) (lis net.Listener, advertiseAddrs 
 	}
 
 	if len(advertiseAddrs) == 0 {
-		return nil, nil, fmt.Errorf("unable to determine which IP address(es) to advertise: no global unicast addresses found")
+		switch addressFamily {
+		case "tcp4":
+			advertiseAddrs = []string{net.JoinHostPort("127.0.0.1", bindPort)}
+		case "tcp6":
+			advertiseAddrs = []string{net.JoinHostPort("::1", bindPort)}
+		default: // "tcp" dual-stack
+			advertiseAddrs = []string{
+				net.JoinHostPort("127.0.0.1", bindPort),
+				net.JoinHostPort("::1", bindPort),
+			}
+		}
 	}
 
 	return lis, advertiseAddrs, nil

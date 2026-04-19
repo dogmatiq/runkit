@@ -139,6 +139,10 @@ func TestListen(t *testing.T) {
 			defer lis.Close()
 
 			t.Run("it advertises the expected addresses", func(t *testing.T) {
+				if len(addrs) == 0 {
+					t.Fatal("Listen() succeeded but returned no advertise addresses")
+				}
+
 				var hosts []string
 				for _, addr := range addrs {
 					host, p, err := net.SplitHostPort(addr)
