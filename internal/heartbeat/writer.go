@@ -22,7 +22,7 @@ const (
 
 	// GracePeriod is added to the heartbeat interval to compute the
 	// record's expiry time.
-	GracePeriod = 3 * time.Second
+	GracePeriod = 10 * time.Second
 )
 
 // Writer periodically writes heartbeat records to a KV store.
