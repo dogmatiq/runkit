@@ -2,6 +2,7 @@ package heartbeat_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -78,8 +79,8 @@ func TestWriter(t *testing.T) {
 			cancel()
 			synctest.Wait()
 
-			if err := <-errCh; err != nil {
-				t.Fatalf("expected nil error, got: %v", err)
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
 			}
 		})
 	})
@@ -117,8 +118,8 @@ func TestWriter(t *testing.T) {
 			cancel()
 			synctest.Wait()
 
-			if err := <-errCh; err != nil {
-				t.Fatalf("expected nil error after refreshes, got: %v", err)
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
 			}
 		})
 	})
@@ -173,8 +174,8 @@ func TestWriter(t *testing.T) {
 			cancel()
 			synctest.Wait()
 
-			if err := <-errCh; err != nil {
-				t.Fatalf("expected nil error, got: %v", err)
+			if err := <-errCh; !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected context.Canceled, got: %v", err)
 			}
 
 			ok, err := ks.Has(context.Background(), w.NodeID)

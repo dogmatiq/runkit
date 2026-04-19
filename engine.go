@@ -1,8 +1,8 @@
 package runkit
 
 import (
-	"cmp"
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
@@ -10,12 +10,9 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/kv"
 	"github.com/dogmatiq/runkit/internal/heartbeat"
+	"github.com/dogmatiq/runkit/internal/network"
 	"golang.org/x/sync/errgroup"
 )
-
-// defaultPort is the default TCP port for the engine listener.
-// TODO: replace with an assigned IANA port before shipping.
-const defaultPort = 0
 
 // Engine runs one or more Dogma applications.
 type Engine struct {
@@ -67,10 +64,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.nodeID = uuidpb.Generate()
 	}
 
-	if e.persistence == nil {
-		panic("runkit: a persistence provider is required, use WithPersistence()")
-	}
-
 	if e.advertiseAddr != "" && e.listenAddr == "" {
 		panic("runkit: WithAdvertiseAddress requires WithListenAddress or DOGMA_LISTEN_ADDRESS")
 	}
@@ -115,24 +108,30 @@ func (e *Engine) ExecutorFor(app dogma.Application) dogma.CommandExecutor {
 
 func (e *Engine) startListener(ctx context.Context) {
 	e.wg.Go(func() error {
-		listenAddr := cmp.Or(e.listenAddr, defaultListenAddr)
-		lis := &stubListener{listenAddr: listenAddr}
-
-		addr, err := lis.Listen()
+		listener, advertiseAddrs, err := network.Listen(e.listenAddr, e.advertiseAddr)
 		if err != nil {
 			return err
 		}
+		defer listener.Close()
 
-		addrs, err := resolveAdvertiseAddrs(addr, listenAddr, e.advertiseAddr)
-		if err != nil {
-			return err
+		stop := context.AfterFunc(ctx, func() {
+			listener.Close()
+		})
+		defer stop()
+
+		e.startHeartbeatWriter(ctx, advertiseAddrs)
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return fmt.Errorf("unable to accept connection: %w", err)
+			}
+
+			conn.Close()
 		}
-
-		// Start the heartbeat writer now that we know which addresses to
-		// advertise. errgroup.Go is safe to call from within a running goroutine.
-		e.startHeartbeatWriter(ctx, addrs)
-
-		return lis.Serve(ctx)
 	})
 }
 

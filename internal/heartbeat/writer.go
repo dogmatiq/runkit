@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/persistencekit/kv"
 	"github.com/dogmatiq/persistencekit/marshaler"
 	"github.com/dogmatiq/runkit/internal/heartbeat/internal/heartbeatpb"
-	xpersistence "github.com/dogmatiq/runkit/internal/x/xpersistence"
+	"github.com/dogmatiq/runkit/internal/x/xpersistence"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -22,7 +22,7 @@ const (
 
 	// GracePeriod is added to the heartbeat interval to compute the
 	// record's expiry time.
-	GracePeriod = 10 * time.Second
+	GracePeriod = 3 * time.Second
 )
 
 // Writer periodically writes heartbeat records to a KV store.
@@ -56,19 +56,16 @@ func (w *Writer) Run(ctx context.Context) error {
 	// each successful write.
 	var rev uint64
 
-	ticker := time.NewTicker(Interval)
-	defer ticker.Stop()
-
 	for {
-		now := time.Now()
+		refreshAt := time.Now().Add(Interval)
+		expiresAt := refreshAt.Add(GracePeriod)
+
 		err := ks.Set(
 			ctx,
 			w.NodeID,
 			&heartbeatpb.HeartbeatRecord{
 				Addresses: w.AdvertiseAddrs,
-				ExpiresAt: timestamppb.New(
-					now.Add(Interval + GracePeriod),
-				),
+				ExpiresAt: timestamppb.New(expiresAt),
 			},
 			rev,
 		)
@@ -76,26 +73,25 @@ func (w *Writer) Run(ctx context.Context) error {
 		if err == nil {
 			rev++
 		} else if kv.IsConflict(err) {
-			return fmt.Errorf("heartbeat: OCC conflict on heartbeat refresh: %w", err)
-		} else if err == ctx.Err() {
-			return err
+			return fmt.Errorf("heartbeat: OCC conflict on heartbeat write for node %v: %w", w.NodeID, err)
 		} else {
 			// TODO: log
-			continue // retry immediately, we're trying to restart our heart!
 		}
 
 		select {
+		case <-time.After(time.Until(refreshAt)):
+			continue
 		case <-ctx.Done():
-			if rev == 0 {
-				// We never successfully wrote a record, so nothing to delete.
-				return ctx.Err()
+			if rev != 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if err := ks.Set(ctx, w.NodeID, nil, rev); err != nil {
+					return fmt.Errorf("heartbeat: failed to delete heartbeat record for node %v: %w", w.NodeID, err)
+				}
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			return ks.Set(ctx, w.NodeID, nil, rev)
-
-		case <-ticker.C:
+			return ctx.Err()
 		}
 	}
 }

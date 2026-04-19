@@ -113,10 +113,5 @@ func TestRun(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("Run() did not return after context cancellation")
 		}
-
-		cancel()
-		if err := <-runDone; err != nil {
-			t.Error(err)
-		}
 	})
 }
