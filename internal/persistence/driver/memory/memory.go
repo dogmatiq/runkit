@@ -25,8 +25,8 @@ type Provider struct {
 	set     memoryset.BinaryStore
 }
 
-// NewProvider returns a [Provider] configured from a memory:// URL. It panics if
-// u.Scheme is not "memory".
+// NewProvider returns a [Provider] configured from a memory:// URL. It returns
+// an error if u.Scheme is not "memory".
 func NewProvider(u *url.URL) (*Provider, error) {
 	if u.Scheme != "memory" {
 		return nil, fmt.Errorf("invalid memory URL: unexpected URL scheme %q", u.Scheme)

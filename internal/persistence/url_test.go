@@ -8,7 +8,7 @@ import (
 	. "github.com/dogmatiq/runkit/internal/persistence"
 )
 
-func TestProviderFromDSN(t *testing.T) {
+func TestProviderFromURL(t *testing.T) {
 	t.Run("memory://", func(t *testing.T) {
 		t.Run("when the silo name is missing", func(t *testing.T) {
 			t.Run("it returns an error", func(t *testing.T) {

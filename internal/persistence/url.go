@@ -3,7 +3,6 @@ package persistence
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/dogmatiq/runkit/internal/persistence/driver/dynamodb"
 	"github.com/dogmatiq/runkit/internal/persistence/driver/memory"
@@ -50,10 +49,6 @@ import (
 //
 //	memory:///<silo>
 func ProviderFromURL(rawURL string) (Provider, error) {
-	if !strings.Contains(rawURL, "//") {
-		return nil, fmt.Errorf("invalid persistence URL: missing expected [scheme]:// prefix")
-	}
-
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid persistence URL: %w", err)
@@ -69,6 +64,6 @@ func ProviderFromURL(rawURL string) (Provider, error) {
 	case "s3":
 		return s3.NewProvider(u)
 	default:
-		return nil, fmt.Errorf("unknown persistence URL scheme: %q", u.Scheme)
+		return nil, fmt.Errorf("unknown persistence driver: %q", u.Scheme)
 	}
 }

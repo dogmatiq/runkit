@@ -118,7 +118,7 @@ func TestWithPersistence(t *testing.T) {
 			}
 		}()
 
-		WithPersistence("memory:/silo")
+		WithPersistence("memory://%ZZ/silo")
 	})
 
 	t.Run("it panics if the URL scheme is unrecognized", func(t *testing.T) {

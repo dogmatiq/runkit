@@ -108,7 +108,7 @@ func WithApplication(app dogma.Application) Option {
 func WithPersistence(url string) Option {
 	p, err := persistence.ProviderFromURL(url)
 	if err != nil {
-		panic(fmt.Sprintf("runkit: invalid persistence URL: %s", err))
+		panic(fmt.Sprintf("runkit: %s", err))
 	}
 	return func(e *Engine) {
 		e.persistence = p
