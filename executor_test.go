@@ -8,7 +8,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	. "github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/persistence/driver/memory"
 )
 
 func TestCommandExecutor_ExecuteCommand(t *testing.T) {
@@ -24,7 +23,8 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistence(memory.Driver),
+			WithPersistenceProvider(newProvider(t)),
+
 			WithApplication(app),
 		)
 		x := e.ExecutorFor(app)

@@ -1,0 +1,60 @@
+package s3
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/dogmatiq/persistencekit/journal"
+	"github.com/dogmatiq/persistencekit/kv"
+	"github.com/dogmatiq/persistencekit/set"
+)
+
+var validParams = map[string]struct{}{
+	"region":   {},
+	"role_arn": {},
+	"insecure": {},
+}
+
+// NewProvider returns a [Provider] configured from an s3:// URL. It returns
+// an error if u.Scheme is not "s3".
+//
+// This driver is not yet implemented.
+func NewProvider(u *url.URL) (*Provider, error) {
+	if u.Scheme != "s3" {
+		return nil, fmt.Errorf("invalid s3 URL: unexpected URL scheme %q", u.Scheme)
+	}
+
+	bucket := strings.TrimPrefix(u.Path, "/")
+	if bucket == "" {
+		return nil, errors.New("invalid s3 URL: bucket name is required in the path (e.g. s3:///<bucket>)")
+	}
+
+	for k := range u.Query() {
+		if _, ok := validParams[k]; !ok {
+			return nil, fmt.Errorf("invalid s3 URL: unknown parameter %q", k)
+		}
+	}
+
+	return &Provider{}, nil
+}
+
+// Provider is a persistence.Provider backed by Amazon S3.
+type Provider struct{}
+
+// KVStore implements persistence.Provider.
+func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
+	return nil, errors.New("s3 kv store is not yet implemented in persistencekit")
+}
+
+// JournalStore implements persistence.Provider.
+func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
+	return nil, errors.New("s3 persistence driver is not yet implemented")
+}
+
+// SetStore implements persistence.Provider.
+func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
+	return nil, errors.New("s3 set store is not yet implemented in persistencekit")
+}

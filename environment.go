@@ -3,6 +3,7 @@ package runkit
 import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/ferrite"
+	"github.com/dogmatiq/runkit/internal/persistence"
 )
 
 // FerriteRegistry is the ferrite environment variable registry for the Runkit
@@ -45,8 +46,24 @@ var envAdvertiseAddress = ferrite.
 	WithExample("[2001:db8::1]:7831", "advertise a specific IPv6 address").
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
+var envPersistenceURL = ferrite.
+	String("DOGMA_PERSISTENCE_URL", "the URL of the persistence provider").
+	WithConstraint("must be a valid persistence URL", isPersistenceURL).
+	WithExample("memory:///silo", "in-process memory storage (testing only)").
+	WithExample("postgres://user:pass@host/dbname", "PostgreSQL storage").
+	WithExample("postgresql://user:pass@host/dbname", "PostgreSQL storage (alternate scheme)").
+	WithExample("dynamodb:///table-prefix", "DynamoDB storage").
+	WithExample("s3:///bucket", "S3 storage").
+	Optional(ferrite.WithRegistry(FerriteRegistry))
+
 // isUUID returns true if v is a valid UUID string.
 func isUUID(v string) bool {
 	_, err := uuidpb.Parse(v)
+	return err == nil
+}
+
+// isPersistenceURL returns true if v is a valid persistence URL.
+func isPersistenceURL(v string) bool {
+	_, err := persistence.ProviderFromURL(v)
 	return err == nil
 }

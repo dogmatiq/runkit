@@ -8,6 +8,7 @@ import (
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/persistence"
 )
 
 // Option is a function that configures an [Engine].
@@ -97,11 +98,32 @@ func WithApplication(app dogma.Application) Option {
 	}
 }
 
-// WithPersistence returns an [Option] that configures the persistence provider
-// for the engine.
+// WithPersistence returns an [Option] that configures the persistence
+// provider for the engine using a URL string.
 //
-// A persistence provider is required. [Engine.Run] panics if none is configured.
-func WithPersistence(p PersistenceProvider) Option {
+// If [FromEnvironment] is also used, this option takes precedence over the
+// value of the DOGMA_PERSISTENCE_URL environment variable.
+//
+// It panics if the URL is malformed or if the scheme is unrecognized.
+func WithPersistence(url string) Option {
+	p, err := persistence.ProviderFromURL(url)
+	if err != nil {
+		panic(fmt.Sprintf("runkit: invalid persistence URL: %s", err))
+	}
+	return func(e *Engine) {
+		e.persistence = p
+	}
+}
+
+// WithPersistenceProvider returns an [Option] that configures the persistence
+// provider for the engine.
+//
+// If [FromEnvironment] is also used, this option takes precedence over the
+// value of the DOGMA_PERSISTENCE_URL environment variable.
+//
+// A persistence provider is required. [Engine.Run] panics if none is
+// configured.
+func WithPersistenceProvider(p PersistenceProvider) Option {
 	if p == nil {
 		panic("runkit: persistence provider must not be nil")
 	}
@@ -159,11 +181,18 @@ func isHostPort(v string) bool {
 //   - DOGMA_SITE_NAME (see [WithSite])
 //   - DOGMA_SITE_KEY (see [WithSite])
 //   - DOGMA_NODE_ID (see [WithNodeID])
+//   - DOGMA_PERSISTENCE_URL (see [WithPersistence])
 //   - DOGMA_LISTEN_ADDRESS (see [WithListenAddress])
 //   - DOGMA_ADVERTISE_ADDRESS (see [WithAdvertiseAddress])
 //
-// Explicit options always take precedence over environment variables, regardless
-// of the order in which options are specified.
+// Explicit options always take precedence over environment variables,
+// regardless of the order in which options are specified.
+//
+// TODO: all of these environment variables should already be validated by
+// Ferrite. The panics in this function are a necessary defense, but they should
+// never be the way we expect to surface invalid environment variable values to
+// users. We should be able to rely on Ferrite to catch these issues at startup
+// and provide user-friendly error messages.
 func FromEnvironment() Option {
 	return func(e *Engine) {
 		if e.site == nil {
@@ -183,6 +212,16 @@ func FromEnvironment() Option {
 					panic(fmt.Sprintf("runkit: invalid DOGMA_NODE_ID: %s", err))
 				}
 				e.nodeID = id
+			}
+		}
+
+		if e.persistence == nil {
+			if rawURL, ok := envPersistenceURL.Value(); ok {
+				p, err := persistence.ProviderFromURL(rawURL)
+				if err != nil {
+					panic(fmt.Sprintf("runkit: invalid DOGMA_PERSISTENCE_URL: %s", err))
+				}
+				e.persistence = p
 			}
 		}
 

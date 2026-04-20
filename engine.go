@@ -68,7 +68,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		panic("runkit: WithAdvertiseAddress requires WithListenAddress or DOGMA_LISTEN_ADDRESS")
 	}
 
-	kvStore, err := e.persistence.NewKVStore(ctx)
+	kvStore, err := e.persistence.KVStore(ctx)
 	if err != nil {
 		return err
 	}
