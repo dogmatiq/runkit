@@ -63,7 +63,9 @@ func ProviderFromURL(rawURL string) (Provider, error) {
 		return dynamodb.NewProvider(u)
 	case "s3":
 		return s3.NewProvider(u)
+	case "":
+		return nil, fmt.Errorf("invalid persistence URL: missing scheme")
 	default:
-		return nil, fmt.Errorf("unknown persistence driver: %q", u.Scheme)
+		return nil, fmt.Errorf("invalid persistence URL: unknown driver (%q)", u.Scheme)
 	}
 }

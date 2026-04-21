@@ -205,9 +205,9 @@ func TestProviderFromURL(t *testing.T) {
 		})
 	})
 
-	t.Run("when the // authority component is missing", func(t *testing.T) {
+	t.Run("when the URL has no scheme", func(t *testing.T) {
 		t.Run("it returns an error", func(t *testing.T) {
-			_, err := ProviderFromURL("nodoubelslash")
+			_, err := ProviderFromURL("no-double-slash")
 			if err == nil {
 				t.Fatal("expected an error")
 			}

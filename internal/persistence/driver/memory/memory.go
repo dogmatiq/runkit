@@ -17,12 +17,18 @@ import (
 
 var registry sync.Map
 
-// Provider is a persistence.Provider backed by a silo of in-memory stores.
-// Providers with the same silo name share state.
-type Provider struct {
+// silo holds the actual in-memory stores shared by all [Provider] instances
+// with the same name.
+type silo struct {
 	kv      memorykv.BinaryStore
 	journal memoryjournal.BinaryStore
 	set     memoryset.BinaryStore
+}
+
+// Provider is a persistence.Provider backed by a named silo of in-memory
+// stores. Providers with the same silo name share state.
+type Provider struct {
+	silo string
 }
 
 // NewProvider returns a [Provider] configured from a memory:// URL. It returns
@@ -45,25 +51,26 @@ func NewProvider(u *url.URL) (*Provider, error) {
 		return nil, fmt.Errorf("invalid memory URL: silo name is required in the URL path: memory:///<silo>")
 	}
 
-	p, ok := registry.Load(silo)
-	if !ok {
-		p, _ = registry.LoadOrStore(silo, &Provider{})
-	}
-
-	return p.(*Provider), nil
+	return &Provider{silo: silo}, nil
 }
 
 // KVStore implements persistence.Provider.
 func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
-	return &p.kv, nil
+	return &p.getSilo().kv, nil
 }
 
 // JournalStore implements persistence.Provider.
 func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
-	return &p.journal, nil
+	return &p.getSilo().journal, nil
 }
 
 // SetStore implements persistence.Provider.
 func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
-	return &p.set, nil
+	return &p.getSilo().set, nil
+}
+
+// getSilo returns the silo for this provider, creating it if necessary.
+func (p *Provider) getSilo() *silo {
+	v, _ := registry.LoadOrStore(p.silo, &silo{})
+	return v.(*silo)
 }
