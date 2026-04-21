@@ -341,7 +341,7 @@ git commit -m "Implement ProviderFromDSN with memory driver support"
 - Create: `internal/persistence/driver/dynamodb/driver.go`
 - Create: `internal/persistence/driver/s3/driver.go`
 
-Each stub parses its DSN for structural validity and returns an unimplemented
+Each stub parses its URL for structural validity and returns an unimplemented
 error from each store method.
 
 - [ ] **Step 1: Create `internal/persistence/driver/postgres/driver.go`**
@@ -349,76 +349,53 @@ error from each store method.
 ```go
 package postgres
 
-import "errors"
-
-// ProviderFromDSN returns a Provider configured from a postgres:// or
-// postgresql:// DSN. The DSN is passed through verbatim to pgx.
-//
-// This driver is not yet implemented.
-func ProviderFromDSN(dsn string) (*Provider, error) {
-	return &Provider{dsn: dsn}, nil
-}
-
-// Provider is a persistence.Provider backed by PostgreSQL.
-type Provider struct {
-	dsn string
-}
-
-func (p *Provider) NewKVStore(_ interface{ Done() <-chan struct{} }) (interface{}, error) {
-	return nil, errors.New("postgres persistence driver is not yet implemented")
-}
-```
-
-Wait — the store method signatures must match `persistence.Provider` exactly.
-Since `Provider` structs are in separate packages that cannot import
-`internal/persistence`, they satisfy the interface implicitly. Use the correct
-signatures from persistencekit directly.
-
-Replace the stub above with:
-
-```go
-package postgres
-
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/persistencekit/kv"
 	"github.com/dogmatiq/persistencekit/set"
 )
 
-// ProviderFromDSN returns a Provider configured from a postgres:// or
-// postgresql:// DSN. The full DSN string is passed through verbatim to pgx
-// when the driver is fully implemented.
+// NewProvider returns a [Provider] configured from a postgres:// or
+// postgresql:// URL. It returns an error if u.Scheme is not "postgres" or
+// "postgresql".
 //
-// This driver is not yet implemented.
-func ProviderFromDSN(dsn string) (*Provider, error) {
-	return &Provider{dsn: dsn}, nil
+// The URL is passed through verbatim to pgx. This driver is not yet
+// implemented.
+func NewProvider(u *url.URL) (*Provider, error) {
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return nil, fmt.Errorf("invalid postgres URL: unexpected URL scheme %q", u.Scheme)
+	}
+
+	return &Provider{url: u.String()}, nil
 }
 
 // Provider is a persistence.Provider backed by PostgreSQL.
-type Provider struct{ dsn string }
+type Provider struct{ url string }
 
-// NewKVStore implements persistence.Provider.
-func (p *Provider) NewKVStore(context.Context) (kv.BinaryStore, error) {
+// KVStore implements persistence.Provider.
+func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
 	return nil, errors.New("postgres persistence driver is not yet implemented")
 }
 
-// NewJournalStore implements persistence.Provider.
-func (p *Provider) NewJournalStore(context.Context) (journal.BinaryStore, error) {
+// JournalStore implements persistence.Provider.
+func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
 	return nil, errors.New("postgres persistence driver is not yet implemented")
 }
 
-// NewSetStore implements persistence.Provider.
-func (p *Provider) NewSetStore(context.Context) (set.BinaryStore, error) {
+// SetStore implements persistence.Provider.
+func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
 	return nil, errors.New("postgres persistence driver is not yet implemented")
 }
 ```
 
 - [ ] **Step 2: Create `internal/persistence/driver/dynamodb/driver.go`**
 
-Parse the DSN strictly: reject unknown query parameters, require a non-empty
+Parse the URL strictly: reject unknown query parameters, require a non-empty
 path (base name), and accept `region`, `role_arn`, `insecure` as the only
 valid params.
 
@@ -443,18 +420,23 @@ var validParams = map[string]struct{}{
 	"insecure": {},
 }
 
-// ProviderFromDSN returns a Provider configured from a dynamodb:// DSN.
+// NewProvider returns a [Provider] configured from a dynamodb:// URL. It
+// returns an error if u.Scheme is not "dynamodb".
 //
 // This driver is not yet implemented.
-func ProviderFromDSN(u *url.URL) (*Provider, error) {
+func NewProvider(u *url.URL) (*Provider, error) {
+	if u.Scheme != "dynamodb" {
+		return nil, fmt.Errorf("invalid dynamodb URL: unexpected URL scheme %q", u.Scheme)
+	}
+
 	base := strings.TrimPrefix(u.Path, "/")
 	if base == "" {
-		return nil, errors.New("invalid dynamodb DSN: base name is required in the URL path (e.g. dynamodb:///myapp)")
+		return nil, errors.New("invalid dynamodb URL: base name is required in the path (e.g. dynamodb:///<base>)")
 	}
 
 	for k := range u.Query() {
 		if _, ok := validParams[k]; !ok {
-			return nil, fmt.Errorf("invalid dynamodb DSN: unknown parameter %q", k)
+			return nil, fmt.Errorf("invalid dynamodb URL: unknown parameter %q", k)
 		}
 	}
 
@@ -464,18 +446,18 @@ func ProviderFromDSN(u *url.URL) (*Provider, error) {
 // Provider is a persistence.Provider backed by Amazon DynamoDB.
 type Provider struct{}
 
-// NewKVStore implements persistence.Provider.
-func (p *Provider) NewKVStore(context.Context) (kv.BinaryStore, error) {
+// KVStore implements persistence.Provider.
+func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
 }
 
-// NewJournalStore implements persistence.Provider.
-func (p *Provider) NewJournalStore(context.Context) (journal.BinaryStore, error) {
+// JournalStore implements persistence.Provider.
+func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
 }
 
-// NewSetStore implements persistence.Provider.
-func (p *Provider) NewSetStore(context.Context) (set.BinaryStore, error) {
+// SetStore implements persistence.Provider.
+func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
 }
 ```
@@ -506,18 +488,23 @@ var validParams = map[string]struct{}{
 	"insecure": {},
 }
 
-// ProviderFromDSN returns a Provider configured from an s3:// DSN.
+// NewProvider returns a [Provider] configured from an s3:// URL. It returns
+// an error if u.Scheme is not "s3".
 //
-// This driver is not yet implemented for kv and set stores.
-func ProviderFromDSN(u *url.URL) (*Provider, error) {
+// This driver is not yet implemented.
+func NewProvider(u *url.URL) (*Provider, error) {
+	if u.Scheme != "s3" {
+		return nil, fmt.Errorf("invalid s3 URL: unexpected URL scheme %q", u.Scheme)
+	}
+
 	bucket := strings.TrimPrefix(u.Path, "/")
 	if bucket == "" {
-		return nil, errors.New("invalid s3 DSN: bucket name is required in the URL path (e.g. s3:///my-bucket)")
+		return nil, errors.New("invalid s3 URL: bucket name is required in the path (e.g. s3:///<bucket>)")
 	}
 
 	for k := range u.Query() {
 		if _, ok := validParams[k]; !ok {
-			return nil, fmt.Errorf("invalid s3 DSN: unknown parameter %q", k)
+			return nil, fmt.Errorf("invalid s3 URL: unknown parameter %q", k)
 		}
 	}
 
@@ -527,18 +514,18 @@ func ProviderFromDSN(u *url.URL) (*Provider, error) {
 // Provider is a persistence.Provider backed by Amazon S3.
 type Provider struct{}
 
-// NewKVStore implements persistence.Provider.
-func (p *Provider) NewKVStore(context.Context) (kv.BinaryStore, error) {
+// KVStore implements persistence.Provider.
+func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
 	return nil, errors.New("s3 kv store is not yet implemented in persistencekit")
 }
 
-// NewJournalStore implements persistence.Provider.
-func (p *Provider) NewJournalStore(context.Context) (journal.BinaryStore, error) {
+// JournalStore implements persistence.Provider.
+func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
 	return nil, errors.New("s3 persistence driver is not yet implemented")
 }
 
-// NewSetStore implements persistence.Provider.
-func (p *Provider) NewSetStore(context.Context) (set.BinaryStore, error) {
+// SetStore implements persistence.Provider.
+func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
 	return nil, errors.New("s3 set store is not yet implemented in persistencekit")
 }
 ```
@@ -562,22 +549,21 @@ git commit -m "Add stub drivers for postgres, dynamodb, and s3"
 
 ---
 
-## Task 5: Tests for `ProviderFromDSN`
+## Task 5: Tests for `ProviderFromURL`
 
 **Files:**
 
-- Create: `internal/persistence/dsn_test.go`
+- Create: `internal/persistence/url_test.go` (already exists; extend it)
 
-- [ ] **Step 1: Create `internal/persistence/dsn_test.go`**
+- [ ] **Step 1: Verify coverage in `internal/persistence/url_test.go`**
 
-Cover the following cases:
+All cases below are already covered; verify they pass:
 
-- `memory://` returns a valid provider
+- `memory://` (missing silo name) returns an error
 - `memory:///myname` returns a valid provider
 - `memory://myname` (non-empty host) returns an error
 - `memory://?foo=bar` (query params) returns an error
 - Two calls with `memory:///shared` return providers that share KV state
-- Two calls with `memory://` return providers that share the default KV state
 - `postgres://user:pass@host/db` returns a valid provider
 - `postgresql://user:pass@host/db` returns a valid provider
 - `dynamodb:///myapp` returns a valid provider
@@ -590,7 +576,7 @@ Cover the following cases:
 - `s3:///my-bucket?unknown=x` returns an error
 - `s3://` (missing bucket) returns an error
 - `unknown://foo` returns an error
-- `nodoubelslash` (missing `//`) returns an error
+- `nodoubelslash` (no scheme) returns an error
 
 - [ ] **Step 2: Run the tests**
 
@@ -603,6 +589,6 @@ Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```
-git add internal/persistence/dsn_test.go
-git commit -m "Add ProviderFromDSN tests"
+git add internal/persistence/url_test.go
+git commit -m "Add ProviderFromURL tests"
 ```

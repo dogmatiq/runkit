@@ -44,17 +44,22 @@ func NewProvider(u *url.URL) (*Provider, error) {
 // Provider is a persistence.Provider backed by Amazon DynamoDB.
 type Provider struct{}
 
-// KVStore implements persistence.Provider.
+// KVStore returns a key-value store backed by DynamoDB.
 func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
 }
 
-// JournalStore implements persistence.Provider.
+// JournalStore returns a journal store backed by DynamoDB.
 func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
 }
 
-// SetStore implements persistence.Provider.
+// SetStore returns a set store backed by DynamoDB.
 func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
 	return nil, errors.New("dynamodb persistence driver is not yet implemented")
+}
+
+// Close is a no-op.
+func (*Provider) Close() error {
+	return nil
 }

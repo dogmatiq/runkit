@@ -110,6 +110,7 @@ func WithPersistence(url string) Option {
 	if err != nil {
 		panic(fmt.Sprintf("runkit: %s", err))
 	}
+
 	return func(e *Engine) {
 		e.persistence = p
 	}
@@ -127,8 +128,9 @@ func WithPersistenceProvider(p PersistenceProvider) Option {
 	if p == nil {
 		panic("runkit: persistence provider must not be nil")
 	}
+
 	return func(e *Engine) {
-		e.persistence = p
+		e.persistence = persistence.NopCloser{Provider: p}
 	}
 }
 
@@ -143,6 +145,7 @@ func WithListenAddress(addr string) Option {
 	if !isHostPort(addr) {
 		panic("runkit: listen address must be a valid host:port address")
 	}
+
 	return func(e *Engine) {
 		e.listenAddr = addr
 	}
@@ -162,6 +165,7 @@ func WithAdvertiseAddress(addr string) Option {
 	if !isHostPort(addr) {
 		panic("runkit: advertise address must be a valid host:port address")
 	}
+
 	return func(e *Engine) {
 		e.advertiseAddr = addr
 	}

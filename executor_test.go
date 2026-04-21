@@ -2,6 +2,7 @@ package runkit_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 
 		cancel()
 
-		if err := <-runDone; err != context.Canceled {
+		if err := <-runDone; !errors.Is(err, context.Canceled) {
 			t.Errorf("Run() returned unexpected error: %v", err)
 		}
 	})

@@ -44,17 +44,22 @@ func NewProvider(u *url.URL) (*Provider, error) {
 // Provider is a persistence.Provider backed by Amazon S3.
 type Provider struct{}
 
-// KVStore implements persistence.Provider.
+// KVStore returns a key-value store backed by Amazon S3.
 func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
 	return nil, errors.New("s3 kv store is not yet implemented in persistencekit")
 }
 
-// JournalStore implements persistence.Provider.
+// JournalStore returns a journal store backed by Amazon S3.
 func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
 	return nil, errors.New("s3 persistence driver is not yet implemented")
 }
 
-// SetStore implements persistence.Provider.
+// SetStore returns a set store backed by Amazon S3.
 func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
 	return nil, errors.New("s3 set store is not yet implemented in persistencekit")
+}
+
+// Close is a no-op.
+func (*Provider) Close() error {
+	return nil
 }

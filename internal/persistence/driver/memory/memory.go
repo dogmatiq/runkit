@@ -54,23 +54,28 @@ func NewProvider(u *url.URL) (*Provider, error) {
 	return &Provider{silo: silo}, nil
 }
 
-// KVStore implements persistence.Provider.
+// KVStore returns the silo's in-memory key-value store.
 func (p *Provider) KVStore(context.Context) (kv.BinaryStore, error) {
-	return &p.getSilo().kv, nil
+	return &p.load().kv, nil
 }
 
-// JournalStore implements persistence.Provider.
+// JournalStore returns the silo's in-memory journal store.
 func (p *Provider) JournalStore(context.Context) (journal.BinaryStore, error) {
-	return &p.getSilo().journal, nil
+	return &p.load().journal, nil
 }
 
-// SetStore implements persistence.Provider.
+// SetStore returns the silo's in-memory set store.
 func (p *Provider) SetStore(context.Context) (set.BinaryStore, error) {
-	return &p.getSilo().set, nil
+	return &p.load().set, nil
 }
 
-// getSilo returns the silo for this provider, creating it if necessary.
-func (p *Provider) getSilo() *silo {
+// Close is a no-op.
+func (p *Provider) Close() error {
+	return nil
+}
+
+// load returns the silo for this provider, creating it if necessary.
+func (p *Provider) load() *silo {
 	v, _ := registry.LoadOrStore(p.silo, &silo{})
 	return v.(*silo)
 }

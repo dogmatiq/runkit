@@ -2,6 +2,7 @@ package runkit_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestRun(t *testing.T) {
 
 		select {
 		case err := <-done:
-			if err != context.Canceled {
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() returned unexpected error: %v", err)
 			}
 		case <-time.After(2 * time.Second):
