@@ -106,7 +106,7 @@ func WithApplication(app dogma.Application) Option {
 //
 // It panics if the URL is malformed or if the scheme is unrecognized.
 func WithPersistence(url string) Option {
-	p, err := persistence.ProviderFromURL(url)
+	p, err := persistence.NewProvider(url)
 	if err != nil {
 		panic(fmt.Sprintf("runkit: %s", err))
 	}
@@ -221,7 +221,7 @@ func FromEnvironment() Option {
 
 		if e.persistence == nil {
 			if rawURL, ok := envPersistenceURL.Value(); ok {
-				p, err := persistence.ProviderFromURL(rawURL)
+				p, err := persistence.NewProvider(rawURL)
 				if err != nil {
 					panic(fmt.Sprintf("runkit: invalid DOGMA_PERSISTENCE_URL: %s", err))
 				}

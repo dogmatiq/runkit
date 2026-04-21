@@ -64,6 +64,6 @@ func isUUID(v string) bool {
 
 // isPersistenceURL returns true if v is a valid persistence URL.
 func isPersistenceURL(v string) bool {
-	_, err := persistence.ProviderFromURL(v)
+	_, err := persistence.NewProvider(v)
 	return err == nil
 }

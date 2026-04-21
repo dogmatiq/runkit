@@ -10,13 +10,8 @@ import (
 	"github.com/dogmatiq/persistencekit/journal"
 	"github.com/dogmatiq/persistencekit/kv"
 	"github.com/dogmatiq/persistencekit/set"
+	"github.com/dogmatiq/runkit/internal/persistence/driver/internal/xaws"
 )
-
-var validParams = map[string]struct{}{
-	"region":   {},
-	"role_arn": {},
-	"insecure": {},
-}
 
 // NewProvider returns a [Provider] configured from an s3:// URL. It returns
 // an error if u.Scheme is not "s3".
@@ -32,10 +27,8 @@ func NewProvider(u *url.URL) (*Provider, error) {
 		return nil, errors.New("invalid s3 URL: bucket name is required in the path (e.g. s3:///<bucket>)")
 	}
 
-	for k := range u.Query() {
-		if _, ok := validParams[k]; !ok {
-			return nil, fmt.Errorf("invalid s3 URL: unknown parameter %q", k)
-		}
+	if _, err := xaws.ParseParams("s3", u); err != nil {
+		return nil, err
 	}
 
 	return &Provider{}, nil
