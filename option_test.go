@@ -111,6 +111,10 @@ func TestWithNodeID(t *testing.T) {
 }
 
 func TestWithPersistence(t *testing.T) {
+	t.Run("it returns an option that sets the persistence provider", func(t *testing.T) {
+		_ = New(WithPersistence("memory:///test-silo"))
+	})
+
 	t.Run("it panics if the URL is malformed", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
@@ -133,6 +137,10 @@ func TestWithPersistence(t *testing.T) {
 }
 
 func TestWithPersistenceProvider(t *testing.T) {
+	t.Run("it returns an option that sets the persistence provider", func(t *testing.T) {
+		_ = New(WithPersistenceProvider(newProvider(t)))
+	})
+
 	t.Run("it panics if the provider is nil", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
