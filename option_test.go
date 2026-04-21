@@ -19,6 +19,10 @@ func TestFromEnvironment(t *testing.T) {
 	t.Setenv("DOGMA_LISTEN_ADDRESS", "0.0.0.0:8000")
 	t.Setenv("DOGMA_ADVERTISE_ADDRESS", "10.0.0.1:8000")
 
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(FromEnvironment())
+	})
+
 	t.Run("it sets the site identity from the environment", func(t *testing.T) {
 		t.Skip("TODO: no public API to introspect engine configuration")
 	})
@@ -77,6 +81,10 @@ func newProvider(t *testing.T) PersistenceProvider {
 }
 
 func TestWithSite(t *testing.T) {
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithSite("my-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"))
+	})
+
 	t.Run("it panics if the name is empty", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
@@ -99,6 +107,10 @@ func TestWithSite(t *testing.T) {
 }
 
 func TestWithNodeID(t *testing.T) {
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithNodeID("b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"))
+	})
+
 	t.Run("it panics if the ID is not a valid UUID", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
@@ -111,8 +123,8 @@ func TestWithNodeID(t *testing.T) {
 }
 
 func TestWithPersistence(t *testing.T) {
-	t.Run("it returns an option that sets the persistence provider", func(t *testing.T) {
-		_ = New(WithPersistence("memory:///test-silo"))
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithPersistence("memory:///test-silo"))
 	})
 
 	t.Run("it panics if the URL is malformed", func(t *testing.T) {
@@ -137,8 +149,8 @@ func TestWithPersistence(t *testing.T) {
 }
 
 func TestWithPersistenceProvider(t *testing.T) {
-	t.Run("it returns an option that sets the persistence provider", func(t *testing.T) {
-		_ = New(WithPersistenceProvider(newProvider(t)))
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithPersistenceProvider(newProvider(t)))
 	})
 
 	t.Run("it panics if the provider is nil", func(t *testing.T) {
@@ -153,6 +165,15 @@ func TestWithPersistenceProvider(t *testing.T) {
 }
 
 func TestWithApplication(t *testing.T) {
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		app := &stubs.ApplicationStub{
+			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+				c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
+			},
+		}
+		New(WithApplication(app))
+	})
+
 	t.Run("it panics if the application is nil", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
@@ -190,8 +211,8 @@ func TestWithApplication(t *testing.T) {
 }
 
 func TestWithListenAddress(t *testing.T) {
-	t.Run("it sets the listen address", func(t *testing.T) {
-		t.Skip("TODO: no public API to introspect engine configuration")
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithListenAddress("0.0.0.0:8000"))
 	})
 
 	t.Run("it panics if the address is empty", func(t *testing.T) {
@@ -206,8 +227,8 @@ func TestWithListenAddress(t *testing.T) {
 }
 
 func TestWithAdvertiseAddress(t *testing.T) {
-	t.Run("it sets the advertise address", func(t *testing.T) {
-		t.Skip("TODO: no public API to introspect engine configuration")
+	t.Run("it does not cause New() to panic", func(t *testing.T) {
+		New(WithAdvertiseAddress("10.0.0.1:8000"))
 	})
 
 	t.Run("it panics if the address is empty", func(t *testing.T) {
