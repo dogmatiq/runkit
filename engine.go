@@ -2,6 +2,7 @@ package runkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
@@ -47,7 +48,7 @@ func New(opts ...Option) *Engine {
 // occurs.
 //
 // It panics if called more than once on the same engine.
-func (e *Engine) Run(ctx context.Context) error {
+func (e *Engine) Run(ctx context.Context) (err error) {
 	if !e.running.CompareAndSwap(false, true) {
 		panic("runkit: Run() has already been called")
 	}
@@ -68,7 +69,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		panic("runkit: WithAdvertiseAddress requires WithListenAddress or DOGMA_LISTEN_ADDRESS")
 	}
 
-	kvStore, err := e.persistence.NewKVStore(ctx)
+	defer func() {
+		err = errors.Join(err, e.persistence.Close())
+	}()
+
+	kvStore, err := e.persistence.KVStore(ctx)
 	if err != nil {
 		return err
 	}

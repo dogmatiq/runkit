@@ -2,13 +2,13 @@ package runkit_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	. "github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/persistence/driver/memory"
 )
 
 func TestExecutorFor(t *testing.T) {
@@ -76,7 +76,7 @@ func TestRun(t *testing.T) {
 
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistence(memory.Driver),
+			WithPersistenceProvider(newProvider(t)),
 			WithAdvertiseAddress("10.0.0.1:7831"),
 		)
 		e.Run(t.Context())
@@ -91,7 +91,7 @@ func TestRun(t *testing.T) {
 
 		e := New(
 			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistence(memory.Driver),
+			WithPersistenceProvider(newProvider(t)),
 			WithListenAddress("127.0.0.1:0"),
 			WithApplication(app),
 		)
@@ -107,7 +107,7 @@ func TestRun(t *testing.T) {
 
 		select {
 		case err := <-done:
-			if err != context.Canceled {
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() returned unexpected error: %v", err)
 			}
 		case <-time.After(2 * time.Second):
