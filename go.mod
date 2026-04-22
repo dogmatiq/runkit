@@ -13,7 +13,7 @@ require (
 	github.com/dogmatiq/persistencekit v0.14.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/testcontainers/testcontainers-go/modules/dynamodb v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/zeebo/xxh3 v1.1.0
 	golang.org/x/sync v0.20.0
 	google.golang.org/protobuf v1.36.11
@@ -94,7 +94,7 @@ require (
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect
