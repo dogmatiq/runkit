@@ -98,11 +98,11 @@ func (s *FailableBinaryStore) init() {
 		return s.fail(BeforeOpen)
 	})
 
-	s.in.BeforeSet(func(string, []byte, []byte, *uint64) error {
+	s.in.BeforeSet(func(string, []byte, []byte, *kv.Revision) error {
 		return s.fail(BeforeSet)
 	})
 
-	s.in.AfterSet(func(string, []byte, []byte, *uint64) error {
+	s.in.AfterSet(func(string, []byte, []byte, *kv.Revision) error {
 		return s.fail(AfterSet)
 	})
 }

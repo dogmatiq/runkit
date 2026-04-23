@@ -54,13 +54,13 @@ func (w *Writer) Run(ctx context.Context) error {
 
 	// rev is the revision of the current heartbeat record. It is updated after
 	// each successful write.
-	var rev uint64
+	var rev kv.Revision
 
 	for {
 		refreshAt := time.Now().Add(Interval)
 		expiresAt := refreshAt.Add(GracePeriod)
 
-		err := ks.Set(
+		next, err := ks.Set(
 			ctx,
 			w.NodeID,
 			&heartbeatpb.HeartbeatRecord{
@@ -71,7 +71,7 @@ func (w *Writer) Run(ctx context.Context) error {
 		)
 
 		if err == nil {
-			rev++
+			rev = next
 		} else if kv.IsConflict(err) {
 			return fmt.Errorf("heartbeat: OCC conflict on heartbeat write for node %v: %w", w.NodeID, err)
 		} else {
@@ -82,11 +82,11 @@ func (w *Writer) Run(ctx context.Context) error {
 		case <-time.After(time.Until(refreshAt)):
 			continue
 		case <-ctx.Done():
-			if rev != 0 {
+			if rev != "" {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
-				if err := ks.Set(ctx, w.NodeID, nil, rev); err != nil {
+				if _, err := ks.Set(ctx, w.NodeID, nil, rev); err != nil {
 					return fmt.Errorf("heartbeat: failed to delete heartbeat record for node %v: %w", w.NodeID, err)
 				}
 			}

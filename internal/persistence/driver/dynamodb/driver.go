@@ -37,8 +37,8 @@ import (
 //     sts:AssumeRole permission on the target role. If omitted, the base
 //     credentials are used directly.
 //
-//   - insecure: set to "true" to use plain HTTP instead of HTTPS when
-//     connecting to a custom endpoint. Has no effect when no host is specified
+//   - insecure: when present, use plain HTTP instead of HTTPS when connecting
+//     to a custom endpoint. It is an error to use this parameter without a host
 //     in the URL. Intended for use with local emulators such as DynamoDB Local.
 func NewProvider(u *url.URL) (*Provider, error) {
 	if u.Scheme != "dynamodb" {
@@ -50,21 +50,21 @@ func NewProvider(u *url.URL) (*Provider, error) {
 		return nil, errors.New("invalid dynamodb URL: table prefix is required in the path (e.g. dynamodb:///<table-prefix>)")
 	}
 
-	params, err := xaws.ParseParams("dynamodb", u)
+	loadConfig, err := xaws.ParseConfig(u)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Provider{
 		tablePrefix: tablePrefix,
-		params:      params,
+		loadConfig:  loadConfig,
 	}, nil
 }
 
 // Provider is a persistence.Provider backed by Amazon DynamoDB.
 type Provider struct {
 	tablePrefix string
-	params      xaws.Params
+	loadConfig  xaws.ConfigLoader
 
 	m      sync.Mutex
 	client *dynamodb.Client
@@ -110,7 +110,7 @@ func (p *Provider) open(ctx context.Context) (*dynamodb.Client, error) {
 		return p.client, nil
 	}
 
-	cfg, err := xaws.LoadConfig(ctx, p.params)
+	cfg, err := p.loadConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
