@@ -77,7 +77,7 @@ func TestNewProvider(t *testing.T) {
 
 			key := []byte("key")
 			want := []byte("value")
-			if err := ks1.Set(t.Context(), key, want, 0); err != nil {
+			if _, err := ks1.Set(t.Context(), key, want, ""); err != nil {
 				t.Fatal(err)
 			}
 
