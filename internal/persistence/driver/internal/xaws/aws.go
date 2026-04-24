@@ -36,12 +36,13 @@ func ParseConfig(u *url.URL) (ConfigLoader, error) {
 		}
 	}
 
-	for k := range u.Query() {
+	q := u.Query()
+	for k := range q {
 		switch k {
 		case "region":
-			region = u.Query().Get("region")
+			region = q.Get("region")
 		case "role_arn":
-			roleARN = u.Query().Get("role_arn")
+			roleARN = q.Get("role_arn")
 		case "insecure":
 			if endpoint == nil {
 				return nil, fmt.Errorf("invalid %s URL: insecure has no effect without a host", u.Scheme)

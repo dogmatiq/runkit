@@ -49,6 +49,9 @@ func NewProvider(u *url.URL) (*Provider, error) {
 	if bucket == "" {
 		return nil, errors.New("invalid s3 URL: bucket name is required in the path (e.g. s3:///<bucket>)")
 	}
+	if strings.Contains(bucket, "/") {
+		return nil, errors.New("invalid s3 URL: bucket name must not contain '/' (e.g. s3:///<bucket>)")
+	}
 
 	loadConfig, err := xaws.ParseConfig(u)
 	if err != nil {
