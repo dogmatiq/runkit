@@ -79,13 +79,13 @@ func WithApplication(app dogma.Application) Option {
 	}
 
 	id := runtimeconfig.FromApplication(app).Identity()
-	key := id.Key.AsString()
+	key := id.GetKey().AsString()
 
 	return func(e *Engine) {
 		if _, exists := e.appsByKey[key]; exists {
 			panic(fmt.Sprintf(
 				"runkit: application is already registered: %s (%s)",
-				id.Name,
+				id.GetName(),
 				key,
 			))
 		}

@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
-	github.com/dogmatiq/enginekit v0.22.0
+	github.com/dogmatiq/enginekit v0.23.1
 	github.com/dogmatiq/ferrite v1.6.1
 	github.com/dogmatiq/persistencekit v0.16.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -52,6 +52,7 @@ require (
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dogmatiq/iago v0.4.0 // indirect
+	github.com/dogmatiq/primo v0.4.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -95,12 +96,12 @@ require (
 )
 
 require (
-	github.com/dogmatiq/dogma v0.20.0
+	github.com/dogmatiq/dogma v0.21.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/go-cmp v0.7.0
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect

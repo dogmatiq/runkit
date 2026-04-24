@@ -72,6 +72,8 @@ github.com/cpuguy83/dockercfg v0.3.2 h1:DlJTyZGBDlXqUZ2Dk2Q3xHs/FtnooJJVaad2S9GK
 github.com/cpuguy83/dockercfg v0.3.2/go.mod h1:sugsbF4//dDlL/i+S+rtpIWp+5h0BHJHfjj5/jFyUJc=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
+github.com/dave/jennifer v1.7.1 h1:B4jJJDHelWcDhlRQxWeo0Npa/pYKBLrirAQoTN45txo=
+github.com/dave/jennifer v1.7.1/go.mod h1:nXbxhEmQfOZhWml3D1cDK5M1FLnMSozpbFN/m3RmGZc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -85,10 +87,14 @@ github.com/dogmatiq/dapper v0.6.0 h1:hnWUsjnt3nUiC9hmkPvuxrnMd7fYNz1i+/GS3gOx0Xs
 github.com/dogmatiq/dapper v0.6.0/go.mod h1:ubRHWzt73s0MsPpGhWvnfW/Z/1YPnrkCsQv6CUOZVEw=
 github.com/dogmatiq/dogma v0.20.0 h1:duP8aMH6uwCOEmgMpG5SAY5iNoq/GcEoinFGkA9FIzE=
 github.com/dogmatiq/dogma v0.20.0/go.mod h1:BNKrZq9wm3jRu35XUWQXkMRhq4EzYK+rOVbGjrbCVyI=
+github.com/dogmatiq/dogma v0.21.0 h1:WFzQjCFjNgDu79wGdwOpPA9rnpEJ7LmEKm9XNgQTKtI=
+github.com/dogmatiq/dogma v0.21.0/go.mod h1:BNKrZq9wm3jRu35XUWQXkMRhq4EzYK+rOVbGjrbCVyI=
 github.com/dogmatiq/dyad v1.0.0 h1:T50WQ9rAzCMcT941wVH5RW5+tAGRssuVlNog+ZMQR54=
 github.com/dogmatiq/dyad v1.0.0/go.mod h1:PrUQr7OCSEUjAkhi7ad8BjxFPKe0I9yP2f1kGimPcJE=
 github.com/dogmatiq/enginekit v0.22.0 h1:e1nmp6dlacR8GmhnK1iWvWaUh7iKrz4ZkJU2mk6Z/gI=
 github.com/dogmatiq/enginekit v0.22.0/go.mod h1:8+IFrqVY9u52QCG2HPj9JS/vyFLw90mMp+7lx8Khuyg=
+github.com/dogmatiq/enginekit v0.23.1 h1:LN3CZcZu/B6eBL0BclJ9fu8MRf8piYYJBITgpYFRFd4=
+github.com/dogmatiq/enginekit v0.23.1/go.mod h1:ppOGb2ZjVg6jUTJc5XBHRmSgHCk/sULFEHXl/C9Z7iI=
 github.com/dogmatiq/ferrite v1.6.1 h1:FZH7LNP3r7dLRKO108yujn4+hv7JQDMRxYC+OoVFBuU=
 github.com/dogmatiq/ferrite v1.6.1/go.mod h1:rSElAivm0Pcef+IjZBmP3yPKeVVsQEIHIeqBt8qzNr0=
 github.com/dogmatiq/iago v0.4.0 h1:57nZqVT34IZxtCZEW/RFif7DNUEjMXgevfr/Mmd0N8I=
@@ -97,8 +103,8 @@ github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
 github.com/dogmatiq/persistencekit v0.16.0 h1:wFw+Hpg+yWo4AQ21npEHlq1iKUhYGkkZ059OdDBwa0c=
 github.com/dogmatiq/persistencekit v0.16.0/go.mod h1:edpWGEHAqvdbSbZldV0WBHDcFyh6PV1QgHMD7UT5Q68=
-github.com/dogmatiq/primo v0.3.2 h1:aXozRZarqNE6XUo15pzfpR8SQGp1CDrDNTuy9OKsYy0=
-github.com/dogmatiq/primo v0.3.2/go.mod h1:KxVdMIF/PdkZzN0Toz2XNCSnP93EcoLarKhS52HqxvQ=
+github.com/dogmatiq/primo v0.4.0 h1:UcjQouSDNskd5MtB0teMCbcqpxMEtlIxZN4tpie2V24=
+github.com/dogmatiq/primo v0.4.0/go.mod h1:0nluSgXdgPy+j17H/xlmngE8MOe47bLdpjaIG0sKFho=
 github.com/dogmatiq/spruce v0.2.3 h1:sm5WLRYTtrNiIePLDXeElChI+/cXK3w4Wy1qL+quBQ0=
 github.com/dogmatiq/spruce v0.2.3/go.mod h1:za5ZdNvh+FRWg4B3DCn8jfNB2LVR/9Dk3fkuHVDJLrk=
 github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/ISU=
