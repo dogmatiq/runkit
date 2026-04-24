@@ -52,7 +52,6 @@ require (
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dogmatiq/iago v0.4.0 // indirect
-	github.com/dogmatiq/primo v0.4.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -96,7 +95,7 @@ require (
 )
 
 require (
-	github.com/dogmatiq/dogma v0.21.0
+	github.com/dogmatiq/dogma v0.22.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
