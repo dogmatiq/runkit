@@ -2,8 +2,10 @@ package runkit
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 )
 
@@ -29,15 +31,31 @@ func (ex *executor) ExecuteCommand(
 	return inner.ExecuteCommand(ctx, cmd, opts...)
 }
 
-// noopExecutor is a [dogma.CommandExecutor] that discards all commands. It is
-// stored in an [executor]'s future by the Phase 1 Run() stub and replaced with
-// real routing logic in Phase 10.
-type noopExecutor struct{}
+// commandSink handles a command that has been packed into an envelope.
+type commandSink interface {
+	ExecuteCommand(ctx context.Context, env *envelopepb.Envelope) error
+}
 
-func (noopExecutor) ExecuteCommand(
-	context.Context,
-	dogma.Command,
-	...dogma.ExecuteCommandOption,
+// commandExecutor is a [dogma.CommandExecutor] that packs commands into
+// envelopes and dispatches them to the appropriate [commandSink] based on the
+// command's type.
+type commandExecutor struct {
+	packer *envelopepb.Packer
+	routes map[string]commandSink
+}
+
+// ExecuteCommand implements [dogma.CommandExecutor].
+func (c *commandExecutor) ExecuteCommand(
+	ctx context.Context,
+	cmd dogma.Command,
+	_ ...dogma.ExecuteCommandOption,
 ) error {
-	return nil
+	env := c.packer.PackCommand(cmd)
+
+	sink, ok := c.routes[env.GetBody().GetMessage().GetTypeId().AsString()]
+	if !ok {
+		panic(fmt.Sprintf("runkit: no handler registered for %T commands", cmd))
+	}
+
+	return sink.ExecuteCommand(ctx, env)
 }

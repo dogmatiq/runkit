@@ -18,7 +18,7 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 		},
 	}
 
-	t.Run("it blocks until Run() is called, then returns nil", func(t *testing.T) {
+	t.Run("it blocks until Run() is called, then panics for unrouted commands", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -30,14 +30,19 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 		)
 		x := e.ExecutorFor(app)
 
-		result := make(chan error, 1)
+		panicked := make(chan struct{})
 		go func() {
-			result <- x.ExecuteCommand(ctx, stubs.CommandA1)
+			defer func() {
+				if recover() != nil {
+					close(panicked)
+				}
+			}()
+			x.ExecuteCommand(ctx, stubs.CommandA1) //nolint:errcheck
 		}()
 
 		select {
-		case err := <-result:
-			t.Fatalf("ExecuteCommand() returned before Run() was called: %v", err)
+		case <-panicked:
+			t.Fatal("ExecuteCommand() panicked before Run() was called")
 		case <-time.After(10 * time.Millisecond):
 		}
 
@@ -46,8 +51,11 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 			runDone <- e.Run(ctx)
 		}()
 
-		if err := <-result; err != nil {
-			t.Fatal(err)
+		select {
+		case <-panicked:
+			// expected
+		case <-time.After(time.Second):
+			t.Fatal("ExecuteCommand() did not panic after Run() was called")
 		}
 
 		cancel()

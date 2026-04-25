@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit/kv"
@@ -22,8 +24,7 @@ type Engine struct {
 	listenAddr    string
 	advertiseAddr string
 	persistence   PersistenceProvider
-	apps          []dogma.Application // TODO(agent): pick one of slice or map, the set is likely to contain one or 2 elements
-	appsByKey     map[string]struct{}
+	apps          map[string]struct{}
 	executors     map[dogma.Application]*executor
 	running       atomic.Bool
 	kvStore       kv.BinaryStore
@@ -33,7 +34,7 @@ type Engine struct {
 // New returns an [Engine] configured by the given options.
 func New(opts ...Option) *Engine {
 	e := &Engine{
-		appsByKey: map[string]struct{}{},
+		apps:      map[string]struct{}{},
 		executors: map[dogma.Application]*executor{},
 	}
 
@@ -153,7 +154,17 @@ func (e *Engine) startListener(ctx context.Context) {
 }
 
 func (e *Engine) startExecutors() {
-	for _, ex := range e.executors {
-		ex.future.Store(noopExecutor{})
+	for app, ex := range e.executors {
+		cfg := runtimeconfig.FromApplication(app)
+
+		packer := &envelopepb.Packer{
+			Site:        e.site,
+			Application: cfg.Identity(),
+		}
+
+		ex.future.Store(&commandExecutor{
+			packer: packer,
+			routes: map[string]commandSink{},
+		})
 	}
 }

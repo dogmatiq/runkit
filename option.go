@@ -82,19 +82,15 @@ func WithApplication(app dogma.Application) Option {
 	key := id.GetKey().AsString()
 
 	return func(e *Engine) {
-		if _, exists := e.appsByKey[key]; exists {
+		if _, exists := e.apps[key]; exists {
 			panic(fmt.Sprintf(
 				"runkit: application is already registered: %s (%s)",
 				id.GetName(),
 				key,
 			))
 		}
-		e.appsByKey[key] = struct{}{}
-
-		ex := &executor{}
-
-		e.apps = append(e.apps, app)
-		e.executors[app] = ex
+		e.apps[key] = struct{}{}
+		e.executors[app] = &executor{}
 	}
 }
 
