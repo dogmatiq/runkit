@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
-	github.com/dogmatiq/enginekit v0.23.2
+	github.com/dogmatiq/enginekit v0.24.0
 	github.com/dogmatiq/ferrite v1.6.1
 	github.com/dogmatiq/persistencekit v0.17.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -95,7 +95,7 @@ require (
 )
 
 require (
-	github.com/dogmatiq/dogma v0.22.0
+	github.com/dogmatiq/dogma v0.23.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
