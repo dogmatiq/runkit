@@ -95,7 +95,7 @@ require (
 )
 
 require (
-	github.com/dogmatiq/dogma v0.22.0
+	github.com/dogmatiq/dogma v0.23.0
 	github.com/dogmatiq/dyad v1.0.0 // indirect
 	github.com/dogmatiq/spruce v0.2.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
