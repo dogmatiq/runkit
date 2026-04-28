@@ -81,8 +81,8 @@ github.com/dogmatiq/dogma v0.23.0 h1:Be89oJvamKPRV/yCETJ59/08z2iD62slR3Y+DXvGsKU
 github.com/dogmatiq/dogma v0.23.0/go.mod h1:BNKrZq9wm3jRu35XUWQXkMRhq4EzYK+rOVbGjrbCVyI=
 github.com/dogmatiq/dyad v1.0.0 h1:T50WQ9rAzCMcT941wVH5RW5+tAGRssuVlNog+ZMQR54=
 github.com/dogmatiq/dyad v1.0.0/go.mod h1:PrUQr7OCSEUjAkhi7ad8BjxFPKe0I9yP2f1kGimPcJE=
-github.com/dogmatiq/enginekit v0.24.0 h1:InTo4+m3fVpJDiotxpRZAzmAGNAuG2cWiDMl+3fThZA=
-github.com/dogmatiq/enginekit v0.24.0/go.mod h1:dXrMccLg5pdIH34GlHxU+k22/t3B4VZdmSbagkvdiko=
+github.com/dogmatiq/enginekit v0.24.1 h1:6YpoDDZwfCQLWPBnXthJ63haffXXzW3goPQkpWXD8dw=
+github.com/dogmatiq/enginekit v0.24.1/go.mod h1:dXrMccLg5pdIH34GlHxU+k22/t3B4VZdmSbagkvdiko=
 github.com/dogmatiq/ferrite v1.6.1 h1:FZH7LNP3r7dLRKO108yujn4+hv7JQDMRxYC+OoVFBuU=
 github.com/dogmatiq/ferrite v1.6.1/go.mod h1:rSElAivm0Pcef+IjZBmP3yPKeVVsQEIHIeqBt8qzNr0=
 github.com/dogmatiq/iago v0.4.0 h1:57nZqVT34IZxtCZEW/RFif7DNUEjMXgevfr/Mmd0N8I=

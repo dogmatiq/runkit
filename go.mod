@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
-	github.com/dogmatiq/enginekit v0.24.0
+	github.com/dogmatiq/enginekit v0.24.1
 	github.com/dogmatiq/ferrite v1.6.1
 	github.com/dogmatiq/persistencekit v0.17.0
 	github.com/jackc/pgx/v5 v5.9.2
