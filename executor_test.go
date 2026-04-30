@@ -12,23 +12,22 @@ import (
 )
 
 func TestCommandExecutor_ExecuteCommand(t *testing.T) {
-	app := &stubs.ApplicationStub{
-		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-			c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
-		},
-	}
-
 	t.Run("it blocks until Run() is called, then panics for unrouted commands", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		e := New(
-			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+		e, err := New(
+			&stubs.ApplicationStub{
+				ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+					c.Identity("app", "c563d2a7-1e4b-4f39-8d72-5a9f0b3e6c18")
+				},
+			},
+			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
 			WithPersistenceProvider(newProvider(t)),
-
-			WithApplication(app),
 		)
-		x := e.ExecutorFor(app)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		panicked := make(chan struct{})
 		go func() {
@@ -37,7 +36,7 @@ func TestCommandExecutor_ExecuteCommand(t *testing.T) {
 					close(panicked)
 				}
 			}()
-			x.ExecuteCommand(ctx, stubs.CommandA1) //nolint:errcheck
+			e.ExecuteCommand(ctx, stubs.CommandA1) //nolint:errcheck
 		}()
 
 		select {

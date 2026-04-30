@@ -36,7 +36,7 @@ appear as child spans of the enclosing handler span.
 
 All spans carry a standard base attribute set:
 
-- `dogma.site_name` -- from `WithSite()` name
+- `dogma.site_name` -- from `WithSiteIdentity()` name
 - `dogma.application_name` -- from Dogma application config (where applicable)
 - `dogma.handler_name` -- from Dogma handler config (where applicable)
 

@@ -81,13 +81,3 @@ func NewProvider(rawURL string) (Provider, error) {
 		return nil, fmt.Errorf("invalid persistence URL: unknown driver (%q)", u.Scheme)
 	}
 }
-
-// NopCloser is a [Provider] adaptor that ignores calls to [Provider.Close].
-type NopCloser struct {
-	Provider
-}
-
-// Close is a no-op.
-func (NopCloser) Close() error {
-	return nil
-}

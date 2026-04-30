@@ -11,90 +11,76 @@ import (
 	. "github.com/dogmatiq/runkit"
 )
 
-func TestExecutorFor(t *testing.T) {
+func TestNew(t *testing.T) {
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-			c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
+			c.Identity("app", "4272e43c-08f5-4eff-b804-733a795468c3")
 		},
 	}
-	e := New(WithApplication(app))
 
-	t.Run("it returns an executor for a registered application", func(t *testing.T) {
-		x := e.ExecutorFor(app)
-		if x == nil {
-			t.Fatal("expected non-nil CommandExecutor")
-		}
-	})
-
-	t.Run("it panics for an unregistered application", func(t *testing.T) {
+	t.Run("it panics if the application is nil", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
 				t.Fatal("expected panic, got none")
 			}
 		}()
 
-		unregistered := &stubs.ApplicationStub{
-			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-				c.Identity("other", "a4b8c2d6-e0f1-4a3b-b7c8-d9e0f1a2b3c4")
-			},
+		New(nil)
+	})
+
+	t.Run("it returns an error if no site identity is configured", func(t *testing.T) {
+		_, err := New(
+			app,
+			WithoutEnvironment(),
+			WithPersistenceProvider(newProvider(t)),
+		)
+		if err == nil {
+			t.Fatal("expected an error")
 		}
-		e.ExecutorFor(unregistered)
+	})
+
+	t.Run("it returns an error if no persistence provider is configured", func(t *testing.T) {
+		_, err := New(
+			app,
+			WithoutEnvironment(),
+			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+		)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+
+	t.Run("it uses the advertise address as the listen address when no listen address is configured", func(t *testing.T) {
+		_, err := New(
+			app,
+			WithoutEnvironment(),
+			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+			WithPersistenceProvider(newProvider(t)),
+			WithAdvertiseAddress("10.0.0.1:7831"),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Skip("construction succeeds but there is no way to inspect the resolved listen address yet")
 	})
 }
 
 func TestRun(t *testing.T) {
-	t.Run("it panics if no site identity is configured", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic, got none")
-			}
-		}()
-
-		e := New()
-		e.Run(t.Context())
-	})
-
-	t.Run("it panics if no persistence provider is configured", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic, got none")
-			}
-		}()
-
-		e := New(
-			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-		)
-		e.Run(t.Context())
-	})
-
-	t.Run("it panics if an advertise address is configured without a listen address", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic, got none")
-			}
-		}()
-
-		e := New(
-			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
-			WithAdvertiseAddress("10.0.0.1:7831"),
-		)
-		e.Run(t.Context())
-	})
-
 	t.Run("it starts and stops cleanly", func(t *testing.T) {
-		app := &stubs.ApplicationStub{
-			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-				c.Identity("app", "c7e6f5d4-b3a2-4918-8f0e-1d2c3b4a5960")
+		e, err := New(
+			&stubs.ApplicationStub{
+				ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+					c.Identity("app", "91b5f738-14e1-4a92-b740-2e2e8b88c835")
+				},
 			},
-		}
-
-		e := New(
-			WithSite("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
 			WithPersistenceProvider(newProvider(t)),
 			WithListenAddress("127.0.0.1:0"),
-			WithApplication(app),
 		)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		ctx, cancel := context.WithCancel(t.Context())
 

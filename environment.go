@@ -41,7 +41,7 @@ var envListenAddress = ferrite.
 
 var envAdvertiseAddress = ferrite.
 	String("DOGMA_ADVERTISE_ADDRESS", "the address other nodes use to connect to this node").
-	WithConstraint("must be a host:port address", isHostPort).
+	WithConstraint("must be a routable host:port address", isRoutableHostPort).
 	WithExample("192.168.0.10:7831", "advertise a specific IPv4 address").
 	WithExample("[2001:db8::1]:7831", "advertise a specific IPv6 address").
 	Optional(ferrite.WithRegistry(FerriteRegistry))
