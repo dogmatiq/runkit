@@ -2,13 +2,12 @@ package runkit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
@@ -20,14 +19,14 @@ import (
 
 // Engine runs a single Dogma [dogma.Application].
 type Engine struct {
-	app dogma.Application
-	cfg config
+	// Deprecated: goal is to make this transient within New() and remove it
+	cfg engineConfig
 
+	nodeID  *uuidpb.UUID
+	packer  *envelopepb.Packer
+	routes  uuidpb.Map[commandSink]
 	started atomic.Bool
 	ready   xsync.Latch
-
-	packer *envelopepb.Packer
-	routes uuidpb.Map[commandSink]
 }
 
 // New returns an [Engine] that runs the given [dogma.Application].
@@ -49,45 +48,47 @@ type Engine struct {
 // Explicit options always take precedence over environment variables. Use
 // [WithoutEnvironment] to disable environment variable reading entirely.
 func New(app dogma.Application, opts ...Option) (*Engine, error) {
-	if app == nil {
-		panic("runkit: application must not be nil")
+	cfg, err := newEngineConfig(app, opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	cfg := config{useEnvironment: true}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
-	if cfg.useEnvironment {
-		applyEnvironment(&cfg)
-	}
-
-	if cfg.site == nil {
-		return nil, errors.New("runkit: a site identity is required, use WithSiteIdentity() or set DOGMA_SITE_NAME and DOGMA_SITE_KEY")
-	}
-
-	if cfg.nodeID == nil {
-		cfg.nodeID = uuidpb.Generate()
-	}
-
-	if cfg.openPersistenceDriver == nil {
-		return nil, errors.New("runkit: a persistence driver is required, use WithPersistence(), WithPersistenceDriver() or set DOGMA_PERSISTENCE_URL")
-	}
-
-	if cfg.listenAddr == "" && cfg.advertiseAddr != "" {
-		cfg.listenAddr = cfg.advertiseAddr
-	}
-
-	appCfg := runtimeconfig.FromApplication(app)
-
-	return &Engine{
-		app: app,
+	e := &Engine{
 		cfg: cfg,
+
+		nodeID: cfg.NodeID,
 		packer: &envelopepb.Packer{
-			Site:        cfg.site,
-			Application: appCfg.Identity(),
+			Site:        cfg.Site,
+			Application: cfg.App.Identity(),
 		},
-	}, nil
+	}
+
+	setupCommandRoutes(cfg, e)
+
+	return e, nil
+}
+
+func setupCommandRoutes(cfg engineConfig, e *Engine) {
+	routes := cfg.App.
+		RouteSet().
+		Filter(config.FilterByRouteType(config.HandlesCommandRouteType)).
+		Routes()
+
+	for r, h := range routes {
+		if h.IsDisabled() {
+			continue
+		}
+
+		typeID := uuidpb.MustParse(r.MessageTypeID.Get())
+
+		config.SwitchByHandlerTypeOf(
+			h,
+			func(*config.Aggregate) { e.routes.Set(typeID, aggregateCommandSink{}) },
+			func(*config.Process) {},
+			func(*config.Integration) { e.routes.Set(typeID, integrationCommandSink{}) },
+			func(*config.Projection) {},
+		)
+	}
 }
 
 // Run starts the engine and blocks until ctx is canceled or a fatal error
@@ -95,7 +96,7 @@ func New(app dogma.Application, opts ...Option) (*Engine, error) {
 //
 // It panics if called more than once on the same engine.
 func (e *Engine) Run(ctx context.Context) (err error) {
-	if e.app == nil {
+	if e.cfg.App == nil {
 		panic("runkit: engine is not properly initialized")
 	}
 
@@ -103,7 +104,7 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		panic("runkit: engine has already been started")
 	}
 
-	driver, err := e.cfg.openPersistenceDriver(ctx)
+	driver, err := e.cfg.OpenPersistenceDriver(ctx)
 	if err != nil {
 		return err
 	}
@@ -111,8 +112,8 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 
 	wg, ctx := errgroup.WithContext(ctx)
 
-	if e.cfg.listenAddr != "" {
-		listener, advertiseAddrs, err := network.Listen(e.cfg.listenAddr, e.cfg.advertiseAddr)
+	if e.cfg.ListenAddr != "" {
+		listener, advertiseAddrs, err := network.Listen(e.cfg.ListenAddr, e.cfg.AdvertiseAddr)
 		if err != nil {
 			return err
 		}
@@ -155,7 +156,7 @@ func (*Engine) serve(listener net.Listener) error {
 
 func (e *Engine) heartbeat(ctx context.Context, driver persistencekit.Driver, advertiseAddrs []string) error {
 	w := &heartbeat.Writer{
-		NodeID:         e.cfg.nodeID,
+		NodeID:         e.nodeID,
 		KVStore:        driver.KVStore(),
 		AdvertiseAddrs: advertiseAddrs,
 	}
@@ -200,5 +201,8 @@ func (e *Engine) ExecuteCommand(
 		panic(fmt.Sprintf("runkit: no handler registered for %T commands", cmd))
 	}
 
-	return sink.ExecuteCommand(ctx, env, observers)
+	return sink.ExecuteCommand(ctx, &executionContext{
+		Envelope:  env,
+		Observers: observers,
+	})
 }

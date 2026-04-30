@@ -2,40 +2,20 @@ package runkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
+	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
+	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/persistencekit"
 )
 
 // Option is a function that configures an [Engine].
-type Option func(*config)
-
-// config holds the immutable configuration of an [Engine].
-type config struct {
-	// useEnvironment enables reading configuration from environment variables.
-	useEnvironment bool
-
-	// site is the identity of the deployment site.
-	site *identitypb.Identity
-
-	// nodeID is the unique identifier for this engine instance within the
-	// cluster.
-	nodeID *uuidpb.UUID
-
-	// openPersistenceDriver opens the driver that provides the engine's
-	// persistent stores.
-	openPersistenceDriver func(context.Context) (persistencekit.Driver, error)
-
-	// listenAddr is the TCP address the engine listens on, in "host:port" format.
-	listenAddr string
-
-	// advertiseAddr is the address the engine advertises to other nodes, in
-	// "host:port" format.
-	advertiseAddr string
-}
+type Option func(*engineConfig)
 
 // WithSiteIdentity returns an [Option] that sets the site identity for the engine.
 //
@@ -63,8 +43,8 @@ func WithSiteIdentity(name, key string) Option {
 		panic(fmt.Sprintf("runkit: invalid site identity: %s", err))
 	}
 
-	return func(c *config) {
-		c.site = site
+	return func(c *engineConfig) {
+		c.Site = site
 	}
 }
 
@@ -85,8 +65,8 @@ func WithNodeID(id string) Option {
 		panic(fmt.Sprintf("runkit: invalid node ID: %s", err))
 	}
 
-	return func(c *config) {
-		c.nodeID = parsed
+	return func(c *engineConfig) {
+		c.NodeID = parsed
 	}
 }
 
@@ -103,8 +83,8 @@ func WithPersistence(url string) Option {
 		panic(fmt.Sprintf("runkit: %s", err))
 	}
 
-	return func(c *config) {
-		c.openPersistenceDriver = open
+	return func(c *engineConfig) {
+		c.OpenPersistenceDriver = open
 	}
 }
 
@@ -120,8 +100,8 @@ func WithPersistenceDriver(d persistencekit.Driver) Option {
 		panic("runkit: persistence driver must not be nil")
 	}
 
-	return func(c *config) {
-		c.openPersistenceDriver = func(context.Context) (persistencekit.Driver, error) {
+	return func(c *engineConfig) {
+		c.OpenPersistenceDriver = func(context.Context) (persistencekit.Driver, error) {
 			return nopCloser{d}, nil
 		}
 	}
@@ -147,8 +127,8 @@ func WithListenAddress(addr string) Option {
 		panic("runkit: listen address must be a valid host:port address")
 	}
 
-	return func(c *config) {
-		c.listenAddr = addr
+	return func(c *engineConfig) {
+		c.ListenAddr = addr
 	}
 }
 
@@ -173,8 +153,8 @@ func WithAdvertiseAddress(addr string) Option {
 		panic("runkit: advertise address must be a routable host:port address")
 	}
 
-	return func(c *config) {
-		c.advertiseAddr = addr
+	return func(c *engineConfig) {
+		c.AdvertiseAddr = addr
 	}
 }
 
@@ -210,39 +190,106 @@ func isRoutableHostPort(v string) bool {
 // WithoutEnvironment returns an [Option] that prevents the engine from reading
 // configuration from environment variables.
 func WithoutEnvironment() Option {
-	return func(c *config) {
-		c.useEnvironment = false
+	return func(c *engineConfig) {
+		c.ApplyEnvironment = false
 	}
+}
+
+// engineConfig holds the immutable configuration of an [Engine].
+type engineConfig struct {
+	// ApplyEnvironment enables reading configuration from environment variables.
+	ApplyEnvironment bool
+
+	// App is the configuration of the application to run.
+	App *config.Application
+
+	// Site is the identity of the deployment Site.
+	Site *identitypb.Identity
+
+	// NodeID is the unique identifier for this engine instance within the
+	// cluster.
+	NodeID *uuidpb.UUID
+
+	// OpenPersistenceDriver opens the driver that provides the engine's
+	// persistent stores.
+	OpenPersistenceDriver func(context.Context) (persistencekit.Driver, error)
+
+	// ListenAddr is the TCP address the engine listens on, in "host:port" format.
+	ListenAddr string
+
+	// AdvertiseAddr is the address the engine advertises to other nodes, in
+	// "host:port" format.
+	AdvertiseAddr string
+}
+
+// newEngineConfig creates a new [engineConfig] from the given application and
+// options. It validates the configuration and returns an error if it is
+// invalid.
+func newEngineConfig(app dogma.Application, opts ...Option) (engineConfig, error) {
+	if app == nil {
+		panic("runkit: application must not be nil")
+	}
+
+	cfg := engineConfig{
+		ApplyEnvironment: true,
+		App:              runtimeconfig.FromApplication(app),
+	}
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	if cfg.ApplyEnvironment {
+		applyEnvironment(&cfg)
+	}
+
+	if cfg.Site == nil {
+		return cfg, errors.New("runkit: a site identity is required, use WithSiteIdentity() or set DOGMA_SITE_NAME and DOGMA_SITE_KEY")
+	}
+
+	if cfg.NodeID == nil {
+		cfg.NodeID = uuidpb.Generate()
+	}
+
+	if cfg.OpenPersistenceDriver == nil {
+		return cfg, errors.New("runkit: a persistence driver is required, use WithPersistence(), WithPersistenceDriver() or set DOGMA_PERSISTENCE_URL")
+	}
+
+	if cfg.ListenAddr == "" && cfg.AdvertiseAddr != "" {
+		cfg.ListenAddr = cfg.AdvertiseAddr
+	}
+
+	return cfg, nil
 }
 
 // applyEnvironment reads configuration from environment variables for any
 // fields that have not already been set by explicit options.
-func applyEnvironment(c *config) {
-	if c.site == nil {
+func applyEnvironment(c *engineConfig) {
+	if c.Site == nil {
 		if key, ok := envSiteKey.Value(); ok {
-			c.site = identitypb.New(envSiteName.Value(), key)
+			c.Site = identitypb.New(envSiteName.Value(), key)
 		}
 	}
 
-	if c.nodeID == nil {
+	if c.NodeID == nil {
 		if id, ok := envNodeID.Value(); ok {
-			c.nodeID = id
+			c.NodeID = id
 		}
 	}
 
-	if c.openPersistenceDriver == nil {
+	if c.OpenPersistenceDriver == nil {
 		if o, ok := envPersistenceURL.Value(); ok {
-			c.openPersistenceDriver = o.Open
+			c.OpenPersistenceDriver = o.Open
 		}
 	}
 
-	if c.listenAddr == "" {
+	if c.ListenAddr == "" {
 		if addr, ok := envListenAddress.Value(); ok {
 			WithListenAddress(addr)(c)
 		}
 	}
 
-	if c.advertiseAddr == "" {
+	if c.AdvertiseAddr == "" {
 		if addr, ok := envAdvertiseAddress.Value(); ok {
 			WithAdvertiseAddress(addr)(c)
 		}
