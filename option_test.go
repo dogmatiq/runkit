@@ -1,13 +1,13 @@
 package runkit_test
 
 import (
-	"net/url"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/persistencekit"
+	"github.com/dogmatiq/persistencekit/driver/memory"
 	. "github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/persistence/driver/memory"
 	"github.com/google/uuid"
 )
 
@@ -53,7 +53,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		t.Skip("TODO: no public API to introspect engine configuration")
 	})
 
-	t.Run("explicit WithPersistenceProvider wins over environment", func(t *testing.T) {
+	t.Run("explicit WithPersistenceDriver wins over environment", func(t *testing.T) {
 		t.Skip("TODO: no public API to introspect engine configuration")
 	})
 
@@ -74,16 +74,10 @@ func TestEnvironmentVariables(t *testing.T) {
 	})
 }
 
-func newProvider(t *testing.T) PersistenceProvider {
+// REVIEW: don't need this any longer
+func newProvider(t *testing.T) persistencekit.Driver {
 	t.Helper()
-	p, err := memory.NewProvider(&url.URL{
-		Scheme: "memory",
-		Path:   "/" + uuid.New().String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return memory.New(uuid.New().String())
 }
 
 func TestWithSite(t *testing.T) {
@@ -97,7 +91,7 @@ func TestWithSite(t *testing.T) {
 		if _, err := New(
 			app,
 			WithSiteIdentity("my-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +129,7 @@ func TestWithNodeID(t *testing.T) {
 		if _, err := New(
 			app,
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 			WithNodeID("b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"),
 		); err != nil {
 			t.Fatal(err)
@@ -191,7 +185,7 @@ func TestWithPersistence(t *testing.T) {
 	})
 }
 
-func TestWithPersistenceProvider(t *testing.T) {
+func TestWithPersistenceDriver(t *testing.T) {
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
 			c.Identity("app", "b4c72f08-6d19-4e5a-8a3b-0f1e2d3c4b5a")
@@ -202,7 +196,7 @@ func TestWithPersistenceProvider(t *testing.T) {
 		if _, err := New(
 			app,
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -215,7 +209,7 @@ func TestWithPersistenceProvider(t *testing.T) {
 			}
 		}()
 
-		WithPersistenceProvider(nil)
+		WithPersistenceDriver(nil)
 	})
 }
 
@@ -230,7 +224,7 @@ func TestWithListenAddress(t *testing.T) {
 		if _, err := New(
 			app,
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 			WithListenAddress("0.0.0.0:8000"),
 		); err != nil {
 			t.Fatal(err)
@@ -259,7 +253,7 @@ func TestWithAdvertiseAddress(t *testing.T) {
 		if _, err := New(
 			app,
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 			WithListenAddress("0.0.0.0:8000"),
 			WithAdvertiseAddress("10.0.0.1:8000"),
 		); err != nil {

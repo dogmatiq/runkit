@@ -32,14 +32,14 @@ func TestNew(t *testing.T) {
 		_, err := New(
 			app,
 			WithoutEnvironment(),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 		)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
 	})
 
-	t.Run("it returns an error if no persistence provider is configured", func(t *testing.T) {
+	t.Run("it returns an error if no persistence driver is configured", func(t *testing.T) {
 		_, err := New(
 			app,
 			WithoutEnvironment(),
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 			app,
 			WithoutEnvironment(),
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 			WithAdvertiseAddress("10.0.0.1:7831"),
 		)
 		if err != nil {
@@ -75,7 +75,7 @@ func TestRun(t *testing.T) {
 				},
 			},
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceProvider(newProvider(t)),
+			WithPersistenceDriver(newProvider(t)),
 			WithListenAddress("127.0.0.1:0"),
 		)
 		if err != nil {

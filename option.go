@@ -1,12 +1,13 @@
 package runkit
 
 import (
+	"context"
 	"fmt"
 	"net"
 
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/persistence"
+	"github.com/dogmatiq/persistencekit"
 )
 
 // Option is a function that configures an [Engine].
@@ -24,8 +25,9 @@ type config struct {
 	// cluster.
 	nodeID *uuidpb.UUID
 
-	// persistence is the provider of the engine's persistent stores.
-	persistence PersistenceProvider
+	// openPersistenceDriver opens the driver that provides the engine's
+	// persistent stores.
+	openPersistenceDriver func(context.Context) (persistencekit.Driver, error)
 
 	// listenAddr is the TCP address the engine listens on, in "host:port" format.
 	listenAddr string
@@ -88,40 +90,50 @@ func WithNodeID(id string) Option {
 	}
 }
 
-// WithPersistence returns an [Option] that configures the persistence
-// provider for the engine using a URL string.
+// WithPersistence returns an [Option] that configures the persistence driver
+// for the engine using a URL string.
 //
 // This option takes precedence over the DOGMA_PERSISTENCE_URL environment
 // variable.
 //
 // It panics if the URL is malformed or if the scheme is unrecognized.
 func WithPersistence(url string) Option {
-	p, err := persistence.NewProvider(url)
+	open, err := persistencekit.ParseURL(url)
 	if err != nil {
 		panic(fmt.Sprintf("runkit: %s", err))
 	}
 
 	return func(c *config) {
-		c.persistence = p
+		c.openPersistenceDriver = open
 	}
 }
 
-// WithPersistenceProvider returns an [Option] that configures the persistence
-// provider for the engine.
+// WithPersistenceDriver returns an [Option] that configures the persistence
+// driver for the engine.
 //
 // This option takes precedence over the DOGMA_PERSISTENCE_URL environment
 // variable.
 //
-// It panics if p is nil.
-func WithPersistenceProvider(p PersistenceProvider) Option {
-	if p == nil {
-		panic("runkit: persistence provider must not be nil")
+// It panics if d is nil.
+func WithPersistenceDriver(d persistencekit.Driver) Option {
+	if d == nil {
+		panic("runkit: persistence driver must not be nil")
 	}
 
 	return func(c *config) {
-		c.persistence = p
+		c.openPersistenceDriver = func(context.Context) (persistencekit.Driver, error) {
+			return nopCloser{d}, nil
+		}
 	}
 }
+
+// nopCloser wraps a [persistencekit.Driver] with a no-op Close method. It is
+// used when the caller retains ownership of the driver.
+type nopCloser struct {
+	persistencekit.Driver
+}
+
+func (nopCloser) Close() error { return nil }
 
 // WithListenAddress returns an [Option] that sets the TCP address the engine
 // listens on, in "host:port" format (e.g. "0.0.0.0:7831").
@@ -206,24 +218,21 @@ func WithoutEnvironment() Option {
 // applyEnvironment reads configuration from environment variables for any
 // fields that have not already been set by explicit options.
 func applyEnvironment(c *config) {
-	// TODO: use a typed Ferrite variable to avoid re-parsing, see https://github.com/dogmatiq/ferrite/issues/188
 	if c.site == nil {
 		if key, ok := envSiteKey.Value(); ok {
-			WithSiteIdentity(envSiteName.Value(), key)(c)
+			c.site = identitypb.New(envSiteName.Value(), key)
 		}
 	}
 
-	// TODO: use a UUID Ferrite variable to avoid re-parsing, see https://github.com/dogmatiq/ferrite/issues/187
 	if c.nodeID == nil {
-		if v, ok := envNodeID.Value(); ok {
-			WithNodeID(v)(c)
+		if id, ok := envNodeID.Value(); ok {
+			c.nodeID = id
 		}
 	}
 
-	// TODO: use a typed Ferrite variable to avoid re-parsing, see https://github.com/dogmatiq/ferrite/issues/188
-	if c.persistence == nil {
-		if u, ok := envPersistenceURL.Value(); ok {
-			WithPersistence(u)(c)
+	if c.openPersistenceDriver == nil {
+		if o, ok := envPersistenceURL.Value(); ok {
+			c.openPersistenceDriver = o.Open
 		}
 	}
 

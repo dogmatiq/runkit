@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/persistencekit"
 	"github.com/dogmatiq/runkit/internal/heartbeat"
 	"github.com/dogmatiq/runkit/internal/network"
 	"golang.org/x/sync/errgroup"
@@ -69,8 +70,8 @@ func New(app dogma.Application, opts ...Option) (*Engine, error) {
 		cfg.nodeID = uuidpb.Generate()
 	}
 
-	if cfg.persistence == nil {
-		return nil, errors.New("runkit: a persistence provider is required, use WithPersistence() or set DOGMA_PERSISTENCE_URL")
+	if cfg.openPersistenceDriver == nil {
+		return nil, errors.New("runkit: a persistence driver is required, use WithPersistence(), WithPersistenceDriver() or set DOGMA_PERSISTENCE_URL")
 	}
 
 	if cfg.listenAddr == "" && cfg.advertiseAddr != "" {
@@ -102,6 +103,12 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		panic("runkit: engine has already been started")
 	}
 
+	driver, err := e.cfg.openPersistenceDriver(ctx)
+	if err != nil {
+		return err
+	}
+	defer driver.Close()
+
 	wg, ctx := errgroup.WithContext(ctx)
 
 	if e.cfg.listenAddr != "" {
@@ -115,7 +122,7 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		})()
 
 		wg.Go(func() error {
-			return e.heartbeat(ctx, advertiseAddrs)
+			return e.heartbeat(ctx, driver, advertiseAddrs)
 		})
 
 		wg.Go(func() error {
@@ -146,15 +153,10 @@ func (*Engine) serve(listener net.Listener) error {
 	}
 }
 
-func (e *Engine) heartbeat(ctx context.Context, advertiseAddrs []string) error {
-	store, err := e.cfg.persistence.KVStore(ctx)
-	if err != nil {
-		return err
-	}
-
+func (e *Engine) heartbeat(ctx context.Context, driver persistencekit.Driver, advertiseAddrs []string) error {
 	w := &heartbeat.Writer{
 		NodeID:         e.cfg.nodeID,
-		KVStore:        store,
+		KVStore:        driver.KVStore(),
 		AdvertiseAddrs: advertiseAddrs,
 	}
 

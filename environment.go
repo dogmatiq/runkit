@@ -1,9 +1,11 @@
 package runkit
 
 import (
+	"context"
+
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/ferrite"
-	"github.com/dogmatiq/runkit/internal/persistence"
+	"github.com/dogmatiq/persistencekit"
 )
 
 // FerriteRegistry is the ferrite environment variable registry for the Runkit
@@ -15,8 +17,7 @@ var FerriteRegistry = ferrite.NewRegistry(
 )
 
 var envSiteKey = ferrite.
-	String("DOGMA_SITE_KEY", "the UUID that uniquely identifies this site").
-	WithConstraint("must be a UUID", isUUID).
+	Custom("DOGMA_SITE_KEY", "the UUID that uniquely identifies this site", uuidpb.Parse, marshalUUID).
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
 var envSiteName = ferrite.
@@ -27,8 +28,7 @@ var envSiteName = ferrite.
 	)
 
 var envNodeID = ferrite.
-	String("DOGMA_NODE_ID", "the UUID that uniquely identifies this node").
-	WithConstraint("must be a UUID", isUUID).
+	Custom("DOGMA_NODE_ID", "the UUID that uniquely identifies this node", uuidpb.Parse, marshalUUID).
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
 var envListenAddress = ferrite.
@@ -47,23 +47,47 @@ var envAdvertiseAddress = ferrite.
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
 var envPersistenceURL = ferrite.
-	String("DOGMA_PERSISTENCE_URL", "the URL of the persistence provider").
-	WithConstraint("must be a valid persistence URL", isPersistenceURL).
-	WithExample("memory:///silo", "in-process memory storage (testing only)").
-	WithExample("postgres://user:pass@host/dbname", "PostgreSQL storage").
-	WithExample("postgresql://user:pass@host/dbname", "PostgreSQL storage (alternate scheme)").
-	WithExample("dynamodb:///table-prefix", "DynamoDB storage").
-	WithExample("s3:///bucket", "S3 storage").
+	Custom(
+		"DOGMA_PERSISTENCE_URL",
+		"the URL of the persistence driver",
+		func(v string) (persistenceDriver, error) {
+			var d persistenceDriver
+			return d, d.UnmarshalText([]byte(v))
+		},
+		func(d persistenceDriver) (string, error) {
+			b, err := d.MarshalText()
+			return string(b), err
+		},
+	).
+	WithExample(persistenceDriver{URL: "memory:///silo"}, "in-process memory storage (testing only)").
+	WithExample(persistenceDriver{URL: "postgres://user:pass@host/dbname"}, "PostgreSQL storage").
+	WithExample(persistenceDriver{URL: "dynamodb:///table-prefix"}, "DynamoDB storage").
+	WithExample(persistenceDriver{URL: "s3:///bucket"}, "S3 storage").
 	Optional(ferrite.WithRegistry(FerriteRegistry))
 
-// isUUID returns true if v is a valid UUID string.
-func isUUID(v string) bool {
-	_, err := uuidpb.Parse(v)
-	return err == nil
+// persistenceDriver holds a parsed persistence URL and the deferred opener it
+// produces.
+type persistenceDriver struct {
+	URL  string
+	Open func(context.Context) (persistencekit.Driver, error)
 }
 
-// isPersistenceURL returns true if v is a valid persistence URL.
-func isPersistenceURL(v string) bool {
-	_, err := persistence.NewProvider(v)
-	return err == nil
+func (d persistenceDriver) MarshalText() ([]byte, error) {
+	return []byte(d.URL), nil
+}
+
+func (d *persistenceDriver) UnmarshalText(text []byte) error {
+	open, err := persistencekit.ParseURL(string(text))
+	if err != nil {
+		return err
+	}
+
+	d.URL = string(text)
+	d.Open = open
+
+	return nil
+}
+
+func marshalUUID(id *uuidpb.UUID) (string, error) {
+	return id.AsString(), nil
 }
