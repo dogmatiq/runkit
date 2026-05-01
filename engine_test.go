@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -68,36 +68,43 @@ func TestNew(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	t.Run("it starts and stops cleanly", func(t *testing.T) {
-		e, err := New(
-			&stubs.ApplicationStub{
-				ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-					c.Identity("app", "91b5f738-14e1-4a92-b740-2e2e8b88c835")
+		synctest.Test(t, func(t *testing.T) {
+			e, err := New(
+				&stubs.ApplicationStub{
+					ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+						c.Identity("app", "91b5f738-14e1-4a92-b740-2e2e8b88c835")
+					},
 				},
-			},
-			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceDriver(newProvider(t)),
-			WithListenAddress("127.0.0.1:0"),
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithCancel(t.Context())
-
-		done := make(chan error, 1)
-		go func() {
-			done <- e.Run(ctx)
-		}()
-
-		cancel()
-
-		select {
-		case err := <-done:
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("Run() returned unexpected error: %v", err)
+				WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
+				WithPersistenceDriver(newProvider(t)),
+			)
+			if err != nil {
+				t.Fatal(err)
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("Run() did not return after context cancellation")
-		}
+
+			ctx, cancel := context.WithCancel(t.Context())
+
+			done := make(chan error, 1)
+			go func() {
+				done <- e.Run(ctx)
+			}()
+
+			// Wait for Run to start and set the ready latch.
+			synctest.Wait()
+
+			cancel()
+
+			// Wait for the Run goroutine to return.
+			synctest.Wait()
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("Run() returned unexpected error: %v", err)
+				}
+			default:
+				t.Fatal("Run() did not return after context cancellation")
+			}
+		})
 	})
 }

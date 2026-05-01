@@ -83,9 +83,15 @@ func setupCommandRoutes(cfg engineConfig, e *Engine) {
 
 		config.SwitchByHandlerTypeOf(
 			h,
-			func(*config.Aggregate) { e.routes.Set(typeID, aggregateCommandSink{}) },
+			func(a *config.Aggregate) {
+				e.routes.Set(typeID, aggregateCommandSink{
+					Handler: a.Interface(),
+				})
+			},
 			func(*config.Process) {},
-			func(*config.Integration) { e.routes.Set(typeID, integrationCommandSink{}) },
+			func(*config.Integration) {
+				e.routes.Set(typeID, integrationCommandSink{})
+			},
 			func(*config.Projection) {},
 		)
 	}
