@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/dogmatiq/enginekit v0.25.0
 	github.com/dogmatiq/ferrite v1.6.2-0.20260429210504-596206fdbb0e
-	github.com/dogmatiq/persistencekit v0.17.1-0.20260430013651-36105b848f3a
+	github.com/dogmatiq/persistencekit v0.18.0
 	github.com/zeebo/xxh3 v1.1.0
 	golang.org/x/sync v0.20.0
 	google.golang.org/protobuf v1.36.11
