@@ -68,8 +68,8 @@ var envPersistenceURL = ferrite.
 // persistenceDriver holds a parsed persistence URL and the deferred opener it
 // produces.
 type persistenceDriver struct {
-	URL  string
-	Open func(context.Context) (persistencekit.Driver, error)
+	URL    string
+	Config persistencekit.Config
 }
 
 func (d persistenceDriver) MarshalText() ([]byte, error) {
@@ -77,13 +77,13 @@ func (d persistenceDriver) MarshalText() ([]byte, error) {
 }
 
 func (d *persistenceDriver) UnmarshalText(text []byte) error {
-	open, err := persistencekit.ParseURL(string(text))
+	cfg, err := persistencekit.ParseURL(context.Background(), string(text))
 	if err != nil {
 		return err
 	}
 
 	d.URL = string(text)
-	d.Open = open
+	d.Config = cfg
 
 	return nil
 }

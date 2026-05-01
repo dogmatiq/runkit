@@ -78,42 +78,32 @@ func WithNodeID(id string) Option {
 //
 // It panics if the URL is malformed or if the scheme is unrecognized.
 func WithPersistence(url string) Option {
-	open, err := persistencekit.ParseURL(url)
+	cfg, err := persistencekit.ParseURL(context.Background(), url)
 	if err != nil {
 		panic(fmt.Sprintf("runkit: %s", err))
 	}
 
 	return func(c *engineConfig) {
-		c.OpenPersistenceDriver = open
+		c.Persistence = cfg
 	}
 }
 
-// WithPersistenceDriver returns an [Option] that configures the persistence
-// driver for the engine.
+// WithPersistenceConfig returns an [Option] that configures persistence using
+// a [persistencekit.Config].
 //
 // This option takes precedence over the DOGMA_PERSISTENCE_URL environment
 // variable.
 //
-// It panics if d is nil.
-func WithPersistenceDriver(d persistencekit.Driver) Option {
-	if d == nil {
-		panic("runkit: persistence driver must not be nil")
+// It panics if cfg is nil.
+func WithPersistenceConfig(cfg persistencekit.Config) Option {
+	if cfg == nil {
+		panic("runkit: persistence config must not be nil")
 	}
 
 	return func(c *engineConfig) {
-		c.OpenPersistenceDriver = func(context.Context) (persistencekit.Driver, error) {
-			return nopCloser{d}, nil
-		}
+		c.Persistence = cfg
 	}
 }
-
-// nopCloser wraps a [persistencekit.Driver] with a no-op Close method. It is
-// used when the caller retains ownership of the driver.
-type nopCloser struct {
-	persistencekit.Driver
-}
-
-func (nopCloser) Close() error { return nil }
 
 // WithListenAddress returns an [Option] that sets the TCP address the engine
 // listens on, in "host:port" format (e.g. "0.0.0.0:7831").
@@ -210,9 +200,8 @@ type engineConfig struct {
 	// cluster.
 	NodeID *uuidpb.UUID
 
-	// OpenPersistenceDriver opens the driver that provides the engine's
-	// persistent stores.
-	OpenPersistenceDriver func(context.Context) (persistencekit.Driver, error)
+	// Persistence is the configuration for the engine's persistent stores.
+	Persistence persistencekit.Config
 
 	// ListenAddr is the TCP address the engine listens on, in "host:port" format.
 	ListenAddr string
@@ -251,8 +240,8 @@ func newEngineConfig(app dogma.Application, opts ...Option) (engineConfig, error
 		cfg.NodeID = uuidpb.Generate()
 	}
 
-	if cfg.OpenPersistenceDriver == nil {
-		return cfg, errors.New("runkit: a persistence driver is required, use WithPersistence(), WithPersistenceDriver() or set DOGMA_PERSISTENCE_URL")
+	if cfg.Persistence == nil {
+		return cfg, errors.New("runkit: a persistence driver is required, use WithPersistence(), WithPersistenceConfig() or set DOGMA_PERSISTENCE_URL")
 	}
 
 	if cfg.ListenAddr == "" && cfg.AdvertiseAddr != "" {
@@ -277,9 +266,9 @@ func applyEnvironment(c *engineConfig) {
 		}
 	}
 
-	if c.OpenPersistenceDriver == nil {
+	if c.Persistence == nil {
 		if o, ok := envPersistenceURL.Value(); ok {
-			c.OpenPersistenceDriver = o.Open
+			c.Persistence = o.Config
 		}
 	}
 

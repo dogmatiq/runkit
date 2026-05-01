@@ -32,7 +32,7 @@ func TestNew(t *testing.T) {
 		_, err := New(
 			app,
 			WithoutEnvironment(),
-			WithPersistenceDriver(newProvider(t)),
+			WithPersistence("memory:///"+t.Name()),
 		)
 		if err == nil {
 			t.Fatal("expected an error")
@@ -55,7 +55,7 @@ func TestNew(t *testing.T) {
 			app,
 			WithoutEnvironment(),
 			WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-			WithPersistenceDriver(newProvider(t)),
+			WithPersistence("memory:///"+t.Name()),
 			WithAdvertiseAddress("10.0.0.1:7831"),
 		)
 		if err != nil {
@@ -76,7 +76,7 @@ func TestRun(t *testing.T) {
 					},
 				},
 				WithSiteIdentity("test-site", "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"),
-				WithPersistenceDriver(newProvider(t)),
+				WithPersistence("memory:///"+t.Name()),
 			)
 			if err != nil {
 				t.Fatal(err)

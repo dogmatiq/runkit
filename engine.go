@@ -110,7 +110,7 @@ func (e *Engine) Run(ctx context.Context) (err error) {
 		panic("runkit: engine has already been started")
 	}
 
-	driver, err := e.cfg.OpenPersistenceDriver(ctx)
+	driver, err := e.cfg.Persistence.NewDriver(ctx)
 	if err != nil {
 		return err
 	}
