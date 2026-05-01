@@ -33,8 +33,7 @@ type Option func(*engineConfig)
 // UUID string that uniquely identifies the site. If you're unsure, generate a
 // new random (v4) UUID and hardcode it.
 //
-// This option takes precedence over the DOGMA_SITE_NAME and DOGMA_SITE_KEY
-// environment variables.
+// This option takes precedence over the DOGMA_SITE environment variable.
 //
 // It panics if name is empty or if key is not a valid UUID.
 func WithSiteIdentity(name, key string) Option {
@@ -233,7 +232,7 @@ func newEngineConfig(app dogma.Application, opts ...Option) (engineConfig, error
 	}
 
 	if cfg.Site == nil {
-		return cfg, errors.New("runkit: a site identity is required, use WithSiteIdentity() or set DOGMA_SITE_NAME and DOGMA_SITE_KEY")
+		return cfg, errors.New("runkit: a site identity is required, use WithSiteIdentity() or set DOGMA_SITE")
 	}
 
 	if cfg.NodeID == nil {
@@ -255,8 +254,8 @@ func newEngineConfig(app dogma.Application, opts ...Option) (engineConfig, error
 // fields that have not already been set by explicit options.
 func applyEnvironment(c *engineConfig) {
 	if c.Site == nil {
-		if key, ok := envSiteKey.Value(); ok {
-			c.Site = identitypb.New(envSiteName.Value(), key)
+		if site, ok := envSite.Value(); ok {
+			c.Site = site
 		}
 	}
 

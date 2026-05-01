@@ -38,8 +38,7 @@ type Engine struct {
 // By default, New reads the following environment variables to fill in any
 // configuration not provided by explicit options:
 //
-//   - DOGMA_SITE_NAME (see [WithSiteIdentity])
-//   - DOGMA_SITE_KEY (see [WithSiteIdentity])
+//   - DOGMA_SITE (see [WithSiteIdentity])
 //   - DOGMA_NODE_ID (see [WithNodeID])
 //   - DOGMA_PERSISTENCE_URL (see [WithPersistence])
 //   - DOGMA_LISTEN_ADDRESS (see [WithListenAddress])
