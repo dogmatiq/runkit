@@ -11,6 +11,7 @@ Accepted
 - References [4. Ranked instruction routing][ADR-4]
 - References [5. Homogeneous cluster nodes][ADR-5]
 - Referenced by [8. Persistence isolation][ADR-8]
+- Referenced by [11. Mutual TLS][ADR-11]
 
 ## Context
 
@@ -163,6 +164,7 @@ This ADR introduces two terms to the [glossary]: **heartbeat record** and
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-8]: 0008-persistence-isolation.md
+[ADR-11]: 0011-mutual-tls.md
 [glossary]: ../glossary.md
 [`Keyspace.Set()`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit/kv#Keyspace.Set
 [orphaned workload adoption]: ../glossary.md#orphaned-workload-adoption
