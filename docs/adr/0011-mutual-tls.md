@@ -41,9 +41,12 @@ support two strategies from day one.
 
    > [!WARNING]
    > An attacker with write access to the persistence store could publish a
-   > public key and impersonate a node — but could just as easily manipulate
-   > persisted state directly. The store's access controls are an adequate
-   > security boundary for the default strategy.
+   > fraudulent public key and impersonate a node. Combined with a privileged
+   > network position, this enables interception of live inter-node traffic.
+   > These are real risks, but the self-signed strategy is still strictly
+   > better than the alternative default of no TLS. Deployments where the
+   > store is not a sufficient trust boundary should use the pre-shared CA
+   > strategy instead.
 
 2. **Pre-shared certificate authority (CA)**: Each node holds a certificate
    signed by a shared CA; peers verify using standard [X.509] chain validation.
@@ -58,9 +61,13 @@ Every cluster gets encrypted, mutually authenticated inter-node traffic without
 any operator configuration. Deployments that need stronger guarantees can swap
 in the pre-shared CA strategy, but the baseline is secure by default.
 
-Under the self-signed strategy, a peer may connect before its public key has
-been seen locally. The verifier must handle this gracefully without creating a
-denial-of-service vector.
+Under the self-signed strategy, connections from nodes that have no published
+heartbeat record are rejected. The verifier can consult the store directly
+during the TLS handshake to resolve an unknown peer.
+
+Because connections are bounded by heartbeat liveness ([ADR-7]), a node whose
+heartbeat record expires or is removed is disconnected from all peers within one
+heartbeat interval — no separate revocation mechanism is needed.
 
 [SPIFFE]/SPIRE is a natural future extension: certificates are issued and
 rotated by a co-located agent rather than published in the heartbeat store.
