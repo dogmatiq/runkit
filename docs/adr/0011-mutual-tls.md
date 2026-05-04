@@ -23,7 +23,9 @@ secure regardless of the network it runs on.
 
 We will require all inter-node connections to use [mutual TLS][mTLS]. Both
 parties must present a certificate — not just the server — so only nodes that
-hold a valid credential can communicate.
+hold a valid credential can communicate. Each certificate includes the node's
+advertised network address as an IP or DNS [subject alternative name][SAN] so
+that dialers can verify the server using standard SAN verification.
 
 The mechanism by which a node obtains its certificate and verifies its peers
 must be extensible, because the right approach varies by deployment. We will
@@ -31,9 +33,10 @@ support two strategies from day one.
 
 1. **Self-signed certificates (default)**: Each node generates an ephemeral key
    pair at startup and publishes its public key in its [heartbeat
-   record][ADR-7]. Rather than validating a CA chain, a peer reads the claimed
-   node identity from the certificate, looks up that node's heartbeat record,
-   and confirms the public key matches. No operator configuration is required.
+   record][ADR-7]. The certificate also carries a URI SAN identifying the node
+   by ID. When receiving a connection, the verifier reads the node identity from
+   the URI SAN, looks up that node's heartbeat record, and confirms the public
+   key matches. No operator configuration is required.
 
    > [!WARNING]
    > An attacker with write access to the persistence store could publish a
@@ -42,12 +45,11 @@ support two strategies from day one.
    > security boundary for the default strategy.
 
 2. **Pre-shared certificate authority (CA)**: Each node holds a certificate
-   signed by a shared CA; peers verify using standard [X.509] chain validation
-   and confirm the certificate identifies the expected node. The operator
-   provisions certificates outside the cluster and is responsible for ensuring
-   each certificate carries the correct node identity. An attacker with
-   persistence write access cannot impersonate a node without also possessing
-   the CA private key, which is never distributed to nodes.
+   signed by a shared CA; peers verify using standard [X.509] chain validation.
+   The operator provisions certificates outside the cluster and is responsible
+   for ensuring each certificate carries the correct address SANs. An attacker
+   with persistence write access cannot impersonate a node without also
+   possessing the CA private key, which is never distributed to nodes.
 
 ## Consequences
 
@@ -69,5 +71,6 @@ abstraction early.
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-7]: 0007-node-heartbeat.md
 [mTLS]: https://en.wikipedia.org/wiki/Mutual_authentication#mTLS
+[SAN]: https://en.wikipedia.org/wiki/Subject_Alternative_Name
 [SPIFFE]: https://www.redhat.com/en/topics/security/spiffe-and-spire
 [X.509]: https://en.wikipedia.org/wiki/X.509
