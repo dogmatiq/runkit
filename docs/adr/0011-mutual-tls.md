@@ -31,9 +31,9 @@ support two strategies from day one.
 
 1. **Self-signed certificates (default)**: Each node generates an ephemeral key
    pair at startup and publishes its public key in its [heartbeat
-   record][ADR-7]. Rather than validating a CA chain, peers verify the
-   certificate by checking whether the presented public key appears in the live
-   node set. No operator configuration is required.
+   record][ADR-7]. Rather than validating a CA chain, a peer reads the claimed
+   node identity from the certificate, looks up that node's heartbeat record,
+   and confirms the public key matches. No operator configuration is required.
 
    > [!WARNING]
    > An attacker with write access to the persistence store could publish a
@@ -42,8 +42,10 @@ support two strategies from day one.
    > security boundary for the default strategy.
 
 2. **Pre-shared certificate authority (CA)**: Each node holds a certificate
-   signed by a shared CA; peers verify using standard [X.509] chain validation.
-   The operator provisions certificates outside the cluster. An attacker with
+   signed by a shared CA; peers verify using standard [X.509] chain validation
+   and confirm the certificate identifies the expected node. The operator
+   provisions certificates outside the cluster and is responsible for ensuring
+   each certificate carries the correct node identity. An attacker with
    persistence write access cannot impersonate a node without also possessing
    the CA private key, which is never distributed to nodes.
 
