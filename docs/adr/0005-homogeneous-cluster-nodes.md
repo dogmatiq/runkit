@@ -11,7 +11,7 @@ Accepted
 - References [4. Ranked instruction routing][ADR-4]
 - Referenced by [6. Durable command executor][ADR-6]
 - Referenced by [7. Node heartbeat][ADR-7]
-- Referenced by [10. Event stream model][ADR-10]
+- Referenced by [10. Event streams][ADR-10]
 - Referenced by [11. Mutual TLS][ADR-11]
 
 ## Context
