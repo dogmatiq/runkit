@@ -50,6 +50,8 @@ support two strategies from day one.
 
 2. **Pre-shared certificate authority (CA)**: Each node holds a certificate
    signed by a shared CA; peers verify using standard [X.509] chain validation.
+   Peers also verify that the connecting node has a current heartbeat record,
+   ensuring that certificate validity alone does not grant cluster membership.
    The operator provisions certificates outside the cluster and is responsible
    for ensuring each certificate carries the correct address SANs. An attacker
    with persistence write access cannot impersonate a node without also
@@ -67,7 +69,7 @@ during the TLS handshake to resolve an unknown peer.
 
 Because connections are bounded by heartbeat liveness ([ADR-7]), a node whose
 heartbeat record expires or is removed is disconnected from all peers within one
-heartbeat interval — no separate revocation mechanism is needed.
+heartbeat read interval — no separate revocation mechanism is needed.
 
 [SPIFFE]/SPIRE is a natural future extension: certificates are issued and
 rotated by a co-located agent rather than published in the heartbeat store.
