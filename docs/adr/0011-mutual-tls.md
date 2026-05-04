@@ -23,9 +23,10 @@ secure regardless of the network it runs on.
 
 We will require all inter-node connections to use [mutual TLS][mTLS]. Both
 parties must present a certificate — not just the server — so only nodes that
-hold a valid credential can communicate. Each certificate includes the node's
-advertised network addresses as IP or DNS [subject alternative name][SANs] so
-that dialers can verify the server using standard host verification.
+hold a valid credential can establish a connection. Each certificate includes
+the node's advertised network addresses as IP or DNS [subject alternative
+name][SANs] so that dialers can verify the server using standard host
+verification.
 
 The mechanism by which a node obtains its certificate and verifies its peers
 must be extensible, because the right approach varies by deployment. We will
@@ -33,11 +34,11 @@ support two strategies from day one.
 
 1. **Self-signed certificates (default)**: Each node generates an ephemeral key
    pair at startup and publishes its public key in its [heartbeat
-   record][ADR-7]. The certificate also carries a URI SAN identifying the node
-   by ID. Both sides of a connection verify the peer's public key against its
-   heartbeat record: the dialer already knows the target node's identity; the
-   receiver reads it from the URI SAN in the client certificate. No operator
-   configuration is required.
+   record][ADR-7]. In addition to the address SANs, the certificate carries a
+   URI SAN identifying the node by ID. Both sides of a connection verify the
+   peer's public key against its heartbeat record: the dialer already knows the
+   target node's identity; the receiver reads it from the URI SAN in the client
+   certificate. No operator configuration is required.
 
    > [!WARNING]
    > An attacker with write access to the persistence store could publish a
@@ -50,12 +51,12 @@ support two strategies from day one.
 
 2. **Pre-shared certificate authority (CA)**: Each node holds a certificate
    signed by a shared CA; peers verify using standard [X.509] chain validation.
-   Peers also verify that the connecting node has a current heartbeat record,
-   ensuring that certificate validity alone does not grant cluster membership.
    The operator provisions certificates outside the cluster and is responsible
-   for ensuring each certificate carries the correct address SANs. An attacker
-   with persistence write access cannot impersonate a node without also
-   possessing the CA private key, which is never distributed to nodes.
+   for ensuring each certificate carries the correct address SANs. Certificate
+   lifecycle management — including rotation and revocation — is the operator's
+   responsibility. An attacker with persistence write access cannot impersonate
+   a node without also possessing the CA private key, which is never distributed
+   to nodes.
 
 ## Consequences
 
@@ -67,9 +68,9 @@ Under the self-signed strategy, connections from nodes that have no published
 heartbeat record are rejected. The verifier can consult the store directly
 during the TLS handshake to resolve an unknown peer.
 
-Because connections are bounded by heartbeat liveness ([ADR-7]), a node whose
-heartbeat record expires or is removed is disconnected from all peers within one
-heartbeat read interval — no separate revocation mechanism is needed.
+It remains undecided how established connections are handled when a peer's
+heartbeat record expires or is removed. Both strategies authenticate at
+connection time, but neither specifies ongoing liveness enforcement.
 
 [SPIFFE]/SPIRE is a natural future extension: certificates are issued and
 rotated by a co-located agent rather than published in the heartbeat store.
