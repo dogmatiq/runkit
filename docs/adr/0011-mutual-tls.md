@@ -64,7 +64,13 @@ Every cluster gets encrypted, mutually authenticated inter-node traffic without
 any operator configuration. Deployments that need stronger guarantees can swap
 in the pre-shared CA strategy, but the baseline is secure by default.
 
-Under the self-signed strategy, connections from nodes that are not part of the live node set (i.e., do not have an unexpired heartbeat record) are rejected. The verifier can consult the store directly during the TLS handshake to resolve an unknown peer.
+Under the self-signed strategy, connections from nodes that are not part of the
+live node set are rejected. The verifier can consult the store directly during
+the TLS handshake to resolve an unknown peer, if necessary.
+
+Neither strategy defends against byzantine nodes. A node that holds valid
+credentials and has write access to the persistence store can impersonate other
+nodes regardless of which strategy is in use.
 
 It remains undecided how established connections are handled when a peer's
 heartbeat record expires or is removed. Both strategies authenticate at
