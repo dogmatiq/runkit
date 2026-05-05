@@ -11,7 +11,8 @@ Accepted
 - References [4. Ranked instruction routing][ADR-4]
 - Referenced by [6. Durable command executor][ADR-6]
 - Referenced by [7. Node heartbeat][ADR-7]
-- Referenced by [10. Event stream model][ADR-10]
+- Referenced by [10. Event streams][ADR-10]
+- Referenced by [11. Mutual TLS][ADR-11]
 
 ## Context
 
@@ -108,6 +109,7 @@ transactions appear anywhere.
 [ADR-4]: 0004-ranked-instruction-routing.md
 [ADR-6]: 0006-durable-command-executor.md
 [ADR-7]: 0007-node-heartbeat.md
-[ADR-10]: 0010-event-stream-model.md
+[ADR-10]: 0010-event-streams.md
+[ADR-11]: 0011-mutual-tls.md
 [`persistencekit`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit
 [Verity]: https://github.com/dogmatiq/verity

@@ -21,3 +21,4 @@ manipulate the ADR documents.
 * [8. Persistence isolation](0008-persistence-isolation.md)
 * [9. Handler-keyed aggregate routing](0009-handler-keyed-aggregate-routing.md)
 * [10. Event streams](0010-event-streams.md)
+* [11. Mutual TLS](0011-mutual-tls.md)
