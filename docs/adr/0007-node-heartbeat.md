@@ -12,6 +12,7 @@ Accepted
 - References [5. Homogeneous cluster nodes][ADR-5]
 - Referenced by [8. Persistence isolation][ADR-8]
 - Referenced by [11. Mutual TLS][ADR-11]
+- Referenced by [12. gRPC][ADR-12]
 
 ## Context
 
@@ -165,6 +166,7 @@ This ADR introduces two terms to the [glossary]: **heartbeat record** and
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-8]: 0008-persistence-isolation.md
 [ADR-11]: 0011-mutual-tls.md
+[ADR-12]: 0012-grpc.md
 [glossary]: ../glossary.md
 [`Keyspace.Set()`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit/kv#Keyspace.Set
 [orphaned workload adoption]: ../glossary.md#orphaned-workload-adoption

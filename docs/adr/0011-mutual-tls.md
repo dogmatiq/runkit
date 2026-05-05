@@ -11,6 +11,7 @@ Proposed
 
 - References [5. Homogeneous cluster nodes][ADR-5]
 - References [7. Node heartbeat][ADR-7]
+- Referenced by [12. gRPC][ADR-12]
 
 ## Context
 
@@ -85,6 +86,7 @@ abstraction early.
 
 [ADR-5]: 0005-homogeneous-cluster-nodes.md
 [ADR-7]: 0007-node-heartbeat.md
+[ADR-12]: 0012-grpc.md
 [mTLS]: https://en.wikipedia.org/wiki/Mutual_authentication#mTLS
 [SANs]: https://en.wikipedia.org/wiki/Subject_Alternative_Name
 [SPIFFE]: https://www.redhat.com/en/topics/security/spiffe-and-spire
