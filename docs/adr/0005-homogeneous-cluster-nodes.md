@@ -13,6 +13,7 @@ Accepted
 - Referenced by [7. Node heartbeat][ADR-7]
 - Referenced by [10. Event streams][ADR-10]
 - Referenced by [11. Mutual TLS][ADR-11]
+- Referenced by [12. gRPC][ADR-12]
 
 ## Context
 
@@ -111,5 +112,6 @@ transactions appear anywhere.
 [ADR-7]: 0007-node-heartbeat.md
 [ADR-10]: 0010-event-streams.md
 [ADR-11]: 0011-mutual-tls.md
+[ADR-12]: 0012-grpc.md
 [`persistencekit`]: https://pkg.go.dev/github.com/dogmatiq/persistencekit
 [Verity]: https://github.com/dogmatiq/verity
