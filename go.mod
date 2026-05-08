@@ -3,7 +3,7 @@ module github.com/dogmatiq/runkit
 go 1.26.0
 
 require (
-	github.com/dogmatiq/enginekit v0.26.0
+	github.com/dogmatiq/enginekit v0.26.2
 	github.com/dogmatiq/ferrite v1.7.0
 	github.com/dogmatiq/persistencekit v0.19.0
 	github.com/zeebo/xxh3 v1.1.0
