@@ -19,12 +19,15 @@ ON eventstream.next_offset (
 -- handlers.
 CREATE TABLE IF NOT EXISTS eventstream.events (
     "offset"              bigint PRIMARY KEY,
-    message_type_id       uuid  NOT NULL,
-    correlation_id        uuid  NOT NULL,
-    envelope              bytea NOT NULL,
+    correlation_id        uuid   NOT NULL,
+    message_type_id       uuid   NOT NULL,
+    envelope              bytea  NOT NULL,
     aggregate_handler_key uuid,
     aggregate_instance_id text,
 
+    -- Ensure that either both aggregate_handler_key and aggregate_instance_id
+    -- are NULL (an event from an integration handler), or neither are NULL (an
+    -- event from an aggregate handler).
     CHECK (
         (aggregate_handler_key IS NULL     AND aggregate_instance_id IS NULL)
      OR (aggregate_handler_key IS NOT NULL AND aggregate_instance_id IS NOT NULL)

@@ -37,7 +37,9 @@ func Append(
 	// "exactly one row" invariant.
 	row := tx.QueryRowContext(
 		ctx,
-		`INSERT INTO eventstream.next_offset (next_offset) VALUES ($1)
+		`INSERT INTO eventstream.next_offset (
+			next_offset
+		) VALUES ($1)
 		ON CONFLICT ((TRUE)) DO UPDATE
 			SET next_offset = next_offset.next_offset + $1
 		RETURNING next_offset`,
@@ -71,15 +73,15 @@ func Append(
 			ctx,
 			`INSERT INTO eventstream.events (
 				"offset",
-				message_type_id,
 				correlation_id,
+				message_type_id,
 				envelope,
 				aggregate_handler_key,
 				aggregate_instance_id
 			) VALUES ($1, $2, $3, $4, $5, $6)`,
 			offsetOfNextEvent,
-			envelope.GetBody().GetMessage().GetTypeId().AsString(),
 			envelope.GetHeader().GetCorrelationId().AsString(),
+			envelope.GetBody().GetMessage().GetTypeId().AsString(),
 			envData,
 			aggregateHandlerKey,
 			aggregateInstanceID,
