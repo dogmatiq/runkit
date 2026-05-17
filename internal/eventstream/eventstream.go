@@ -24,7 +24,7 @@ func Append(
 
 	// Advance the next offset of the stream to accommodate the new events.
 	//
-	// The ((TRUE)) conflict target matches the event_stream_offset_singleton
+	// The ((TRUE)) conflict target matches the idx_event_stream_offset_singleton
 	// unique index that enforces the table's "exactly one row" invariant.
 	row := tx.QueryRowContext(
 		ctx,
@@ -33,7 +33,7 @@ func Append(
 		) VALUES (
 		 	$1
 		)
-		ON CONFLICT (('singleton'::singleton))
+		ON CONFLICT ((TRUE))
 		DO UPDATE
 			SET next_offset = event_stream_offset.next_offset + EXCLUDED.next_offset
 		RETURNING COALESCE(OLD.next_offset, 0)`,

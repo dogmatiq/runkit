@@ -1,4 +1,4 @@
-package commandqueue
+package database
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// ApplySchema creates the commandqueue package's tables and indexes. It is
-// safe to call on every startup.
+// ApplySchema creates the engine's tables and indexes. It is safe to call
+// on every startup.
 func ApplySchema(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, schemaSQL)
 	return err
