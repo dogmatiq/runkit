@@ -1,21 +1,19 @@
 package eventstream_test
 
 import (
-	"errors"
 	"fmt"
-	"slices"
 	"testing"
 
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
+	"github.com/dogmatiq/reference-engine/internal/database"
 	. "github.com/dogmatiq/reference-engine/internal/eventstream"
-	"github.com/dogmatiq/reference-engine/internal/pgtest"
-	"google.golang.org/protobuf/proto"
+	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
 func TestAppend(t *testing.T) {
-	db, _ := pgtest.Setup(t)
+	db, _ := database.NewTestDB(t)
 	packer := &envelopepb.Packer{
 		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
 	}
@@ -39,8 +37,7 @@ func TestAppend(t *testing.T) {
 		p.PackEvent(stubs.EventA3)
 		envelopes, _ := p.Seal()
 
-		wantOffset := Offset(3)
-		gotOffset, err := Append(
+		gotNextOffset, err := Append(
 			t.Context(),
 			tx,
 			envelopes,
@@ -49,11 +46,14 @@ func TestAppend(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if gotOffset != wantOffset {
-			t.Fatalf("unexpected offset after last event: got %d, want %d", gotOffset, wantOffset)
+		if wantNextOffset := Offset(3); gotNextOffset != wantNextOffset {
+			t.Fatalf("unexpected offset after last event: got %d, want %d", gotNextOffset, wantNextOffset)
 		}
 
-		wantEnvelopes = slices.Collect(envelopes.All())
+		for envelope := range envelopes.All() {
+			SetOffset(envelope, Offset(len(wantEnvelopes)))
+			wantEnvelopes = append(wantEnvelopes, envelope)
+		}
 	}
 
 	// Pack some events produced by <handler-2>.
@@ -66,8 +66,7 @@ func TestAppend(t *testing.T) {
 		p.PackEvent(stubs.EventA2)
 		envelopes, _ := p.Seal()
 
-		wantOffset := Offset(5)
-		gotOffset, err := Append(
+		gotNextOffset, err := Append(
 			t.Context(),
 			tx,
 			envelopes,
@@ -76,11 +75,12 @@ func TestAppend(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if gotOffset != wantOffset {
-			t.Fatalf("unexpected offset after last event: got %d, want %d", gotOffset, wantOffset)
+		if wantNextOffset := Offset(5); gotNextOffset != wantNextOffset {
+			t.Fatalf("unexpected offset after last event: got %d, want %d", gotNextOffset, wantNextOffset)
 		}
 
 		for envelope := range envelopes.All() {
+			SetOffset(envelope, Offset(len(wantEnvelopes)))
 			wantEnvelopes = append(wantEnvelopes, envelope)
 		}
 	}
@@ -88,34 +88,31 @@ func TestAppend(t *testing.T) {
 	// Verify that we can read all events back in order, with no offset gaps.
 	{
 		wantOffset := Offset(0)
+		wantOffsetMax := Offset(len(wantEnvelopes))
 
-		if err := Read(
-			t.Context(),
-			tx,
-			0,
-			"", "", // no filter
-			func(gotEv Event) error {
-				if gotEv.Offset != wantOffset {
-					t.Fatalf("unexpected offset during read: got %d, want %d", gotEv.Offset, wantOffset)
-				}
+		for gotEnvelope, err := range Read(t.Context(), tx, 0) {
+			if err != nil {
+				t.Fatal(err)
+			}
 
-				wantEnv := wantEnvelopes[gotEv.Offset]
-				if !proto.Equal(gotEv.Envelope, wantEnv) {
-					t.Fatalf("unexpected envelope at offset %d: got %v, want %v", gotEv.Offset, gotEv.Envelope, wantEnv)
-				}
+			if wantOffset > wantOffsetMax {
+				t.Fatalf("unexpected offset during read: got %d, want less than %d", wantOffset, wantOffsetMax)
+			}
 
-				wantOffset++
+			wantEnvelope := wantEnvelopes[wantOffset]
+			xtesting.ExpectEnvelope(t, gotEnvelope, wantEnvelope)
 
-				return nil
-			},
-		); err != nil {
-			t.Fatal(err)
+			wantOffset++
+		}
+
+		if wantOffset != wantOffsetMax {
+			t.Fatalf("unexpected number of events read: got %d, want %d", wantOffset, wantOffsetMax)
 		}
 	}
 }
 
 func TestRead(t *testing.T) {
-	db, _ := pgtest.Setup(t)
+	db, _ := database.NewTestDB(t)
 
 	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
@@ -199,6 +196,7 @@ func TestRead(t *testing.T) {
 		}
 
 		for envelope := range envelopes.All() {
+			SetOffset(envelope, Offset(len(allEnvelopes)))
 			allEnvelopes = append(allEnvelopes, envelope)
 		}
 	}
@@ -211,125 +209,89 @@ func TestRead(t *testing.T) {
 		))
 	}
 
-	t.Run("it calls fn for each event", func(t *testing.T) {
-		wantOffset := Offset(0)
+	t.Run("it yields each event in order", func(t *testing.T) {
 		wantEnvelopes := allEnvelopes
 
-		if err := Read(
-			t.Context(),
-			tx,
-			0,
-			"", "", // no filter
-			func(gotEv Event) error {
-				if gotEv.Offset != wantOffset {
-					t.Fatalf("unexpected offset during read: got %d, want %d", gotEv.Offset, wantOffset)
-				}
+		for gotEnvelope, err := range Read(t.Context(), tx, 0) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wantEnvelopes) == 0 {
+				t.Fatal("more events yielded than expected")
+			}
+			xtesting.ExpectEnvelope(t, gotEnvelope, wantEnvelopes[0])
+			wantEnvelopes = wantEnvelopes[1:]
+		}
 
-				wantEnv := wantEnvelopes[0]
-				if !proto.Equal(gotEv.Envelope, wantEnv) {
-					t.Fatalf("unexpected envelope at offset %d: got %v, want %v", gotEv.Offset, gotEv.Envelope, wantEnv)
-				}
-
-				wantEnvelopes = wantEnvelopes[1:]
-				wantOffset++
-
-				return nil
-			},
-		); err != nil {
-			t.Fatal(err)
+		if len(wantEnvelopes) != 0 {
+			t.Fatalf("fewer events yielded than expected: %d remaining", len(wantEnvelopes))
 		}
 	})
 
 	t.Run("it skips events before the start offset", func(t *testing.T) {
 		const startOffset = 10
-		wantOffset := Offset(startOffset)
 		wantEnvelopes := allEnvelopes[startOffset:]
 
-		if err := Read(
-			t.Context(),
-			tx,
-			startOffset,
-			"", "", // no filter
-			func(gotEv Event) error {
-				if gotEv.Offset != wantOffset {
-					t.Fatalf("unexpected offset during read: got %d, want %d", gotEv.Offset, wantOffset)
-				}
+		for gotEnvelope, err := range Read(t.Context(), tx, startOffset) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wantEnvelopes) == 0 {
+				t.Fatal("more events yielded than expected")
+			}
+			xtesting.ExpectEnvelope(t, gotEnvelope, wantEnvelopes[0])
+			wantEnvelopes = wantEnvelopes[1:]
+		}
 
-				wantEnv := wantEnvelopes[0]
-				if !proto.Equal(gotEv.Envelope, wantEnv) {
-					t.Fatalf("unexpected envelope at offset %d: got %v, want %v", gotEv.Offset, gotEv.Envelope, wantEnv)
-				}
-
-				wantEnvelopes = wantEnvelopes[1:]
-				wantOffset++
-
-				return nil
-			},
-		); err != nil {
-			t.Fatal(err)
+		if len(wantEnvelopes) != 0 {
+			t.Fatalf("fewer events yielded than expected: %d remaining", len(wantEnvelopes))
 		}
 	})
 
 	t.Run("it filters by aggregate instance ID", func(t *testing.T) {
-		var (
-			wantOffsets   []Offset
-			wantEnvelopes []*envelopepb.Envelope
-		)
-
-		for offset, envelope := range allEnvelopes {
+		var wantEnvelopes []*envelopepb.Envelope
+		for _, envelope := range allEnvelopes {
 			src := envelope.GetHeader().GetSource()
 			if src.GetHandler().GetKey().AsString() == aggregate1.GetKey().AsString() &&
 				src.GetInstanceId() == "<instance-1>" {
-				wantOffsets = append(wantOffsets, Offset(offset))
 				wantEnvelopes = append(wantEnvelopes, envelope)
 			}
 		}
 
-		if err := Read(
+		for gotEnvelope, err := range ReadForAggregateInstance(
 			t.Context(),
 			tx,
 			0,
-			aggregate1.GetKey().AsString(),
+			aggregate1.GetKey(),
 			"<instance-1>",
-			func(gotEv Event) error {
-				wantOffset := wantOffsets[0]
-				if gotEv.Offset != wantOffset {
-					t.Fatalf("unexpected offset during read: got %d, want %d", gotEv.Offset, wantOffset)
-				}
+		) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(wantEnvelopes) == 0 {
+				t.Fatal("more events yielded than expected")
+			}
+			xtesting.ExpectEnvelope(t, gotEnvelope, wantEnvelopes[0])
+			wantEnvelopes = wantEnvelopes[1:]
+		}
 
-				wantEnv := wantEnvelopes[0]
-				if !proto.Equal(gotEv.Envelope, wantEnv) {
-					t.Fatalf("unexpected envelope at offset %d: got %v, want %v", gotEv.Offset, gotEv.Envelope, wantEnv)
-				}
-
-				wantOffsets = wantOffsets[1:]
-				wantEnvelopes = wantEnvelopes[1:]
-
-				return nil
-			},
-		); err != nil {
-			t.Fatal(err)
+		if len(wantEnvelopes) != 0 {
+			t.Fatalf("fewer events yielded than expected: %d remaining", len(wantEnvelopes))
 		}
 	})
 
-	t.Run("it returns immediately if fn returns an error", func(t *testing.T) {
-		called := false
-		wantErr := errors.New("<error>")
-		gotErr := Read(
-			t.Context(),
-			tx,
-			0,
-			"", "", // no filter
-			func(Event) error {
-				if called {
-					t.Fatal("fn called more than once")
-				}
-				called = true
-				return wantErr
-			},
-		)
-		if gotErr != wantErr {
-			t.Fatalf("unexpected error: got %v, want %v", gotErr, wantErr)
+	t.Run("it stops iteration when the caller breaks", func(t *testing.T) {
+		count := 0
+		for _, err := range Read(t.Context(), tx, 0) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			count++
+			break
+		}
+		if count != 1 {
+			t.Fatalf("unexpected number of events: got %d, want 1", count)
 		}
 	})
 }
+

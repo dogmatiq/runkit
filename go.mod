@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/dogmatiq/dogma v0.25.0
-	github.com/dogmatiq/enginekit v0.26.3
+	github.com/dogmatiq/enginekit v0.26.4
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
@@ -27,7 +27,6 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/dogmatiq/primo v0.4.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
