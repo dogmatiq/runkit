@@ -60,11 +60,34 @@ func NewTestDB(t testing.TB, schema ...string) (*sql.DB, string) {
 		t.Fatalf("unable to apply schema: %s", err)
 	}
 
-	for _, schema := range schema {
-		if _, err := db.ExecContext(t.Context(), schema); err != nil {
+	for _, s := range schema {
+		if _, err := db.ExecContext(t.Context(), s); err != nil {
 			t.Fatalf("unable to apply custom schema: %s", err)
 		}
 	}
 
 	return db, dsn
+}
+
+// Transact executes the given function within a transaction.
+func Transact(
+	t testing.TB,
+	db *sql.DB,
+	fn func(context.Context, *sql.Tx) error,
+) {
+	t.Helper()
+
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("unable to begin transaction: %s", err)
+	}
+	defer tx.Rollback()
+
+	if err := fn(t.Context(), tx); err != nil {
+		t.Fatalf("transaction function produced an error: %s", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("unable to commit transaction: %s", err)
+	}
 }

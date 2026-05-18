@@ -68,9 +68,9 @@ func claimIdempotencyKey(
 	res, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO command_idempotency_keys (
-				idempotency_key
-			) VALUES ($1)
-			ON CONFLICT (idempotency_key) DO NOTHING`,
+			idempotency_key
+		) VALUES ($1)
+		ON CONFLICT (idempotency_key) DO NOTHING`,
 		idempotencyKey,
 	)
 	if err != nil {

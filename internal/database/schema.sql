@@ -1,4 +1,32 @@
 --------------------------------------------------------------------------------
+-- The "aggregate_instances" table stores meta-data about each aggregate
+-- instance, and a snapshot of its state, if one is available.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS aggregate_instances (
+    handler_key                   uuid   NOT NULL,
+    instance_id                   text   NOT NULL CHECK (instance_id != ''),
+    event_offset_after_last_event bigint NOT NULL DEFAULT 0 CHECK (event_offset_after_last_event >= 0),
+    event_offset_after_snapshot   bigint NOT NULL DEFAULT 0 CHECK (event_offset_after_snapshot >= 0),
+    snapshot                      bytea,
+
+    PRIMARY KEY (handler_key, instance_id),
+
+    CONSTRAINT has_complete_snapshot
+    CHECK (
+        CASE
+            WHEN event_offset_after_snapshot = 0
+            THEN snapshot IS NULL
+            ELSE snapshot IS NOT NULL
+        END
+    ),
+
+    CONSTRAINT snapshot_offset_in_range
+    CHECK (
+        event_offset_after_snapshot <= event_offset_after_last_event
+    )
+);
+
+--------------------------------------------------------------------------------
 -- The "command_queue" table is the queue of commands awaiting handling.
 -- Rows are deleted once the command is successfully handled.
 --------------------------------------------------------------------------------
@@ -24,7 +52,11 @@ CREATE TABLE IF NOT EXISTS command_queue (
             THEN routed_to_aggregate_instance_id IS NULL
             ELSE TRUE
         END
-    )
+    ),
+
+    CONSTRAINT fk_routed_to_aggregate_instance
+    FOREIGN KEY (routed_to_handler_key, routed_to_aggregate_instance_id)
+    REFERENCES aggregate_instances (handler_key, instance_id)
 );
 
 -- Create an index that allows us to efficiently find the next unrouted command
@@ -103,7 +135,11 @@ CREATE TABLE IF NOT EXISTS event_stream (
             THEN aggregate_instance_id IS NULL
             ELSE aggregate_instance_id IS NOT NULL
         END
-    )
+    ),
+
+    CONSTRAINT fk_aggregate_instance
+    FOREIGN KEY (aggregate_handler_key, aggregate_instance_id)
+    REFERENCES aggregate_instances (handler_key, instance_id)
 );
 
 -- Create an index that allows us to efficiently query events by their message
@@ -137,32 +173,4 @@ WHERE aggregate_handler_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_event_stream_by_correlation_id
 ON event_stream (
     correlation_id
-);
-
---------------------------------------------------------------------------------
--- The "aggregate_instances" table stores meta-data about each aggregate
--- instance, and a snapshot of its state, if one is available.
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS aggregate_instances (
-    handler_key               uuid   NOT NULL,
-    instance_id               text   NOT NULL CHECK (instance_id != ''),
-    event_offset_after_latest bigint NOT NULL DEFAULT 0 CHECK (event_offset_after_latest >= 0),
-    snapshot_offset           bigint CHECK (snapshot_offset >= 0),
-    snapshot                  bytea,
-
-    PRIMARY KEY (handler_key, instance_id),
-
-    CONSTRAINT has_complete_snapshot
-    CHECK (
-        CASE
-            WHEN snapshot_offset IS NULL
-            THEN snapshot IS NULL
-            ELSE snapshot IS NOT NULL
-        END
-    ),
-
-    CONSTRAINT snapshot_offset_in_range
-    CHECK (
-        snapshot_offset <= event_offset_after_latest
-    )
 );

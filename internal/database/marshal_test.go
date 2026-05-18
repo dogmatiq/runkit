@@ -23,7 +23,9 @@ func TestMarshalUUID(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO test_uuid (id) VALUES ($1)`,
+			`INSERT INTO test_uuid (
+				id
+			) VALUES ($1)`,
 			MarshalUUID(original),
 		); err != nil {
 			t.Fatal(err)
@@ -32,7 +34,9 @@ func TestMarshalUUID(t *testing.T) {
 		got := &uuidpb.UUID{}
 		if err := db.QueryRowContext(
 			t.Context(),
-			`SELECT id FROM test_uuid WHERE id = $1`,
+			`SELECT id
+			FROM test_uuid
+			WHERE id = $1`,
 			MarshalUUID(original),
 		).Scan(UnmarshalUUID(got)); err != nil {
 			t.Fatal(err)
@@ -74,7 +78,9 @@ func TestMarshalEnvelope(t *testing.T) {
 		var id int
 		if err := db.QueryRowContext(
 			t.Context(),
-			`INSERT INTO test_envelope (data) VALUES ($1) RETURNING id`,
+			`INSERT INTO test_envelope (
+				data
+			) VALUES ($1) RETURNING id`,
 			MarshalEnvelope(original),
 		).Scan(&id); err != nil {
 			t.Fatal(err)
@@ -83,7 +89,9 @@ func TestMarshalEnvelope(t *testing.T) {
 		got := &envelopepb.Envelope{}
 		if err := db.QueryRowContext(
 			t.Context(),
-			`SELECT data FROM test_envelope WHERE id = $1`,
+			`SELECT data
+			FROM test_envelope
+			WHERE id = $1`,
 			id,
 		).Scan(UnmarshalEnvelope(got)); err != nil {
 			t.Fatal(err)

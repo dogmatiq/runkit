@@ -24,15 +24,14 @@ func Append(
 
 	// Advance the next offset of the stream to accommodate the new events.
 	//
-	// The ((TRUE)) conflict target matches the idx_event_stream_offset_singleton
-	// unique index that enforces the table's "exactly one row" invariant.
+	// The conflict target (TRUE) refers to idx_event_stream_offset_singleton,
+	// which enforces the "exactly one row" invariant on the event_stream_offset
+	// table.
 	row := tx.QueryRowContext(
 		ctx,
 		`INSERT INTO event_stream_offset (
 			next_offset
-		) VALUES (
-		 	$1
-		)
+		) VALUES ($1)
 		ON CONFLICT ((TRUE))
 		DO UPDATE
 			SET next_offset = event_stream_offset.next_offset + EXCLUDED.next_offset
@@ -53,14 +52,7 @@ func Append(
 			envelope,
 			aggregate_handler_key,
 			aggregate_instance_id
-		) VALUES (
-			$1,
-			$2,
-			$3,
-			$4,
-			$5,
-			$6
-		)`,
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("unable to prepare event insert statement: %w", err)
@@ -103,12 +95,12 @@ func Append(
 // offset.
 func Read(
 	ctx context.Context,
-	tx *sql.Tx,
+	q database.Querier,
 	offset Offset,
 ) iter.Seq2[*envelopepb.Envelope, error] {
 	return read(
 		ctx,
-		tx,
+		q,
 		`SELECT
 			event_offset,
 			envelope
@@ -125,14 +117,14 @@ func Read(
 // aggregate instance, starting at or after the given offset.
 func ReadForAggregateInstance(
 	ctx context.Context,
-	tx *sql.Tx,
+	q database.Querier,
 	offset Offset,
 	aggregateHandlerKey *uuidpb.UUID,
 	aggregateInstanceID string,
 ) iter.Seq2[*envelopepb.Envelope, error] {
 	return read(
 		ctx,
-		tx,
+		q,
 		`SELECT
 			event_offset,
 			envelope
@@ -157,13 +149,13 @@ const eventsPerPage = 100
 // offset as $1.
 func read(
 	ctx context.Context,
-	tx *sql.Tx,
+	q database.Querier,
 	query string,
 	offset Offset,
 	args ...any,
 ) iter.Seq2[*envelopepb.Envelope, error] {
 	return func(yield func(*envelopepb.Envelope, error) bool) {
-		stmt, err := tx.PrepareContext(ctx, query)
+		stmt, err := q.PrepareContext(ctx, query)
 		if err != nil {
 			yield(nil, fmt.Errorf("unable to prepare event query statement: %w", err))
 			return
