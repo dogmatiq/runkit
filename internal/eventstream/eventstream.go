@@ -3,6 +3,7 @@ package eventstream
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"iter"
 
@@ -86,6 +87,25 @@ func Append(
 		}
 
 		next++
+	}
+
+	return next, nil
+}
+
+// NextOffset returns the next unused offset of the event stream.
+func NextOffset(ctx context.Context, q database.Querier) (Offset, error) {
+	var next Offset
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT next_offset
+		FROM event_stream_offset`,
+	)
+	if err := row.Scan(&next); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+
+		return 0, fmt.Errorf("unable to query next stream offset: %w", err)
 	}
 
 	return next, nil

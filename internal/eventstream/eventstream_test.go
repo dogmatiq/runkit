@@ -101,18 +101,30 @@ func TestEventStream(t *testing.T) {
 			batch.Handler,
 			opts...,
 		)
+
 		for range batch.EventCount {
 			p.PackEvent(stubs.EventA1)
 		}
-		envelopes, _ := p.Seal()
 
-		if _, err := Append(t.Context(), tx, envelopes); err != nil {
-			t.Fatal(err)
-		}
+		envelopes, _ := p.Seal()
 
 		for envelope := range envelopes.All() {
 			SetOffset(envelope, Offset(len(allEnvelopes)))
 			allEnvelopes = append(allEnvelopes, envelope)
+		}
+
+		wantNextOffset := Offset(len(allEnvelopes))
+		gotNextOffset, err := Append(t.Context(), tx, envelopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if gotNextOffset != wantNextOffset {
+			t.Fatalf(
+				"unexpected next offset after appending batch: got %d, want %d",
+				gotNextOffset,
+				wantNextOffset,
+			)
 		}
 	}
 
@@ -225,5 +237,56 @@ func TestEventStream(t *testing.T) {
 				)
 			})
 		})
+	}
+}
+
+func TestNextOffset(t *testing.T) {
+	db, _ := database.NewTestDB(t)
+
+	// Assert that the next offset is zero when there are no events.
+	got, err := NextOffset(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := Offset(0); got != want {
+		t.Fatalf("unexpected offset: got %d, want %d", got, want)
+	}
+
+	// Append some events so that the next offset is no longer zero.
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	packer := &envelopepb.Packer{
+		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
+	}
+
+	p := packer.PackEffects(
+		packer.PackCommand(stubs.CommandA1),
+		identitypb.MustParse("<handler>", "ca4b488a-1db7-4375-b263-6812252c016a"),
+	)
+	p.PackEvent(stubs.EventA1)
+	eventEnvelopes, _ := p.Seal()
+
+	want, err := Append(t.Context(), tx, eventEnvelopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert that the next offset is what we expect after appending events.
+	got, err = NextOffset(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != want {
+		t.Fatalf("unexpected offset: got %d, want %d", got, want)
 	}
 }
