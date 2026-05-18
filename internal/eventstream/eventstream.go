@@ -141,6 +141,31 @@ func ReadForAggregateInstance(
 	)
 }
 
+// ReadForCorrelationID returns a sequence of events that share the given
+// correlation ID, starting at or after the given offset.
+func ReadForCorrelationID(
+	ctx context.Context,
+	q database.Querier,
+	offset Offset,
+	correlationID *uuidpb.UUID,
+) iter.Seq2[*envelopepb.Envelope, error] {
+	return read(
+		ctx,
+		q,
+		`SELECT
+			event_offset,
+			envelope
+		FROM event_stream
+		WHERE event_offset >= $1
+			AND correlation_id = $2
+		ORDER BY event_offset
+		LIMIT $3`,
+		offset,
+		database.MarshalUUID(correlationID),
+		eventsPerPage,
+	)
+}
+
 // eventsPerPage is the number of events read from the database at a time.
 const eventsPerPage = 100
 
