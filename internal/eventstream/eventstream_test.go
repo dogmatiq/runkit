@@ -137,9 +137,9 @@ func TestEventStream(t *testing.T) {
 			},
 		},
 		{
-			Name: "func ReadForAggregateInstance()",
+			Name: "func ReadByAggregateInstance()",
 			Read: func(ctx context.Context, q database.Querier, offset Offset) iter.Seq2[*envelopepb.Envelope, error] {
-				return ReadForAggregateInstance(
+				return ReadByAggregateInstance(
 					ctx,
 					q,
 					offset,
@@ -162,9 +162,9 @@ func TestEventStream(t *testing.T) {
 			},
 		},
 		{
-			Name: "func ReadForCorrelationID()",
+			Name: "func ReadByCorrelationID()",
 			Read: func(ctx context.Context, q database.Querier, offset Offset) iter.Seq2[*envelopepb.Envelope, error] {
-				return ReadForCorrelationID(
+				return ReadByCorrelationID(
 					ctx,
 					q,
 					offset,

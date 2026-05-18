@@ -113,9 +113,9 @@ func Read(
 	)
 }
 
-// ReadForAggregateInstance returns a sequence of events recorded by a specific
+// ReadByAggregateInstance returns a sequence of events recorded by a specific
 // aggregate instance, starting at or after the given offset.
-func ReadForAggregateInstance(
+func ReadByAggregateInstance(
 	ctx context.Context,
 	q database.Querier,
 	offset Offset,
@@ -141,9 +141,9 @@ func ReadForAggregateInstance(
 	)
 }
 
-// ReadForCorrelationID returns a sequence of events that share the given
+// ReadByCorrelationID returns a sequence of events that share the given
 // correlation ID, starting at or after the given offset.
-func ReadForCorrelationID(
+func ReadByCorrelationID(
 	ctx context.Context,
 	q database.Querier,
 	offset Offset,
