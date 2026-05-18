@@ -191,7 +191,7 @@ func (w *worker) refreshRoot(
 		w.offsetAfterLastAppliedEvent = offsetAfterSnapshot
 	}
 
-	for eventEnvelope, err := range eventstream.ReadForAggregateInstance(
+	for eventEnvelope, err := range eventstream.ReadByAggregateInstance(
 		ctx,
 		tx,
 		w.offsetAfterLastAppliedEvent,

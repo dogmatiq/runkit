@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS command_queue (
         END
     ),
 
-    CONSTRAINT fk_routed_to_aggregate_instance
+    -- Commands routed to aggregate handlers must reference an existing
+    -- aggregate_instance row, so that it can be exclusively locked.
+    CONSTRAINT fk_aggregate_instance
     FOREIGN KEY (routed_to_handler_key, routed_to_aggregate_instance_id)
     REFERENCES aggregate_instances (handler_key, instance_id)
 );
@@ -135,11 +137,7 @@ CREATE TABLE IF NOT EXISTS event_stream (
             THEN aggregate_instance_id IS NULL
             ELSE aggregate_instance_id IS NOT NULL
         END
-    ),
-
-    CONSTRAINT fk_aggregate_instance
-    FOREIGN KEY (aggregate_handler_key, aggregate_instance_id)
-    REFERENCES aggregate_instances (handler_key, instance_id)
+    )
 );
 
 -- Create an index that allows us to efficiently query events by their message

@@ -3,6 +3,7 @@ package commandqueue
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -246,4 +247,37 @@ func Reset(
 	}
 
 	return nil
+}
+
+// NextAttemptByCorrelationID returns the earliest time that any command with
+// the given correlation ID is scheduled for its next attempt.
+func NextAttemptByCorrelationID(
+	ctx context.Context,
+	q database.Querier,
+	correlationID *uuidpb.UUID,
+) (time.Time, bool, error) {
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT next_attempt_at
+		FROM command_queue
+		WHERE correlation_id = $1
+		ORDER BY next_attempt_at
+		LIMIT 1`,
+		database.MarshalUUID(correlationID),
+	)
+
+	var nextAttempt time.Time
+	if err := row.Scan(&nextAttempt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+
+		return time.Time{}, false, fmt.Errorf(
+			"unable to get next attempt for correlation ID %s: %w",
+			correlationID,
+			err,
+		)
+	}
+
+	return nextAttempt, true, nil
 }

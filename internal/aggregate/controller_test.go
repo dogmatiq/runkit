@@ -101,7 +101,7 @@ func TestController(t *testing.T) {
 
 		xtesting.ExpectEvents(
 			t,
-			eventstream.ReadForAggregateInstance(
+			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
 				0,
@@ -164,7 +164,7 @@ func TestController(t *testing.T) {
 
 		xtesting.ExpectEvents(
 			t,
-			eventstream.ReadForAggregateInstance(
+			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
 				0,
@@ -290,7 +290,7 @@ func TestController(t *testing.T) {
 
 		xtesting.ExpectEvents(
 			t,
-			eventstream.ReadForAggregateInstance(
+			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
 				0,

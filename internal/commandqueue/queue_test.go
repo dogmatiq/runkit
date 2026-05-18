@@ -1,7 +1,9 @@
 package commandqueue_test
 
 import (
+	"context"
 	"database/sql"
+	"slices"
 	"testing"
 	"time"
 
@@ -259,24 +261,38 @@ func TestReset(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		const (
-			handlerKey = "ef5ea913-f312-422f-9c40-32280c17ac04"
-			instanceID = "<instance-1>"
+		var (
+			handlerKey          = uuidpb.Generate()
+			aggregateInstanceID = "<instance-1>"
 		)
+
 		if _, err := tx.ExecContext(
 			t.Context(),
-			`UPDATE command_queue SET
-				routed_to_handler_key = $2,
-				routed_to_aggregate_instance_id = $3
-			WHERE message_id = $1`,
-			database.MarshalUUID(messageID),
-			handlerKey,
-			instanceID,
+			`INSERT INTO aggregate_instances (
+				handler_key,
+				instance_id
+			) VALUES ($1, $2)`,
+			database.MarshalUUID(handlerKey),
+			aggregateInstanceID,
 		); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := Reset(t.Context(), tx, messageID); err != nil {
+		if err := Route(
+			t.Context(),
+			tx,
+			messageID,
+			handlerKey,
+			aggregateInstanceID,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Reset(
+			t.Context(),
+			tx,
+			messageID,
+		); err != nil {
 			t.Fatal(err)
 		}
 
@@ -298,6 +314,136 @@ func TestReset(t *testing.T) {
 	})
 }
 
+func TestNextAttemptByCorrelationID(t *testing.T) {
+	db, _ := database.NewTestDB(t)
+
+	packer := &envelopepb.Packer{
+		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
+	}
+	// handlerID := identitypb.MustParse("<handler>", "e0f7a00e-face-4b1e-b0b0-000000000001")
+
+	t.Run("it returns false when no commands exist with the given correlation ID", func(t *testing.T) {
+		_, ok, err := NextAttemptByCorrelationID(t.Context(), db, uuidpb.Generate())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Fatal("expected ok to be false")
+		}
+	})
+
+	t.Run("it returns the sole command's next attempt time", func(t *testing.T) {
+		var (
+			commandEnvelope = packer.PackCommand(stubs.CommandA1)
+			correlationID   = commandEnvelope.GetHeader().GetCorrelationId()
+		)
+
+		database.Transact(
+			t,
+			db,
+			func(ctx context.Context, tx *sql.Tx) error {
+				return Enqueue(ctx, tx, commandEnvelope)
+			},
+		)
+
+		got, ok, err := NextAttemptByCorrelationID(
+			t.Context(),
+			db,
+			correlationID,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatal("expected ok to be true")
+		}
+
+		want, ok := getCommand(t, db, commandEnvelope.GetBody().GetMessageId())
+		if !ok {
+			t.Fatalf(
+				"expected command %s to be on the queue",
+				commandEnvelope.GetBody().GetMessageId().AsString(),
+			)
+		}
+
+		if !got.Equal(want.NextAttemptAt) {
+			t.Fatalf(
+				"unexpected next_attempt_at: got %v, want %v",
+				got,
+				want.NextAttemptAt,
+			)
+		}
+	})
+
+	t.Run("it returns the earliest next attempt time when multiple commands share the correlation ID", func(t *testing.T) {
+		var (
+			causeEnvelope = packer.PackCommand(stubs.CommandA1)
+			correlationID = causeEnvelope.GetHeader().GetCorrelationId()
+		)
+
+		p := packer.PackEffects(
+			causeEnvelope,
+			identitypb.MustParse("<handler>", "2c0c4c4a-fa80-4cd7-9f19-44d0c7745e92"),
+		)
+
+		p.PackCommand(stubs.CommandA2)
+		commandEnvelopes, _ := p.Seal()
+		effectEnvelope := slices.Collect(commandEnvelopes.All())[0]
+
+		database.Transact(
+			t,
+			db,
+			func(ctx context.Context, tx *sql.Tx) error {
+				if err := Enqueue(ctx, tx, causeEnvelope); err != nil {
+					return err
+				}
+
+				// Push the command's next attempt time into the future.
+				// The "root" command's message ID _is_ the correlation ID.
+				if err := Nack(ctx, tx, correlationID); err != nil {
+					return err
+				}
+
+				// Enqueue the "effect" command, which should now have an earlier
+				// next attempt time than the "cause" command.
+				if err := Enqueue(ctx, tx, effectEnvelope); err != nil {
+					return err
+				}
+
+				return nil
+			},
+		)
+
+		got, ok, err := NextAttemptByCorrelationID(t.Context(), db, correlationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatal("expected ok to be true")
+		}
+
+		want, ok := getCommand(
+			t,
+			db,
+			effectEnvelope.GetBody().GetMessageId(),
+		)
+		if !ok {
+			t.Fatalf(
+				"expected command %s to be on the queue",
+				effectEnvelope.GetBody().GetMessageId().AsString(),
+			)
+		}
+
+		if !got.Equal(want.NextAttemptAt) {
+			t.Fatalf(
+				"unexpected next_attempt_at: got %v, want %v",
+				got,
+				want.NextAttemptAt,
+			)
+		}
+	})
+}
+
 // enqueuedCommand is a pending command on the queue.
 type enqueuedCommand struct {
 	Envelope      *envelopepb.Envelope
@@ -305,10 +451,14 @@ type enqueuedCommand struct {
 }
 
 // getCommand reads the command with the given message ID from the queue.
-func getCommand(t *testing.T, tx *sql.Tx, messageID *uuidpb.UUID) (enqueuedCommand, bool) {
+func getCommand(
+	t *testing.T,
+	q database.Querier,
+	messageID *uuidpb.UUID,
+) (enqueuedCommand, bool) {
 	t.Helper()
 
-	row := tx.QueryRowContext(
+	row := q.QueryRowContext(
 		t.Context(),
 		`SELECT envelope, next_attempt_at
 		FROM command_queue
