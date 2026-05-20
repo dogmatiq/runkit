@@ -163,3 +163,18 @@ ON aggregate_command_routes (
     handler_key,
     instance_id
 );
+
+--------------------------------------------------------------------------------
+-- The "handler_locks" table provides a mechanism for enforcing that at most one
+-- worker processes commands (or events) for a handler at any given time.
+--
+-- It is used by handler types that declare dogma.MinimizeConcurrency as their
+-- concurrency preference (integration and projection handlers).
+--
+-- A row is inserted for each handler at startup. Workers attempt to lock the
+-- row with FOR UPDATE SKIP LOCKED within their claim transaction; if the lock
+-- cannot be acquired, the worker backs off.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS handler_locks (
+    handler_key uuid PRIMARY KEY
+);
