@@ -124,9 +124,10 @@ func (w *worker) acquireCommand(
 			c.message_id,
 			c.envelope
 		FROM aggregate_instances AS i
+		INNER JOIN aggregate_command_routes AS r
+			USING (handler_key, instance_id)
 		INNER JOIN command_queue AS c
-			ON c.routed_to_handler_key = i.handler_key
-			AND c.routed_to_aggregate_instance_id = i.instance_id
+			USING (message_id)
 		WHERE i.handler_key = $2
 			AND i.instance_id = $3
 			AND c.next_attempt_at <= now()
@@ -230,15 +231,15 @@ func (w *worker) handleCommand(
 	mt := message.TypeOf(command)
 
 	// If this handler no longer subscribes to the command type, reset the
-	// command it can be re-routed to a different handler.
+	// command so it can be re-routed to a different handler.
 	if !w.Config.RouteSet().HasMessageType(mt) {
-		return commandqueue.Reset(ctx, tx, commandMessageID)
+		return w.resetCommand(ctx, tx, commandMessageID)
 	}
 
 	// If the handler's routing function now returns a different instance, reset
 	// the command so it can be re-routed to a different instance.
 	if aggregateInstanceID := w.Config.Interface().RouteCommandToInstance(command); aggregateInstanceID != w.AggregateInstanceID {
-		return commandqueue.Reset(ctx, tx, commandMessageID)
+		return w.resetCommand(ctx, tx, commandMessageID)
 	}
 
 	packer := w.Packer.PackEffects(
@@ -311,6 +312,28 @@ func (w *worker) saveSnapshot(ctx context.Context) error {
 		w.AggregateInstanceID,
 	); err != nil {
 		return fmt.Errorf("unable to update snapshot: %w", err)
+	}
+
+	return nil
+}
+
+// resetCommand removes the routing entry for a command so it can be re-routed
+// to a different handler or instance.
+//
+// The command's attempt count and next_attempt_at are preserved so that
+// problematic commands continue to back off rather than hot-looping.
+func (w *worker) resetCommand(
+	ctx context.Context,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
+) error {
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM aggregate_command_routes
+		WHERE message_id = $1`,
+		database.MarshalUUID(messageID),
+	); err != nil {
+		return fmt.Errorf("unable to delete route for command %s: %w", messageID, err)
 	}
 
 	return nil

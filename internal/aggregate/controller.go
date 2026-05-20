@@ -11,6 +11,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/database"
 )
@@ -22,6 +23,10 @@ const (
 	// maxWorkers is the maximum number of worker goroutines that the controller
 	// will spawn *per handler*.
 	maxWorkers = 50
+
+	// acquireLimit is the maximum number of commands acquired for routing in a
+	// single tick.
+	acquireLimit = 32
 )
 
 // Controller manages the state of instances of a single aggregate type.
@@ -110,7 +115,7 @@ func (c *Controller) routeCommandsToInstances(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	commandEnvelopes, err := commandqueue.Acquire(ctx, tx, c.Config.RouteSet())
+	commandEnvelopes, err := c.acquireUnroutedCommands(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -133,19 +138,91 @@ func (c *Controller) routeCommandsToInstances(ctx context.Context) error {
 			return err
 		}
 
-		if err := commandqueue.Route(
-			ctx,
-			tx,
-			commandMessageID,
-			c.Config.Identity().GetKey(),
-			aggregateInstanceID,
-		); err != nil {
+		if err := c.routeCommand(ctx, tx, commandMessageID, aggregateInstanceID); err != nil {
 			return err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("unable to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// acquireUnroutedCommands locks a batch of commands that have not yet been
+// routed to an aggregate instance, filtered by the types this handler
+// subscribes to.
+func (c *Controller) acquireUnroutedCommands(
+	ctx context.Context,
+	tx *sql.Tx,
+) ([]*envelopepb.Envelope, error) {
+	var (
+		messageTypeIDs []string
+		commandRoutes  = c.Config.
+				RouteSet().
+				Filter(config.FilterByRouteType(config.HandlesCommandRouteType)).
+				Routes()
+	)
+
+	for route := range commandRoutes {
+		messageTypeIDs = append(messageTypeIDs, route.MessageTypeID.Get())
+	}
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT c.envelope
+		FROM command_queue AS c
+		WHERE c.message_type_id = ANY($1::uuid[])
+			AND c.next_attempt_at <= now()
+			AND NOT EXISTS (
+				SELECT 1
+				FROM aggregate_command_routes AS r
+				WHERE r.message_id = c.message_id
+			)
+		ORDER BY c.next_attempt_at
+		LIMIT $2
+		FOR UPDATE OF c SKIP LOCKED`,
+		messageTypeIDs,
+		acquireLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to acquire unrouted commands: %w", err)
+	}
+	defer rows.Close()
+
+	var envelopes []*envelopepb.Envelope
+	for rows.Next() {
+		env := &envelopepb.Envelope{}
+		if err := rows.Scan(database.UnmarshalEnvelope(env)); err != nil {
+			return nil, fmt.Errorf("unable to scan envelope: %w", err)
+		}
+		envelopes = append(envelopes, env)
+	}
+
+	return envelopes, rows.Err()
+}
+
+// routeCommand inserts a routing entry that assigns a command to an aggregate
+// instance.
+func (c *Controller) routeCommand(
+	ctx context.Context,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
+	aggregateInstanceID string,
+) error {
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO aggregate_command_routes (
+			message_id,
+			handler_key,
+			instance_id
+		) VALUES ($1, $2, $3)`,
+		database.MarshalUUID(messageID),
+		database.MarshalUUID(c.Config.Identity().GetKey()),
+		aggregateInstanceID,
+	); err != nil {
+		return fmt.Errorf("unable to route command %s: %w", messageID, err)
 	}
 
 	return nil
@@ -223,9 +300,10 @@ func (c *Controller) startWorkers(ctx context.Context) error {
 		WHERE i.handler_key = $1
 			AND EXISTS (
 				SELECT 1
-				FROM command_queue AS c
-				WHERE c.routed_to_handler_key = i.handler_key
-					AND c.routed_to_aggregate_instance_id = i.instance_id
+				FROM aggregate_command_routes AS r
+				INNER JOIN command_queue AS c USING (message_id)
+				WHERE r.handler_key = i.handler_key
+					AND r.instance_id = i.instance_id
 					AND c.next_attempt_at <= now()
 			)
 		LIMIT $2

@@ -144,13 +144,21 @@ func TestController(t *testing.T) {
 					return err
 				}
 
-				return commandqueue.Route(
+				if _, err := tx.ExecContext(
 					ctx,
-					tx,
-					commandEnvelope.GetBody().GetMessageId(),
-					controller.Config.Identity().GetKey(),
+					`INSERT INTO aggregate_command_routes (
+						message_id,
+						handler_key,
+						instance_id
+					) VALUES ($1, $2, $3)`,
+					database.MarshalUUID(commandEnvelope.GetBody().GetMessageId()),
+					database.MarshalUUID(controller.Config.Identity().GetKey()),
 					incorrectInstanceID,
-				)
+				); err != nil {
+					return err
+				}
+
+				return nil
 			},
 		)
 

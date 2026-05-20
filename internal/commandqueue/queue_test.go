@@ -73,7 +73,7 @@ func TestEnqueue(t *testing.T) {
 		}
 
 		// The idempotency key remains in-effect after the first command has
-		// been nacked, reset, and acked.
+		// been nacked and acked.
 		{
 			const key = "<idempotency-key-after-handling>"
 
@@ -84,9 +84,6 @@ func TestEnqueue(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := Nack(t.Context(), tx, id1); err != nil {
-				t.Fatal(err)
-			}
-			if err := Reset(t.Context(), tx, id1); err != nil {
 				t.Fatal(err)
 			}
 			if err := Ack(t.Context(), tx, id1); err != nil {
@@ -203,115 +200,6 @@ func TestNack(t *testing.T) {
 			t.Fatalf("unexpected next_attempt_at: got %v, want %v", got.NextAttemptAt, wantNext)
 		}
 	}
-}
-
-func TestReset(t *testing.T) {
-	db, _ := database.NewTestDB(t)
-	packer := &envelopepb.Packer{
-		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
-	}
-
-	tx, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-
-	t.Run("it restarts the backoff progression", func(t *testing.T) {
-		env := packer.PackCommand(stubs.CommandA1)
-		messageID := env.GetBody().GetMessageId()
-
-		if err := Enqueue(t.Context(), tx, env); err != nil {
-			t.Fatal(err)
-		}
-		if err := Nack(t.Context(), tx, messageID); err != nil {
-			t.Fatal(err)
-		}
-		if err := Nack(t.Context(), tx, messageID); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := Reset(t.Context(), tx, messageID); err != nil {
-			t.Fatal(err)
-		}
-
-		nowRow := tx.QueryRowContext(t.Context(), `SELECT now()`)
-
-		var txNow time.Time
-		if err := nowRow.Scan(&txNow); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := Nack(t.Context(), tx, messageID); err != nil {
-			t.Fatal(err)
-		}
-
-		got, _ := getCommand(t, tx, messageID)
-		wantNext := txNow.Add(BackoffBase)
-		if !got.NextAttemptAt.Equal(wantNext) {
-			t.Fatalf("unexpected next_attempt_at: got %v, want %v", got.NextAttemptAt, wantNext)
-		}
-	})
-
-	t.Run("it clears the route", func(t *testing.T) {
-		env := packer.PackCommand(stubs.CommandA2)
-		messageID := env.GetBody().GetMessageId()
-
-		if err := Enqueue(t.Context(), tx, env); err != nil {
-			t.Fatal(err)
-		}
-
-		var (
-			handlerKey          = uuidpb.Generate()
-			aggregateInstanceID = "<instance-1>"
-		)
-
-		if _, err := tx.ExecContext(
-			t.Context(),
-			`INSERT INTO aggregate_instances (
-				handler_key,
-				instance_id
-			) VALUES ($1, $2)`,
-			database.MarshalUUID(handlerKey),
-			aggregateInstanceID,
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := Route(
-			t.Context(),
-			tx,
-			messageID,
-			handlerKey,
-			aggregateInstanceID,
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := Reset(
-			t.Context(),
-			tx,
-			messageID,
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		row := tx.QueryRowContext(
-			t.Context(),
-			`SELECT routed_to_handler_key IS NULL
-			FROM command_queue
-			WHERE message_id = $1`,
-			database.MarshalUUID(messageID),
-		)
-
-		var cleared bool
-		if err := row.Scan(&cleared); err != nil {
-			t.Fatal(err)
-		}
-		if !cleared {
-			t.Fatalf("did not expect a route for command %s to remain", messageID.AsString())
-		}
-	})
 }
 
 func TestNextAttemptByCorrelationID(t *testing.T) {
