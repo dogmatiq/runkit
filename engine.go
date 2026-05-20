@@ -18,6 +18,7 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
+	"github.com/dogmatiq/reference-engine/internal/integration"
 	"github.com/dogmatiq/reference-engine/internal/process"
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 	"golang.org/x/sync/errgroup"
@@ -78,26 +79,37 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.app = runtimeconfig.FromApplication(e.App)
 	e.packer = &envelopepb.Packer{Application: e.app.Identity()}
 
-	g, ctx := errgroup.WithContext(ctx)
+	var controllers []interface {
+		Run(context.Context) error
+	}
 
 	for _, h := range e.app.Handlers() {
-		if h.IsDisabled() {
-			continue
-		}
-
-		switch h := h.(type) {
-		case *config.Aggregate:
-			g.Go(func() error {
-				c := &aggregate.Controller{
+		if !h.IsDisabled() {
+			switch h := h.(type) {
+			case *config.Aggregate:
+				controllers = append(controllers, &aggregate.Controller{
+					Config: h,
 					DB:     e.db,
 					Packer: e.packer,
-					Config: h,
 					Logger: logger,
-				}
-
-				return c.Run(ctx)
-			})
+				})
+			case *config.Integration:
+				controllers = append(controllers, &integration.Controller{
+					Config: h,
+					DB:     e.db,
+					Packer: e.packer,
+					Logger: logger,
+				})
+			}
 		}
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	for _, c := range controllers {
+		g.Go(func() error {
+			return c.Run(ctx)
+		})
 	}
 
 	close(e.ready)

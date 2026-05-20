@@ -3,6 +3,7 @@ package concurrency
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -37,9 +38,9 @@ func Acquire(
 		database.MarshalUUID(handlerKey),
 	)
 
-	var one int
-	if err := row.Scan(&one); err != nil {
-		if err == sql.ErrNoRows {
+	var ignored bool
+	if err := row.Scan(&ignored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, fmt.Errorf("unable to acquire lock for handler %s: %w", handlerKey, err)

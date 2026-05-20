@@ -1,4 +1,4 @@
-package aggregate
+package integration
 
 import (
 	"fmt"
@@ -9,16 +9,10 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 )
 
-// scope implements [dogma.AggregateCommandScope].
+// scope implements [dogma.IntegrationCommandScope].
 type scope struct {
-	AggregateInstanceID string
-	Root                dogma.AggregateRoot
-	Packer              *envelopepb.EffectPacker
-	Logger              *slog.Logger
-}
-
-func (s *scope) InstanceID() string {
-	return s.AggregateInstanceID
+	Packer *envelopepb.EffectPacker
+	Logger *slog.Logger
 }
 
 func (s *scope) Now() time.Time {
@@ -31,5 +25,4 @@ func (s *scope) Log(format string, args ...any) {
 
 func (s *scope) RecordEvent(e dogma.Event) {
 	s.Packer.PackEvent(e)
-	s.Root.ApplyEvent(e)
 }
