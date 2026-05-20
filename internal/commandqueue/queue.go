@@ -35,7 +35,7 @@ func Enqueue(
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO command_queue (
+		`INSERT INTO pending_commands (
 			message_id,
 			correlation_id,
 			message_type_id,
@@ -99,7 +99,7 @@ func Ack(
 ) error {
 	if _, err := tx.ExecContext(
 		ctx,
-		`DELETE FROM command_queue
+		`DELETE FROM pending_commands
 		WHERE message_id = $1`,
 		database.MarshalUUID(messageID),
 	); err != nil {
@@ -120,7 +120,7 @@ func Nack(
 ) error {
 	if _, err := tx.ExecContext(
 		ctx,
-		`UPDATE command_queue SET
+		`UPDATE pending_commands SET
 			attempt_count = attempt_count + 1,
 			next_attempt_at = now() + LEAST(
 				pow(2, attempt_count) * $2,
@@ -147,7 +147,7 @@ func NextAttemptByCorrelationID(
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT next_attempt_at
-		FROM command_queue
+		FROM pending_commands
 		WHERE correlation_id = $1
 		ORDER BY next_attempt_at
 		LIMIT 1`,

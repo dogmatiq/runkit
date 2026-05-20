@@ -96,7 +96,7 @@ func TestController(t *testing.T) {
 			db,
 			"empty command queue",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		xtesting.ExpectEvents(
@@ -167,7 +167,7 @@ func TestController(t *testing.T) {
 			db,
 			"empty command queue",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		xtesting.ExpectEvents(
@@ -204,7 +204,7 @@ func TestController(t *testing.T) {
 			"command nack'd",
 			`SELECT
 				COUNT(*) != 0
-			FROM command_queue
+			FROM pending_commands
 			WHERE message_id = $1
 				AND next_attempt_at > now()`,
 			database.MarshalUUID(commandEnvelope.GetBody().GetMessageId()),
@@ -293,7 +293,7 @@ func TestController(t *testing.T) {
 			db,
 			"empty command queue",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		xtesting.ExpectEvents(

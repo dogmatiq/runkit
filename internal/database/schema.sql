@@ -1,8 +1,8 @@
 --------------------------------------------------------------------------------
--- The "command_queue" table is the queue of commands awaiting handling.
+-- The "pending_commands" table is the queue of commands awaiting handling.
 -- Rows are deleted once the command is successfully handled.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS command_queue (
+CREATE TABLE IF NOT EXISTS pending_commands (
     message_id      uuid        PRIMARY KEY,
     correlation_id  uuid        NOT NULL,
     message_type_id uuid        NOT NULL,
@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS command_queue (
 
 -- Create an index that allows us to efficiently find the next due command of a
 -- given message type.
-CREATE INDEX IF NOT EXISTS idx_command_queue_by_type
-ON command_queue (
+CREATE INDEX IF NOT EXISTS idx_pending_commands_by_type
+ON pending_commands (
     message_type_id,
     next_attempt_at
 );
@@ -24,8 +24,8 @@ ON command_queue (
 -- initial command.
 --
 -- It is used to implement dogma.WithEventObserver().
-CREATE INDEX IF NOT EXISTS idx_command_queue_by_correlation_id
-ON command_queue (
+CREATE INDEX IF NOT EXISTS idx_pending_commands_by_correlation_id
+ON pending_commands (
     correlation_id
 );
 
@@ -33,7 +33,7 @@ ON command_queue (
 -- The "command_idempotency_keys" table is an append-only list of idempotency
 -- keys specified by dogma.WithIdempotencyKey(), it is used to deduplicate
 -- commands even after they have been handled and deleted from the
--- "command_queue" table.
+-- "pending_commands" table.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS command_idempotency_keys (
     idempotency_key text PRIMARY KEY CHECK (idempotency_key != '')
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS aggregate_instances (
 -- specific instance, and deleted when the command is acked.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aggregate_command_routes (
-    message_id  uuid PRIMARY KEY REFERENCES command_queue (message_id) ON DELETE CASCADE,
+    message_id  uuid PRIMARY KEY REFERENCES pending_commands (message_id) ON DELETE CASCADE,
     handler_key uuid NOT NULL,
     instance_id text NOT NULL CHECK (instance_id != ''),
 

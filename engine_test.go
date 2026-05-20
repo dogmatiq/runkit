@@ -91,7 +91,7 @@ func TestExecuteCommand(t *testing.T) {
 			db,
 			"command queue empty",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		xtesting.ExpectEvents(
@@ -188,7 +188,7 @@ func TestExecuteCommand(t *testing.T) {
 			db,
 			"command queue empty",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		// Send the same key again; it should succeed without producing another
@@ -210,7 +210,7 @@ func TestExecuteCommand(t *testing.T) {
 			db,
 			"command queue empty",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		// Verify only one event was produced for this instance.
@@ -247,7 +247,7 @@ func TestExecuteCommand(t *testing.T) {
 			db,
 			"command queue empty",
 			`SELECT COUNT(*) = 0
-			FROM command_queue`,
+			FROM pending_commands`,
 		)
 
 		// Second call: deduplicated, observer can never be satisfied.

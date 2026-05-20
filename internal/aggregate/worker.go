@@ -126,7 +126,7 @@ func (w *worker) acquireCommand(
 		FROM aggregate_instances AS i
 		INNER JOIN aggregate_command_routes AS r
 			USING (handler_key, instance_id)
-		INNER JOIN command_queue AS c
+		INNER JOIN pending_commands AS c
 			USING (message_id)
 		WHERE i.handler_key = $2
 			AND i.instance_id = $3

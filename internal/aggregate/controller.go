@@ -172,7 +172,7 @@ func (c *Controller) acquireUnroutedCommands(
 	rows, err := tx.QueryContext(
 		ctx,
 		`SELECT c.envelope
-		FROM command_queue AS c
+		FROM pending_commands AS c
 		WHERE c.message_type_id = ANY($1::uuid[])
 			AND c.next_attempt_at <= now()
 			AND NOT EXISTS (
@@ -301,7 +301,7 @@ func (c *Controller) startWorkers(ctx context.Context) error {
 			AND EXISTS (
 				SELECT 1
 				FROM aggregate_command_routes AS r
-				INNER JOIN command_queue AS c USING (message_id)
+				INNER JOIN pending_commands AS c USING (message_id)
 				WHERE r.handler_key = i.handler_key
 					AND r.instance_id = i.instance_id
 					AND c.next_attempt_at <= now()

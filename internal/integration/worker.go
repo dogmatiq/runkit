@@ -100,7 +100,7 @@ func (w *worker) acquireCommand(
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT c.envelope
-		FROM command_queue AS c
+		FROM pending_commands AS c
 		WHERE c.message_type_id = ANY($1::uuid[])
 			AND c.next_attempt_at <= now()
 		ORDER BY c.next_attempt_at

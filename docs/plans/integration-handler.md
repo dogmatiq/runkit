@@ -12,27 +12,27 @@ Decouple aggregate-specific routing from the shared command queue.
 
 ### Schema changes (schema.sql)
 
-Remove from `command_queue`:
+Remove from `pending_commands`:
 
 - `routed_to_handler_key` column
 - `routed_to_aggregate_instance_id` column
 - `has_complete_route` constraint
 - `fk_aggregate_instance` FK constraint
-- `idx_command_queue_by_route` index
-- `WHERE routed_to_handler_key IS NULL` filter on `idx_command_queue_by_type`
+- `idx_pending_commands_by_route` index
+- `WHERE routed_to_handler_key IS NULL` filter on `idx_pending_commands_by_type`
 
 Add new table:
 
 ```sql
 CREATE TABLE IF NOT EXISTS aggregate_command_routes (
-    message_id  uuid PRIMARY KEY REFERENCES command_queue(message_id),
+    message_id  uuid PRIMARY KEY REFERENCES pending_commands(message_id),
     handler_key uuid NOT NULL,
     instance_id text NOT NULL CHECK (instance_id != ''),
     FOREIGN KEY (handler_key, instance_id) REFERENCES aggregate_instances(handler_key, instance_id)
 );
 ```
 
-Column names are chosen to allow joins via `USING` with `command_queue`,
+Column names are chosen to allow joins via `USING` with `pending_commands`,
 `aggregate_instances`.
 
 ### API changes (commandqueue package)
@@ -57,9 +57,9 @@ functions or methods. The aggregate controller now:
 
 1. Finds unrouted commands using `NOT EXISTS` against `aggregate_command_routes`.
 2. Routes them (inserts into `aggregate_command_routes`).
-3. Workers claim routed commands by joining `command_queue`,
+3. Workers claim routed commands by joining `pending_commands`,
    `aggregate_command_routes`, and `aggregate_instances` (with `FOR UPDATE SKIP
-   LOCKED` on the instance row).
+LOCKED` on the instance row).
 4. Reset (for reroute) deletes the routing row.
 
 ### Exit criteria

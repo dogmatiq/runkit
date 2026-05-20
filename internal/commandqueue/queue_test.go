@@ -349,7 +349,7 @@ func getCommand(
 	row := q.QueryRowContext(
 		t.Context(),
 		`SELECT envelope, next_attempt_at
-		FROM command_queue
+		FROM pending_commands
 		WHERE message_id = $1`,
 		database.MarshalUUID(messageID),
 	)
