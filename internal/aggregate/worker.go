@@ -319,9 +319,6 @@ func (w *worker) saveSnapshot(ctx context.Context) error {
 
 // resetCommand removes the routing entry for a command so it can be re-routed
 // to a different handler or instance.
-//
-// The command's attempt count and next_attempt_at are preserved so that
-// problematic commands continue to back off rather than hot-looping.
 func (w *worker) resetCommand(
 	ctx context.Context,
 	tx *sql.Tx,
