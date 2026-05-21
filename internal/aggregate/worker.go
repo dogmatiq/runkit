@@ -44,6 +44,9 @@ type worker struct {
 	// manages.
 	root dogma.AggregateRoot
 
+	// eventStreamID is the event stream assigned to this aggregate instance.
+	eventStreamID *uuidpb.UUID
+
 	// offsetAfterLastAppliedEvent is the offset after the most recent event that was
 	// applied to root.
 	offsetAfterLastAppliedEvent eventstream.Offset
@@ -114,6 +117,7 @@ func (w *worker) acquireCommand(
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
+			i.event_stream_id,
 			i.event_offset_after_last_event,
 			i.event_offset_after_snapshot,
 			CASE -- Fetch the snapshot data if it's newer than our in-memory state
@@ -139,6 +143,8 @@ func (w *worker) acquireCommand(
 		w.AggregateInstanceID,
 	)
 
+	w.eventStreamID = &uuidpb.UUID{}
+
 	var (
 		offsetAfterLastRecordedEvent eventstream.Offset
 		offsetAfterSnapshot          eventstream.Offset
@@ -148,6 +154,7 @@ func (w *worker) acquireCommand(
 	)
 
 	if err := row.Scan(
+		database.UnmarshalUUID(w.eventStreamID),
 		&offsetAfterLastRecordedEvent,
 		&offsetAfterSnapshot,
 		&snapshotData,
@@ -195,6 +202,7 @@ func (w *worker) refreshRoot(
 	for eventEnvelope, err := range eventstream.ReadByAggregateInstance(
 		ctx,
 		tx,
+		w.eventStreamID,
 		w.offsetAfterLastAppliedEvent,
 		w.Config.Identity().GetKey(),
 		w.AggregateInstanceID,
@@ -260,7 +268,12 @@ func (w *worker) handleCommand(
 	)
 
 	if envelopes, ok := packer.Seal(); ok {
-		offsetAfterLastEvent, err := eventstream.Append(ctx, tx, envelopes)
+		offsetAfterLastEvent, err := eventstream.Append(
+			ctx,
+			tx,
+			w.eventStreamID,
+			envelopes,
+		)
 		if err != nil {
 			return err
 		}

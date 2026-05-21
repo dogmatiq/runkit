@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/database"
 	. "github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
@@ -22,6 +23,11 @@ func TestEventStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+
+	eventStreamID, err := Acquire(t.Context(), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	packer := &envelopepb.Packer{
 		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
@@ -109,12 +115,20 @@ func TestEventStream(t *testing.T) {
 		envelopes, _ := p.Seal()
 
 		for envelope := range envelopes.All() {
-			SetOffset(envelope, Offset(len(allEnvelopes)))
+			envelopepb.SetExtension(
+				envelope.GetBody(),
+				envelopepb.
+					NewEventStreamPositionBuilder().
+					WithStreamId(eventStreamID).
+					WithOffset(uint64(len(allEnvelopes))).
+					Build(),
+			)
+
 			allEnvelopes = append(allEnvelopes, envelope)
 		}
 
 		wantNextOffset := Offset(len(allEnvelopes))
-		gotNextOffset, err := Append(t.Context(), tx, envelopes)
+		gotNextOffset, err := Append(t.Context(), tx, eventStreamID, envelopes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,22 +152,35 @@ func TestEventStream(t *testing.T) {
 
 	cases := []struct {
 		Name   string
-		Read   func(context.Context, database.Querier, Offset) iter.Seq2[*envelopepb.Envelope, error]
+		Read   func(context.Context, database.Querier, *uuidpb.UUID, Offset) iter.Seq2[*envelopepb.Envelope, error]
 		Filter func(envelope *envelopepb.Envelope) bool
 	}{
 		{
 			Name: "func Read()",
-			Read: Read,
+			Read: func(
+				ctx context.Context,
+				q database.Querier,
+				eventStreamID *uuidpb.UUID,
+				offset Offset,
+			) iter.Seq2[*envelopepb.Envelope, error] {
+				return Read(ctx, q, eventStreamID, offset)
+			},
 			Filter: func(envelope *envelopepb.Envelope) bool {
 				return true
 			},
 		},
 		{
 			Name: "func ReadByAggregateInstance()",
-			Read: func(ctx context.Context, q database.Querier, offset Offset) iter.Seq2[*envelopepb.Envelope, error] {
+			Read: func(
+				ctx context.Context,
+				q database.Querier,
+				eventStreamID *uuidpb.UUID,
+				offset Offset,
+			) iter.Seq2[*envelopepb.Envelope, error] {
 				return ReadByAggregateInstance(
 					ctx,
 					q,
+					eventStreamID,
 					offset,
 					aggregate1.GetKey(),
 					"<instance-1>",
@@ -175,10 +202,16 @@ func TestEventStream(t *testing.T) {
 		},
 		{
 			Name: "func ReadByCorrelationID()",
-			Read: func(ctx context.Context, q database.Querier, offset Offset) iter.Seq2[*envelopepb.Envelope, error] {
+			Read: func(
+				ctx context.Context,
+				q database.Querier,
+				eventStreamID *uuidpb.UUID,
+				offset Offset,
+			) iter.Seq2[*envelopepb.Envelope, error] {
 				return ReadByCorrelationID(
 					ctx,
 					q,
+					eventStreamID,
 					offset,
 					commonCommand.GetHeader().GetCorrelationId(),
 				)
@@ -211,6 +244,7 @@ func TestEventStream(t *testing.T) {
 					c.Read(
 						t.Context(),
 						tx,
+						eventStreamID,
 						0,
 					),
 					filterEnvelopes(
@@ -228,6 +262,7 @@ func TestEventStream(t *testing.T) {
 					c.Read(
 						t.Context(),
 						tx,
+						eventStreamID,
 						startOffset,
 					),
 					filterEnvelopes(
@@ -238,55 +273,5 @@ func TestEventStream(t *testing.T) {
 			})
 		})
 	}
-}
 
-func TestNextOffset(t *testing.T) {
-	db, _ := database.NewTestDB(t)
-
-	// Assert that the next offset is zero when there are no events.
-	got, err := NextOffset(t.Context(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if want := Offset(0); got != want {
-		t.Fatalf("unexpected offset: got %d, want %d", got, want)
-	}
-
-	// Append some events so that the next offset is no longer zero.
-	tx, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-
-	packer := &envelopepb.Packer{
-		Application: identitypb.MustParse("<app>", "7803a1f8-cfe2-47c1-bbee-610ec37b6008"),
-	}
-
-	p := packer.PackEffects(
-		packer.PackCommand(stubs.CommandA1),
-		identitypb.MustParse("<handler>", "ca4b488a-1db7-4375-b263-6812252c016a"),
-	)
-	p.PackEvent(stubs.EventA1)
-	eventEnvelopes, _ := p.Seal()
-
-	want, err := Append(t.Context(), tx, eventEnvelopes)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Assert that the next offset is what we expect after appending events.
-	got, err = NextOffset(t.Context(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if got != want {
-		t.Fatalf("unexpected offset: got %d, want %d", got, want)
-	}
 }

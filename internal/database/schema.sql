@@ -40,31 +40,29 @@ CREATE TABLE IF NOT EXISTS command_idempotency_keys (
 );
 
 --------------------------------------------------------------------------------
--- The "event_stream_offset" table holds the next "unused" offset on the event
--- stream.
+-- The "event_streams" is the set of all event streams, and their next unused
+-- offset.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS event_stream_offset (
-    next_offset bigint NOT NULL DEFAULT 0 CHECK (next_offset >= 0)
-);
-
--- Create a unique index that ensures that the "event_stream_offset" table
--- contains at most one row.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_event_stream_offset_singleton
-ON event_stream_offset (
-    (TRUE)
+CREATE TABLE IF NOT EXISTS event_streams (
+    event_stream_id uuid        PRIMARY KEY,
+    next_offset     bigint      NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 --------------------------------------------------------------------------------
--- The "event_stream" table contains all events recorded by aggregate and
--- integration handlers.
+-- The "events" table contains all events recorded by aggregate and integration
+-- handlers.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS event_stream (
-    event_offset          bigint PRIMARY KEY CHECK (event_offset >= 0),
+CREATE TABLE IF NOT EXISTS events (
+    event_stream_id       uuid   NOT NULL REFERENCES event_streams (event_stream_id),
+    event_offset          bigint NOT NULL CHECK (event_offset >= 0),
     correlation_id        uuid   NOT NULL,
     message_type_id       uuid   NOT NULL,
     envelope              bytea  NOT NULL,
     aggregate_handler_key uuid,
     aggregate_instance_id text   CHECK (aggregate_instance_id != ''),
+
+    PRIMARY KEY (event_stream_id, event_offset),
 
     -- Ensure that either both aggregate_handler_key and aggregate_instance_id
     -- are NULL (an event from an integration handler), or neither are NULL (an
@@ -84,8 +82,8 @@ CREATE TABLE IF NOT EXISTS event_stream (
 --
 -- It is used to filter events by type when routing to process and projection
 -- handlers.
-CREATE INDEX IF NOT EXISTS idx_event_stream_by_type
-ON event_stream (
+CREATE INDEX IF NOT EXISTS idx_events_by_type
+ON events (
     message_type_id
 );
 
@@ -94,8 +92,9 @@ ON event_stream (
 --
 -- It is used to reload aggregate root state. The WHERE clause excludes events
 -- recorded by integration handlers from the index.
-CREATE INDEX IF NOT EXISTS idx_event_stream_by_aggregate_instance
-ON event_stream (
+CREATE INDEX IF NOT EXISTS idx_events_by_aggregate_instance
+ON events (
+    event_stream_id,
     aggregate_handler_key,
     aggregate_instance_id,
     event_offset
@@ -103,13 +102,15 @@ ON event_stream (
 WHERE aggregate_handler_key IS NOT NULL;
 
 -- Create an index that allows us to efficiently query events by their
--- correlation ID. That is, events somewhere in the causal chain of the same
--- initial command.
+-- correlation ID within a stream. That is, events somewhere in the causal chain
+-- of the same initial command.
 --
 -- It is used to implement dogma.WithEventObserver().
-CREATE INDEX IF NOT EXISTS idx_event_stream_by_correlation_id
-ON event_stream (
-    correlation_id
+CREATE INDEX IF NOT EXISTS idx_events_by_correlation_id
+ON events (
+    event_stream_id,
+    correlation_id,
+    event_offset
 );
 
 --------------------------------------------------------------------------------
@@ -119,6 +120,7 @@ ON event_stream (
 CREATE TABLE IF NOT EXISTS aggregate_instances (
     handler_key                   uuid   NOT NULL,
     instance_id                   text   NOT NULL CHECK (instance_id != ''),
+    event_stream_id               uuid   NOT NULL REFERENCES event_streams (event_stream_id),
     event_offset_after_last_event bigint NOT NULL DEFAULT 0 CHECK (event_offset_after_last_event >= 0),
     event_offset_after_snapshot   bigint NOT NULL DEFAULT 0 CHECK (event_offset_after_snapshot >= 0),
     snapshot                      bytea,

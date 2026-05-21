@@ -1,6 +1,7 @@
 package xtesting
 
 import (
+	"database/sql"
 	"iter"
 	"reflect"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
 )
 
@@ -83,4 +86,33 @@ func ExpectEventEnvelopes(
 	if len(want) != 0 {
 		t.Fatalf("expected %d more events", len(want))
 	}
+}
+
+// EventStreamByAggregateInstance returns the event stream ID for the given
+// aggregate instance.
+func EventStreamByAggregateInstance(
+	t testing.TB,
+	db *sql.DB,
+	handlerKey *uuidpb.UUID,
+	instanceID string,
+) *uuidpb.UUID {
+	t.Helper()
+
+	row := db.QueryRowContext(
+		t.(*testing.T).Context(),
+		`SELECT
+			event_stream_id
+		FROM aggregate_instances
+		WHERE handler_key = $1
+			AND instance_id = $2`,
+		database.MarshalUUID(handlerKey),
+		instanceID,
+	)
+
+	eventStreamID := &uuidpb.UUID{}
+	if err := row.Scan(database.UnmarshalUUID(eventStreamID)); err != nil {
+		t.Fatal(err)
+	}
+
+	return eventStreamID
 }

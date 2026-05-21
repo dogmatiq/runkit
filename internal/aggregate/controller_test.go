@@ -104,6 +104,12 @@ func TestController(t *testing.T) {
 			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
+				xtesting.EventStreamByAggregateInstance(
+					t,
+					db,
+					controller.Config.Identity().GetKey(),
+					instanceID,
+				),
 				0,
 				controller.Config.Identity().GetKey(),
 				instanceID,
@@ -132,14 +138,21 @@ func TestController(t *testing.T) {
 					return err
 				}
 
+				eventStreamID, err := eventstream.Acquire(ctx, tx)
+				if err != nil {
+					return err
+				}
+
 				if _, err := tx.ExecContext(
 					ctx,
 					`INSERT INTO aggregate_instances (
 						handler_key,
-						instance_id
-					) VALUES ($1, $2)`,
+						instance_id,
+						event_stream_id
+					) VALUES ($1, $2, $3)`,
 					database.MarshalUUID(controller.Config.Identity().GetKey()),
 					incorrectInstanceID,
+					database.MarshalUUID(eventStreamID),
 				); err != nil {
 					return err
 				}
@@ -175,6 +188,12 @@ func TestController(t *testing.T) {
 			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
+				xtesting.EventStreamByAggregateInstance(
+					t,
+					db,
+					controller.Config.Identity().GetKey(),
+					correctInstanceID,
+				),
 				0,
 				controller.Config.Identity().GetKey(),
 				correctInstanceID,
@@ -262,7 +281,7 @@ func TestController(t *testing.T) {
 			func(ctx context.Context, tx *sql.Tx) error {
 				_, err := tx.ExecContext(
 					ctx,
-					`DELETE FROM event_stream
+					`DELETE FROM events
 					WHERE aggregate_handler_key = $1
 						AND aggregate_instance_id = $2`,
 					database.MarshalUUID(controller.Config.Identity().GetKey()),
@@ -301,6 +320,12 @@ func TestController(t *testing.T) {
 			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
+				xtesting.EventStreamByAggregateInstance(
+					t,
+					db,
+					controller.Config.Identity().GetKey(),
+					instanceID,
+				),
 				0,
 				controller.Config.Identity().GetKey(),
 				instanceID,

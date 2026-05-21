@@ -99,6 +99,12 @@ func TestExecuteCommand(t *testing.T) {
 			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
+				xtesting.EventStreamByAggregateInstance(
+					t,
+					db,
+					handlerIdentity.GetKey(),
+					"no-options",
+				),
 				0,
 				handlerIdentity.GetKey(),
 				"no-options",
@@ -219,6 +225,12 @@ func TestExecuteCommand(t *testing.T) {
 			eventstream.ReadByAggregateInstance(
 				t.Context(),
 				db,
+				xtesting.EventStreamByAggregateInstance(
+					t,
+					db,
+					handlerIdentity.GetKey(),
+					"idempotent",
+				),
 				0,
 				handlerIdentity.GetKey(),
 				"idempotent",

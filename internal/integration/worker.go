@@ -154,7 +154,17 @@ func (w *worker) handleCommand(
 	}
 
 	if envelopes, ok := packer.Seal(); ok {
-		if _, err := eventstream.Append(ctx, tx, envelopes); err != nil {
+		eventStreamID, err := eventstream.Acquire(ctx, tx)
+		if err != nil {
+			return err
+		}
+
+		if _, err := eventstream.Append(
+			ctx,
+			tx,
+			eventStreamID,
+			envelopes,
+		); err != nil {
 			return err
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
@@ -84,11 +85,25 @@ func TestController(t *testing.T) {
 			FROM pending_commands`,
 		)
 
+		offsets, err := eventstream.Offsets(t.Context(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var eventStreamID *uuidpb.UUID
+		for id := range offsets.Keys() {
+			if eventStreamID != nil {
+				t.Fatal("expected exactly one event stream")
+			}
+			eventStreamID = id
+		}
+
 		xtesting.ExpectEvents(
 			t,
 			eventstream.Read(
 				t.Context(),
 				db,
+				eventStreamID,
 				0,
 			),
 			stubs.EventA1,

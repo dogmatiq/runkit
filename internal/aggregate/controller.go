@@ -14,6 +14,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/eventstream"
 )
 
 const (
@@ -200,7 +201,11 @@ func (c *Controller) acquireUnroutedCommands(
 		envelopes = append(envelopes, env)
 	}
 
-	return envelopes, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("unable to iterate unrouted commands: %w", err)
+	}
+
+	return envelopes, nil
 }
 
 // routeCommand inserts a routing entry that assigns a command to an aggregate
@@ -260,15 +265,22 @@ func (c *Controller) ensureInstanceExists(
 	tx *sql.Tx,
 	aggregateInstanceID string,
 ) error {
+	eventStreamID, err := eventstream.Acquire(ctx, tx)
+	if err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO aggregate_instances (
 			handler_key,
-			instance_id
-		) VALUES ($1, $2)
+			instance_id,
+			event_stream_id
+		) VALUES ($1, $2, $3)
 		ON CONFLICT (handler_key, instance_id) DO NOTHING`,
 		database.MarshalUUID(c.Config.Identity().GetKey()),
 		aggregateInstanceID,
+		database.MarshalUUID(eventStreamID),
 	); err != nil {
 		return fmt.Errorf("unable to insert aggregate instance: %w", err)
 	}
@@ -288,7 +300,7 @@ func (c *Controller) startWorkers(ctx context.Context) error {
 
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -312,18 +324,21 @@ func (c *Controller) startWorkers(ctx context.Context) error {
 		database.MarshalUUID(c.Config.Identity().GetKey()),
 		limit,
 	)
+	if err != nil {
+		return fmt.Errorf("unable to query aggregate instances with pending commands: %w", err)
+	}
 
 	for rows.Next() {
 		var aggregateInstanceID string
 		if err := rows.Scan(&aggregateInstanceID); err != nil {
-			return err
+			return fmt.Errorf("unable to scan aggregate instance ID: %w", err)
 		}
 
 		c.startWorker(ctx, aggregateInstanceID)
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("unable to query aggregate instances with pending commands: %w", err)
+		return fmt.Errorf("unable to iterate aggregate instances with pending commands: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

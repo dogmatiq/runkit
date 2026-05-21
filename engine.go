@@ -173,12 +173,12 @@ func (e *Engine) ExecuteCommand(
 		return fmt.Errorf("unable to enqueue command: %w", err)
 	}
 
-	// If there are event observers, capture the next event offset before
+	// If there are event observers, capture all stream offsets before
 	// committing the transaction, so that we can start observing events that
 	// occur after the command is enqueued.
-	var offset eventstream.Offset
+	var observedOffsets *uuidpb.Map[eventstream.Offset]
 	if len(observers) != 0 {
-		offset, err = eventstream.NextOffset(ctx, tx)
+		observedOffsets, err = eventstream.Offsets(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -193,7 +193,7 @@ func (e *Engine) ExecuteCommand(
 		return e.waitForObserver(
 			ctx,
 			commandEnvelope.GetHeader().GetCorrelationId(),
-			offset,
+			observedOffsets,
 			observers,
 		)
 	}
@@ -207,7 +207,7 @@ func (e *Engine) ExecuteCommand(
 func (e *Engine) waitForObserver(
 	ctx context.Context,
 	correlationID *uuidpb.UUID,
-	offset eventstream.Offset,
+	observedOffsets *uuidpb.Map[eventstream.Offset],
 	observers []func(context.Context, dogma.Event) (bool, error),
 ) error {
 	for {
@@ -225,8 +225,15 @@ func (e *Engine) waitForObserver(
 			return err
 		}
 
-		// Next, observe any events that have occurred since the last offset to
-		// see if any of them satisfy the observers.
+		// Re-fetch stream offsets to discover any streams created since the
+		// snapshot.
+		currentOffsets, err := eventstream.Offsets(ctx, e.db)
+		if err != nil {
+			return err
+		}
+
+		// Next, observe any events that have occurred since the last offset on
+		// each stream to see if any of them satisfy the observers.
 		//
 		// IMPORTANT: We must query the event stream _after_ checking for
 		// pending commands and deadlines to avoid a race condition. The
@@ -235,31 +242,40 @@ func (e *Engine) waitForObserver(
 		// complete after that query but before the pending command check,
 		// meaning we'd believe there is no way that more relevant events can
 		// appear on the stream, but in fact they're already there.
-		for eventEnvelope, err := range eventstream.ReadByCorrelationID(
-			ctx,
-			e.db,
-			offset,
-			correlationID,
-		) {
-			if err != nil {
-				return err
+		for eventStreamID, currentOffset := range currentOffsets.All() {
+			observedOffset, _ := observedOffsets.Get(eventStreamID) // 0 for newly discovered streams
+
+			if currentOffset <= observedOffset {
+				continue
 			}
 
-			event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
-			if err != nil {
-				return err
-			}
-
-			// Feed the events to each observer, stopping if any of them is
-			// satisfied or returns an error.
-			for _, fn := range observers {
-				ok, err := fn(ctx, event)
-				if ok || err != nil {
+			for eventEnvelope, err := range eventstream.ReadByCorrelationID(
+				ctx,
+				e.db,
+				eventStreamID,
+				observedOffset,
+				correlationID,
+			) {
+				if err != nil {
 					return err
 				}
-			}
 
-			offset = eventstream.OffsetOf(eventEnvelope) + 1
+				event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
+				if err != nil {
+					return err
+				}
+
+				// Feed the events to each observer, stopping if any of them is
+				// satisfied or returns an error.
+				for _, fn := range observers {
+					ok, err := fn(ctx, event)
+					if ok || err != nil {
+						return err
+					}
+				}
+
+				observedOffsets.Set(eventStreamID, eventstream.OffsetOf(eventEnvelope)+1)
+			}
 		}
 
 		// If there are no pending commands or deadlines, we can't possibly
