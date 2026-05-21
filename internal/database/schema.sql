@@ -78,13 +78,15 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 -- Create an index that allows us to efficiently query events by their message
--- type ID.
+-- type ID within a specific stream.
 --
 -- It is used to filter events by type when routing to process and projection
 -- handlers.
 CREATE INDEX IF NOT EXISTS idx_events_by_type
 ON events (
-    message_type_id
+    event_stream_id,
+    message_type_id,
+    event_offset
 );
 
 -- Create an index that allows us to efficiently query events by the aggregate

@@ -163,7 +163,7 @@ func TestEventStream(t *testing.T) {
 				eventStreamID *uuidpb.UUID,
 				offset Offset,
 			) iter.Seq2[*envelopepb.Envelope, error] {
-				return Read(ctx, q, eventStreamID, offset)
+				return Read(ctx, q, eventStreamID, offset, nil)
 			},
 			Filter: func(envelope *envelopepb.Envelope) bool {
 				return true
@@ -213,6 +213,7 @@ func TestEventStream(t *testing.T) {
 					q,
 					eventStreamID,
 					offset,
+					nil,
 					commonCommand.GetHeader().GetCorrelationId(),
 				)
 			},

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -146,8 +147,10 @@ func (e *Engine) ExecuteCommand(
 	// Convert the [dogma.ExecuteCommandOption] values into pack options and
 	// observer functions.
 	var (
-		packOptions []envelopepb.PackCommandOption
-		observers   []func(context.Context, dogma.Event) (bool, error)
+		packOptions          []envelopepb.PackCommandOption
+		observers            []func(context.Context, dogma.Event) (bool, error)
+		messageTypeIDs       []string
+		useMessageTypeFilter = true
 	)
 	for _, opt := range options {
 		switch o := opt.(type) {
@@ -155,6 +158,15 @@ func (e *Engine) ExecuteCommand(
 			packOptions = append(packOptions, envelopepb.WithIdempotencyKey(o.Key()))
 		case dogma.EventObserverOption:
 			observers = append(observers, o.Observer())
+
+			if useMessageTypeFilter {
+				if o.EventType().GoType().Kind() == reflect.Interface {
+					useMessageTypeFilter = false
+					messageTypeIDs = nil
+				} else {
+					messageTypeIDs = append(messageTypeIDs, o.EventType().ID())
+				}
+			}
 		default:
 			panic(fmt.Sprintf("unsupported execute command option type: %T", o))
 		}
@@ -194,6 +206,7 @@ func (e *Engine) ExecuteCommand(
 			ctx,
 			commandEnvelope.GetHeader().GetCorrelationId(),
 			observedOffsets,
+			messageTypeIDs,
 			observers,
 		)
 	}
@@ -208,6 +221,7 @@ func (e *Engine) waitForObserver(
 	ctx context.Context,
 	correlationID *uuidpb.UUID,
 	observedOffsets *uuidpb.Map[eventstream.Offset],
+	messageTypeIDs []string,
 	observers []func(context.Context, dogma.Event) (bool, error),
 ) error {
 	for {
@@ -254,6 +268,7 @@ func (e *Engine) waitForObserver(
 				e.db,
 				eventStreamID,
 				observedOffset,
+				messageTypeIDs,
 				correlationID,
 			) {
 				if err != nil {
@@ -307,7 +322,7 @@ func (e *Engine) waitForObserver(
 
 		// gracePeriod is the amount of time added to the sleep interval in an
 		// attempt to wait until _after_ the handling of the [nextAction].
-		const gracePeriod = 5 * time.Millisecond
+		const gracePeriod = 25 * time.Millisecond
 		delay := time.Until(nextAction) + gracePeriod
 
 		select {

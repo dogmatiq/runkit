@@ -185,13 +185,17 @@ func Offsets(ctx context.Context, q database.Querier) (*uuidpb.Map[Offset], erro
 
 // Read returns a sequence of events in the given stream, starting at the given
 // offset.
+//
+// If messageTypeIDs is non-nil, only events with a matching message type are
+// returned.
 func Read(
 	ctx context.Context,
 	q database.Querier,
 	eventStreamID *uuidpb.UUID,
 	offset Offset,
+	messageTypeIDs []string,
 ) iter.Seq2[*envelopepb.Envelope, error] {
-	return read(ctx, q, eventStreamID, offset, nil)
+	return read(ctx, q, eventStreamID, offset, messageTypeIDs, nil)
 }
 
 // ReadByAggregateInstance returns a sequence of events recorded by a specific
@@ -204,7 +208,7 @@ func ReadByAggregateInstance(
 	aggregateHandlerKey *uuidpb.UUID,
 	aggregateInstanceID string,
 ) iter.Seq2[*envelopepb.Envelope, error] {
-	return read(ctx, q, eventStreamID, offset, map[string]any{
+	return read(ctx, q, eventStreamID, offset, nil, map[string]any{
 		"aggregate_handler_key": database.MarshalUUID(aggregateHandlerKey),
 		"aggregate_instance_id": aggregateInstanceID,
 	})
@@ -213,14 +217,18 @@ func ReadByAggregateInstance(
 // ReadByCorrelationID returns a sequence of events that share the given
 // correlation ID within a specific stream, starting at or after the given
 // offset.
+//
+// If messageTypeIDs is non-nil, only events with a matching message type are
+// returned.
 func ReadByCorrelationID(
 	ctx context.Context,
 	q database.Querier,
 	eventStreamID *uuidpb.UUID,
 	offset Offset,
+	messageTypeIDs []string,
 	correlationID *uuidpb.UUID,
 ) iter.Seq2[*envelopepb.Envelope, error] {
-	return read(ctx, q, eventStreamID, offset, map[string]any{
+	return read(ctx, q, eventStreamID, offset, messageTypeIDs, map[string]any{
 		"correlation_id": database.MarshalUUID(correlationID),
 	})
 }
@@ -235,6 +243,7 @@ func read(
 	q database.Querier,
 	eventStreamID *uuidpb.UUID,
 	offset Offset,
+	messageTypeIDs []string,
 	filters map[string]any,
 ) iter.Seq2[*envelopepb.Envelope, error] {
 	var query strings.Builder
@@ -247,8 +256,17 @@ func read(
 			AND event_offset >= $2`,
 	)
 
-	args := make([]any, 0, len(filters))
+	args := make([]any, 0, len(filters)+1)
 	placeholder := 3
+
+	if messageTypeIDs != nil {
+		query.WriteString(" AND message_type_id = ANY($")
+		query.WriteString(strconv.Itoa(placeholder))
+		query.WriteString("::uuid[])")
+		args = append(args, messageTypeIDs)
+		placeholder++
+	}
+
 	for k, v := range filters {
 		query.WriteString(" AND ")
 		query.WriteString(k)

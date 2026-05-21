@@ -105,6 +105,7 @@ func TestController(t *testing.T) {
 				db,
 				eventStreamID,
 				0,
+				nil,
 			),
 			stubs.EventA1,
 		)
