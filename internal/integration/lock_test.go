@@ -1,4 +1,4 @@
-package concurrency_test
+package integration
 
 import (
 	"context"
@@ -6,21 +6,23 @@ import (
 	"testing"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/concurrency"
 	"github.com/dogmatiq/reference-engine/internal/database"
 )
 
-var handlerKey = uuidpb.Generate()
-
-func TestAcquire(t *testing.T) {
+func TestAcquireLock(t *testing.T) {
 	db, _ := database.NewTestDB(t)
+	handlerKey := uuidpb.Generate()
+
+	if err := ensureLockRowExists(t.Context(), db, handlerKey); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("it returns true when the lock is not held", func(t *testing.T) {
 		database.Transact(
 			t,
 			db,
 			func(ctx context.Context, tx *sql.Tx) error {
-				acquired, err := concurrency.Acquire(ctx, tx, handlerKey)
+				acquired, err := acquireLock(ctx, tx, handlerKey)
 				if err != nil {
 					return err
 				}
@@ -37,7 +39,7 @@ func TestAcquire(t *testing.T) {
 			t,
 			db,
 			func(ctx context.Context, tx *sql.Tx) error {
-				acquired, err := concurrency.Acquire(ctx, tx, handlerKey)
+				acquired, err := acquireLock(ctx, tx, handlerKey)
 				if err != nil {
 					return err
 				}
@@ -50,14 +52,13 @@ func TestAcquire(t *testing.T) {
 	})
 
 	t.Run("it returns false when another transaction holds the lock", func(t *testing.T) {
-		// Begin a transaction that holds the lock for the duration of the test.
 		holding, err := db.BeginTx(t.Context(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer holding.Rollback()
 
-		acquired, err := concurrency.Acquire(t.Context(), holding, handlerKey)
+		acquired, err := acquireLock(t.Context(), holding, handlerKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,12 +66,11 @@ func TestAcquire(t *testing.T) {
 			t.Fatal("expected holding transaction to acquire lock")
 		}
 
-		// A second transaction should fail to acquire the same lock.
 		database.Transact(
 			t,
 			db,
 			func(ctx context.Context, tx *sql.Tx) error {
-				acquired, err := concurrency.Acquire(ctx, tx, handlerKey)
+				acquired, err := acquireLock(ctx, tx, handlerKey)
 				if err != nil {
 					return err
 				}
@@ -82,8 +82,12 @@ func TestAcquire(t *testing.T) {
 		)
 	})
 
-	t.Run("it allows independent handlers to acquire locks concurrently", func(t *testing.T) {
+	t.Run("it allows different handlers to acquire locks concurrently", func(t *testing.T) {
 		otherKey := uuidpb.Generate()
+
+		if err := ensureLockRowExists(t.Context(), db, otherKey); err != nil {
+			t.Fatal(err)
+		}
 
 		holding, err := db.BeginTx(t.Context(), nil)
 		if err != nil {
@@ -91,7 +95,7 @@ func TestAcquire(t *testing.T) {
 		}
 		defer holding.Rollback()
 
-		acquired, err := concurrency.Acquire(t.Context(), holding, handlerKey)
+		acquired, err := acquireLock(t.Context(), holding, handlerKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,12 +103,11 @@ func TestAcquire(t *testing.T) {
 			t.Fatal("expected holding transaction to acquire lock")
 		}
 
-		// A different handler key should still be acquirable.
 		database.Transact(
 			t,
 			db,
 			func(ctx context.Context, tx *sql.Tx) error {
-				acquired, err := concurrency.Acquire(ctx, tx, otherKey)
+				acquired, err := acquireLock(ctx, tx, otherKey)
 				if err != nil {
 					return err
 				}

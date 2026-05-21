@@ -42,21 +42,25 @@ type Controller struct {
 // Run runs the controller until ctx is canceled or an unrecoverable error
 // occurs.
 func (c *Controller) Run(ctx context.Context) error {
-	n := maxWorkers
+	numWorkers := maxWorkers
 	if c.Config.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-		n = 1
+		numWorkers = 1
+
+		if err := ensureLockRowExists(ctx, c.DB, c.Config.Identity().GetKey()); err != nil {
+			return err
+		}
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	for range n {
+	for range numWorkers {
 		g.Go(func() error {
 			w := &worker{
-				Config: c.Config,
-				DB:     c.DB,
-				Packer: c.Packer,
-				Logger: c.Logger,
-				Lock:   c.Config.ConcurrencyPreference() == dogma.MinimizeConcurrency,
+				Config:                c.Config,
+				DB:                    c.DB,
+				Packer:                c.Packer,
+				Logger:                c.Logger,
+				ConcurrencyPreference: c.Config.ConcurrencyPreference(),
 			}
 
 			err := w.Run(ctx)

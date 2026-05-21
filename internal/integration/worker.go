@@ -12,18 +12,17 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
-	"github.com/dogmatiq/reference-engine/internal/concurrency"
 	"github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
 )
 
 // worker handles commands for an integration handler.
 type worker struct {
-	Config *config.Integration
-	DB     *sql.DB
-	Packer *envelopepb.Packer
-	Logger *slog.Logger
-	Lock   bool
+	Config                *config.Integration
+	DB                    *sql.DB
+	Packer                *envelopepb.Packer
+	Logger                *slog.Logger
+	ConcurrencyPreference dogma.ConcurrencyPreference
 }
 
 // Run runs the worker until ctx is canceled.
@@ -56,13 +55,10 @@ func (w *worker) tick(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	if w.Lock {
-		acquired, err := concurrency.Acquire(ctx, tx, w.Config.Identity().GetKey())
-		if err != nil {
+	if w.ConcurrencyPreference == dogma.MinimizeConcurrency {
+		ok, err := acquireLock(ctx, tx, w.Config.Identity().GetKey())
+		if !ok || err != nil {
 			return err
-		}
-		if !acquired {
-			return nil
 		}
 	}
 
