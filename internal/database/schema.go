@@ -10,11 +10,16 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// ApplySchema creates the engine's tables and indexes. It is safe to call
-// on every startup.
+// ApplySchema applies the PostgreSQL schema to the given database.
 func ApplySchema(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("unable to apply schema: %w", err)
-	}
-	return nil
+	return Transact(
+		ctx,
+		db,
+		func(ctx context.Context, tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+				return fmt.Errorf("unable to apply schema: %w", err)
+			}
+			return nil
+		},
+	)
 }

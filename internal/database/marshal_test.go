@@ -8,14 +8,17 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/database/databasetest"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestMarshalUUID(t *testing.T) {
-	db, _ := NewTestDB(
+	db, _ := databasetest.New(
 		t,
-		`CREATE TABLE test_uuid (id uuid PRIMARY KEY)`,
+		`CREATE TABLE test_uuid (
+			id uuid PRIMARY KEY
+		)`,
 	)
 
 	t.Run("it round-trips a UUID through a Postgres uuid column", func(t *testing.T) {
@@ -63,9 +66,12 @@ func TestMarshalUUID(t *testing.T) {
 }
 
 func TestMarshalEnvelope(t *testing.T) {
-	db, _ := NewTestDB(
+	db, _ := databasetest.New(
 		t,
-		`CREATE TABLE test_envelope (id serial PRIMARY KEY, data bytea NOT NULL)`,
+		`CREATE TABLE test_envelope (
+			id serial PRIMARY KEY,
+			data bytea NOT NULL
+		)`,
 	)
 
 	packer := &envelopepb.Packer{

@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/database/databasetest"
 )
 
 func TestApplySchema_isIdempotent(t *testing.T) {
-	db, _ := database.NewTestDB(t)
+	db, _ := databasetest.New(t)
 
-	// [NewTestDB] already applied the schema; a second call must be a no-op.
+	// [databasetest.New] already applied the schema; an additional application
+	// must be a no-op.
 	if err := database.ApplySchema(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}

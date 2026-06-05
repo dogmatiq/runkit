@@ -1,21 +1,24 @@
-package database
+package databasetest
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// NewTestDB starts a fresh PostgreSQL container, opens a [*sql.DB] against it,
-// and returns both the DB and the DSN.
+// New starts a fresh PostgreSQL container, opens a [*sql.DB] against it, and
+// returns both the DB and the DSN.
 //
 // The container is terminated and the DB closed when the test ends.
-func NewTestDB(t testing.TB, schema ...string) (*sql.DB, string) {
+func New(t testing.TB, schema ...string) (*sql.DB, string) {
 	t.Helper()
 
 	username := "dogma"
@@ -56,7 +59,7 @@ func NewTestDB(t testing.TB, schema ...string) (*sql.DB, string) {
 		}
 	})
 
-	if err := ApplySchema(t.Context(), db); err != nil {
+	if err := database.ApplySchema(t.Context(), db); err != nil {
 		t.Fatalf("unable to apply schema: %s", err)
 	}
 
@@ -73,21 +76,55 @@ func NewTestDB(t testing.TB, schema ...string) (*sql.DB, string) {
 func Transact(
 	t testing.TB,
 	db *sql.DB,
-	fn func(context.Context, *sql.Tx) error,
+	fn func(*sql.Tx),
 ) {
 	t.Helper()
 
-	tx, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatalf("unable to begin transaction: %s", err)
-	}
-	defer tx.Rollback()
+	if err := database.Transact(
+		t.Context(),
+		db,
+		func(_ context.Context, tx *sql.Tx) error {
+			t.Helper()
 
-	if err := fn(t.Context(), tx); err != nil {
-		t.Fatalf("transaction function produced an error: %s", err)
+			fn(tx)
+			return nil
+		},
+	); err != nil {
+		t.Fatal(err)
 	}
+}
 
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("unable to commit transaction: %s", err)
-	}
+// WaitUntil repeatedly executes a database query until it produces a row with a
+// truthy value or [xtesting.WaitTimeout] elapses.
+func WaitUntil(
+	t testing.TB,
+	q database.Querier,
+	description, query string,
+	args ...any,
+) {
+	t.Helper()
+
+	xtesting.WaitUntil(
+		t,
+		description,
+		func() bool {
+			t.Helper()
+
+			row := q.QueryRowContext(
+				t.Context(),
+				query,
+				args...,
+			)
+
+			var result bool
+			if err := row.Scan(&result); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return false
+				}
+				t.Fatal(err)
+			}
+
+			return result
+		},
+	)
 }
