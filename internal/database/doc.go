@@ -1,3 +1,2 @@
-// Package database provides helpers for working with the engine's Postgres
-// database via [database/sql].
+// Package database provides utilities for working with the engine's database.
 package database
