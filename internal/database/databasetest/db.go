@@ -2,11 +2,13 @@ package databasetest
 
 import (
 	"database/sql"
+	"fmt"
+	"net/url"
+	"sync"
 	"testing"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/database"
-	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -18,20 +20,7 @@ import (
 func New(t testing.TB) *sql.DB {
 	t.Helper()
 
-	username := "dogma"
-	password := "dogma"
-
-	container, err := postgres.Run(
-		t.Context(),
-		"postgres:18-alpine",
-		testcontainers.WithReuseByName("dogmatiq-reference-engine-test"),
-		postgres.BasicWaitStrategies(),
-		postgres.WithUsername(username),
-		postgres.WithPassword(password),
-	)
-	if err != nil {
-		t.Fatalf("unable to start PostgreSQL container: %s", err)
-	}
+	container := getContainer(t)
 
 	mainDSN, err := container.ConnectionString(t.Context())
 	if err != nil {
@@ -65,7 +54,7 @@ func NewWithSchema(t testing.TB) *sql.DB {
 }
 
 // replaceDatabaseNameInDSN replaces the database name in the given PostgreSQL
-// connection string. with the given name and returns the modified connection
+// connection string with the given name and returns the modified connection
 // string.
 func replaceDatabaseNameInDSN(
 	t testing.TB,
@@ -74,13 +63,13 @@ func replaceDatabaseNameInDSN(
 ) string {
 	t.Helper()
 
-	config, err := pgx.ParseConfig(dsn)
+	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("unable to parse PostgreSQL connection string: %s", err)
 	}
-	config.Database = dbName
+	u.Path = "/" + dbName
 
-	return config.ConnString()
+	return u.String()
 }
 
 // createTestDatabase creates a new database with a random name on the server
@@ -104,4 +93,60 @@ func createTestDatabase(t testing.TB, dsn string) (dbName string) {
 	}
 
 	return dbName
+}
+
+var containerState struct {
+	mutex     sync.Mutex
+	container *postgres.PostgresContainer
+}
+
+// getContainer returns a singleton PostgreSQL container for the test suite. It
+// starts the container if it hasn't been started yet.
+//
+// By caching the container ourselves, we avoid the overhead of calling out to
+// docker at the start of every test.
+func getContainer(t testing.TB) *postgres.PostgresContainer {
+	t.Helper()
+
+	containerState.mutex.Lock()
+	defer containerState.mutex.Unlock()
+
+	if containerState.container != nil {
+		return containerState.container
+	}
+
+	// We don't use "dogma" as the username because the default PostgreSQL
+	// "search_path" would automatically find the "dogma" schema, but we want to
+	// make sure that all queries name the schema explicitly.
+	username := "dogmatiq-reference-engine-test"
+	password := "password"
+
+	t.Log("sessionID", testcontainers.SessionID())
+
+	container, err := postgres.Run(
+		t.Context(),
+		"postgres:18-alpine",
+
+		// Allow container reuse, but key it based on the same session ID that
+		// testcontainers does for starting the Ryuk reaper process; otherwise
+		// the container will be shutdown by the first reaper process that
+		// starts.
+		testcontainers.WithReuseByName(
+			fmt.Sprintf(
+				"dogma-reference-engine-%s",
+				testcontainers.SessionID(),
+			),
+		),
+
+		postgres.BasicWaitStrategies(),
+		postgres.WithUsername(username),
+		postgres.WithPassword(password),
+	)
+	if err != nil {
+		t.Fatalf("unable to start PostgreSQL container: %s", err)
+	}
+
+	containerState.container = container
+
+	return container
 }
