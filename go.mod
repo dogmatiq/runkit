@@ -3,10 +3,13 @@ module github.com/dogmatiq/reference-engine
 go 1.26
 
 require (
+	github.com/dogmatiq/dogma v0.25.0
 	github.com/dogmatiq/enginekit v0.26.4
+	github.com/dogmatiq/spruce v0.2.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -64,7 +67,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
