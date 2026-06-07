@@ -30,7 +30,7 @@ func Expect[T comparable](
 			t.Fatalf("expectation failed: %s: got no rows, want %v", description, want)
 		}
 
-		t.Fatal(err)
+		t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
 	}
 
 	if got != want {

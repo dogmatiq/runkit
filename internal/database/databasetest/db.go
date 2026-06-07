@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/database/schema"
+	"github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 	"github.com/testcontainers/testcontainers-go"
@@ -57,7 +57,7 @@ func New(t testing.TB) *sql.DB {
 func NewWithSchema(t testing.TB) *sql.DB {
 	db := New(t)
 
-	if err := schema.Create(t.Context(), db); err != nil {
+	if err := database.CreateSchema(t.Context(), db); err != nil {
 		t.Fatalf("unable to apply database schema: %s", err)
 	}
 

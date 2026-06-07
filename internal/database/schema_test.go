@@ -1,16 +1,16 @@
-package schema_test
+package database_test
 
 import (
 	"testing"
 
+	. "github.com/dogmatiq/reference-engine/internal/database"
 	"github.com/dogmatiq/reference-engine/internal/database/databasetest"
-	. "github.com/dogmatiq/reference-engine/internal/database/schema"
 )
 
 func TestCreateAndDrop(t *testing.T) {
 	db := databasetest.New(t)
 
-	if err := Create(t.Context(), db); err != nil {
+	if err := CreateSchema(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -24,11 +24,11 @@ func TestCreateAndDrop(t *testing.T) {
 		WHERE schema_name = 'dogma'`,
 	)
 
-	if err := Create(t.Context(), db); err != nil {
+	if err := CreateSchema(t.Context(), db); err != nil {
 		t.Fatalf("schema creation is not idempotent: %s", err)
 	}
 
-	if err := Drop(t.Context(), db); err != nil {
+	if err := DropSchema(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
