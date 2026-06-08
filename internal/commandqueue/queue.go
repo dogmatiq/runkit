@@ -50,3 +50,28 @@ func Remove(
 
 	return nil
 }
+
+// Defer defers execution of a command by an exponentially increasing amount of
+// time based on the number of times it has been deferred.
+func Defer(
+	ctx context.Context,
+	x xsql.Executor,
+	messageID *uuidpb.UUID,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		x,
+		`UPDATE dogma.pending_commands SET
+			attempt_count = attempt_count + 1,
+			next_attempt_at = clock_timestamp() + LEAST(
+				pow(2, attempt_count) * 0.5,
+				300
+			) * interval '1 second'
+		WHERE message_id = $1`,
+		xsql.UUID(messageID),
+	); err != nil {
+		return fmt.Errorf("unable to defer queued command: %w", err)
+	}
+
+	return nil
+}

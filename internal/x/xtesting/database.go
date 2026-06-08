@@ -175,11 +175,11 @@ func ExpectQueryResult[T comparable](
 
 	var got T
 	if err := row.Scan(&got); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("expectation failed: %s: got no rows, want %v", description, want)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
 		}
 
-		t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
+		t.Fatalf("expectation failed: %s: got no rows, want %v", description, want)
 	}
 
 	if got != want {
@@ -212,14 +212,12 @@ func ExpectQueryResultEventually[T comparable](
 
 		var got T
 		if err := row.Scan(&got); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				t.Logf("expectation failed: %s: got no rows, want %v", description, want)
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
 			}
 
-			t.Logf("expectation failed: %s: unable to scan row: %s", description, err)
-		}
-
-		if got == want {
+			t.Logf("expectation failed: %s: got no rows, want %v", description, want)
+		} else if got == want {
 			return
 		}
 

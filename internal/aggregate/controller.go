@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
+	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
@@ -59,7 +60,21 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 
 		commandForRouting, err := envelopepb.Unpack[dogma.Command](commandEnvelope)
 		if err != nil {
-			return err
+			c.Logger.ErrorContext(
+				ctx,
+				"command cannot be unpacked from envelope",
+				xslog.Envelope(commandEnvelope),
+			)
+
+			if err := commandqueue.Defer(
+				ctx,
+				c.DB,
+				commandEnvelope.GetBody().GetMessageId(),
+			); err != nil {
+				return err
+			}
+
+			continue
 		}
 
 		instanceID := c.Handler.RouteCommandToInstance(commandForRouting)

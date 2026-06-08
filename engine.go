@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
+	"github.com/dogmatiq/reference-engine/internal/testhook"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
@@ -80,6 +81,10 @@ func (e *Engine) ExecuteCommand(
 	}
 
 	commandEnvelope := e.packer.PackCommand(command)
+
+	testhook.Invoke(ctx, testhook.ExecuteCommand{
+		CommandEnvelope: commandEnvelope,
+	})
 
 	if err := xsql.Transact(
 		ctx,
