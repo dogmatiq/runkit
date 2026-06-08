@@ -6,11 +6,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
@@ -48,7 +44,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 					&stubs.CommandStub[stubs.TypeA]{},
 				)
 
-				xtesting.ExpectCommandQueueDrainedEventually(
+				xtesting.ExpectEmptyCommandQueueEventually(
 					t,
 					engine.DB,
 				)
@@ -83,39 +79,25 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 			t,
 			app,
 			func(ctx context.Context, engine *dogmaengine.Engine) {
-				packer := &envelopepb.Packer{
-					Application: identitypb.New(
-						"<app>",
-						uuidpb.MustParse("2fba12dd-4608-43e8-9bbd-16fb32ae452e"),
-					),
-				}
+				handledCommand := xtesting.AddCommandDirectlyToQueue(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
 
-				handledCommand := packer.PackCommand(&stubs.CommandStub[stubs.TypeA]{})
-				ignoredCommand := packer.PackCommand(&stubs.CommandStub[stubs.TypeB]{})
+				ignoredCommand := xtesting.AddCommandDirectlyToQueue(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeB]{},
+				)
 
-				if err := commandqueue.Add(
-					ctx,
-					engine.DB,
-					handledCommand,
-				); err != nil {
-					t.Fatalf("unable to add command to queue: %v", err)
-				}
-
-				if err := commandqueue.Add(
-					ctx,
-					engine.DB,
-					ignoredCommand,
-				); err != nil {
-					t.Fatalf("unable to add command to queue: %v", err)
-				}
-
-				xtesting.ExpectCommandQueueNotToContainEventually(
+				xtesting.ExpectCommandToBeRemovedFromQueueEventually(
 					t,
 					engine.DB,
 					handledCommand.GetBody().GetMessageId(),
 				)
 
-				xtesting.ExpectCommandQueueToContain(
+				xtesting.ExpectCommandToBeQueued(
 					t,
 					engine.DB,
 					ignoredCommand.GetBody().GetMessageId(),

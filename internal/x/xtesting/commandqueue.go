@@ -4,13 +4,46 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	dogmaengine "github.com/dogmatiq/reference-engine"
+	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// ExpectCommandQueueDrainedEventually asserts that all pending commands are
+// AddCommandDirectlyToQueue adds the given directly command to the engine's command
+// queue, bypassing the engine's [dogma.CommandExecutor] implementation.
+func AddCommandDirectlyToQueue(
+	t testing.TB,
+	engine *dogmaengine.Engine,
+	command dogma.Command,
+) *envelopepb.Envelope {
+	t.Helper()
+
+	app := runtimeconfig.FromApplication(engine.App)
+
+	packer := &envelopepb.Packer{
+		Application: app.Identity(),
+	}
+
+	commandEnvelope := packer.PackCommand(command)
+
+	if err := commandqueue.Add(
+		t.Context(),
+		engine.DB,
+		commandEnvelope,
+	); err != nil {
+		t.Fatalf("unable to add command to queue: %v", err)
+	}
+
+	return commandEnvelope
+}
+
+// ExpectEmptyCommandQueueEventually asserts that all pending commands are
 // eventually removed from the queue.
-func ExpectCommandQueueDrainedEventually(
+func ExpectEmptyCommandQueueEventually(
 	t testing.TB,
 	q xsql.Querier,
 ) {
@@ -24,9 +57,9 @@ func ExpectCommandQueueDrainedEventually(
 	)
 }
 
-// ExpectCommandQueueToContain asserts that the command queue contains all
+// ExpectCommandToBeQueued asserts that the command queue contains all
 // commands with the given IDs.
-func ExpectCommandQueueToContain(
+func ExpectCommandToBeQueued(
 	t testing.TB,
 	q xsql.Querier,
 	messageIDs ...*uuidpb.UUID,
@@ -46,9 +79,9 @@ func ExpectCommandQueueToContain(
 	)
 }
 
-// ExpectCommandQueueNotToContainEventually asserts that the command queue
+// ExpectCommandToBeRemovedFromQueueEventually asserts that the command queue
 // eventually does not contain the commands with the given IDs.
-func ExpectCommandQueueNotToContainEventually(
+func ExpectCommandToBeRemovedFromQueueEventually(
 	t testing.TB,
 	q xsql.Querier,
 	messageIDs ...*uuidpb.UUID,
