@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestAggregate(t *testing.T) {
+func TestAggregate_commandRouting(t *testing.T) {
 	t.Run("it routes commands to the correct handler", func(t *testing.T) {
 		var (
 			handlerACalled xsync.Latch

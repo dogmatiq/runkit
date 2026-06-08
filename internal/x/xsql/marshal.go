@@ -15,6 +15,17 @@ func UUID(id *uuidpb.UUID) Value {
 	return text{id}
 }
 
+// UUIDs marshals a slice of UUIDs as a slice of UUID strings, suitable for use
+// with the PostgreSQL ANY operator.
+func UUIDs(ids []*uuidpb.UUID) []string {
+	stringIDs := make([]string, len(ids))
+	for i, id := range ids {
+		stringIDs[i] = id.AsString()
+	}
+
+	return stringIDs
+}
+
 // Envelope returns a value that marshals and unmarshals an envelope to/from its
 // binary representation as used in the database.
 func Envelope(envelope *envelopepb.Envelope) Value {
@@ -28,17 +39,17 @@ type text struct {
 	}
 }
 
-func (e text) Scan(v any) error {
+func (x text) Scan(v any) error {
 	data, ok := v.(string)
 	if !ok {
-		return fmt.Errorf("cannot scan %T into %T", v, e.V)
+		return fmt.Errorf("cannot scan %T into %T", v, x.V)
 	}
 
-	return e.V.UnmarshalText([]byte(data))
+	return x.V.UnmarshalText([]byte(data))
 }
 
-func (e text) Value() (driver.Value, error) {
-	data, err := e.V.MarshalText()
+func (x text) Value() (driver.Value, error) {
+	data, err := x.V.MarshalText()
 	return string(data), err
 }
 
@@ -49,15 +60,15 @@ type binary struct {
 	}
 }
 
-func (e binary) Scan(v any) error {
+func (x binary) Scan(v any) error {
 	data, ok := v.([]byte)
 	if !ok {
-		return fmt.Errorf("cannot scan %T into %T", v, e.V)
+		return fmt.Errorf("cannot scan %T into %T", v, x.V)
 	}
 
-	return e.V.UnmarshalBinary(data)
+	return x.V.UnmarshalBinary(data)
 }
 
-func (e binary) Value() (driver.Value, error) {
-	return e.V.MarshalBinary()
+func (x binary) Value() (driver.Value, error) {
+	return x.V.MarshalBinary()
 }
