@@ -1,3 +1,0 @@
-// Package databasetest provides utilities for testing code that interacts with
-// the engine's database.
-package databasetest

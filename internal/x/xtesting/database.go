@@ -1,23 +1,40 @@
-package databasetest
+package xtesting
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
 	"testing"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/database"
-	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// New returns a database pool that connects to an isolated test database.
+// NewDatabase is a variant of [newDatabase] that applies the engine's schema to the
+// database before returning it.
+func NewDatabase(t testing.TB) *sql.DB {
+	db := newDatabase(t)
+
+	if err := database.CreateSchema(t.Context(), db); err != nil {
+		t.Fatalf("unable to apply database schema: %s", err)
+	}
+
+	return db
+}
+
+// newDatabase returns a database pool that connects to an isolated test
+// database.
 //
 // The database is removed when the test ends.
-func New(t testing.TB) *sql.DB {
+func newDatabase(t testing.TB) *sql.DB {
 	t.Helper()
 
 	container := getContainer(t)
@@ -37,18 +54,6 @@ func New(t testing.TB) *sql.DB {
 	t.Cleanup(func() {
 		db.Close()
 	})
-
-	return db
-}
-
-// NewWithSchema is a variant of [New] that applies the engine's schema to the
-// database before returning it.
-func NewWithSchema(t testing.TB) *sql.DB {
-	db := New(t)
-
-	if err := database.CreateSchema(t.Context(), db); err != nil {
-		t.Fatalf("unable to apply database schema: %s", err)
-	}
 
 	return db
 }
@@ -121,8 +126,6 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 	username := "dogmatiq-reference-engine-test"
 	password := "password"
 
-	t.Log("sessionID", testcontainers.SessionID())
-
 	container, err := postgres.Run(
 		t.Context(),
 		"postgres:18-alpine",
@@ -149,4 +152,92 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 	containerState.container = container
 
 	return container
+}
+
+// DatabaseExecutor is the common interface for running queries and executing
+// statements, it is implemented by both [sql.DB] and [sql.Tx].
+type DatabaseExecutor interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// ExpectQueryResult executes a database query and fails the test if it does not
+// produce a row with the wanted value in the first column.
+func ExpectQueryResult[T comparable](
+	t testing.TB,
+	description string,
+	want T,
+	x DatabaseExecutor,
+	query string,
+	args ...any,
+) {
+	t.Helper()
+
+	row := x.QueryRowContext(
+		t.Context(),
+		query,
+		args...,
+	)
+
+	var got T
+	if err := row.Scan(&got); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expectation failed: %s: got no rows, want %v", description, want)
+		}
+
+		t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
+	}
+
+	if got != want {
+		t.Fatalf("expectation failed: %s: got %v, want %v", description, got, want)
+	}
+}
+
+// ExpectQueryResultEventually executes a database query and fails the test if
+// it does not produce a row with the wanted value in the first column within
+// [WaitTimeout].
+func ExpectQueryResultEventually[T comparable](
+	t testing.TB,
+	description string,
+	want T,
+	x DatabaseExecutor,
+	query string,
+	args ...any,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
+	defer cancel()
+
+	for {
+		row := x.QueryRowContext(
+			ctx,
+			query,
+			args...,
+		)
+
+		var got T
+		if err := row.Scan(&got); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				t.Logf("expectation failed: %s: got no rows, want %v", description, want)
+			}
+
+			t.Logf("expectation failed: %s: unable to scan row: %s", description, err)
+		}
+
+		if got == want {
+			return
+		}
+
+		t.Logf("expectation failed: %s: got %v, want %v", description, got, want)
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("expectation failed: %s: timed out waiting for value to become %v", description, want)
+		case <-time.After(50 * time.Millisecond):
+			continue
+		}
+	}
 }

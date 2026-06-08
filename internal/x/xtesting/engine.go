@@ -9,23 +9,22 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/database/databasetest"
 	"github.com/dogmatiq/spruce"
 )
 
-// RunApp runs the given Dogma application in a test engine and executes the
+// Run runs the given Dogma application in a test engine and executes the
 // given function while the engine is running.
 //
 // If the engine stops before the function returns the context passed to fn
 // is canceled, and the test fails.
-func RunApp(
+func Run(
 	t testing.TB,
 	app dogma.Application,
 	fn func(context.Context, *dogmaengine.Engine),
 ) {
 	t.Helper()
 
-	db := databasetest.NewWithSchema(t)
+	db := NewDatabase(t)
 
 	engine := &dogmaengine.Engine{
 		DB:     db,
@@ -50,9 +49,29 @@ func RunApp(
 		if err := engine.Run(engineContext); err != nil {
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("engine stopped unexpectedly: %v", err)
+				return
 			}
 		}
 	}()
 
 	fn(testContext, engine)
+}
+
+// ExecuteCommand executes the given command on the engine, and fails the test
+// if it returns an error.
+func ExecuteCommand(
+	t testing.TB,
+	engine *dogmaengine.Engine,
+	command dogma.Command,
+	options ...dogma.ExecuteCommandOption,
+) {
+	t.Helper()
+
+	if err := engine.ExecuteCommand(
+		t.Context(),
+		command,
+		options...,
+	); err != nil {
+		t.Fatalf("unable to execute command: %v", err)
+	}
 }

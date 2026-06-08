@@ -4,17 +4,17 @@ import (
 	"testing"
 
 	. "github.com/dogmatiq/reference-engine/internal/database"
-	"github.com/dogmatiq/reference-engine/internal/database/databasetest"
+	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
 func TestCreateAndDrop(t *testing.T) {
-	db := databasetest.New(t)
+	db := xtesting.NewDatabase(t)
 
 	if err := CreateSchema(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
-	databasetest.Expect(
+	xtesting.ExpectQueryResult(
 		t,
 		"schema exists",
 		1,
@@ -32,7 +32,7 @@ func TestCreateAndDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	databasetest.Expect(
+	xtesting.ExpectQueryResult(
 		t,
 		"schema does not exist",
 		0,

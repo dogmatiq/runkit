@@ -36,16 +36,17 @@ type text struct {
 }
 
 func (e text) Scan(v any) error {
-	data, ok := v.([]byte)
+	data, ok := v.(string)
 	if !ok {
-		return fmt.Errorf("cannot scan %T into envelope", v)
+		return fmt.Errorf("cannot scan %T into %T", v, e.V)
 	}
 
-	return e.V.UnmarshalText(data)
+	return e.V.UnmarshalText([]byte(data))
 }
 
 func (e text) Value() (driver.Value, error) {
-	return e.V.MarshalText()
+	data, err := e.V.MarshalText()
+	return string(data), err
 }
 
 type binary struct {
@@ -58,7 +59,7 @@ type binary struct {
 func (e binary) Scan(v any) error {
 	data, ok := v.([]byte)
 	if !ok {
-		return fmt.Errorf("cannot scan %T into envelope", v)
+		return fmt.Errorf("cannot scan %T into %T", v, e.V)
 	}
 
 	return e.V.UnmarshalBinary(data)

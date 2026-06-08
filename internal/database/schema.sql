@@ -5,5 +5,7 @@ CREATE SCHEMA IF NOT EXISTS dogma;
 -- yet been handled.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dogma.pending_commands (
-    envelope bytea NOT NULL
+    message_id      uuid  PRIMARY KEY,
+    message_type_id uuid  NOT NULL,
+    envelope        bytea NOT NULL
 );
