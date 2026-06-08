@@ -11,7 +11,8 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/commandqueue"
+	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
 // Controller manages the state of aggregate instances for a single aggregate
@@ -25,26 +26,6 @@ type Controller struct {
 
 // Run handles messages for the controller's handler until ctx is canceled.
 func (c *Controller) Run(ctx context.Context) (err error) {
-	c.Logger.InfoContext(
-		ctx,
-		"aggregate controller started",
-		slog.Any("command_types", c.CommandTypeIDs),
-	)
-	defer func() {
-		if err == nil || errors.Is(err, ctx.Err()) {
-			c.Logger.InfoContext(
-				ctx,
-				"aggregate controller stopped",
-			)
-		} else {
-			c.Logger.ErrorContext(
-				ctx,
-				"aggregate controller stopped",
-				slog.String("error", err.Error()),
-			)
-		}
-	}()
-
 	for {
 		row := c.DB.QueryRowContext(
 			ctx,
@@ -61,8 +42,8 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 		messageTypeID := &uuidpb.UUID{}
 
 		if err := row.Scan(
-			database.UUID(messageTypeID),
-			database.Envelope(commandEnvelope),
+			xsql.UUID(messageTypeID),
+			xsql.Envelope(commandEnvelope),
 		); err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("unable to scan pending command: %w", err)
@@ -104,13 +85,16 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 			commandForHandling,
 		)
 
-		if _, err := c.DB.ExecContext(
+		return xsql.Transact(
 			ctx,
-			`DELETE FROM dogma.pending_commands
-			WHERE message_id = $1`,
-			database.UUID(commandEnvelope.GetBody().GetMessageId()),
-		); err != nil {
-			return fmt.Errorf("unable to delete pending command: %w", err)
-		}
+			c.DB,
+			func(ctx context.Context, tx *sql.Tx) error {
+				return commandqueue.Remove(
+					ctx,
+					tx,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			},
+		)
 	}
 }

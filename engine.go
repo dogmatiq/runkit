@@ -9,11 +9,12 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
-	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
-	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/commandqueue"
+	"github.com/dogmatiq/reference-engine/internal/x/xslog"
+	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -52,7 +53,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	for _, handler := range e.app.Handlers() {
-		c := e.buildHandlerController(handler)
+		c := e.newControllerForHandler(handler)
 		g.Go(func() error {
 			return c.Run(ctx)
 		})
@@ -79,36 +80,21 @@ func (e *Engine) ExecuteCommand(
 	}
 
 	commandEnvelope := e.packer.PackCommand(command)
-	messageID := commandEnvelope.GetBody().GetMessageId()
-	messageTypeID := commandEnvelope.GetBody().GetMessage().GetTypeId()
 
-	if _, err := e.DB.ExecContext(
+	if err := xsql.Transact(
 		ctx,
-		`INSERT INTO dogma.pending_commands (
-			message_id,
-			message_type_id,
-			envelope
-		) VALUES ($1, $2, $3)`,
-		database.UUID(messageID),
-		database.UUID(messageTypeID),
-		database.Envelope(commandEnvelope),
+		e.DB,
+		func(ctx context.Context, tx *sql.Tx) error {
+			return commandqueue.Add(ctx, tx, commandEnvelope)
+		},
 	); err != nil {
-		return fmt.Errorf("unable to enqueue command: %w", err)
+		return err
 	}
 
 	e.Logger.InfoContext(
 		ctx,
-		"command enqueued",
-		slog.Group(
-			"message",
-			slog.String("id", messageID.AsString()),
-			slog.String("description", commandEnvelope.GetBody().GetMessage().GetDescription()),
-			slog.Group(
-				"type",
-				slog.String("id", messageTypeID.AsString()),
-				slog.String("name", string(message.NameOf(command))),
-			),
-		),
+		"enqueued command for execution",
+		xslog.Envelope(commandEnvelope),
 	)
 
 	return nil
@@ -119,35 +105,47 @@ type controller interface {
 	Run(context.Context) error
 }
 
-// buildHandlerController creates a controller for the given handler
-// configuration.
-func (e *Engine) buildHandlerController(handler config.Handler) controller {
+// newControllerForHandler creates a controller for the given handler.
+func (e *Engine) newControllerForHandler(handler config.Handler) controller {
+	switch handler := handler.(type) {
+	case *config.Aggregate:
+		return &aggregate.Controller{
+			DB:             e.DB,
+			Handler:        handler.Interface(),
+			CommandTypeIDs: e.collectInboundMessageTypeIDs(handler),
+			Logger:         e.newLoggerForHandler(handler),
+		}
+	default:
+		panic(fmt.Sprintf("unsupported handler type: %T", handler))
+	}
+}
+
+// newLoggerForHandler creates a logger for the given handler with the
+// appropriate fields.
+func (e *Engine) newLoggerForHandler(handler config.Handler) *slog.Logger {
+	return e.Logger.With(
+		xslog.Identity(
+			"handler",
+			handler.Identity(),
+			slog.String("type", handler.HandlerType().String()),
+		),
+	)
+}
+
+// collectInboundMessageTypeIDs returns the message type IDs of all inbound
+// messages routed to the given handler. It is represented as a slice of UUID
+// strings for direct use in SQL queries.
+func (*Engine) collectInboundMessageTypeIDs(handler config.Handler) []string {
 	inboundRoutes := handler.
 		RouteSet().
 		Filter(config.FilterByMessageDirection(config.InboundDirection)).
 		Routes()
 
 	var inboundMessageTypeIDs []string
+
 	for route := range inboundRoutes {
 		inboundMessageTypeIDs = append(inboundMessageTypeIDs, route.MessageTypeID.Get())
 	}
 
-	switch handler := handler.(type) {
-	case *config.Aggregate:
-		return &aggregate.Controller{
-			DB:             e.DB,
-			Handler:        handler.Interface(),
-			CommandTypeIDs: inboundMessageTypeIDs,
-			Logger: e.Logger.With(
-				slog.Group(
-					"handler",
-					slog.String("type", "aggregate"),
-					slog.String("name", handler.Identity().GetName()),
-					slog.String("key", handler.Identity().GetKey().AsString()),
-				),
-			),
-		}
-	default:
-		panic(fmt.Sprintf("unsupported handler type: %T", handler))
-	}
+	return inboundMessageTypeIDs
 }

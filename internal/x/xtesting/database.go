@@ -13,7 +13,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/database"
+	"github.com/dogmatiq/reference-engine/internal/schema"
+	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -23,7 +24,7 @@ import (
 func NewDatabase(t testing.TB) *sql.DB {
 	db := newDatabase(t)
 
-	if err := database.CreateSchema(t.Context(), db); err != nil {
+	if err := schema.Create(t.Context(), db); err != nil {
 		t.Fatalf("unable to apply database schema: %s", err)
 	}
 
@@ -154,28 +155,19 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 	return container
 }
 
-// DatabaseExecutor is the common interface for running queries and executing
-// statements, it is implemented by both [sql.DB] and [sql.Tx].
-type DatabaseExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
 // ExpectQueryResult executes a database query and fails the test if it does not
 // produce a row with the wanted value in the first column.
 func ExpectQueryResult[T comparable](
 	t testing.TB,
 	description string,
 	want T,
-	x DatabaseExecutor,
+	q xsql.Querier,
 	query string,
 	args ...any,
 ) {
 	t.Helper()
 
-	row := x.QueryRowContext(
+	row := q.QueryRowContext(
 		t.Context(),
 		query,
 		args...,
@@ -202,7 +194,7 @@ func ExpectQueryResultEventually[T comparable](
 	t testing.TB,
 	description string,
 	want T,
-	x DatabaseExecutor,
+	q xsql.Querier,
 	query string,
 	args ...any,
 ) {
@@ -212,7 +204,7 @@ func ExpectQueryResultEventually[T comparable](
 	defer cancel()
 
 	for {
-		row := x.QueryRowContext(
+		row := q.QueryRowContext(
 			ctx,
 			query,
 			args...,

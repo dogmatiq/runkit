@@ -1,7 +1,6 @@
-package database
+package xsql
 
 import (
-	"database/sql"
 	"database/sql/driver"
 	"encoding"
 	"fmt"
@@ -9,12 +8,6 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 )
-
-// Value is a type that can be stored in and retrieved from the database.
-type Value interface {
-	driver.Value
-	sql.Scanner
-}
 
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary
 // representation as used in the database.
