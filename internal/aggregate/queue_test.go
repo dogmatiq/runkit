@@ -7,7 +7,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/testhook"
+	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
@@ -138,7 +138,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 					t,
 					engine,
 					&stubs.CommandStub[stubs.TypeA]{},
-					func(x testhook.ExecuteCommand) {
+					func(x contexthook.ExecuteCommand) {
 						// Corrupt the command so that it cannot be unpacked.
 						x.CommandEnvelope.GetBody().GetMessage().SetData([]byte("<invalid>"))
 					},

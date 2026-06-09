@@ -76,7 +76,7 @@ func ExecuteCommand(
 		t,
 		engine,
 		command,
-		func(testhook.ExecuteCommand) {},
+		func(contexthook.ExecuteCommand) {},
 		options...,
 	)
 }
@@ -87,16 +87,16 @@ func ExecuteCommandWithHook(
 	t testing.TB,
 	engine *dogmaengine.Engine,
 	command dogma.Command,
-	hook func(testhook.ExecuteCommand),
+	hook func(contexthook.ExecuteCommand),
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
 	t.Helper()
 
 	var commandEnvelope *envelopepb.Envelope
 
-	ctx := testhook.Append(
+	ctx := contexthook.With(
 		t.Context(),
-		func(x testhook.ExecuteCommand) {
+		func(x contexthook.ExecuteCommand) {
 			hook(x)
 			commandEnvelope = x.CommandEnvelope
 		},
