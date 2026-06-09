@@ -120,9 +120,8 @@ CREATE TABLE IF NOT EXISTS dogma.events (
 -- recorded by integration handlers from the index.
 CREATE INDEX IF NOT EXISTS idx_events_by_aggregate_instance
 ON dogma.events (
-    event_stream_id,
-    event_offset,
     aggregate_handler_key,
-    aggregate_instance_id
+    aggregate_instance_id,
+    event_offset
 )
 WHERE aggregate_handler_key IS NOT NULL;
