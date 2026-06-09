@@ -2,6 +2,7 @@ package commandqueue
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
@@ -12,10 +13,10 @@ import (
 // Add adds a command to the queue.
 func Add(
 	ctx context.Context,
-	x xsql.Executor,
+	tx *sql.Tx,
 	commandEnvelope *envelopepb.Envelope,
 ) error {
-	if _, err := x.ExecContext(
+	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO dogma.pending_commands (
 			message_id,
@@ -35,12 +36,12 @@ func Add(
 // Remove removes a command from the queue.
 func Remove(
 	ctx context.Context,
-	x xsql.Executor,
+	tx *sql.Tx,
 	messageID *uuidpb.UUID,
 ) error {
 	if err := xsql.ExecOne(
 		ctx,
-		x,
+		tx,
 		`DELETE FROM dogma.pending_commands
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
@@ -55,12 +56,12 @@ func Remove(
 // time based on the number of times it has been deferred.
 func Defer(
 	ctx context.Context,
-	x xsql.Executor,
+	tx *sql.Tx,
 	messageID *uuidpb.UUID,
 ) error {
 	if err := xsql.ExecOne(
 		ctx,
-		x,
+		tx,
 		`UPDATE dogma.pending_commands SET
 			attempt_count = attempt_count + 1,
 			next_attempt_at = clock_timestamp() + LEAST(
