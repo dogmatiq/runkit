@@ -62,5 +62,9 @@ func messageType(v *uuidpb.UUID) slog.Attr {
 
 // Error returns an [slog.Attr] for an error value.
 func Error(err error) slog.Attr {
+	if err == nil {
+		return slog.Attr{}
+	}
+
 	return slog.String("error", err.Error())
 }
