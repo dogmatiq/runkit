@@ -85,7 +85,29 @@ func ExpectCommandToBeDeferredEventually(
 		`SELECT COUNT(*)
 		FROM dogma.pending_commands
 		WHERE message_id = $1
-			AND next_attempt_at > clock_timestamp()`,
+		AND next_attempt_at > clock_timestamp()`,
+		xsql.UUID(messageID),
+	)
+}
+
+// ExpectCommandAttemptCount asserts that the command with the given ID has been
+// attempted exactly the expected number of times.
+func ExpectCommandAttemptCount(
+	t testing.TB,
+	q xsql.Querier,
+	messageID *uuidpb.UUID,
+	want int,
+) {
+	t.Helper()
+
+	ExpectQueryResult(
+		t,
+		fmt.Sprintf("command %q has been attempted %d time(s)", messageID, want),
+		want,
+		q,
+		`SELECT attempt_count
+		FROM dogma.pending_commands
+		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
 }

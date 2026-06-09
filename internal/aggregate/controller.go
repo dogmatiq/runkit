@@ -53,12 +53,17 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 	}
 }
 
+// processNextCommand attempts to process the next pending command for the
+// handler.
+//
+// If there are no pending commands, it returns [errNoPendingCommands].
 func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT envelope
 		FROM dogma.pending_commands
 		WHERE message_type_id = ANY($1)
+		AND next_attempt_at <= clock_timestamp()
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		c.CommandTypeIDs,
@@ -150,8 +155,8 @@ func (c *Controller) loadInstance(
 		`SELECT envelope
 		FROM dogma.events
 		WHERE event_stream_id = $1
-			AND aggregate_handler_key = $2
-			AND aggregate_instance_id = $3
+		AND aggregate_handler_key = $2
+		AND aggregate_instance_id = $3
 		ORDER BY event_offset`,
 		xsql.UUID(eventStreamID),
 		xsql.UUID(c.HandlerIdentity.GetKey()),
@@ -219,7 +224,7 @@ func (c *Controller) ensureInstanceLocked(
 		`SELECT event_stream_id
 		FROM dogma.aggregate_instances
 		WHERE handler_key = $1
-			AND instance_id = $2
+		AND instance_id = $2
 		FOR UPDATE`,
 		xsql.UUID(c.HandlerIdentity.GetKey()),
 		instanceID,

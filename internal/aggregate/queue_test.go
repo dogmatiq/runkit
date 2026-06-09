@@ -133,7 +133,8 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 			t,
 			app,
 			func(t testing.TB, engine *dogmaengine.Engine) {
-				commandEnvelope := xtesting.ExecuteCommandWithHook(
+				// Execute an invalid command so that it will be deferred.
+				invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 					t,
 					engine,
 					&stubs.CommandStub[stubs.TypeA]{},
@@ -146,13 +147,32 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 				xtesting.ExpectCommandToBeDeferredEventually(
 					t,
 					engine.DB,
-					commandEnvelope.GetBody().GetMessageId(),
+					invalidCommandEnvelope.GetBody().GetMessageId(),
+				)
+
+				// Execute a valid command to verify that the deferred command
+				// does not block handling of other commands.
+				validCommandEnvelope := xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+					t,
+					engine.DB,
+					validCommandEnvelope.GetBody().GetMessageId(),
+				)
+
+				// Verify that the invalid command has not been attempted
+				// more than once.
+				xtesting.ExpectCommandAttemptCount(
+					t,
+					engine.DB,
+					invalidCommandEnvelope.GetBody().GetMessageId(),
+					1,
 				)
 			},
 		)
-	})
-
-	t.Run("it does not attempt to handle deferred commands", func(t *testing.T) {
-		t.Skip("not implemented")
 	})
 }
