@@ -32,6 +32,37 @@ CREATE TABLE IF NOT EXISTS dogma.event_streams (
 );
 
 --------------------------------------------------------------------------------
+-- The "aggregate_instances" table stores meta-data about each aggregate
+-- instance, and a snapshot of its state, if one is available.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dogma.aggregate_instances (
+    handler_key     uuid   NOT NULL,
+    instance_id     text   NOT NULL CHECK (instance_id != ''),
+    event_stream_id uuid   NOT NULL,
+
+    PRIMARY KEY (handler_key, instance_id),
+
+    -- This unique constraint is required so that the events table can declare a
+    -- composite foreign key that includes event_stream_id, ensuring each
+    -- aggregate instance's events are always on the correct stream. It is
+    -- otherwise logically redundant because the PK already ensures there can be
+    -- only one row for a given instance
+    CONSTRAINT unique_instance_stream
+    UNIQUE (
+        handler_key,
+        instance_id,
+        event_stream_id
+    ),
+
+    CONSTRAINT fk_event_stream
+    FOREIGN KEY (event_stream_id)
+    REFERENCES dogma.event_streams (event_stream_id)
+    ON DELETE RESTRICT -- can't delete streams with aggregate instances bound to them
+    ON UPDATE RESTRICT -- can't change a stream's ID
+);
+
+
+--------------------------------------------------------------------------------
 -- The "events" table contains all events recorded by aggregate and integration
 -- handlers.
 --------------------------------------------------------------------------------
@@ -60,8 +91,26 @@ CREATE TABLE IF NOT EXISTS dogma.events (
     CONSTRAINT fk_event_stream
     FOREIGN KEY (event_stream_id)
     REFERENCES dogma.event_streams (event_stream_id)
-    ON DELETE RESTRICT -- can't delete streams that contain events
-    ON UPDATE RESTRICT -- can't change a stream's ID
+    ON DELETE RESTRICT  -- can't delete streams that contain events
+    ON UPDATE RESTRICT, -- can't change a stream's ID
+
+    CONSTRAINT fk_aggregate_instance
+    FOREIGN KEY (
+        aggregate_handler_key,
+        aggregate_instance_id,
+
+        -- Include the "event_stream_id" column in the constraint to ensure that
+        -- any event produced by an aggregate instance can only be recorded
+        -- against the stream that the instance is bound to.
+        event_stream_id
+    )
+    REFERENCES dogma.aggregate_instances (
+        handler_key,
+        instance_id,
+        event_stream_id
+    )
+    ON DELETE RESTRICT -- can't delete aggregate instances with events
+    ON UPDATE RESTRICT -- can't change an instance's ID or stream ID
 );
 
 -- Create an index for finding events by the aggregate instance that recorded

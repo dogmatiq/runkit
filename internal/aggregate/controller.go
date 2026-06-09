@@ -29,117 +29,20 @@ type Controller struct {
 	Logger          *slog.Logger
 }
 
+var errNoPendingCommands = errors.New("no pending commands")
+
 // Run handles messages for the controller's handler until ctx is canceled.
 func (c *Controller) Run(ctx context.Context) (err error) {
-	c.Logger.DebugContext(
-		ctx,
-		"aggregate controller started",
-	)
-
-	defer func() {
-		c.Logger.DebugContext(
-			ctx,
-			"aggregate controller stopped",
-			xslog.Error(err),
-		)
-	}()
-
 	for {
-		pollImmediately := false
-
 		if err := xsql.Transact(
 			ctx,
 			c.DB,
-			func(ctx context.Context, tx *sql.Tx) error {
-				row := tx.QueryRowContext(
-					ctx,
-					`SELECT envelope
-					FROM dogma.pending_commands
-					WHERE message_type_id = ANY($1)
-					LIMIT 1
-					FOR UPDATE SKIP LOCKED`,
-					c.CommandTypeIDs,
-				)
-
-				commandEnvelope := &envelopepb.Envelope{}
-
-				if err := row.Scan(
-					xsql.Envelope(commandEnvelope),
-				); err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						return nil
-					}
-
-					return fmt.Errorf("unable to scan pending command: %w", err)
-				}
-
-				pollImmediately = true
-
-				commandForRouting, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
-				if !ok || err != nil {
-					return err
-				}
-
-				instanceID := c.Handler.RouteCommandToInstance(commandForRouting)
-				if instanceID == "" {
-					return errors.New("handler returned an empty instance ID")
-				}
-
-				root, ok, err := c.loadInstance(ctx, tx, instanceID, commandEnvelope)
-				if !ok || err != nil {
-					return err
-				}
-
-				// Unpack the command a second time, as the Dogma API requires that each
-				// time a message is passed to the application, the application assumes
-				// ownership of the message and the values within it.
-				commandForHandling, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
-				if !ok || err != nil {
-					return err
-				}
-
-				packer := c.Packer.PackEffects(
-					commandEnvelope,
-					c.HandlerIdentity,
-					envelopepb.WithInstanceID(instanceID),
-				)
-
-				c.Handler.HandleCommand(
-					root,
-					&scope{
-						instanceID: instanceID,
-						packer:     packer,
-					},
-					commandForHandling,
-				)
-
-				if eventEnvelopes, ok := packer.Seal(); ok {
-					eventStreamID, err := c.findEventStreamID(ctx, tx, instanceID)
-					if err != nil {
-						return err
-					}
-
-					if err := eventstream.Append(
-						ctx,
-						tx,
-						eventStreamID,
-						eventEnvelopes,
-					); err != nil {
-						return err
-					}
-				}
-
-				return commandqueue.Remove(
-					ctx,
-					tx,
-					commandEnvelope.GetBody().GetMessageId(),
-				)
-			},
+			c.processNextCommand,
 		); err != nil {
-			return err
-		}
+			if !errors.Is(err, errNoPendingCommands) {
+				return err
+			}
 
-		if !pollImmediately {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -150,57 +53,116 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 	}
 }
 
-func (c *Controller) findEventStreamID(ctx context.Context, tx *sql.Tx, instanceID string) (*uuidpb.UUID, error) {
+func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 	row := tx.QueryRowContext(
 		ctx,
-		`SELECT event_stream_id
-		FROM dogma.events
-		WHERE aggregate_handler_key = $1
-			AND aggregate_instance_id = $2
-		ORDER BY event_offset
-		LIMIT 1`,
-		xsql.UUID(c.HandlerIdentity.GetKey()),
-		instanceID,
+		`SELECT envelope
+		FROM dogma.pending_commands
+		WHERE message_type_id = ANY($1)
+		LIMIT 1
+		FOR UPDATE SKIP LOCKED`,
+		c.CommandTypeIDs,
 	)
 
-	eventStreamID := &uuidpb.UUID{}
+	commandEnvelope := &envelopepb.Envelope{}
 
 	if err := row.Scan(
-		xsql.UUID(eventStreamID),
+		xsql.Envelope(commandEnvelope),
 	); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("unable to scan event stream ID: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNoPendingCommands
 		}
 
-		return eventstream.Acquire(ctx, tx)
+		return fmt.Errorf("unable to scan pending command: %w", err)
 	}
 
-	return eventStreamID, nil
+	commandForRouting, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
+	if !ok || err != nil {
+		return err
+	}
+
+	instanceID := c.Handler.RouteCommandToInstance(commandForRouting)
+	if instanceID == "" {
+		return errors.New("handler returned an empty instance ID")
+	}
+
+	root, eventStreamID, ok, err := c.loadInstance(ctx, tx, instanceID, commandEnvelope)
+	if !ok || err != nil {
+		return err
+	}
+
+	// Unpack the command a second time, as the Dogma API requires that each
+	// time a message is passed to the application, the application assumes
+	// ownership of the message and the values within it.
+	commandForHandling, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
+	if !ok || err != nil {
+		return err
+	}
+
+	packer := c.Packer.PackEffects(
+		commandEnvelope,
+		c.HandlerIdentity,
+		envelopepb.WithInstanceID(instanceID),
+	)
+
+	c.Handler.HandleCommand(
+		root,
+		&scope{
+			instanceID: instanceID,
+			packer:     packer,
+		},
+		commandForHandling,
+	)
+
+	if eventEnvelopes, ok := packer.Seal(); ok {
+		if err := eventstream.Append(
+			ctx,
+			tx,
+			eventStreamID,
+			eventEnvelopes,
+		); err != nil {
+			return err
+		}
+	}
+
+	return commandqueue.Remove(
+		ctx,
+		tx,
+		commandEnvelope.GetBody().GetMessageId(),
+	)
 }
 
+// loadInstance loads the aggregate instance with the given ID, and returns the
+// root and event stream ID for the instance.
 func (c *Controller) loadInstance(
 	ctx context.Context,
 	tx *sql.Tx,
 	instanceID string,
 	commandEnvelope *envelopepb.Envelope,
-) (dogma.AggregateRoot, bool, error) {
+) (root dogma.AggregateRoot, eventStreamID *uuidpb.UUID, ok bool, err error) {
+	eventStreamID, err = c.ensureInstanceLocked(ctx, tx, instanceID)
+	if err != nil {
+		return nil, nil, false, err
+	}
 
 	rows, err := tx.QueryContext(
 		ctx,
 		`SELECT envelope
 		FROM dogma.events
-		WHERE aggregate_handler_key = $1
-			AND aggregate_instance_id = $2
+		WHERE event_stream_id = $1
+			AND aggregate_handler_key = $2
+			AND aggregate_instance_id = $3
 		ORDER BY event_offset`,
+		xsql.UUID(eventStreamID),
 		xsql.UUID(c.HandlerIdentity.GetKey()),
 		instanceID,
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("unable to query historical events: %w", err)
+		return nil, nil, false, fmt.Errorf("unable to query historical events: %w", err)
 	}
 	defer rows.Close()
 
-	root := c.Handler.New()
+	root = c.Handler.New()
 
 	for rows.Next() {
 		eventEnvelope := &envelopepb.Envelope{}
@@ -208,7 +170,7 @@ func (c *Controller) loadInstance(
 		if err := rows.Scan(
 			xsql.Envelope(eventEnvelope),
 		); err != nil {
-			return nil, false, fmt.Errorf("unable to scan historical event: %w", err)
+			return nil, nil, false, fmt.Errorf("unable to scan historical event: %w", err)
 		}
 
 		event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
@@ -219,7 +181,7 @@ func (c *Controller) loadInstance(
 				xslog.Envelope(eventEnvelope),
 			)
 
-			return nil, false, commandqueue.Defer(
+			return nil, nil, false, commandqueue.Defer(
 				ctx,
 				tx,
 				commandEnvelope.GetBody().GetMessageId(),
@@ -236,12 +198,88 @@ func (c *Controller) loadInstance(
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("unable to iterate historical events: %w", err)
+		return nil, nil, false, fmt.Errorf("unable to iterate historical events: %w", err)
 	}
 
-	return root, true, nil
+	return root, eventStreamID, true, nil
 }
 
+// ensureInstanceLocked attempts to acquire a lock on the aggregate instance
+// with the given ID, and returns the event stream ID for the instance.
+//
+// If the instance does not exist, it is created and the event stream ID for the
+// new instance is returned.
+func (c *Controller) ensureInstanceLocked(
+	ctx context.Context,
+	tx *sql.Tx,
+	instanceID string,
+) (eventStreamID *uuidpb.UUID, err error) {
+	row := tx.QueryRowContext(
+		ctx,
+		`SELECT event_stream_id
+		FROM dogma.aggregate_instances
+		WHERE handler_key = $1
+			AND instance_id = $2
+		FOR UPDATE`,
+		xsql.UUID(c.HandlerIdentity.GetKey()),
+		instanceID,
+	)
+
+	eventStreamID = &uuidpb.UUID{}
+
+	err = row.Scan(
+		xsql.UUID(eventStreamID),
+	)
+
+	// The instance exists, return its event stream.
+	if err == nil {
+		return eventStreamID, nil
+	}
+
+	// Some legitimate error occurred, return it.
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("unable to scan event stream ID: %w", err)
+	}
+
+	// The instance does not exist, acquire an event stream for this instance.
+	eventStreamID, err = eventstream.Acquire(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attempt to insert the new instance, or if it was inserted after our
+	// initial select, return the existing instance's event stream ID.
+	//
+	// Either way, the row is locked by this transaction after this query.
+	row = tx.QueryRowContext(
+		ctx,
+		`INSERT INTO dogma.aggregate_instances (
+			handler_key,
+			instance_id,
+			event_stream_id
+		) VALUES ($1, $2, $3)
+		ON CONFLICT (handler_key, instance_id)
+		DO UPDATE SET
+			instance_id = EXCLUDED.instance_id
+		RETURNING event_stream_id`,
+		xsql.UUID(c.HandlerIdentity.GetKey()),
+		instanceID,
+		xsql.UUID(eventStreamID),
+	)
+
+	if err := row.Scan(
+		xsql.UUID(eventStreamID),
+	); err != nil {
+		return nil, fmt.Errorf("unable to upsert aggregate instance: %w", err)
+	}
+
+	return eventStreamID, nil
+}
+
+// unpackCommand returns the command contained in the given envelope.
+//
+// If the command cannot be unpacked, it is deferred for handling at a future
+// time.
 func (c *Controller) unpackCommand(
 	ctx context.Context,
 	tx *sql.Tx,

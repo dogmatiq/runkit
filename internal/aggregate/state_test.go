@@ -2,6 +2,7 @@ package aggregate_test
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -269,6 +270,114 @@ func TestAggregate_state(t *testing.T) {
 	})
 
 	t.Run("it serializes concurrent state changes for the same instance", func(t *testing.T) {
-		t.Skip("not implemented")
+		const commandCount = 20
+
+		app := &stubs.ApplicationStub{
+			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
+				c.Routes(
+					dogma.ViaAggregate(
+						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+							ConfigureFunc: func(c dogma.AggregateConfigurer) {
+								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+								c.Routes(
+									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+								)
+							},
+							RouteCommandToInstanceFunc: func(dogma.Command) string {
+								return "<instance>"
+							},
+							HandleCommandFunc: func(
+								r *stubs.AggregateRootStub,
+								s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+								m dogma.Command,
+							) {
+								switch m.(type) {
+
+								// When we receive a TypeA command, record an
+								// event that captures how many events the
+								// handler observed at the time it was called.
+								case *stubs.CommandStub[stubs.TypeA]:
+									s.RecordEvent(&stubs.EventStub[stubs.TypeA]{
+										Content: stubs.TypeA(fmt.Sprintf("%d", len(r.AppliedEvents))),
+									})
+
+								// When we receive a TypeB command, verify that
+								// each event recorded the expected sequential
+								// count, proving that each command observed the
+								// state produced by all prior commands.
+								case *stubs.CommandStub[stubs.TypeB]:
+									if got := len(r.AppliedEvents); got != commandCount {
+										t.Errorf(
+											"unexpected event count: got %d, want %d",
+											got,
+											commandCount,
+										)
+									}
+
+									for idx, event := range r.AppliedEvents {
+										want := stubs.TypeA(fmt.Sprintf("%d", idx))
+										got := event.(*stubs.EventStub[stubs.TypeA]).Content
+
+										if got != want {
+											t.Errorf(
+												"unexpected event content at index %d: got %q, want %q",
+												idx,
+												got,
+												want,
+											)
+										}
+									}
+
+								default:
+									panic(dogma.UnexpectedMessage)
+								}
+							},
+						},
+					),
+				)
+			},
+		}
+
+		xtesting.Run(
+			t,
+			app,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				// Send many TypeA commands at once without waiting between
+				// them, so that concurrent engines may attempt to process
+				// multiple commands for the same instance simultaneously.
+				for range commandCount {
+					xtesting.ExecuteCommand(
+						t,
+						engine,
+						&stubs.CommandStub[stubs.TypeA]{},
+					)
+				}
+
+				// Wait until all TypeA commands are handled before making
+				// assertions about the aggregate state.
+				xtesting.ExpectEmptyCommandQueueEventually(
+					t,
+					engine.DB,
+				)
+
+				// Send TypeB command which asserts about the aggregate state
+				// within the handler.
+				xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeB]{},
+				)
+
+				// Wait until the last command is handled once more so that we
+				// don't end the test before the assertions are executed.
+				xtesting.ExpectEmptyCommandQueueEventually(
+					t,
+					engine.DB,
+				)
+			},
+		)
 	})
 }
