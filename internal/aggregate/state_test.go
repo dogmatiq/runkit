@@ -380,4 +380,86 @@ func TestAggregate_state(t *testing.T) {
 			},
 		)
 	})
+
+	t.Run("it defers the command if there is an invalid historical event", func(t *testing.T) {
+		app := &stubs.ApplicationStub{
+			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
+				c.Routes(
+					dogma.ViaAggregate(
+						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+							ConfigureFunc: func(c dogma.AggregateConfigurer) {
+								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+								c.Routes(
+									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+								)
+							},
+							RouteCommandToInstanceFunc: func(dogma.Command) string {
+								return "<instance>"
+							},
+							HandleCommandFunc: func(
+								r *stubs.AggregateRootStub,
+								s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+								m dogma.Command,
+							) {
+								s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+							},
+						},
+					),
+				)
+			},
+		}
+
+		xtesting.Run(
+			t,
+			app,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				// Execute a command to create the instance and record an
+				// event in its history.
+				xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectEmptyCommandQueueEventually(
+					t,
+					engine.DB,
+				)
+
+				// Corrupt the stored event envelope so that it cannot be
+				// parsed.
+				xtesting.Transact(
+					t,
+					engine.DB,
+					func(tx *sql.Tx) {
+						xtesting.ExecOne(
+							t,
+							tx,
+							`UPDATE dogma.events
+							SET envelope = '\x00'::bytea
+							WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+							AND aggregate_instance_id = '<instance>'`,
+						)
+					},
+				)
+
+				// Execute another command to the same instance.
+				commandEnvelope := xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				// The command should be deferred because the instance
+				// state cannot be loaded.
+				xtesting.ExpectCommandToBeDeferredEventually(
+					t,
+					engine.DB,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			},
+		)
+	})
 }

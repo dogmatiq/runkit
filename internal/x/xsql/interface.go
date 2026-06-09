@@ -20,8 +20,8 @@ type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// Value is an interface for values that can be stored in the database.
-type Value interface {
+// ScannerValuer is an interface for values that can be stored in the database.
+type ScannerValuer interface {
 	driver.Value
 	sql.Scanner
 }

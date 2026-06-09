@@ -34,9 +34,9 @@ type Engine struct {
 	// If it is nil, [slog.Default] is used.
 	Logger *slog.Logger
 
-	ready  xsync.Latch
-	app    *config.Application
-	packer *envelopepb.Packer
+	ready          xsync.Latch
+	app            *config.Application
+	envelopePacker *envelopepb.Packer
 }
 
 // Run starts the engine and blocks until ctx is canceled.
@@ -47,7 +47,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		return fmt.Errorf("invalid application configuration: %w", err)
 	}
 
-	e.packer = &envelopepb.Packer{
+	e.envelopePacker = &envelopepb.Packer{
 		Application: e.app.Identity(),
 	}
 
@@ -80,7 +80,7 @@ func (e *Engine) ExecuteCommand(
 		return err
 	}
 
-	commandEnvelope := e.packer.PackCommand(command)
+	commandEnvelope := e.envelopePacker.PackCommand(command)
 
 	contexthook.Invoke(ctx, contexthook.ExecuteCommand{
 		CommandEnvelope: commandEnvelope,
@@ -118,7 +118,7 @@ func (e *Engine) newControllerForHandler(handler config.Handler) controller {
 			DB:              e.DB,
 			Handler:         handler.Interface(),
 			HandlerIdentity: handler.Identity(),
-			Packer:          e.packer,
+			EnvelopePacker:  e.envelopePacker,
 			CommandTypeIDs:  e.collectInboundMessageTypeIDs(handler),
 			Logger:          e.newLoggerForHandler(handler),
 		}

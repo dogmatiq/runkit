@@ -106,7 +106,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 		)
 	})
 
-	t.Run("it defers commands that cannot be unpacked", func(t *testing.T) {
+	t.Run("it defers invalid commands", func(t *testing.T) {
 		app := &stubs.ApplicationStub{
 			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
 				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")

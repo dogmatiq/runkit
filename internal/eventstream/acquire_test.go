@@ -33,6 +33,12 @@ func TestAcquire(t *testing.T) {
 		},
 	)
 
+	xtesting.ExpectEventStreamCount(
+		t,
+		db,
+		1,
+	)
+
 	// Return the same ID on subsequent calls.
 	xtesting.Transact(
 		t,
@@ -51,6 +57,12 @@ func TestAcquire(t *testing.T) {
 				)
 			}
 		},
+	)
+
+	xtesting.ExpectEventStreamCount(
+		t,
+		db,
+		1,
 	)
 
 	// Create a new stream if existing streams are at capacity.
@@ -97,4 +109,11 @@ func TestAcquire(t *testing.T) {
 			}
 		},
 	)
+
+	xtesting.ExpectEventStreamCount(
+		t,
+		db,
+		2,
+	)
+
 }

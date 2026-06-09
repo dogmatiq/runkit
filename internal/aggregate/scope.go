@@ -9,7 +9,7 @@ import (
 
 type scope struct {
 	instanceID string
-	packer     *envelopepb.EffectPacker
+	envelopePacker     *envelopepb.EffectPacker
 }
 
 func (s *scope) Now() time.Time {
@@ -25,5 +25,5 @@ func (s *scope) InstanceID() string {
 }
 
 func (s *scope) RecordEvent(ev dogma.Event) {
-	s.packer.PackEvent(ev)
+	s.envelopePacker.PackEvent(ev)
 }

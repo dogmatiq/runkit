@@ -90,7 +90,7 @@ func (e *Engine) makeController(handler config.Handler) controller {
 		return &aggregate.Controller{
 			Config: handler,
 			DB:     e.db,
-			Packer: e.packer,
+			EnvelopePacker: e.packer,
 			Logger: e.Logger,
 		}
 	case *config.Integration:

@@ -30,12 +30,17 @@ func Identity(k string, v *identitypb.Identity, extra ...slog.Attr) slog.Attr {
 
 // Envelope returns an [slog.Attr] for a message envelope.
 func Envelope(v *envelopepb.Envelope, extra ...slog.Attr) slog.Attr {
-	attrs := []any{
-		UUID("message_id", v.GetBody().GetMessageId()),
-		UUID("causation_id", v.GetHeader().GetCausationId()),
-		UUID("correlation_id", v.GetHeader().GetCorrelationId()),
-		slog.String("description", v.GetBody().GetMessage().GetDescription()),
-		messageType(v.GetBody().GetMessage().GetTypeId()),
+	var attrs []any
+
+	if v.Validate() == nil {
+		attrs = append(
+			attrs,
+			UUID("message_id", v.GetBody().GetMessageId()),
+			UUID("causation_id", v.GetHeader().GetCausationId()),
+			UUID("correlation_id", v.GetHeader().GetCorrelationId()),
+			slog.String("description", v.GetBody().GetMessage().GetDescription()),
+			messageType(v.GetBody().GetMessage().GetTypeId()),
+		)
 	}
 
 	for _, a := range extra {

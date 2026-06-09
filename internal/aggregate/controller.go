@@ -24,7 +24,7 @@ type Controller struct {
 	DB              *sql.DB
 	Handler         dogma.AggregateMessageHandler[dogma.AggregateRoot]
 	HandlerIdentity *identitypb.Identity
-	Packer          *envelopepb.Packer
+	EnvelopePacker  *envelopepb.Packer
 	CommandTypeIDs  []string
 	Logger          *slog.Logger
 }
@@ -69,21 +69,38 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		c.CommandTypeIDs,
 	)
 
-	commandEnvelope := &envelopepb.Envelope{}
+	var (
+		commandEnvelope                       = &envelopepb.Envelope{}
+		commandForRouting, commandForHandling dogma.Command
+	)
 
 	if err := row.Scan(
-		xsql.Envelope(commandEnvelope),
+		xsql.UnpackEnvelope(
+			commandEnvelope,
+			&commandForRouting,
+			&commandForHandling,
+		),
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errNoPendingCommands
 		}
 
-		return fmt.Errorf("unable to scan pending command: %w", err)
-	}
+		if err, ok := errors.AsType[xsql.UnpackEnvelopeError](err); ok {
+			c.Logger.ErrorContext(
+				ctx,
+				"cannot unpack command envelope",
+				xslog.Envelope(commandEnvelope),
+				xslog.Error(err),
+			)
 
-	commandForRouting, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
-	if !ok || err != nil {
-		return err
+			return commandqueue.Defer(
+				ctx,
+				tx,
+				commandEnvelope.GetBody().GetMessageId(),
+			)
+		}
+
+		return fmt.Errorf("unable to scan pending command: %w", err)
 	}
 
 	instanceID := c.Handler.RouteCommandToInstance(commandForRouting)
@@ -96,15 +113,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 
-	// Unpack the command a second time, as the Dogma API requires that each
-	// time a message is passed to the application, the application assumes
-	// ownership of the message and the values within it.
-	commandForHandling, ok, err := c.unpackCommand(ctx, tx, commandEnvelope)
-	if !ok || err != nil {
-		return err
-	}
-
-	packer := c.Packer.PackEffects(
+	envelopePacker := c.EnvelopePacker.PackEffects(
 		commandEnvelope,
 		c.HandlerIdentity,
 		envelopepb.WithInstanceID(instanceID),
@@ -113,13 +122,13 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 	c.Handler.HandleCommand(
 		root,
 		&scope{
-			instanceID: instanceID,
-			packer:     packer,
+			instanceID:     instanceID,
+			envelopePacker: envelopePacker,
 		},
 		commandForHandling,
 	)
 
-	if eventEnvelopes, ok := packer.Seal(); ok {
+	if eventEnvelopes, ok := envelopePacker.Seal(); ok {
 		if err := eventstream.Append(
 			ctx,
 			tx,
@@ -169,37 +178,43 @@ func (c *Controller) loadInstance(
 
 	root = c.Handler.New()
 
-	for rows.Next() {
-		eventEnvelope := &envelopepb.Envelope{}
+	var (
+		// Reuse the same envelope for each event to avoid unnecessary
+		// allocations.
+		eventEnvelope = &envelopepb.Envelope{}
+		event         dogma.Event
+	)
 
+	for rows.Next() {
 		if err := rows.Scan(
-			xsql.Envelope(eventEnvelope),
+			xsql.UnpackEnvelope(
+				eventEnvelope,
+				&event,
+			),
 		); err != nil {
+			if err, ok := errors.AsType[xsql.UnpackEnvelopeError](err); ok {
+				c.Logger.ErrorContext(
+					ctx,
+					"cannot unpack historical event envelope",
+					xslog.Envelope(eventEnvelope),
+					xslog.Error(err),
+				)
+
+				if err := rows.Close(); err != nil {
+					return nil, nil, false, fmt.Errorf("unable to close rows after envelope unpack error: %w", err)
+				}
+
+				return nil, nil, false, commandqueue.Defer(
+					ctx,
+					tx,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			}
+
 			return nil, nil, false, fmt.Errorf("unable to scan historical event: %w", err)
 		}
 
-		event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
-		if err != nil {
-			c.Logger.ErrorContext(
-				ctx,
-				"event cannot be unpacked from envelope",
-				xslog.Envelope(eventEnvelope),
-			)
-
-			return nil, nil, false, commandqueue.Defer(
-				ctx,
-				tx,
-				commandEnvelope.GetBody().GetMessageId(),
-			)
-		}
-
 		root.ApplyEvent(event)
-
-		c.Logger.DebugContext(
-			ctx,
-			"event applied to aggregate root",
-			xslog.Envelope(eventEnvelope),
-		)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -279,31 +294,4 @@ func (c *Controller) ensureInstanceLocked(
 	}
 
 	return eventStreamID, nil
-}
-
-// unpackCommand returns the command contained in the given envelope.
-//
-// If the command cannot be unpacked, it is deferred for handling at a future
-// time.
-func (c *Controller) unpackCommand(
-	ctx context.Context,
-	tx *sql.Tx,
-	commandEnvelope *envelopepb.Envelope,
-) (dogma.Command, bool, error) {
-	command, err := envelopepb.Unpack[dogma.Command](commandEnvelope)
-	if err != nil {
-		c.Logger.ErrorContext(
-			ctx,
-			"command cannot be unpacked from envelope",
-			xslog.Envelope(commandEnvelope),
-		)
-
-		return nil, false, commandqueue.Defer(
-			ctx,
-			tx,
-			commandEnvelope.GetBody().GetMessageId(),
-		)
-	}
-
-	return command, true, nil
 }
