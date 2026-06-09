@@ -12,6 +12,9 @@ import (
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary
 // representation as used in the database.
 func UUID(id *uuidpb.UUID) Value {
+	if id == nil {
+		panic("UUID must not be nil")
+	}
 	return text{id}
 }
 
@@ -29,6 +32,9 @@ func UUIDs(ids []*uuidpb.UUID) []string {
 // Envelope returns a value that marshals and unmarshals an envelope to/from its
 // binary representation as used in the database.
 func Envelope(envelope *envelopepb.Envelope) Value {
+	if envelope == nil {
+		panic("envelope must not be nil")
+	}
 	return binary{envelope}
 }
 

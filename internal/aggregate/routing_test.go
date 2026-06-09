@@ -1,7 +1,6 @@
 package aggregate_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -86,7 +85,7 @@ func TestAggregate_commandRouting(t *testing.T) {
 		xtesting.Run(
 			t,
 			app,
-			func(ctx context.Context, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine) {
 				xtesting.ExecuteCommand(
 					t,
 					engine,
@@ -152,7 +151,7 @@ func TestAggregate_commandRouting(t *testing.T) {
 		xtesting.Run(
 			t,
 			app,
-			func(ctx context.Context, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine) {
 				xtesting.ExecuteCommand(
 					t,
 					engine,

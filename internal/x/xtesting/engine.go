@@ -26,7 +26,7 @@ func Run(
 	t testing.TB,
 	app dogma.Application,
 	fn func(
-		context.Context,
+		testing.TB,
 		*dogmaengine.Engine,
 	),
 ) {
@@ -73,7 +73,10 @@ func Run(
 		})
 	}
 
-	fn(testContext, engine)
+	fn(
+		testingTBWithContext{t, testContext},
+		engine,
+	)
 }
 
 // ExecuteCommand executes the given command on the engine, and fails the test
@@ -125,4 +128,13 @@ func ExecuteCommandWithHook(
 	}
 
 	return commandEnvelope
+}
+
+type testingTBWithContext struct {
+	testing.TB
+	ctx context.Context
+}
+
+func (t testingTBWithContext) Context() context.Context {
+	return t.ctx
 }

@@ -14,6 +14,8 @@ func ExpectEmptyCommandQueueEventually(
 	t testing.TB,
 	q xsql.Querier,
 ) {
+	t.Helper()
+
 	ExpectQueryResultEventually(
 		t,
 		"command queue drained",
@@ -31,6 +33,8 @@ func ExpectCommandToBeQueued(
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
 ) {
+	t.Helper()
+
 	ExpectQueryResult(
 		t,
 		fmt.Sprintf("command queue contains message %q", messageID),
@@ -50,6 +54,8 @@ func ExpectCommandToBeRemovedFromQueueEventually(
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
 ) {
+	t.Helper()
+
 	ExpectQueryResultEventually(
 		t,
 		fmt.Sprintf("command queue does not contain message %q", messageID),
@@ -69,6 +75,8 @@ func ExpectCommandToBeDeferredEventually(
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
 ) {
+	t.Helper()
+
 	ExpectQueryResultEventually(
 		t,
 		fmt.Sprintf("command queue contains message %q with a next_attempt_at timestamp in the future", messageID),

@@ -1,7 +1,6 @@
 package aggregate_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -38,7 +37,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 		xtesting.Run(
 			t,
 			app,
-			func(ctx context.Context, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine) {
 				xtesting.ExecuteCommand(
 					t,
 					engine,
@@ -79,7 +78,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 		xtesting.Run(
 			t,
 			app,
-			func(ctx context.Context, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine) {
 				handledCommandEnvelope := xtesting.ExecuteCommand(
 					t,
 					engine,
@@ -133,7 +132,7 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 		xtesting.Run(
 			t,
 			app,
-			func(ctx context.Context, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine) {
 				commandEnvelope := xtesting.ExecuteCommandWithHook(
 					t,
 					engine,
@@ -151,5 +150,9 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 				)
 			},
 		)
+	})
+
+	t.Run("it does not attempt to handle deferred commands", func(t *testing.T) {
+		t.Skip("not implemented")
 	})
 }

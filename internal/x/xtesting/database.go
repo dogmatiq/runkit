@@ -155,6 +155,43 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 	return container
 }
 
+// Transact executes the given function within a database transaction, and fails
+// the test if it returns an error.
+func Transact(t testing.TB, db *sql.DB, fn func(*sql.Tx)) {
+	t.Helper()
+
+	if err := xsql.Transact(
+		t.Context(),
+		db,
+		func(_ context.Context, tx *sql.Tx) error {
+			fn(tx)
+			return nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ExecOne executes the given query and fails the test if it returns an error or
+// does not affect exactly one row.
+func ExecOne(
+	t testing.TB,
+	x xsql.Executor,
+	query string,
+	args ...any,
+) {
+	t.Helper()
+
+	if err := xsql.ExecOne(
+		t.Context(),
+		x,
+		query,
+		args...,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // ExpectQueryResult executes a database query and fails the test if it does not
 // produce a row with the wanted value in the first column.
 func ExpectQueryResult[T comparable](
@@ -215,18 +252,14 @@ func ExpectQueryResultEventually[T comparable](
 			if !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
 			}
-
-			t.Logf("expectation failed: %s: got no rows, want %v", description, want)
 		} else if got == want {
 			return
 		}
 
-		t.Logf("expectation failed: %s: got %v, want %v", description, got, want)
-
 		select {
 		case <-ctx.Done():
 			t.Fatalf("expectation failed: %s: timed out waiting for value to become %v", description, want)
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 			continue
 		}
 	}
