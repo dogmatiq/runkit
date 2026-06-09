@@ -8,17 +8,20 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/testhook"
+	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/spruce"
+	"golang.org/x/sync/errgroup"
 )
 
-// Run runs the given Dogma application in a test engine and executes the
-// given function while the engine is running.
+// Run runs the given Dogma application in a test engine and executes the given
+// function while the engine is running.
 //
-// If the engine stops before the function returns the context passed to fn
-// is canceled, and the test fails.
+// Multiple engines are run concurrently to ensure that behavior is consistent
+// when multiple engines running against the same database.
+//
+// If any of the engines stops before fn returns, the context passed to fn is
+// canceled, and the test fails.
 func Run(
 	t testing.TB,
 	app dogma.Application,
@@ -29,35 +32,46 @@ func Run(
 ) {
 	t.Helper()
 
-	db := NewDatabase(t)
+	engineContext, stopEngines := context.WithCancel(t.Context())
+	engineGroup, engineContext := errgroup.WithContext(engineContext)
 
-	engine := &dogmaengine.Engine{
-		DB:     db,
-		App:    app,
-		Logger: spruce.NewTestLogger(t),
-	}
-
-	var engineStopped xsync.Latch
-	engineContext, stopEngine := context.WithCancel(t.Context())
 	defer func() {
-		stopEngine()
-		engineStopped.Wait()
+		stopEngines()
+		engineGroup.Wait()
 	}()
 
 	testContext, stopTest := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stopTest()
 
-	go func() {
-		defer stopTest()
-		defer engineStopped.Set()
+	db := NewDatabase(t)
+	logger := spruce.NewTestLogger(t)
 
-		if err := engine.Run(engineContext); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("engine stopped unexpectedly: %v", err)
-				return
-			}
+	const numEngines = 3
+	var engine *dogmaengine.Engine
+
+	for idx := range numEngines {
+		e := &dogmaengine.Engine{
+			DB:     db,
+			App:    app,
+			Logger: logger.With("engine", idx),
 		}
-	}()
+
+		if engine == nil {
+			engine = e
+		}
+
+		engineGroup.Go(func() error {
+			defer stopTest()
+
+			err := e.Run(engineContext)
+
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("engine %d stopped unexpectedly: %v", idx, err)
+			}
+
+			return err
+		})
+	}
 
 	fn(testContext, engine)
 }
