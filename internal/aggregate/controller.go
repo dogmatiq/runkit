@@ -69,7 +69,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		FROM dogma.pending_commands AS c
 		WHERE message_type_id = ANY($1)
 		AND attempt_at <= clock_timestamp()
-		ORDER BY attempt_count
+		ORDER BY is_deprioritized
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		c.CommandTypeIDs,

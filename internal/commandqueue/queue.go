@@ -52,8 +52,9 @@ func Remove(
 	return nil
 }
 
-// Deprioritize bumps a command's attempt count without changing its attempt
-// time, causing it to sort after fresher commands.
+// Deprioritize lowers a command's priority such that it is still eligible for
+// immediate execution, but will be processed after any commands that have not
+// been deprioritized.
 func Deprioritize(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -63,7 +64,7 @@ func Deprioritize(
 		ctx,
 		tx,
 		`UPDATE dogma.pending_commands SET
-			attempt_count = attempt_count + 1
+			is_deprioritized = true
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	); err != nil {

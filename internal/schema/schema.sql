@@ -8,16 +8,17 @@ CREATE TABLE IF NOT EXISTS dogma.pending_commands (
     message_id            uuid        PRIMARY KEY,
     message_type_id       uuid        NOT NULL,
     envelope              bytea       NOT NULL,
+    is_deprioritized      boolean     NOT NULL DEFAULT false,
     attempt_count         int         NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     attempt_at            timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 -- Create an index for finding commands that are ready to be processed by their
--- type, ordered by priority (attempt count).
+-- type, ordered by priority.
 CREATE INDEX IF NOT EXISTS pending_commands_by_type
 ON dogma.pending_commands (
     message_type_id,
-    attempt_count
+    is_deprioritized
 );
 
 --------------------------------------------------------------------------------
