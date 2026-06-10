@@ -23,20 +23,20 @@ const (
 func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 	row := tx.QueryRowContext(
 		ctx,
-		`WITH stream_rates AS (
+		`WITH streams AS (
 			SELECT
-				s.event_stream_id,
+				s.id,
 				COALESCE(
-					(s.next_offset - e.event_offset) / EXTRACT(EPOCH FROM clock_timestamp() - e.recorded_at),
+					(s.next_offset - e.event_stream_offset) / EXTRACT(EPOCH FROM clock_timestamp() - e.recorded_at),
 					0
 				) AS events_per_second
 			FROM dogma.event_streams AS s
 			LEFT JOIN dogma.events AS e
-				ON e.event_stream_id = s.event_stream_id
-				AND e.event_offset = GREATEST(0, s.next_offset - $1)
+				ON e.event_stream_id = s.id
+				AND e.event_stream_offset = GREATEST(0, s.next_offset - $1)
 		)
-		SELECT event_stream_id
-		FROM stream_rates
+		SELECT id
+		FROM streams
 		WHERE events_per_second < $1
 		ORDER BY events_per_second
 		LIMIT 1`,
@@ -65,8 +65,8 @@ func Create(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO dogma.event_streams (
-				event_stream_id
-			) VALUES ($1)`,
+			id
+		) VALUES ($1)`,
 		xsql.UUID(eventStreamID),
 	); err != nil {
 		return nil, fmt.Errorf("unable to create event stream: %w", err)

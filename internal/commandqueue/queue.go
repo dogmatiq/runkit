@@ -64,7 +64,7 @@ func Defer(
 		tx,
 		`UPDATE dogma.pending_commands SET
 			attempt_count = attempt_count + 1,
-			next_attempt_at = clock_timestamp() + LEAST(
+			attempt_at = clock_timestamp() + LEAST(
 				pow(2, attempt_count) * 0.5,
 				300
 			) * interval '1 second'

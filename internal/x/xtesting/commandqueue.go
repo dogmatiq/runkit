@@ -79,13 +79,13 @@ func ExpectCommandToBeDeferredEventually(
 
 	ExpectQueryResultEventually(
 		t,
-		fmt.Sprintf("command queue contains message %q with a next_attempt_at timestamp in the future", messageID),
+		fmt.Sprintf("command queue contains message %q with an attempt_at timestamp in the future", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)
 		FROM dogma.pending_commands
 		WHERE message_id = $1
-		AND next_attempt_at > clock_timestamp()`,
+		AND attempt_at > clock_timestamp()`,
 		xsql.UUID(messageID),
 	)
 }

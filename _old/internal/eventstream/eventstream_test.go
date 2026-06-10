@@ -241,7 +241,7 @@ func TestEventStream(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			t.Run("it yields each event in order", func(t *testing.T) {
-				xtesting.ExpectEventEnvelopes(
+				xtesting.ExpectEventEnvelopesAtOffset(
 					t,
 					c.Read(
 						t.Context(),
@@ -259,7 +259,7 @@ func TestEventStream(t *testing.T) {
 			t.Run("it skips events before the start offset", func(t *testing.T) {
 				const startOffset = 10
 
-				xtesting.ExpectEventEnvelopes(
+				xtesting.ExpectEventEnvelopesAtOffset(
 					t,
 					c.Read(
 						t.Context(),

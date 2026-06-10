@@ -71,7 +71,7 @@ func TestAcquire(t *testing.T) {
 		db,
 		`UPDATE dogma.event_streams SET
 			next_offset = $1
-		WHERE event_stream_id = $2`,
+		WHERE id = $2`,
 		Capacity,
 		xsql.UUID(firstStreamID),
 	)
@@ -80,7 +80,7 @@ func TestAcquire(t *testing.T) {
 		db,
 		`INSERT INTO dogma.events (
 			event_stream_id,
-			event_offset,
+			event_stream_offset,
 			envelope
 		) VALUES ($1, $2, $3)`,
 		xsql.UUID(firstStreamID),

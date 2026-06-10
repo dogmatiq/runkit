@@ -14,19 +14,24 @@ import (
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary
 // representation as used in the database.
 func UUID(id *uuidpb.UUID) ScannerValuer {
-	if id == nil {
-		panic("UUID must not be nil")
-	}
-
 	return scannerValuerFuncs{
 		func(v any) error {
+			if id == nil {
+				return fmt.Errorf("cannot scan into nil UUID pointer")
+			}
+
 			data, ok := v.(string)
 			if !ok {
 				return fmt.Errorf("cannot scan %T into %T", v, id)
 			}
+
 			return id.UnmarshalText([]byte(data))
 		},
 		func() (driver.Value, error) {
+			if id == nil {
+				return nil, nil
+			}
+
 			data, err := id.MarshalText()
 			return string(data), err
 		},
@@ -42,13 +47,22 @@ func Envelope(envelope *envelopepb.Envelope) ScannerValuer {
 
 	return scannerValuerFuncs{
 		func(v any) error {
+			if envelope == nil {
+				return fmt.Errorf("cannot scan into nil envelope pointer")
+			}
+
 			data, ok := v.([]byte)
 			if !ok {
 				return fmt.Errorf("cannot scan %T into %T", v, envelope)
 			}
+
 			return envelope.UnmarshalBinary(data)
 		},
 		func() (driver.Value, error) {
+			if envelope == nil {
+				return nil, nil
+			}
+
 			return envelope.MarshalBinary()
 		},
 	}

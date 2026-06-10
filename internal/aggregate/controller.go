@@ -63,7 +63,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		`SELECT envelope
 		FROM dogma.pending_commands
 		WHERE message_type_id = ANY($1)
-		AND next_attempt_at <= clock_timestamp()
+		AND attempt_at <= clock_timestamp()
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		c.CommandTypeIDs,
@@ -129,7 +129,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 	)
 
 	if eventEnvelopes, ok := envelopePacker.Seal(); ok {
-		if err := eventstream.Append(
+		if _, err := eventstream.Append(
 			ctx,
 			tx,
 			eventStreamID,
@@ -166,7 +166,7 @@ func (c *Controller) loadInstance(
 		WHERE event_stream_id = $1
 		AND aggregate_handler_key = $2
 		AND aggregate_instance_id = $3
-		ORDER BY event_offset`,
+		ORDER BY event_stream_offset`,
 		xsql.UUID(eventStreamID),
 		xsql.UUID(c.HandlerIdentity.GetKey()),
 		instanceID,

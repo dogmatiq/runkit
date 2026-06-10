@@ -11,12 +11,14 @@ import (
 )
 
 // Append adds events to the end of the event stream with the given ID.
+//
+// It returns the next offset in the stream after the appended events.
 func Append(
 	ctx context.Context,
 	tx *sql.Tx,
 	eventStreamID *uuidpb.UUID,
 	eventEnvelopes *envelopepb.MultiEnvelope,
-) error {
+) (Offset, error) {
 	source := eventEnvelopes.GetHeader().GetSource()
 
 	var (
@@ -28,39 +30,44 @@ func Append(
 		aggregateInstanceID = source.GetInstanceId()
 	}
 
+	var offset Offset
+
 	for eventEnvelope := range eventEnvelopes.All() {
-		if _, err := tx.ExecContext(
+		row := tx.QueryRowContext(
 			ctx,
-			`WITH x AS (
+			`WITH stream AS (
 				UPDATE dogma.event_streams SET
 					next_offset = next_offset + 1
-				WHERE event_stream_id = $1
+				WHERE id = $1
 				RETURNING
-					event_stream_id,
+					id,
 					OLD.next_offset
 			)
 			INSERT INTO dogma.events (
 				event_stream_id,
-				event_offset,
-				envelope,
+				event_stream_offset,
 				aggregate_handler_key,
-				aggregate_instance_id
+				aggregate_instance_id,
+				envelope
 			)
 			SELECT
-				event_stream_id,
+				id,
 				next_offset,
 				$2,
 				$3,
 				$4
-			FROM x`,
+			FROM stream
+			RETURNING event_stream_offset`,
 			xsql.UUID(eventStreamID),
-			xsql.Envelope(eventEnvelope),
 			xsql.UUID(aggregateHandlerKey),
 			aggregateInstanceID,
-		); err != nil {
-			return fmt.Errorf("unable to append event to stream: %w", err)
+			xsql.Envelope(eventEnvelope),
+		)
+
+		if err := row.Scan(&offset); err != nil {
+			return 0, fmt.Errorf("unable to append event to stream: %w", err)
 		}
 	}
 
-	return nil
+	return offset + 1, nil
 }
