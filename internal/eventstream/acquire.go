@@ -52,14 +52,15 @@ func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 			return nil, fmt.Errorf("unable to query event streams: %w", err)
 		}
 
-		return Create(ctx, tx)
+		return ForceCreate(ctx, tx)
 	}
 
 	return eventStreamID, nil
 }
 
-// Create forces creation of a new event stream.
-func Create(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
+// ForceCreate forces creation of a new event stream, ignoring the capacity of
+// existing streams. It returns the ID of the new stream.
+func ForceCreate(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 	eventStreamID := uuidpb.Generate()
 
 	if _, err := tx.ExecContext(

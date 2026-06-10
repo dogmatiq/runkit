@@ -14,6 +14,94 @@ import (
 )
 
 func TestAggregate_state(t *testing.T) {
+	t.Run("it applies events to the in-memory aggregate root when they are recorded", func(t *testing.T) {
+		app := &stubs.ApplicationStub{
+			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
+				c.Routes(
+					dogma.ViaAggregate(
+						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+							ConfigureFunc: func(c dogma.AggregateConfigurer) {
+								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+								c.Routes(
+									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
+								)
+							},
+							RouteCommandToInstanceFunc: func(dogma.Command) string {
+								return "<instance>"
+							},
+							HandleCommandFunc: func(
+								r *stubs.AggregateRootStub,
+								s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+								m dogma.Command,
+							) {
+								s.RecordEvent(&stubs.EventStub[stubs.TypeA]{
+									Content: "<content-a>",
+								})
+
+								// Verify that the first event is applied
+								// immediately after recording it.
+								want := []dogma.Event{
+									&stubs.EventStub[stubs.TypeA]{
+										Content: "<content-a>",
+									},
+								}
+
+								if !reflect.DeepEqual(r.AppliedEvents, want) {
+									t.Errorf(
+										"unexpected aggregate state: %#v",
+										r.AppliedEvents,
+									)
+								}
+
+								s.RecordEvent(&stubs.EventStub[stubs.TypeB]{
+									Content: "<content-b>",
+								})
+
+								// Verify that the second event is applied
+								// immediately after recording it.
+								want = []dogma.Event{
+									&stubs.EventStub[stubs.TypeA]{
+										Content: "<content-a>",
+									},
+									&stubs.EventStub[stubs.TypeB]{
+										Content: "<content-b>",
+									},
+								}
+
+								if !reflect.DeepEqual(r.AppliedEvents, want) {
+									t.Errorf(
+										"unexpected aggregate state: %#v",
+										r.AppliedEvents,
+									)
+								}
+							},
+						},
+					),
+				)
+			},
+		}
+
+		xtesting.Run(
+			t,
+			app,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectEmptyCommandQueueEventually(
+					t,
+					engine.DB,
+				)
+			},
+		)
+	})
+
 	t.Run("it persists aggregate root state changes", func(t *testing.T) {
 		app := &stubs.ApplicationStub{
 			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
@@ -95,7 +183,7 @@ func TestAggregate_state(t *testing.T) {
 					engine.DB,
 					func(tx *sql.Tx) {
 						for range 3 {
-							if _, err := eventstream.Create(t.Context(), tx); err != nil {
+							if _, err := eventstream.ForceCreate(t.Context(), tx); err != nil {
 								t.Fatal(err)
 							}
 						}

@@ -19,13 +19,11 @@ func Append(
 	eventStreamID *uuidpb.UUID,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 ) (Offset, error) {
-	source := eventEnvelopes.GetHeader().GetSource()
-
 	var (
 		aggregateHandlerKey *uuidpb.UUID
 		aggregateInstanceID any
 	)
-	if source.GetInstanceId() != "" {
+	if source := eventEnvelopes.GetHeader().GetSource(); source.GetInstanceId() != "" {
 		aggregateHandlerKey = source.GetHandler().GetKey()
 		aggregateInstanceID = source.GetInstanceId()
 	}
@@ -35,7 +33,7 @@ func Append(
 	for eventEnvelope := range eventEnvelopes.All() {
 		row := tx.QueryRowContext(
 			ctx,
-			`WITH stream AS (
+			`WITH streams AS (
 				UPDATE dogma.event_streams SET
 					next_offset = next_offset + 1
 				WHERE id = $1
@@ -46,22 +44,25 @@ func Append(
 			INSERT INTO dogma.events (
 				event_stream_id,
 				event_stream_offset,
+				message_id,
+				envelope,
 				aggregate_handler_key,
-				aggregate_instance_id,
-				envelope
+				aggregate_instance_id
 			)
 			SELECT
-				id,
-				next_offset,
+				s.id,
+				s.next_offset,
 				$2,
 				$3,
-				$4
-			FROM stream
+				$4,
+				$5
+			FROM streams AS s
 			RETURNING event_stream_offset`,
 			xsql.UUID(eventStreamID),
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
+			xsql.Envelope(eventEnvelope),
 			xsql.UUID(aggregateHandlerKey),
 			aggregateInstanceID,
-			xsql.Envelope(eventEnvelope),
 		)
 
 		if err := row.Scan(&offset); err != nil {

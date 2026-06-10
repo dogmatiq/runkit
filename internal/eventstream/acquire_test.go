@@ -79,10 +79,12 @@ func TestAcquire(t *testing.T) {
 		t,
 		db,
 		`INSERT INTO dogma.events (
+			message_id,
 			event_stream_id,
 			event_stream_offset,
 			envelope
-		) VALUES ($1, $2, $3)`,
+		) VALUES ($1, $2, $3, $4)`,
+		xsql.UUID(uuidpb.Generate()),
 		xsql.UUID(firstStreamID),
 		0,
 		[]byte{},
@@ -92,19 +94,19 @@ func TestAcquire(t *testing.T) {
 		t,
 		db,
 		func(tx *sql.Tx) {
-			streamID, err := Acquire(t.Context(), tx)
+			eventStreamID, err := Acquire(t.Context(), tx)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if err := streamID.Validate(); err != nil {
+			if err := eventStreamID.Validate(); err != nil {
 				t.Fatal(err)
 			}
 
-			if streamID.Equal(firstStreamID) {
+			if eventStreamID.Equal(firstStreamID) {
 				t.Fatalf(
 					"unexpected stream ID: got %q, want a different ID",
-					streamID,
+					eventStreamID,
 				)
 			}
 		},

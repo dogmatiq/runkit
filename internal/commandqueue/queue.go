@@ -52,6 +52,27 @@ func Remove(
 	return nil
 }
 
+// Deprioritize bumps a command's attempt count without changing its attempt
+// time, causing it to sort after fresher commands.
+func Deprioritize(
+	ctx context.Context,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		tx,
+		`UPDATE dogma.pending_commands SET
+			attempt_count = attempt_count + 1
+		WHERE message_id = $1`,
+		xsql.UUID(messageID),
+	); err != nil {
+		return fmt.Errorf("unable to deprioritize queued command: %w", err)
+	}
+
+	return nil
+}
+
 // Defer defers execution of a command by an exponentially increasing amount of
 // time based on the number of times it has been deferred.
 func Defer(

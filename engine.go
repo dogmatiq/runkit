@@ -5,15 +5,18 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"reflect"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
+	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
@@ -34,27 +37,40 @@ type Engine struct {
 	// If it is nil, [slog.Default] is used.
 	Logger *slog.Logger
 
-	ready          xsync.Latch
-	app            *config.Application
+	// ready is a latch that is set when the engine is ready to accept commands
+	// for execution. It is used to block ExecuteCommand() from proceeding until
+	// the engine is ready.
+	ready xsync.Latch
+
+	// appConfig is the application configuration derived from e.App.
+	appConfig *config.Application
+
+	// envelopePacker is used to pack messages into envelopes for persistence.
 	envelopePacker *envelopepb.Packer
+
+	// inboundCommandTypes is the set of command types that the engine accepts for
+	// execution.
+	inboundCommandTypes map[reflect.Type]struct{}
 }
 
 // Run starts the engine and blocks until ctx is canceled.
 func (e *Engine) Run(ctx context.Context) error {
-	e.app = runtimeconfig.FromApplication(e.App)
+	e.appConfig = runtimeconfig.FromApplication(e.App)
 
-	if err := config.Validate(e.app, config.ForExecution()); err != nil {
+	if err := config.Validate(e.appConfig, config.ForExecution()); err != nil {
 		return fmt.Errorf("invalid application configuration: %w", err)
 	}
 
+	e.setupCommandTypes()
+
 	e.envelopePacker = &envelopepb.Packer{
-		Application: e.app.Identity(),
+		Application: e.appConfig.Identity(),
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
 
-	for _, handler := range e.app.Handlers() {
-		c := e.newControllerForHandler(handler)
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		c := e.newControllerForHandler(handlerConfig)
 		g.Go(func() error {
 			return c.Run(ctx)
 		})
@@ -86,23 +102,59 @@ func (e *Engine) ExecuteCommand(
 		CommandEnvelope: commandEnvelope,
 	})
 
-	if err := xsql.Transact(
-		ctx,
-		e.DB,
-		func(ctx context.Context, tx *sql.Tx) error {
-			return commandqueue.Add(ctx, tx, commandEnvelope)
+	if err := command.Validate(
+		xmessage.ValidationScope{
+			IsNewMessage: true,
+			Envelope:     commandEnvelope,
 		},
 	); err != nil {
 		return err
 	}
 
-	e.Logger.InfoContext(
-		ctx,
-		"enqueued command for execution",
-		xslog.Envelope(commandEnvelope),
-	)
+	if _, ok := e.inboundCommandTypes[reflect.TypeOf(command)]; !ok {
+		return fmt.Errorf("no route found for command type: %T", command)
+	}
 
-	return nil
+	return xsql.Transact(
+		ctx,
+		e.DB,
+		func(ctx context.Context, tx *sql.Tx) error {
+			if err := commandqueue.Add(
+				ctx,
+				tx,
+				commandEnvelope,
+			); err != nil {
+				return err
+			}
+
+			e.Logger.InfoContext(
+				ctx,
+				"enqueued command for execution",
+				xslog.Envelope("command", commandEnvelope),
+			)
+
+			return nil
+		},
+	)
+}
+
+// setupCommandTypes builds a set of command types that the engine accepts for
+// execution.
+func (e *Engine) setupCommandTypes() {
+	inboundCommandRoutes := e.appConfig.
+		RouteSet().
+		Filter(
+			config.FilterByMessageDirection(config.InboundDirection),
+			config.FilterByMessageKind(message.CommandKind),
+		).
+		Routes()
+
+	e.inboundCommandTypes = map[reflect.Type]struct{}{}
+
+	for route := range inboundCommandRoutes {
+		typ := route.MessageType.Get().ReflectType()
+		e.inboundCommandTypes[typ] = struct{}{}
+	}
 }
 
 // controller is the interface implemented by all message handler controllers.
@@ -111,30 +163,30 @@ type controller interface {
 }
 
 // newControllerForHandler creates a controller for the given handler.
-func (e *Engine) newControllerForHandler(handler config.Handler) controller {
-	switch handler := handler.(type) {
+func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controller {
+	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return &aggregate.Controller{
 			DB:              e.DB,
-			Handler:         handler.Interface(),
-			HandlerIdentity: handler.Identity(),
+			Handler:         handlerConfig.Interface(),
+			HandlerIdentity: handlerConfig.Identity(),
 			EnvelopePacker:  e.envelopePacker,
-			CommandTypeIDs:  e.collectInboundMessageTypeIDs(handler),
-			Logger:          e.newLoggerForHandler(handler),
+			CommandTypeIDs:  e.collectInboundMessageTypeIDs(handlerConfig),
+			Logger:          e.newLoggerForHandler(handlerConfig),
 		}
 	default:
-		panic(fmt.Sprintf("unsupported handler type: %T", handler))
+		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))
 	}
 }
 
 // newLoggerForHandler creates a logger for the given handler with the
 // appropriate fields.
-func (e *Engine) newLoggerForHandler(handler config.Handler) *slog.Logger {
+func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger {
 	return e.Logger.With(
 		xslog.Identity(
 			"handler",
-			handler.Identity(),
-			slog.String("type", handler.HandlerType().String()),
+			handlerConfig.Identity(),
+			slog.String("type", handlerConfig.HandlerType().String()),
 		),
 	)
 }
@@ -142,8 +194,8 @@ func (e *Engine) newLoggerForHandler(handler config.Handler) *slog.Logger {
 // collectInboundMessageTypeIDs returns the message type IDs of all inbound
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
-func (*Engine) collectInboundMessageTypeIDs(handler config.Handler) []string {
-	inboundRoutes := handler.
+func (*Engine) collectInboundMessageTypeIDs(handlerConfig config.Handler) []string {
+	inboundRoutes := handlerConfig.
 		RouteSet().
 		Filter(config.FilterByMessageDirection(config.InboundDirection)).
 		Routes()

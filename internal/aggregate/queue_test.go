@@ -5,6 +5,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
@@ -85,10 +86,15 @@ func TestAggregate_commandQueueUsage(t *testing.T) {
 					&stubs.CommandStub[stubs.TypeA]{},
 				)
 
-				ignoredCommandEnvelope := xtesting.ExecuteCommand(
+				ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
 					t,
 					engine,
-					&stubs.CommandStub[stubs.TypeB]{},
+					&stubs.CommandStub[stubs.TypeA]{},
+					func(x contexthook.ExecuteCommand) {
+						// Mangle the command type so that it's something that
+						// is not handled by the aggregate handler.
+						x.CommandEnvelope.GetBody().GetMessage().SetTypeId(uuidpb.Generate())
+					},
 				)
 
 				xtesting.ExpectCommandToBeRemovedFromQueueEventually(
