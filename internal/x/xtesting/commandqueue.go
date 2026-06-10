@@ -68,9 +68,9 @@ func ExpectCommandToBeRemovedFromQueueEventually(
 	)
 }
 
-// ExpectCommandToBeDeferredEventually asserts that the command with the
-// given ID on the queue to be handled at a future time.
-func ExpectCommandToBeDeferredEventually(
+// ExpectCommandToBeDeferredDueToFailureEventually asserts that the command with
+// the given ID has been deferred at least once due to a failure.
+func ExpectCommandToBeDeferredDueToFailureEventually(
 	t testing.TB,
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
@@ -79,35 +79,13 @@ func ExpectCommandToBeDeferredEventually(
 
 	ExpectQueryResultEventually(
 		t,
-		fmt.Sprintf("command queue contains message %q with an attempt_at timestamp in the future", messageID),
+		fmt.Sprintf("command %q has been deferred due to failure", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)
 		FROM dogma.pending_commands
 		WHERE message_id = $1
-		AND attempt_at > clock_timestamp()`,
-		xsql.UUID(messageID),
-	)
-}
-
-// ExpectCommandAttemptCount asserts that the command with the given ID has been
-// attempted exactly the expected number of times.
-func ExpectCommandAttemptCount(
-	t testing.TB,
-	q xsql.Querier,
-	messageID *uuidpb.UUID,
-	want int,
-) {
-	t.Helper()
-
-	ExpectQueryResult(
-		t,
-		fmt.Sprintf("command %q has been attempted %d time(s)", messageID, want),
-		want,
-		q,
-		`SELECT attempt_count
-		FROM dogma.pending_commands
-		WHERE message_id = $1`,
+		AND failures >= 1`,
 		xsql.UUID(messageID),
 	)
 }

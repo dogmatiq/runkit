@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/spruce"
@@ -24,13 +26,20 @@ import (
 // canceled, and the test fails.
 func Run(
 	t testing.TB,
-	app dogma.Application,
 	fn func(
 		testing.TB,
 		*dogmaengine.Engine,
 	),
+	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
+
+	app := &stubs.ApplicationStub{
+		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+			c.Identity(t.Name(), uuidpb.Generate().AsString())
+			c.Routes(routes...)
+		},
+	}
 
 	engineContext, stopEngines := context.WithCancel(t.Context())
 	engineGroup, engineContext := errgroup.WithContext(engineContext)

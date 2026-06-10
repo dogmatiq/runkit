@@ -68,8 +68,8 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 			c.envelope
 		FROM dogma.pending_commands AS c
 		WHERE message_type_id = ANY($1)
-		AND attempt_at <= clock_timestamp()
-		ORDER BY is_deprioritized
+		AND execute_at <= clock_timestamp()
+		ORDER BY execute_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		c.CommandTypeIDs,
@@ -111,7 +111,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 			xslog.Error(err),
 		)
 
-		return commandqueue.Defer(ctx, tx, commandMessageID)
+		return commandqueue.DeferDueToFailure(ctx, tx, commandMessageID)
 	}
 
 	c.commandLogger = c.Logger.With(
@@ -120,7 +120,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 
 	instanceID, ok := c.routeCommandToInstance(ctx, commandForRouting)
 	if !ok {
-		return commandqueue.Defer(ctx, tx, commandMessageID)
+		return commandqueue.DeferDueToFailure(ctx, tx, commandMessageID)
 	}
 
 	c.commandLogger = c.Logger.With(
@@ -136,7 +136,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	if !ok {
-		return commandqueue.Deprioritize(ctx, tx, commandMessageID)
+		return commandqueue.DeferDueToContention(ctx, tx, commandMessageID)
 	}
 
 	c.commandLogger = c.Logger.With(
@@ -153,7 +153,7 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	if !ok {
-		return commandqueue.Defer(ctx, tx, commandMessageID)
+		return commandqueue.DeferDueToFailure(ctx, tx, commandMessageID)
 	}
 
 	c.commandLogger = c.Logger.With(

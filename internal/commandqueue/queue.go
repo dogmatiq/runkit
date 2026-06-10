@@ -4,10 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+)
+
+const (
+	// deferBase is the initial delay applied the first time a command is
+	// deferred. Each subsequent deferral doubles the delay up to deferCap.
+	deferBase = 10 * time.Millisecond
+
+	// deferCap is the maximum delay that can be applied when deferring a
+	// command.
+	deferCap = 300 * time.Second
 )
 
 // Add adds a command to the queue.
@@ -52,10 +63,10 @@ func Remove(
 	return nil
 }
 
-// Deprioritize lowers a command's priority such that it is still eligible for
-// immediate execution, but will be processed after any commands that have not
-// been deprioritized.
-func Deprioritize(
+// DeferDueToContention defers a command by a fixed delay without incrementing
+// the failure count. It is used when a command cannot be processed due to
+// transient contention rather than an error.
+func DeferDueToContention(
 	ctx context.Context,
 	tx *sql.Tx,
 	messageID *uuidpb.UUID,
@@ -64,19 +75,20 @@ func Deprioritize(
 		ctx,
 		tx,
 		`UPDATE dogma.pending_commands SET
-			is_deprioritized = true
+			execute_at = clock_timestamp() + $2 * interval '1 millisecond'
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
+		deferBase.Milliseconds(),
 	); err != nil {
-		return fmt.Errorf("unable to deprioritize queued command: %w", err)
+		return fmt.Errorf("unable to defer queued command due to contention: %w", err)
 	}
 
 	return nil
 }
 
-// Defer defers execution of a command by an exponentially increasing amount of
-// time based on the number of times it has been deferred.
-func Defer(
+// DeferDueToFailure defers execution of a command by an exponentially
+// increasing amount of time based on the number of failures.
+func DeferDueToFailure(
 	ctx context.Context,
 	tx *sql.Tx,
 	messageID *uuidpb.UUID,
@@ -85,15 +97,17 @@ func Defer(
 		ctx,
 		tx,
 		`UPDATE dogma.pending_commands SET
-			attempt_count = attempt_count + 1,
-			attempt_at = clock_timestamp() + LEAST(
-				pow(2, attempt_count) * 0.5,
-				300
-			) * interval '1 second'
+			failures = failures + 1,
+			execute_at = clock_timestamp() + LEAST(
+				pow(2, failures) * $2,
+				$3
+			) * interval '1 millisecond'
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
+		deferBase.Milliseconds(),
+		deferCap.Milliseconds(),
 	); err != nil {
-		return fmt.Errorf("unable to defer queued command: %w", err)
+		return fmt.Errorf("unable to defer queued command due to failure: %w", err)
 	}
 
 	return nil

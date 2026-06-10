@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
+// scope implements [dogma.AggregateCommandScope].
 type scope struct {
 	instanceID     string
 	aggregateRoot  dogma.AggregateRoot

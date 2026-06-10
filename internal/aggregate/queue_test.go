@@ -1,6 +1,7 @@
 package aggregate_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -11,174 +12,223 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestAggregate_commandQueueUsage(t *testing.T) {
-	t.Run("it removes commands from the queue after handling", func(t *testing.T) {
-		app := &stubs.ApplicationStub{
-			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
-				c.Routes(
-					dogma.ViaAggregate(
-						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
-							ConfigureFunc: func(c dogma.AggregateConfigurer) {
-								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
-								c.Routes(
-									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-								)
-							},
-							RouteCommandToInstanceFunc: func(dogma.Command) string {
-								return "<instance>"
-							},
-						},
-					),
-				)
-			},
-		}
+func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
+	xtesting.Run(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
 
-		xtesting.Run(
-			t,
-			app,
-			func(t testing.TB, engine *dogmaengine.Engine) {
-				xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
-
-				xtesting.ExpectEmptyCommandQueueEventually(
-					t,
-					engine.DB,
-				)
+			xtesting.ExpectEmptyCommandQueueEventually(
+				t,
+				engine.DB,
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
 			},
-		)
+		),
+	)
+}
+
+func TestUnhandledCommandsRemainQueued(t *testing.T) {
+	xtesting.Run(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			handledCommandEnvelope := xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+				func(x contexthook.ExecuteCommand) {
+					// Mangle the command type so that it's something that
+					// is not handled by the aggregate handler.
+					x.CommandEnvelope.GetBody().GetMessage().SetTypeId(uuidpb.Generate())
+				},
+			)
+
+			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+				t,
+				engine.DB,
+				handledCommandEnvelope.GetBody().GetMessageId(),
+			)
+
+			xtesting.ExpectCommandToBeQueued(
+				t,
+				engine.DB,
+				ignoredCommandEnvelope.GetBody().GetMessageId(),
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+			},
+		),
+	)
+}
+
+func TestInvalidCommandsAreDeferred(t *testing.T) {
+	xtesting.Run(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			// Execute an invalid command so that it will be deferred.
+			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+				func(x contexthook.ExecuteCommand) {
+					// Corrupt the command so that it cannot be unpacked.
+					x.CommandEnvelope.GetBody().GetMessage().SetData([]byte("<invalid>"))
+				},
+			)
+
+			// Execute a valid command to verify that the deferred command
+			// does not block handling of other commands.
+			validCommandEnvelope := xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+				t,
+				engine.DB,
+				validCommandEnvelope.GetBody().GetMessageId(),
+			)
+
+			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				t,
+				engine.DB,
+				invalidCommandEnvelope.GetBody().GetMessageId(),
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+			},
+		),
+	)
+}
+
+func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
+	xtesting.Run(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			// Execute a command to create the instance and record an
+			// event in its history.
+			xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			xtesting.ExpectEmptyCommandQueueEventually(
+				t,
+				engine.DB,
+			)
+
+			// Corrupt the stored event envelope so that it cannot be
+			// parsed.
+			xtesting.Transact(
+				t,
+				engine.DB,
+				func(tx *sql.Tx) {
+					xtesting.ExecOne(
+						t,
+						tx,
+						`UPDATE dogma.events
+							SET envelope = '\x00'::bytea
+							WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+							AND aggregate_instance_id = '<instance>'`,
+					)
+				},
+			)
+
+			// Execute another command to the same instance.
+			commandEnvelope := xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			// The command should be deferred because the instance
+			// state cannot be loaded.
+			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				t,
+				engine.DB,
+				commandEnvelope.GetBody().GetMessageId(),
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+				HandleCommandFunc: func(
+					r *stubs.AggregateRootStub,
+					s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+					m dogma.Command,
+				) {
+					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+				},
+			},
+		),
+	)
+}
+
+func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
+	t.Run("in RouteCommandToInstance()", func(t *testing.T) {
+		t.Skip()
 	})
 
-	t.Run("it does not remove other commands from the queue", func(t *testing.T) {
-		app := &stubs.ApplicationStub{
-			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
-				c.Routes(
-					dogma.ViaAggregate(
-						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
-							ConfigureFunc: func(c dogma.AggregateConfigurer) {
-								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
-								c.Routes(
-									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-								)
-							},
-							RouteCommandToInstanceFunc: func(dogma.Command) string {
-								return "<instance>"
-							},
-						},
-					),
-				)
-			},
-		}
-
-		xtesting.Run(
-			t,
-			app,
-			func(t testing.TB, engine *dogmaengine.Engine) {
-				handledCommandEnvelope := xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
-
-				ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-					func(x contexthook.ExecuteCommand) {
-						// Mangle the command type so that it's something that
-						// is not handled by the aggregate handler.
-						x.CommandEnvelope.GetBody().GetMessage().SetTypeId(uuidpb.Generate())
-					},
-				)
-
-				xtesting.ExpectCommandToBeRemovedFromQueueEventually(
-					t,
-					engine.DB,
-					handledCommandEnvelope.GetBody().GetMessageId(),
-				)
-
-				xtesting.ExpectCommandToBeQueued(
-					t,
-					engine.DB,
-					ignoredCommandEnvelope.GetBody().GetMessageId(),
-				)
-			},
-		)
+	t.Run("in HandleCommand()", func(t *testing.T) {
+		t.Skip()
 	})
 
-	t.Run("it defers invalid commands", func(t *testing.T) {
-		app := &stubs.ApplicationStub{
-			ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-				c.Identity("<app>", "2fba12dd-4608-43e8-9bbd-16fb32ae452e")
-				c.Routes(
-					dogma.ViaAggregate(
-						&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
-							ConfigureFunc: func(c dogma.AggregateConfigurer) {
-								c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
-								c.Routes(
-									dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-									dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-								)
-							},
-							RouteCommandToInstanceFunc: func(dogma.Command) string {
-								return "<instance>"
-							},
-						},
-					),
-				)
-			},
-		}
-
-		xtesting.Run(
-			t,
-			app,
-			func(t testing.TB, engine *dogmaengine.Engine) {
-				// Execute an invalid command so that it will be deferred.
-				invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-					func(x contexthook.ExecuteCommand) {
-						// Corrupt the command so that it cannot be unpacked.
-						x.CommandEnvelope.GetBody().GetMessage().SetData([]byte("<invalid>"))
-					},
-				)
-
-				xtesting.ExpectCommandToBeDeferredEventually(
-					t,
-					engine.DB,
-					invalidCommandEnvelope.GetBody().GetMessageId(),
-				)
-
-				// Execute a valid command to verify that the deferred command
-				// does not block handling of other commands.
-				validCommandEnvelope := xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
-
-				xtesting.ExpectCommandToBeRemovedFromQueueEventually(
-					t,
-					engine.DB,
-					validCommandEnvelope.GetBody().GetMessageId(),
-				)
-
-				// Verify that the invalid command has not been attempted
-				// more than once.
-				xtesting.ExpectCommandAttemptCount(
-					t,
-					engine.DB,
-					invalidCommandEnvelope.GetBody().GetMessageId(),
-					1,
-				)
-			},
-		)
+	t.Run("in ApplyEvent()", func(t *testing.T) {
+		t.Skip()
 	})
 }
