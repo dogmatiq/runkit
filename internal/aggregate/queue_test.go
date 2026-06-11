@@ -13,7 +13,7 @@ import (
 )
 
 func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			xtesting.ExecuteCommand(
@@ -45,7 +45,7 @@ func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
 }
 
 func TestUnhandledCommandsRemainQueued(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			handledCommandEnvelope := xtesting.ExecuteCommand(
@@ -95,7 +95,7 @@ func TestUnhandledCommandsRemainQueued(t *testing.T) {
 }
 
 func TestInvalidCommandsAreDeferred(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Execute an invalid command so that it will be deferred.
@@ -147,7 +147,7 @@ func TestInvalidCommandsAreDeferred(t *testing.T) {
 }
 
 func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Execute a command to create the instance and record an

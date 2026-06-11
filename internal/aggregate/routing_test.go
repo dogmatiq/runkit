@@ -16,7 +16,7 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 		handlerBCalled xsync.Latch
 	)
 
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			xtesting.ExecuteCommand(
@@ -101,7 +101,7 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 func TestCommandsAreRoutedToTheCorrectInstance(t *testing.T) {
 	var handlerCalled xsync.Latch
 
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			xtesting.ExecuteCommand(

@@ -14,7 +14,7 @@ import (
 )
 
 func TestEventsAreAppliedToInMemoryAggregateRoot(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			xtesting.ExecuteCommand(
@@ -93,7 +93,7 @@ func TestEventsAreAppliedToInMemoryAggregateRoot(t *testing.T) {
 }
 
 func TestStateChangesArePersisted(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Force creation of multiple event streams so that the
@@ -219,7 +219,7 @@ func TestStateChangesArePersisted(t *testing.T) {
 }
 
 func TestStateIsIsolatedToCorrectInstance(t *testing.T) {
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Send TypeA commands to append a TypeA events for two
@@ -332,7 +332,7 @@ func TestStateIsIsolatedToCorrectInstance(t *testing.T) {
 func TestMutationsToASingleInstanceAreSerialized(t *testing.T) {
 	const commandCount = 20
 
-	xtesting.Run(
+	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Send many TypeA commands at once without waiting between

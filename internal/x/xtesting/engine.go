@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Run runs the given Dogma application in a test engine and executes the given
+// RunEngines runs the given Dogma application in a test engine and executes the given
 // function while the engine is running.
 //
 // Multiple engines are run concurrently to ensure that behavior is consistent
@@ -24,7 +24,7 @@ import (
 //
 // If any of the engines stops before fn returns, the context passed to fn is
 // canceled, and the test fails.
-func Run(
+func RunEngines(
 	t testing.TB,
 	fn func(
 		testing.TB,
