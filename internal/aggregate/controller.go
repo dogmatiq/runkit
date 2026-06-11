@@ -14,6 +14,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
+	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -172,16 +173,26 @@ func (c *Controller) processNextCommand(ctx context.Context, tx *sql.Tx) error {
 		envelopepb.WithInstanceID(instanceID),
 	)
 
-	c.Handler.HandleCommand(
-		aggregateRoot,
-		&scope{
-			instanceID:     instanceID,
-			aggregateRoot:  aggregateRoot,
-			envelopePacker: envelopePacker,
-			logger:         c.commandLogger,
-		},
-		commandForHandling,
-	)
+	if err := xerrors.Recover(func() {
+		c.Handler.HandleCommand(
+			aggregateRoot,
+			&scope{
+				instanceID:     instanceID,
+				aggregateRoot:  aggregateRoot,
+				envelopePacker: envelopePacker,
+				logger:         c.commandLogger,
+			},
+			commandForHandling,
+		)
+	}); err != nil {
+		c.commandLogger.ErrorContext(
+			ctx,
+			"unable to handle command",
+			xslog.Error(err),
+		)
+
+		return commandqueue.DeferDueToFailure(ctx, tx, commandMessageID)
+	}
 
 	if eventEnvelopes, ok := envelopePacker.Seal(); ok {
 		if _, err := eventstream.Append(
@@ -205,17 +216,28 @@ func (c *Controller) routeCommandToInstance(
 	ctx context.Context,
 	commandForRouting dogma.Command,
 ) (string, bool) {
-	instanceID := c.Handler.RouteCommandToInstance(commandForRouting)
-	if instanceID != "" {
-		return instanceID, true
-	}
+	var instanceID string
 
-	c.commandLogger.ErrorContext(
-		ctx,
-		"handler routed command to an empty instance ID",
+	err := xerrors.Recover(
+		func() {
+			instanceID = c.Handler.RouteCommandToInstance(commandForRouting)
+		},
 	)
 
-	return "", false
+	if err == nil && instanceID == "" {
+		err = errors.New("handler returned an empty instance ID")
+	}
+
+	if err != nil {
+		c.commandLogger.ErrorContext(
+			ctx,
+			"unable to route command to instance",
+			xslog.Error(err),
+		)
+		return "", false
+	}
+
+	return instanceID, true
 }
 
 func (c *Controller) lockInstance(
@@ -381,7 +403,21 @@ func (c *Controller) loadRoot(
 			return nil, false, nil
 		}
 
-		aggregateRoot.ApplyEvent(eventForApply)
+		if err := xerrors.Recover(func() {
+			aggregateRoot.ApplyEvent(eventForApply)
+		}); err != nil {
+			c.commandLogger.ErrorContext(
+				ctx,
+				"cannot apply event to aggregate root",
+				slog.Group(
+					"event",
+					xslog.UUID("message_id", eventMessageID),
+				),
+				xslog.Error(err),
+			)
+
+			return nil, false, nil
+		}
 	}
 
 	if err := rows.Err(); err != nil {

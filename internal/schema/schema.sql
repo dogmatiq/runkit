@@ -76,9 +76,11 @@ WHERE aggregate_handler_key IS NOT NULL;
 -- instance, and a snapshot of its state, if one is available.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dogma.aggregate_instances (
-    handler_key     uuid NOT NULL,
-    instance_id     text NOT NULL CHECK (instance_id != ''),
-    event_stream_id uuid NOT NULL,
+    handler_key           uuid   NOT NULL,
+    instance_id           text   NOT NULL CHECK (instance_id != ''),
+    event_stream_id       uuid   NOT NULL,
+    offset_after_snapshot bigint NOT NULL DEFAULT 0 CHECK (event_stream_offset_after_snapshot >= 0),
+    snapshot              bytea,
 
     PRIMARY KEY (handler_key, instance_id)
 );

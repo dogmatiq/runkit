@@ -2,6 +2,7 @@ package aggregate_test
 
 import (
 	"database/sql"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -221,14 +222,147 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 
 func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
 	t.Run("in RouteCommandToInstance()", func(t *testing.T) {
-		t.Skip()
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				commandEnvelope := xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+					t,
+					engine.DB,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			},
+			dogma.ViaAggregate(
+				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+					ConfigureFunc: func(c dogma.AggregateConfigurer) {
+						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Routes(
+							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+						)
+					},
+					RouteCommandToInstanceFunc: func(dogma.Command) string {
+						panic("<panic>")
+					},
+				},
+			),
+		)
 	})
 
 	t.Run("in HandleCommand()", func(t *testing.T) {
-		t.Skip()
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				commandEnvelope := xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+					t,
+					engine.DB,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			},
+			dogma.ViaAggregate(
+				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+					ConfigureFunc: func(c dogma.AggregateConfigurer) {
+						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Routes(
+							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+						)
+					},
+					RouteCommandToInstanceFunc: func(dogma.Command) string {
+						return "<instance>"
+					},
+					HandleCommandFunc: func(
+						*stubs.AggregateRootStub,
+						dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+						dogma.Command,
+					) {
+						panic("<panic>")
+					},
+				},
+			),
+		)
 	})
 
 	t.Run("in ApplyEvent()", func(t *testing.T) {
-		t.Skip()
+		// eventApplied is set to true after the first successful call to
+		// ApplyEvent. The first call occurs within scope.RecordEvent during
+		// HandleCommand; subsequent calls occur during state loading when
+		// replaying historical events. Only those subsequent calls panic,
+		// ensuring the first command succeeds (creating history) while the
+		// second command fails during state replay.
+		var eventApplied atomic.Bool
+
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				// Execute a command to create the instance and record an
+				// event in its history.
+				xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectEmptyCommandQueueEventually(
+					t,
+					engine.DB,
+				)
+
+				// Execute another command to the same instance. When
+				// loading state, replaying the event will panic.
+				commandEnvelope := xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+
+				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+					t,
+					engine.DB,
+					commandEnvelope.GetBody().GetMessageId(),
+				)
+			},
+			dogma.ViaAggregate(
+				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+					ConfigureFunc: func(c dogma.AggregateConfigurer) {
+						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Routes(
+							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+						)
+					},
+					NewFunc: func() *stubs.AggregateRootStub {
+						return &stubs.AggregateRootStub{
+							ApplyEventFunc: func(dogma.Event) {
+								if !eventApplied.CompareAndSwap(false, true) {
+									panic("<panic>")
+								}
+							},
+						}
+					},
+					RouteCommandToInstanceFunc: func(dogma.Command) string {
+						return "<instance>"
+					},
+					HandleCommandFunc: func(
+						_ *stubs.AggregateRootStub,
+						s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+						_ dogma.Command,
+					) {
+						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					},
+				},
+			),
+		)
 	})
 }

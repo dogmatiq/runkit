@@ -1,12 +1,14 @@
 package xslog
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 )
 
 // UUID returns an [slog.Attr] for a UUID value.
@@ -64,10 +66,24 @@ func messageType(v *uuidpb.UUID) slog.Attr {
 }
 
 // Error returns an [slog.Attr] for an error value.
+//
+// If the error is a [xerrors.PanicError], it includes the stack trace.
 func Error(err error) slog.Attr {
 	if err == nil {
 		return slog.Attr{}
 	}
 
-	return slog.String("error", err.Error())
+	attrs := []any{
+		slog.String("message", err.Error()),
+	}
+
+	if err, ok := errors.AsType[xerrors.PanicError](err); ok {
+		attrs = append(
+			attrs,
+			slog.Bool("panic", true),
+			slog.String("stack", err.StackTrace),
+		)
+	}
+
+	return slog.Group("error", attrs...)
 }
