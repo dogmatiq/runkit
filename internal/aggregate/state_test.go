@@ -431,3 +431,7 @@ func TestMutationsToASingleInstanceAreSerialized(t *testing.T) {
 		),
 	)
 }
+
+func TestInvalidSnapshotsAreDiscarded(t *testing.T) {
+	t.Skip()
+}
