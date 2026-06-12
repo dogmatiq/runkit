@@ -16,6 +16,7 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
+	"github.com/dogmatiq/reference-engine/internal/integration"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -173,6 +174,16 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Packer:         e.envelopePacker,
 			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
 			Logger:         e.newLoggerForHandler(handlerConfig),
+		}
+	case *config.Integration:
+		return &integration.Controller{
+			DB:                    e.DB,
+			Handler:               handlerConfig.Interface(),
+			Identity:              handlerConfig.Identity(),
+			ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
+			Packer:                e.envelopePacker,
+			CommandTypeIDs:        e.collectInboundMessageTypeIDs(handlerConfig),
+			Logger:                e.newLoggerForHandler(handlerConfig),
 		}
 	default:
 		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))

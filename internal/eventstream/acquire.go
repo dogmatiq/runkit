@@ -17,15 +17,18 @@ const (
 	Capacity = 1000
 )
 
-// Acquire returns the ID of the stream with the most available capacity. If all
-// existing streams are at capacity according to [Capacity], a new stream is
-// created and its ID returned.
+// Acquire returns the ID of a stream with available capacity.
+//
+// It prefers streams with lower throughput and fewer events, breaking ties
+// randomly. If all existing streams are at capacity according to [Capacity], a
+// new stream is created and its ID returned.
 func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`WITH streams AS (
 			SELECT
 				s.id,
+				s.next_offset,
 				COALESCE(
 					(s.next_offset - e.event_stream_offset) / EXTRACT(EPOCH FROM clock_timestamp() - e.recorded_at),
 					0
@@ -38,7 +41,10 @@ func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 		SELECT id
 		FROM streams
 		WHERE events_per_second < $1
-		ORDER BY events_per_second
+		ORDER BY
+			events_per_second,
+			next_offset,
+			random()
 		LIMIT 1`,
 		Capacity,
 	)
