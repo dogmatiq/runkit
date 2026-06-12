@@ -21,7 +21,7 @@ func TestAppend(t *testing.T) {
 		t,
 		db,
 		func(tx *sql.Tx) {
-			eventStreamID, err := Acquire(t.Context(), tx)
+			streamID, err := Acquire(t.Context(), tx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,7 +43,7 @@ func TestAppend(t *testing.T) {
 			got, err := eventstream.Append(
 				t.Context(),
 				tx,
-				eventStreamID,
+				streamID,
 				eventEnvelopes,
 			)
 			if err != nil {
@@ -54,10 +54,10 @@ func TestAppend(t *testing.T) {
 				t.Fatalf("unexpected offset: got %d, want %d", got, want)
 			}
 
-			xtesting.ExpectEventEnvelopesAtOffset(
+			xtesting.ExpectContiguousEventEnvelopes(
 				t,
 				tx,
-				eventStreamID,
+				streamID,
 				0,
 				slices.Collect(eventEnvelopes.All())...,
 			)

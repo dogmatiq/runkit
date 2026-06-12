@@ -16,7 +16,7 @@ import (
 func Append(
 	ctx context.Context,
 	tx *sql.Tx,
-	eventStreamID *uuidpb.UUID,
+	streamID *uuidpb.UUID,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 ) (Offset, error) {
 	var (
@@ -58,7 +58,7 @@ func Append(
 				$5
 			FROM streams AS s
 			RETURNING event_stream_offset`,
-			xsql.UUID(eventStreamID),
+			xsql.UUID(streamID),
 			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
 			xsql.Envelope(eventEnvelope),
 			xsql.UUID(aggregateHandlerKey),

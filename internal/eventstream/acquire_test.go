@@ -94,19 +94,19 @@ func TestAcquire(t *testing.T) {
 		t,
 		db,
 		func(tx *sql.Tx) {
-			eventStreamID, err := Acquire(t.Context(), tx)
+			streamID, err := Acquire(t.Context(), tx)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if err := eventStreamID.Validate(); err != nil {
+			if err := streamID.Validate(); err != nil {
 				t.Fatal(err)
 			}
 
-			if eventStreamID.Equal(firstStreamID) {
+			if streamID.Equal(firstStreamID) {
 				t.Fatalf(
 					"unexpected stream ID: got %q, want a different ID",
-					eventStreamID,
+					streamID,
 				)
 			}
 		},

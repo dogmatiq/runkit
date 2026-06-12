@@ -43,10 +43,10 @@ func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 		Capacity,
 	)
 
-	eventStreamID := &uuidpb.UUID{}
+	streamID := &uuidpb.UUID{}
 
 	if err := row.Scan(
-		xsql.UUID(eventStreamID),
+		xsql.UUID(streamID),
 	); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("unable to query event streams: %w", err)
@@ -55,23 +55,23 @@ func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 		return ForceCreate(ctx, tx)
 	}
 
-	return eventStreamID, nil
+	return streamID, nil
 }
 
 // ForceCreate forces creation of a new event stream, ignoring the capacity of
 // existing streams. It returns the ID of the new stream.
 func ForceCreate(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
-	eventStreamID := uuidpb.Generate()
+	streamID := uuidpb.Generate()
 
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO dogma.event_streams (
 			id
 		) VALUES ($1)`,
-		xsql.UUID(eventStreamID),
+		xsql.UUID(streamID),
 	); err != nil {
 		return nil, fmt.Errorf("unable to create event stream: %w", err)
 	}
 
-	return eventStreamID, nil
+	return streamID, nil
 }

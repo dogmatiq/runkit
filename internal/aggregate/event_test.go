@@ -2,12 +2,11 @@ package aggregate_test
 
 import (
 	"database/sql"
-	"reflect"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -18,10 +17,10 @@ func TestEventsAreAppendedToTheEventStreamInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			want := []*stubs.EventStub[stubs.TypeA]{
-				{Content: "event-0"},
-				{Content: "event-1"},
-				{Content: "event-2"},
+			want := []dogma.Event{
+				&stubs.EventStub[stubs.TypeA]{Content: "event-0"},
+				&stubs.EventStub[stubs.TypeA]{Content: "event-1"},
+				&stubs.EventStub[stubs.TypeA]{Content: "event-2"},
 			}
 
 			// Send commands sequentially, waiting between each so that the
@@ -31,7 +30,7 @@ func TestEventsAreAppendedToTheEventStreamInOrder(t *testing.T) {
 					t,
 					engine,
 					&stubs.CommandStub[stubs.TypeA]{
-						Content: event.Content,
+						Content: event.(*stubs.EventStub[stubs.TypeA]).Content,
 					},
 				)
 
@@ -41,62 +40,25 @@ func TestEventsAreAppendedToTheEventStreamInOrder(t *testing.T) {
 				)
 			}
 
-			// Verify that events appear on the stream in the order they
-			// were recorded.
-			rows, err := engine.DB.QueryContext(
+			// Find the stream used for this instance.
+			streamID := &uuidpb.UUID{}
+			row := engine.DB.QueryRowContext(
 				t.Context(),
-				`SELECT
-					event_stream_offset,
-					envelope
-				FROM dogma.events
-				WHERE aggregate_instance_id = '<instance>'
-				ORDER BY event_stream_offset
-				LIMIT $1`,
-				len(want),
+				`SELECT event_stream_id
+				FROM dogma.aggregate_instances
+				WHERE instance_id = '<instance>'`,
 			)
-			if err != nil {
-				t.Fatalf("unable to query events: %v", err)
-			}
-			defer rows.Close()
-
-			var wantOffset eventstream.Offset
-
-			for rows.Next() {
-				var gotOffset eventstream.Offset
-				env := &envelopepb.Envelope{}
-				if err := rows.Scan(&gotOffset, xsql.Envelope(env)); err != nil {
-					t.Fatalf("unable to scan event: %v", err)
-				}
-
-				if gotOffset != wantOffset {
-					t.Fatalf(
-						"unexpected event stream offset: got %d, want %d",
-						gotOffset,
-						wantOffset,
-					)
-				}
-
-				got, err := envelopepb.Unpack[dogma.Event](env)
-				if err != nil {
-					t.Fatalf("unable to unpack event: %v", err)
-				}
-
-				wantEvent := want[0]
-				want = want[1:]
-
-				if !reflect.DeepEqual(got, wantEvent) {
-					t.Logf("unexpected event at offset %d:", gotOffset)
-					t.Logf("+++ got:\n%#v", got)
-					t.Logf("--- want:\n%#v", wantEvent)
-					t.FailNow()
-				}
-
-				wantOffset++
+			if err := row.Scan(xsql.UUID(streamID)); err != nil {
+				t.Fatalf("unable to find event stream: %v", err)
 			}
 
-			if len(want) != 0 {
-				t.Fatalf("missing %d event(s)", len(want))
-			}
+			xtesting.ExpectContiguousEvents(
+				t,
+				engine.DB,
+				streamID,
+				0,
+				want...,
+			)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
