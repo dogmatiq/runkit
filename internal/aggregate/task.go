@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -41,14 +41,13 @@ func (t *commandTask) Execute(ctx context.Context) error {
 
 	err := t.handleCommand(ctx)
 
-	switch err {
-	case nil:
-		err = commandqueue.Remove(ctx, t.Tx, t.MessageID)
-	case errLocked:
+	if errors.Is(err, errLocked) {
 		err = commandqueue.DeferDueToContention(ctx, t.Tx, t.MessageID)
-	case errFailed:
+	} else if errors.Is(err, errFailed) {
 		err = commandqueue.DeferDueToFailure(ctx, t.Tx, t.MessageID)
-	default:
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -150,41 +149,17 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		return errFailed
 	}
 
-	eventEnvelopes, ok := packer.Seal()
-	if !ok {
-		// No events were recorded.
-		return nil
-	}
-
-	var nextOffset eventstream.Offset
-
-	if streamID != nil {
-		nextOffset, err = eventstream.Append(
+	if eventEnvelopes, ok := packer.Seal(); ok {
+		return t.completeWithEvents(
 			ctx,
-			t.Tx,
+			instanceID,
 			streamID,
 			eventEnvelopes,
+			root,
 		)
-	} else {
-		streamID, nextOffset, err = eventstream.AppendAny(
-			ctx,
-			t.Tx,
-			eventEnvelopes,
-		)
-		if err == nil {
-			err = t.bindStream(ctx, instanceID, streamID)
-		}
-	}
-	if err != nil {
-		return err
 	}
 
-	return t.takeSnapshot(
-		ctx,
-		instanceID,
-		root,
-		nextOffset,
-	)
+	return t.completeWithoutEvents(ctx, instanceID)
 }
 
 // routeCommandToInstance routes the instance ID for the given command by
@@ -306,7 +281,7 @@ func (t *commandTask) tryLockInstance(
 	instanceID string,
 ) (
 	streamID *uuidpb.UUID,
-	offset eventstream.Offset,
+	offset uint64,
 	snapshot []byte,
 	exists bool,
 	err error,
@@ -379,7 +354,7 @@ func (t *commandTask) tryLockInstance(
 // exists it returns the existing instance's data.
 func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) (
 	streamID *uuidpb.UUID,
-	offset eventstream.Offset,
+	offset uint64,
 	snapshot []byte,
 	err error,
 ) {
@@ -425,7 +400,7 @@ func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) 
 func (t *commandTask) applyHistoricalEvents(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
-	offset eventstream.Offset,
+	offset uint64,
 	instanceID string,
 	root dogma.AggregateRoot,
 ) error {
@@ -538,12 +513,98 @@ func (t *commandTask) applySnapshot(
 	return true
 }
 
-func (t *commandTask) takeSnapshot(
+// completeWithoutEvents removes the command from the queue when no events were
+// recorded during handling. It deletes the aggregate instance if there are no
+// prior events.
+func (t *commandTask) completeWithoutEvents(
 	ctx context.Context,
 	instanceID string,
-	root dogma.AggregateRoot,
-	offset eventstream.Offset,
 ) error {
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT aggregate.complete_without_events($1, $2, $3)`,
+		xsql.UUID(t.MessageID),
+		xsql.UUID(t.Identity.GetKey()),
+		instanceID,
+	); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+// completeWithEvents appends events to the aggregate's event stream, optionally
+// persists a snapshot, and removes the command from the queue in a single
+// database round-trip.
+func (t *commandTask) completeWithEvents(
+	ctx context.Context,
+	instanceID string,
+	streamID *uuidpb.UUID,
+	eventEnvelopes *envelopepb.MultiEnvelope,
+	root dogma.AggregateRoot,
+) error {
+	snapshot, hasSnapshot := t.marshalSnapshot(ctx, root)
+
+	var (
+		query strings.Builder
+		args  []any
+	)
+
+	var snapshotArg any
+	if hasSnapshot {
+		snapshotArg = snapshot
+	}
+
+	args = append(
+		args,
+		xsql.UUID(t.MessageID),
+		xsql.UUID(t.Identity.GetKey()),
+		instanceID,
+		xsql.UUID(streamID),
+		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
+		snapshotArg,
+	)
+
+	query.WriteString(`SELECT aggregate.complete_with_events($1, $2, $3, $4, $5, $6, ARRAY[`)
+
+	first := true
+	for eventEnvelope := range eventEnvelopes.All() {
+		if first {
+			first = false
+		} else {
+			query.WriteString(", ")
+		}
+
+		n := len(args)
+		fmt.Fprintf(
+			&query,
+			"ROW($%d, $%d, $%d)::eventstream.event",
+			n+1, n+2, n+3,
+		)
+
+		args = append(
+			args,
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.Envelope(eventEnvelope),
+		)
+	}
+
+	query.WriteString(`])`)
+
+	if _, err := t.Tx.ExecContext(ctx, query.String(), args...); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+// marshalSnapshot attempts to marshal the aggregate root's state as a binary
+// snapshot. It returns false if marshaling is not supported or fails.
+func (t *commandTask) marshalSnapshot(
+	ctx context.Context,
+	root dogma.AggregateRoot,
+) ([]byte, bool) {
 	var snapshot []byte
 
 	if err := xerrors.Recover(
@@ -561,48 +622,8 @@ func (t *commandTask) takeSnapshot(
 			)
 		}
 
-		return nil
+		return nil, false
 	}
 
-	if err := xsql.ExecOne(
-		ctx,
-		t.Tx,
-		`UPDATE aggregate.instances SET
-			snapshot_offset = $1,
-			snapshot = $2
-		WHERE handler_key = $3
-		AND instance_id = $4`,
-		offset-1,
-		snapshot,
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	); err != nil {
-		return fmt.Errorf("unable to persist snapshot: %w", err)
-	}
-
-	return nil
-}
-
-// bindStream binds an event stream to the aggregate instance after the first
-// event has been appended.
-func (t *commandTask) bindStream(
-	ctx context.Context,
-	instanceID string,
-	streamID *uuidpb.UUID,
-) error {
-	if err := xsql.ExecOne(
-		ctx,
-		t.Tx,
-		`UPDATE aggregate.instances SET
-			stream_id = $1
-		WHERE handler_key = $2
-		AND instance_id = $3`,
-		xsql.UUID(streamID),
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	); err != nil {
-		return fmt.Errorf("unable to bind event stream to aggregate instance: %w", err)
-	}
-
-	return nil
+	return snapshot, true
 }

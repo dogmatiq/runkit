@@ -13,7 +13,6 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -140,7 +139,7 @@ func waitForEvents(
 	eventTypes uuidpb.Set,
 	eventObservers []dogma.EventObserver[dogma.Event],
 ) error {
-	var nextOffsets uuidpb.Map[eventstream.Offset]
+	var nextOffsets uuidpb.Map[uint64]
 
 	for {
 		// First, check if there are any pending commands or deadlines within this
@@ -242,11 +241,11 @@ func pollForEvents(
 	correlationID *uuidpb.UUID,
 	eventTypes uuidpb.Set,
 	observers []dogma.EventObserver[dogma.Event],
-	nextOffsets uuidpb.Map[eventstream.Offset],
+	nextOffsets uuidpb.Map[uint64],
 ) (satisfied bool, err error) {
 	var (
 		streamIDs    []string
-		offsets      []eventstream.Offset
+		offsets      []uint64
 		eventTypeIDs []string
 	)
 
@@ -296,7 +295,7 @@ func pollForEvents(
 	for rows.Next() {
 		var (
 			streamID      = &uuidpb.UUID{}
-			offset        eventstream.Offset
+			offset        uint64
 			eventEnvelope = &envelopepb.Envelope{}
 		)
 

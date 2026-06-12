@@ -119,18 +119,10 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
-		return t.appendEventsAndRemoveCommand(ctx, eventEnvelopes)
+		return t.completeWithEvents(ctx, eventEnvelopes)
 	}
 
-	if _, err := t.Tx.ExecContext(
-		ctx,
-		`SELECT commandqueue.remove($1)`,
-		xsql.UUID(t.MessageID),
-	); err != nil {
-		return fmt.Errorf("unable to complete command handling: %w", err)
-	}
-
-	return nil
+	return t.completeWithoutEvents(ctx)
 }
 
 // acquireLock serializes command handling for the handler when it prefers
@@ -152,10 +144,23 @@ func (t *commandTask) acquireLock(ctx context.Context) error {
 	return nil
 }
 
-// appendEventsAndRemoveCommand removes the command from the queue and appends
-// any events that were recorded during handling in a single database
-// round-trip.
-func (t *commandTask) appendEventsAndRemoveCommand(
+// completeWithoutEvents removes the command from the queue when no events were
+// recorded during handling.
+func (t *commandTask) completeWithoutEvents(ctx context.Context) error {
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT integration.complete_without_events($1)`,
+		xsql.UUID(t.MessageID),
+	); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+// completeWithEvents removes the command from the queue and appends events that
+// were recorded during handling in a single database round-trip.
+func (t *commandTask) completeWithEvents(
 	ctx context.Context,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 ) error {

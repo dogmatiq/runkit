@@ -7,7 +7,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
@@ -82,7 +81,7 @@ func ExpectContiguousEvents(
 	t testing.TB,
 	q xsql.Querier,
 	streamID *uuidpb.UUID,
-	offset eventstream.Offset,
+	offset uint64,
 	want ...dogma.Event,
 ) {
 	t.Helper()
@@ -109,7 +108,7 @@ func ExpectContiguousEvents(
 	wantOffset := offset
 
 	for rows.Next() {
-		var gotOffset eventstream.Offset
+		var gotOffset uint64
 		env := &envelopepb.Envelope{}
 		if err := rows.Scan(&gotOffset, xsql.Envelope(env)); err != nil {
 			t.Fatalf("unable to scan event: %v", err)
@@ -152,7 +151,7 @@ func ExpectContiguousEventEnvelopes(
 	t testing.TB,
 	q xsql.Querier,
 	streamID *uuidpb.UUID,
-	offset eventstream.Offset,
+	offset uint64,
 	want ...*envelopepb.Envelope,
 ) {
 	t.Helper()
@@ -180,7 +179,7 @@ func ExpectContiguousEventEnvelopes(
 
 	for rows.Next() {
 		var (
-			gotOffset   eventstream.Offset
+			gotOffset   uint64
 			gotEnvelope = &envelopepb.Envelope{}
 		)
 
