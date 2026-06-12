@@ -1,14 +1,12 @@
 package aggregate_test
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
@@ -90,20 +88,9 @@ func TestAllEventsFromTheSameInstanceAreAppendedToTheSameStream(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Force creation of multiple event streams so that the
-			// controller's use of [eventstream.Acquire] doesn't just create
-			// a single stream and use it continuously.
-			xtesting.Transact(
-				t,
-				engine.DB,
-				func(tx *sql.Tx) {
-					for range 3 {
-						if _, err := eventstream.ForceCreate(t.Context(), tx); err != nil {
-							t.Fatal(err)
-						}
-					}
-				},
-			)
+			// Force creation of multiple event streams so that the controller
+			// doesn't just create a single stream and use it continuously.
+			xtesting.CreateEventStreams(t, engine.DB, 3)
 
 			// Send multiple commands to two different instances, each
 			// recording an event, to verify that events from the same

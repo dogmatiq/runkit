@@ -13,6 +13,31 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// CreateEventStreams creates the given number of event streams.
+func CreateEventStreams(
+	t testing.TB,
+	x xsql.Executor,
+	count int,
+) []*uuidpb.UUID {
+	t.Helper()
+
+	streamIDs := make([]*uuidpb.UUID, count)
+
+	for i := range count {
+		streamIDs[i] = uuidpb.Generate()
+
+		if _, err := x.ExecContext(
+			t.Context(),
+			`INSERT INTO eventstream.streams (id) VALUES ($1)`,
+			xsql.UUID(streamIDs[i]),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return streamIDs
+}
+
 // ExpectEventStreamCount asserts that the number of event streams in the database
 // matches the given value.
 func ExpectEventStreamCount(

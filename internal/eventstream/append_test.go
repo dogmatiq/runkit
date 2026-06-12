@@ -21,10 +21,7 @@ func TestAppend(t *testing.T) {
 		t,
 		db,
 		func(tx *sql.Tx) {
-			streamID, err := Acquire(t.Context(), tx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			streamIDs := xtesting.CreateEventStreams(t, tx, 1)
 
 			envelopePacker := &envelopepb.Packer{
 				Application: identitypb.New("<app>", uuidpb.Generate()),
@@ -43,7 +40,7 @@ func TestAppend(t *testing.T) {
 			got, err := eventstream.Append(
 				t.Context(),
 				tx,
-				streamID,
+				streamIDs[0],
 				eventEnvelopes,
 			)
 			if err != nil {
@@ -57,7 +54,7 @@ func TestAppend(t *testing.T) {
 			xtesting.ExpectContiguousEventEnvelopes(
 				t,
 				tx,
-				streamID,
+				streamIDs[0],
 				0,
 				slices.Collect(eventEnvelopes.All())...,
 			)

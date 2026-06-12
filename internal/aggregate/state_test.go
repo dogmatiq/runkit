@@ -9,7 +9,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
@@ -96,20 +95,9 @@ func TestStateChangesArePersisted(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Force creation of multiple event streams so that the
-			// controller's use of [eventstream.Acquire] doesn't just create
-			// a single stream and use it continuously.
-			xtesting.Transact(
-				t,
-				engine.DB,
-				func(tx *sql.Tx) {
-					for range 3 {
-						if _, err := eventstream.ForceCreate(t.Context(), tx); err != nil {
-							t.Fatal(err)
-						}
-					}
-				},
-			)
+			// Force creation of multiple event streams so that the controller
+			// doesn't just create a single stream and use it continuously.
+			xtesting.CreateEventStreams(t, engine.DB, 3)
 
 			// Send TypeA command to append a TypeA event.
 			xtesting.ExecuteCommand(

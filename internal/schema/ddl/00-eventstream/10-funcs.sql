@@ -110,14 +110,20 @@ CREATE OR REPLACE FUNCTION eventstream.append_any(
     aggregate_instance_id text,
     events                eventstream.event[]
 )
-RETURNS bigint
+RETURNS TABLE(stream_id uuid, next_offset bigint)
 LANGUAGE sql
 AS $$
-    SELECT eventstream.append(
-        eventstream.acquire(),
-        correlation_id,
-        aggregate_handler_key,
-        aggregate_instance_id,
-        events
-    );
+    WITH acquired AS (
+        SELECT eventstream.acquire() AS id
+    )
+    SELECT
+        a.id,
+        eventstream.append(
+            a.id,
+            correlation_id,
+            aggregate_handler_key,
+            aggregate_instance_id,
+            events
+        )
+    FROM acquired AS a;
 $$;

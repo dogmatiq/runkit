@@ -156,12 +156,25 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		return nil
 	}
 
-	nextOffset, err := eventstream.Append(
-		ctx,
-		t.Tx,
-		streamID,
-		eventEnvelopes,
-	)
+	var nextOffset eventstream.Offset
+
+	if streamID != nil {
+		nextOffset, err = eventstream.Append(
+			ctx,
+			t.Tx,
+			streamID,
+			eventEnvelopes,
+		)
+	} else {
+		streamID, nextOffset, err = eventstream.AppendAny(
+			ctx,
+			t.Tx,
+			eventEnvelopes,
+		)
+		if err == nil {
+			err = t.bindStream(ctx, instanceID, streamID)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -228,6 +241,11 @@ func (t *commandTask) loadInstance(
 	root, err = t.newRoot(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// If the instance has no stream binding there are no events to replay.
+	if streamID == nil {
+		return root, nil, nil
 	}
 
 	// If the instance has a snapshot, attempt to unmarshal it.
@@ -309,7 +327,7 @@ func (t *commandTask) tryLockInstance(
 		), locked AS (
 			SELECT
 				stream_id,
-				offset_after_snapshot,
+				snapshot_offset,
 				snapshot
 			FROM aggregate.instances
 			WHERE handler_key = $1
@@ -318,10 +336,10 @@ func (t *commandTask) tryLockInstance(
 		)
 		SELECT
 			locked.stream_id,
-			COALESCE(locked.offset_after_snapshot, 0) AS next_offset,
+			COALESCE(locked.snapshot_offset + 1, 0),
 			locked.snapshot,
 			exists.exists,
-			locked.stream_id IS NOT NULL AS locked
+			(SELECT COUNT(*) FROM locked) > 0 AS locked
 		FROM exists
 		LEFT JOIN locked
 		ON true`,
@@ -350,6 +368,10 @@ func (t *commandTask) tryLockInstance(
 		return nil, 0, nil, true, errLocked
 	}
 
+	if streamID.Validate() != nil {
+		streamID = nil
+	}
+
 	return streamID, offset, snapshot, exists, nil
 }
 
@@ -361,31 +383,24 @@ func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) 
 	snapshot []byte,
 	err error,
 ) {
-	acquiredStreamID, err := eventstream.Acquire(ctx, t.Tx)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-
 	// If another transaction is racing to create the same instance we may
 	// lose the race and block until it completes, in which case we must
 	// honor the event stream binding that the other transaction
-	// established, rather than using the candidate we chose.
+	// establishes, if any.
 	row := t.Tx.QueryRowContext(
 		ctx,
 		`INSERT INTO aggregate.instances (
 			handler_key,
-			instance_id,
-			stream_id
-		) VALUES ($1, $2, $3)
+			instance_id
+		) VALUES ($1, $2)
 		ON CONFLICT (handler_key, instance_id) DO UPDATE SET
 			instance_id = EXCLUDED.instance_id
 		RETURNING
 			stream_id,
-			offset_after_snapshot,
+			COALESCE(snapshot_offset + 1, 0),
 			snapshot`,
 		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
-		xsql.UUID(acquiredStreamID),
 	)
 
 	streamID = &uuidpb.UUID{}
@@ -396,6 +411,10 @@ func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) 
 		&snapshot,
 	); err != nil {
 		return nil, 0, nil, fmt.Errorf("unable to insert aggregate instance: %w", err)
+	}
+
+	if streamID.Validate() != nil {
+		streamID = nil
 	}
 
 	return streamID, offset, snapshot, nil
@@ -549,16 +568,40 @@ func (t *commandTask) takeSnapshot(
 		ctx,
 		t.Tx,
 		`UPDATE aggregate.instances SET
-			offset_after_snapshot = $1,
+			snapshot_offset = $1,
 			snapshot = $2
 		WHERE handler_key = $3
 		AND instance_id = $4`,
-		offset,
+		offset-1,
 		snapshot,
 		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
 	); err != nil {
 		return fmt.Errorf("unable to persist snapshot: %w", err)
+	}
+
+	return nil
+}
+
+// bindStream binds an event stream to the aggregate instance after the first
+// event has been appended.
+func (t *commandTask) bindStream(
+	ctx context.Context,
+	instanceID string,
+	streamID *uuidpb.UUID,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		t.Tx,
+		`UPDATE aggregate.instances SET
+			stream_id = $1
+		WHERE handler_key = $2
+		AND instance_id = $3`,
+		xsql.UUID(streamID),
+		xsql.UUID(t.Identity.GetKey()),
+		instanceID,
+	); err != nil {
+		return fmt.Errorf("unable to bind event stream to aggregate instance: %w", err)
 	}
 
 	return nil

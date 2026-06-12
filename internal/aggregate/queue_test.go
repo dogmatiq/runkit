@@ -184,7 +184,7 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 						tx,
 						`UPDATE aggregate.instances SET
 							snapshot = NULL,
-							offset_after_snapshot = 0
+							snapshot_offset = NULL
 						WHERE handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
 						AND instance_id = '<instance>'`,
 					)
