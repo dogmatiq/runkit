@@ -79,8 +79,16 @@ CREATE TABLE IF NOT EXISTS dogma.aggregate_instances (
     handler_key           uuid   NOT NULL,
     instance_id           text   NOT NULL CHECK (instance_id != ''),
     event_stream_id       uuid   NOT NULL,
-    offset_after_snapshot bigint NOT NULL DEFAULT 0 CHECK (event_stream_offset_after_snapshot >= 0),
     snapshot              bytea,
+    offset_after_snapshot bigint NOT NULL DEFAULT 0 CHECK (offset_after_snapshot >= 0),
 
-    PRIMARY KEY (handler_key, instance_id)
+    PRIMARY KEY (handler_key, instance_id),
+
+    CHECK (
+        CASE
+            WHEN snapshot IS NULL
+            THEN offset_after_snapshot = 0
+            ELSE offset_after_snapshot > 0
+        END
+    )
 );

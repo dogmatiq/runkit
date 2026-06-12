@@ -30,7 +30,7 @@ func (e PanicError) Unwrap() error {
 // If the panic originates directly within fn itself, it is not caught and
 // propagates normally. This ensures that bugs in the engine's own closure logic
 // are not silently swallowed.
-func Recover(fn func()) (err error) {
+func Recover(fn func() error) (err error) {
 	// Capture the stack depth from [Recover] down to the goroutine root. This
 	// is used to trim engine frames from the bottom of the panic stack so that
 	// the stack trace only includes user code.
@@ -52,8 +52,7 @@ func Recover(fn func()) (err error) {
 		}
 	}()
 
-	fn()
-	return nil
+	return fn()
 }
 
 // captureStack returns a formatted stack trace of the panicking code,

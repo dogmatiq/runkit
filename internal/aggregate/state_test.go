@@ -432,6 +432,311 @@ func TestMutationsToASingleInstanceAreSerialized(t *testing.T) {
 	)
 }
 
-func TestInvalidSnapshotsAreDiscarded(t *testing.T) {
-	t.Skip()
+func TestSnapshotIsPersistedAfterEveryCommand(t *testing.T) {
+	// Prove that a snapshot is persisted after handling each command by
+	// deleting the historical events after the first command is handled. If
+	// the snapshot was persisted, the state is still correct when the next
+	// command is handled; if not, the missing events cause incorrect state.
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			// Execute a command to create the instance and record an event.
+			xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			xtesting.ExpectEmptyCommandQueueEventually(
+				t,
+				engine.DB,
+			)
+
+			// Delete the historical events. If a snapshot was persisted after
+			// handling the command above, the state will still be correct.
+			xtesting.Transact(
+				t,
+				engine.DB,
+				func(tx *sql.Tx) {
+					xtesting.ExecOne(
+						t,
+						tx,
+						`DELETE FROM dogma.events
+						WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+						AND aggregate_instance_id = '<instance>'`,
+					)
+				},
+			)
+
+			// Execute another command that asserts the state was loaded
+			// correctly from the snapshot (not by replaying the now-deleted
+			// events).
+			xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeB]{},
+			)
+
+			xtesting.ExpectEmptyCommandQueueEventually(
+				t,
+				engine.DB,
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+				HandleCommandFunc: func(
+					r *stubs.AggregateRootStub,
+					s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+					m dogma.Command,
+				) {
+					switch m.(type) {
+					case *stubs.CommandStub[stubs.TypeA]:
+						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{
+							Content: "<content>",
+						})
+
+					case *stubs.CommandStub[stubs.TypeB]:
+						want := []dogma.Event{
+							&stubs.EventStub[stubs.TypeA]{
+								Content: "<content>",
+							},
+						}
+
+						if !reflect.DeepEqual(r.AppliedEvents, want) {
+							t.Errorf(
+								"unexpected aggregate state: got %#v, want %#v",
+								r.AppliedEvents,
+								want,
+							)
+						}
+
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+				},
+			},
+		),
+	)
+}
+
+func TestSnapshotMarshalingErrorsAreNonFatal(t *testing.T) {
+	// If MarshalBinary() fails, the command should still be handled
+	// successfully, the snapshot just won't be persisted. We verify this by
+	// sending two commands: if the first succeeds (queue empties), then the
+	// marshaling failure was non-fatal; and since no snapshot is persisted we
+	// expect the second command to see state rebuilt from event replay.
+	cases := []struct {
+		Name              string
+		MarshalBinaryFunc func() ([]byte, error)
+	}{
+		{
+			"returns error",
+			func() ([]byte, error) {
+				return nil, fmt.Errorf("<marshal error>")
+			},
+		},
+		{
+			"panics",
+			func() ([]byte, error) {
+				panic("<marshal panic>")
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, engine *dogmaengine.Engine) {
+					xtesting.ExecuteCommand(
+						t,
+						engine,
+						&stubs.CommandStub[stubs.TypeA]{},
+					)
+
+					xtesting.ExpectEmptyCommandQueueEventually(
+						t,
+						engine.DB,
+					)
+
+					xtesting.ExecuteCommand(
+						t,
+						engine,
+						&stubs.CommandStub[stubs.TypeB]{},
+					)
+
+					xtesting.ExpectEmptyCommandQueueEventually(
+						t,
+						engine.DB,
+					)
+				},
+				dogma.ViaAggregate(
+					&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+						ConfigureFunc: func(c dogma.AggregateConfigurer) {
+							c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+							c.Routes(
+								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+								dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+							)
+						},
+						NewFunc: func() *stubs.AggregateRootStub {
+							return &stubs.AggregateRootStub{
+								MarshalBinaryFunc: c.MarshalBinaryFunc,
+							}
+						},
+						RouteCommandToInstanceFunc: func(dogma.Command) string {
+							return "<instance>"
+						},
+						HandleCommandFunc: func(
+							r *stubs.AggregateRootStub,
+							s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+							m dogma.Command,
+						) {
+							switch m.(type) {
+							case *stubs.CommandStub[stubs.TypeA]:
+								s.RecordEvent(&stubs.EventStub[stubs.TypeA]{
+									Content: "<content>",
+								})
+
+							case *stubs.CommandStub[stubs.TypeB]:
+								want := []dogma.Event{
+									&stubs.EventStub[stubs.TypeA]{
+										Content: "<content>",
+									},
+								}
+
+								if !reflect.DeepEqual(r.AppliedEvents, want) {
+									t.Errorf(
+										"unexpected aggregate state: got %#v, want %#v",
+										r.AppliedEvents,
+										want,
+									)
+								}
+
+							default:
+								panic(dogma.UnexpectedMessage)
+							}
+						},
+					},
+				),
+			)
+		})
+	}
+}
+
+func TestSnapshotUnmarshalingErrorsAreNonFatal(t *testing.T) {
+	// If UnmarshalBinary() fails when loading a snapshot, the engine should
+	// fall back to replaying all historical events. We verify this by sending
+	// two commands: the first persists a snapshot, and the second encounters
+	// the unmarshal failure but still sees correct state from event replay.
+	cases := []struct {
+		Name                string
+		UnmarshalBinaryFunc func([]byte) error
+	}{
+		{
+			"returns error",
+			func([]byte) error {
+				return fmt.Errorf("<unmarshal error>")
+			},
+		},
+		{
+			"panics",
+			func([]byte) error {
+				panic("<unmarshal panic>")
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, engine *dogmaengine.Engine) {
+					xtesting.ExecuteCommand(
+						t,
+						engine,
+						&stubs.CommandStub[stubs.TypeA]{},
+					)
+
+					xtesting.ExpectEmptyCommandQueueEventually(
+						t,
+						engine.DB,
+					)
+
+					xtesting.ExecuteCommand(
+						t,
+						engine,
+						&stubs.CommandStub[stubs.TypeB]{},
+					)
+
+					xtesting.ExpectEmptyCommandQueueEventually(
+						t,
+						engine.DB,
+					)
+				},
+				dogma.ViaAggregate(
+					&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+						ConfigureFunc: func(c dogma.AggregateConfigurer) {
+							c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+							c.Routes(
+								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+								dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+							)
+						},
+						NewFunc: func() *stubs.AggregateRootStub {
+							return &stubs.AggregateRootStub{
+								UnmarshalBinaryFunc: c.UnmarshalBinaryFunc,
+							}
+						},
+						RouteCommandToInstanceFunc: func(dogma.Command) string {
+							return "<instance>"
+						},
+						HandleCommandFunc: func(
+							r *stubs.AggregateRootStub,
+							s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+							m dogma.Command,
+						) {
+							switch m.(type) {
+							case *stubs.CommandStub[stubs.TypeA]:
+								s.RecordEvent(&stubs.EventStub[stubs.TypeA]{
+									Content: "<content>",
+								})
+
+							case *stubs.CommandStub[stubs.TypeB]:
+								want := []dogma.Event{
+									&stubs.EventStub[stubs.TypeA]{
+										Content: "<content>",
+									},
+								}
+
+								if !reflect.DeepEqual(r.AppliedEvents, want) {
+									t.Errorf(
+										"unexpected aggregate state: got %#v, want %#v",
+										r.AppliedEvents,
+										want,
+									)
+								}
+
+							default:
+								panic(dogma.UnexpectedMessage)
+							}
+						},
+					},
+				),
+			)
+		})
+	}
 }

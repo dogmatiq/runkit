@@ -165,7 +165,8 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 			)
 
 			// Corrupt the stored event envelope so that it cannot be
-			// parsed.
+			// parsed, and clear the snapshot so the engine must attempt
+			// to replay the corrupt event.
 			xtesting.Transact(
 				t,
 				engine.DB,
@@ -173,10 +174,19 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 					xtesting.ExecOne(
 						t,
 						tx,
-						`UPDATE dogma.events
-							SET envelope = '\x00'::bytea
-							WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
-							AND aggregate_instance_id = '<instance>'`,
+						`UPDATE dogma.events SET
+							envelope = '\x00'::bytea
+						WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+						AND aggregate_instance_id = '<instance>'`,
+					)
+					xtesting.ExecOne(
+						t,
+						tx,
+						`UPDATE dogma.aggregate_instances SET
+							snapshot = NULL,
+							offset_after_snapshot = 0
+						WHERE handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+						AND instance_id = '<instance>'`,
 					)
 				},
 			)

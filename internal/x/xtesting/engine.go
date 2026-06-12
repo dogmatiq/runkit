@@ -25,7 +25,7 @@ import (
 // If any of the engines stops before fn returns, the context passed to fn is
 // canceled, and the test fails.
 func RunEngines(
-	t testing.TB,
+	t *testing.T,
 	fn func(
 		testing.TB,
 		*dogmaengine.Engine,
@@ -33,6 +33,7 @@ func RunEngines(
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
+	t.Parallel()
 
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {

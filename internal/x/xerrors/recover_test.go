@@ -10,15 +10,28 @@ import (
 
 func TestRecover(t *testing.T) {
 	t.Run("it returns nil on success", func(t *testing.T) {
-		err := xerrors.Recover(func() {})
+		err := xerrors.Recover(func() error {
+			return nil
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
+	t.Run("it returns the error returned by the closure", func(t *testing.T) {
+		want := errors.New("<error>")
+		err := xerrors.Recover(func() error {
+			return want
+		})
+		if !errors.Is(err, want) {
+			t.Fatalf("unexpected error: got %v, want %v", err, want)
+		}
+	})
+
 	t.Run("it returns a PanicError when user code panics with a string", func(t *testing.T) {
-		err := xerrors.Recover(func() {
+		err := xerrors.Recover(func() error {
 			panicWithString()
+			return nil
 		})
 
 		panicErr, ok := errors.AsType[xerrors.PanicError](err)
@@ -37,8 +50,9 @@ func TestRecover(t *testing.T) {
 
 	t.Run("it returns a PanicError that unwraps when user code panics with an error", func(t *testing.T) {
 		cause := errors.New("<error>")
-		err := xerrors.Recover(func() {
+		err := xerrors.Recover(func() error {
 			panicWithError(cause)
+			return nil
 		})
 
 		if _, ok := errors.AsType[xerrors.PanicError](err); !ok {
@@ -51,8 +65,9 @@ func TestRecover(t *testing.T) {
 	})
 
 	t.Run("it excludes engine frames from the stack trace", func(t *testing.T) {
-		err := xerrors.Recover(func() {
+		err := xerrors.Recover(func() error {
 			panicWithString()
+			return nil
 		})
 
 		panicErr, ok := errors.AsType[xerrors.PanicError](err)
@@ -79,7 +94,7 @@ func TestRecover(t *testing.T) {
 			}
 		}()
 
-		xerrors.Recover(func() {
+		xerrors.Recover(func() error {
 			panic("<panic>")
 		})
 	})
