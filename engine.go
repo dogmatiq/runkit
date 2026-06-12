@@ -167,12 +167,12 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return &aggregate.Controller{
-			DB:              e.DB,
-			Handler:         handlerConfig.Interface(),
-			HandlerIdentity: handlerConfig.Identity(),
-			EnvelopePacker:  e.envelopePacker,
-			CommandTypeIDs:  e.collectInboundMessageTypeIDs(handlerConfig),
-			Logger:          e.newLoggerForHandler(handlerConfig),
+			DB:             e.DB,
+			Handler:        handlerConfig.Interface(),
+			Identity:       handlerConfig.Identity(),
+			Packer:         e.envelopePacker,
+			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 	default:
 		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))

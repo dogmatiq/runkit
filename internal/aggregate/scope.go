@@ -12,10 +12,10 @@ import (
 
 // scope implements [dogma.AggregateCommandScope].
 type scope struct {
-	instanceID     string
-	aggregateRoot  dogma.AggregateRoot
-	envelopePacker *envelopepb.EffectPacker
-	logger         *slog.Logger
+	instanceID string
+	root       dogma.AggregateRoot
+	packer     *envelopepb.EffectPacker
+	logger     *slog.Logger
 }
 
 func (s *scope) Now() time.Time {
@@ -31,9 +31,9 @@ func (s *scope) InstanceID() string {
 }
 
 func (s *scope) RecordEvent(event dogma.Event) {
-	s.aggregateRoot.ApplyEvent(event)
+	s.root.ApplyEvent(event)
 
-	eventEnvelope := s.envelopePacker.PackEvent(event)
+	eventEnvelope := s.packer.PackEvent(event)
 
 	s.logger.Info(
 		"handler recorded an event",

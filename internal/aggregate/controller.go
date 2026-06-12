@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -23,78 +25,98 @@ import (
 // Controller manages the state of aggregate instances for a single aggregate
 // message handler type.
 type Controller struct {
-	DB              *sql.DB
-	Handler         dogma.AggregateMessageHandler[dogma.AggregateRoot]
-	HandlerIdentity *identitypb.Identity
-	EnvelopePacker  *envelopepb.Packer
-	CommandTypeIDs  []string
-	Logger          *slog.Logger
+	DB             *sql.DB
+	Handler        dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Identity       *identitypb.Identity
+	Packer         *envelopepb.Packer
+	CommandTypeIDs []string
+	Logger         *slog.Logger
 }
-
-var (
-	errIdle   = errors.New("no pending commands")
-	errLocked = errors.New("instance locked")
-	errFailed = errors.New("handling command")
-)
 
 // Run handles messages for the controller's handler until ctx is canceled.
 func (c *Controller) Run(ctx context.Context) (err error) {
-	for {
-		if err := xsql.Transact(
-			ctx,
-			c.DB,
-			func(ctx context.Context, tx *sql.Tx) error {
-				commandMessageID, commandEnvelopeBytes, err := c.lockCommand(ctx, tx)
-				if err != nil {
-					return err
+	tasks := make(chan *commandTask)
+
+	var g sync.WaitGroup
+
+	g.Go(func() {
+		defer close(tasks)
+
+		for {
+			task, ok, err := c.acquireTask(ctx)
+			if err != nil {
+				if errors.Is(err, ctx.Err()) {
+					return
 				}
 
-				err = c.handleCommand(
+				c.Logger.ErrorContext(
 					ctx,
-					tx,
-					commandMessageID,
-					commandEnvelopeBytes,
+					"unable to acquire task",
+					xslog.Error(err),
 				)
-
-				switch err {
-				case nil:
-					return commandqueue.Remove(ctx, tx, commandMessageID)
-				case errLocked:
-					return commandqueue.DeferDueToContention(ctx, tx, commandMessageID)
-				case errFailed:
-					return commandqueue.DeferDueToFailure(ctx, tx, commandMessageID)
-				default:
-					return err
-				}
-			},
-		); err != nil {
-			if !errors.Is(err, errIdle) {
-				return err
 			}
 
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(25 * time.Millisecond):
-				continue
+			if ok {
+				select {
+				case <-ctx.Done():
+					task.Tx.Rollback()
+					return
+				case tasks <- task:
+					continue
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(25 * time.Millisecond):
+					continue
+				}
 			}
 		}
+	})
 
+	for range runtime.GOMAXPROCS(0) {
+		g.Go(func() {
+			for task := range tasks {
+				if err := task.Execute(ctx); err != nil {
+					if errors.Is(err, ctx.Err()) {
+						return
+					}
+
+					task.Logger.ErrorContext(
+						ctx,
+						"unable to execute task",
+						xslog.Error(err),
+					)
+				}
+			}
+		})
 	}
+
+	g.Wait()
+
+	return ctx.Err()
 }
 
-// lockCommand attempts to exclusively lock the next pending command for the
+// acquireTask attempts to exclusively lock the next pending command for the
 // handler and return its message ID and envelope data.
-//
-// If there are no pending commands, it returns [errIdle].
-func (c *Controller) lockCommand(
+func (c *Controller) acquireTask(
 	ctx context.Context,
-	tx *sql.Tx,
 ) (
-	commandMessageID *uuidpb.UUID,
-	commandEnvelopeBytes []byte,
+	task *commandTask,
+	ok bool,
 	err error,
 ) {
+	tx, err := c.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
+	}
+	defer func() {
+		if !ok {
+			tx.Rollback()
+		}
+	}()
+
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -109,46 +131,97 @@ func (c *Controller) lockCommand(
 		c.CommandTypeIDs,
 	)
 
-	commandMessageID = &uuidpb.UUID{}
-
-	if err := row.Scan(
-		xsql.UUID(commandMessageID),
-		&commandEnvelopeBytes,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, errIdle
-		}
-
-		return nil, nil, fmt.Errorf("unable to scan pending command: %w", err)
+	task = &commandTask{
+		Tx:            tx,
+		MessageID:     &uuidpb.UUID{},
+		Handler:       c.Handler,
+		Identity:      c.Identity,
+		Packer:        c.Packer,
+		EnvelopeBytes: []byte{},
+		ParentLogger:  c.Logger,
+		Logger:        c.Logger,
 	}
 
-	return commandMessageID, commandEnvelopeBytes, nil
+	if err := row.Scan(
+		xsql.UUID(task.MessageID),
+		&task.EnvelopeBytes,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+
+		return nil, false, fmt.Errorf("unable to scan pending command: %w", err)
+	}
+
+	task.Logger = c.Logger.With(
+		slog.Group(
+			"command",
+			xslog.UUID("message_id", task.MessageID),
+		),
+	)
+
+	return task, true, nil
+}
+
+type commandTask struct {
+	Tx                   *sql.Tx
+	Handler              dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Identity             *identitypb.Identity
+	Packer               *envelopepb.Packer
+	MessageID            *uuidpb.UUID
+	EnvelopeBytes        []byte
+	ParentLogger, Logger *slog.Logger
+}
+
+var (
+	errLocked = errors.New("instance is locked by another transaction")
+	errFailed = errors.New("unable to handle command")
+)
+
+// Execute processes the task by handling its command and committing the
+// transaction.
+func (t *commandTask) Execute(ctx context.Context) error {
+	defer t.Tx.Rollback()
+
+	err := t.handleCommand(ctx)
+
+	switch err {
+	case nil:
+		err = commandqueue.Remove(ctx, t.Tx, t.MessageID)
+	case errLocked:
+		err = commandqueue.DeferDueToContention(ctx, t.Tx, t.MessageID)
+	case errFailed:
+		err = commandqueue.DeferDueToFailure(ctx, t.Tx, t.MessageID)
+	default:
+		return err
+	}
+
+	if err := t.Tx.Commit(); err != nil {
+		return fmt.Errorf("unable to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 // handleCommand processes the command in the given envelope.
-func (c *Controller) handleCommand(
-	ctx context.Context,
-	tx *sql.Tx,
-	commandMessageID *uuidpb.UUID,
-	commandEnvelopeBytes []byte,
-) error {
+func (t *commandTask) handleCommand(ctx context.Context) error {
 	var (
 		commandEnvelope                       = &envelopepb.Envelope{}
 		commandForRouting, commandForHandling dogma.Command
 	)
 
 	if err := xmessage.Unpack(
-		commandEnvelopeBytes,
+		t.EnvelopeBytes,
 		commandEnvelope,
 		&commandForRouting,
 		&commandForHandling,
 	); err != nil {
-		c.Logger.ErrorContext(
+		t.Logger.ErrorContext(
 			ctx,
-			"cannot unmarshal command",
+			"unable to unmarshal command",
 			slog.Group(
 				"command",
-				xslog.UUID("message_id", commandMessageID),
+				xslog.UUID("message_id", t.MessageID),
 			),
 			xslog.Error(err),
 		)
@@ -156,16 +229,16 @@ func (c *Controller) handleCommand(
 		return errFailed
 	}
 
-	logger := c.Logger.With(
+	t.Logger = t.ParentLogger.With(
 		xslog.Envelope("command", commandEnvelope),
 	)
 
-	instanceID, err := c.routeCommandToInstance(ctx, commandForRouting, logger)
+	instanceID, err := t.routeCommandToInstance(ctx, commandForRouting)
 	if err != nil {
 		return err
 	}
 
-	logger = c.Logger.With(
+	t.Logger = t.ParentLogger.With(
 		xslog.Envelope("command", commandEnvelope),
 		slog.Group(
 			"aggregate_instance",
@@ -173,43 +246,43 @@ func (c *Controller) handleCommand(
 		),
 	)
 
-	aggregateRoot, eventStreamID, err := c.loadInstance(ctx, tx, instanceID, logger)
+	root, streamID, err := t.loadInstance(ctx, instanceID)
 	if err != nil {
 		return err
 	}
 
-	logger = c.Logger.With(
+	t.Logger = t.ParentLogger.With(
 		xslog.Envelope("command", commandEnvelope),
 		slog.Group(
 			"aggregate_instance",
 			slog.String("id", instanceID),
-			slog.String("description", aggregateRoot.AggregateInstanceDescription()),
-			xslog.UUID("event_stream_id", eventStreamID),
+			slog.String("description", root.AggregateInstanceDescription()),
+			xslog.UUID("event_stream_id", streamID),
 		),
 	)
 
-	envelopePacker := c.EnvelopePacker.PackEffects(
+	packer := t.Packer.PackEffects(
 		commandEnvelope,
-		c.HandlerIdentity,
+		t.Identity,
 		envelopepb.WithInstanceID(instanceID),
 	)
 
 	if err := xerrors.Recover(
 		func() error {
-			c.Handler.HandleCommand(
-				aggregateRoot,
+			t.Handler.HandleCommand(
+				root,
 				&scope{
-					instanceID:     instanceID,
-					aggregateRoot:  aggregateRoot,
-					envelopePacker: envelopePacker,
-					logger:         logger,
+					instanceID: instanceID,
+					root:       root,
+					packer:     packer,
+					logger:     t.Logger,
 				},
 				commandForHandling,
 			)
 			return nil
 		},
 	); err != nil {
-		logger.ErrorContext(
+		t.Logger.ErrorContext(
 			ctx,
 			"unable to handle command",
 			xslog.Error(err),
@@ -218,7 +291,7 @@ func (c *Controller) handleCommand(
 		return errFailed
 	}
 
-	eventEnvelopes, ok := envelopePacker.Seal()
+	eventEnvelopes, ok := packer.Seal()
 	if !ok {
 		// No events were recorded.
 		return nil
@@ -226,49 +299,45 @@ func (c *Controller) handleCommand(
 
 	nextOffset, err := eventstream.Append(
 		ctx,
-		tx,
-		eventStreamID,
+		t.Tx,
+		streamID,
 		eventEnvelopes,
 	)
 	if err != nil {
 		return err
 	}
 
-	return c.takeSnapshot(
+	return t.takeSnapshot(
 		ctx,
-		tx,
 		instanceID,
-		aggregateRoot,
+		root,
 		nextOffset,
-		logger,
 	)
 }
 
 // routeCommandToInstance routes the instance ID for the given command by
 // calling the handler's RouteCommandToInstance() method.
-func (c *Controller) routeCommandToInstance(
+func (t *commandTask) routeCommandToInstance(
 	ctx context.Context,
 	commandForRouting dogma.Command,
-	logger *slog.Logger,
-) (string, error) {
-	var instanceID string
-
+) (instanceID string, err error) {
 	if err := xerrors.Recover(
 		func() error {
-			instanceID = c.Handler.RouteCommandToInstance(commandForRouting)
+			instanceID = t.Handler.RouteCommandToInstance(commandForRouting)
 			if instanceID == "" {
 				return errors.New("handler returned an empty instance ID")
 			}
 			return nil
 		},
 	); err != nil {
-		logger.ErrorContext(
+		t.Logger.ErrorContext(
 			ctx,
 			"unable to route command to instance",
 			xslog.Error(err),
 		)
 
 		return "", errFailed
+
 	}
 
 	return instanceID, nil
@@ -277,46 +346,38 @@ func (c *Controller) routeCommandToInstance(
 // loadInstance loads the aggregate instance with the given ID and returns its
 // aggregate root and the ID of the event stream to which new events must be
 // appended.
-func (c *Controller) loadInstance(
+func (t *commandTask) loadInstance(
 	ctx context.Context,
-	tx *sql.Tx,
 	instanceID string,
-	logger *slog.Logger,
 ) (
-	aggregateRoot dogma.AggregateRoot,
-	eventStreamID *uuidpb.UUID,
+	root dogma.AggregateRoot,
+	streamID *uuidpb.UUID,
 	err error,
 ) {
-	eventStreamID, nextOffset, snapshot, exists, locked, err := c.tryLockInstance(ctx, tx, instanceID)
+	streamID, nextOffset, snapshot, exists, err := t.tryLockInstance(ctx, instanceID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if !exists {
-		eventStreamID, nextOffset, snapshot, err = c.tryCreateInstance(ctx, tx, instanceID)
+		streamID, nextOffset, snapshot, err = t.tryCreateInstance(ctx, instanceID)
 		if err != nil {
 			return nil, nil, err
 		}
-	} else if !locked {
-		logger.DebugContext(
-			ctx,
-			"instance is locked by another transaction",
-		)
-		return nil, nil, errLocked
 	}
 
-	aggregateRoot, err = c.newRoot(ctx, logger)
+	root, err = t.newRoot(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// If the instance has a snapshot, attempt to unmarshal it.
 	if nextOffset != 0 {
-		if !c.applySnapshot(ctx, aggregateRoot, snapshot, logger) {
+		if !t.applySnapshot(ctx, root, snapshot) {
 			// We couldn't unmarshal the snapshot, so we just create a fresh root
 			// and replay all of the instance's historical events.
 			nextOffset = 0
-			aggregateRoot, err = c.newRoot(ctx, logger)
+			root, err = t.newRoot(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -324,33 +385,30 @@ func (c *Controller) loadInstance(
 	}
 
 	// Load events that were recorded after the snapshot was taken.
-	if err := c.applyHistoricalEvents(
+	if err := t.applyHistoricalEvents(
 		ctx,
-		tx,
-		eventStreamID,
+		streamID,
 		nextOffset,
 		instanceID,
-		aggregateRoot,
-		logger,
+		root,
 	); err != nil {
 		return nil, nil, err
 	}
 
-	return aggregateRoot, eventStreamID, nil
+	return root, streamID, nil
 }
 
 // newRoot creates a new aggregate root by calling the handler's New() method.
-func (c *Controller) newRoot(
-	ctx context.Context,
-	logger *slog.Logger,
-) (aggregateRoot dogma.AggregateRoot, err error) {
+func (t *commandTask) newRoot(ctx context.Context) (dogma.AggregateRoot, error) {
+	var root dogma.AggregateRoot
+
 	if err := xerrors.Recover(
 		func() error {
-			aggregateRoot = c.Handler.New()
+			root = t.Handler.New()
 			return nil
 		},
 	); err != nil {
-		logger.ErrorContext(
+		t.Logger.ErrorContext(
 			ctx,
 			"unable to create aggregate root",
 			xslog.Error(err),
@@ -359,29 +417,28 @@ func (c *Controller) newRoot(
 		return nil, errFailed
 	}
 
-	return aggregateRoot, nil
+	return root, nil
 }
 
 // tryLockInstance attempts to acquire a lock on the aggregate instance with the
 // given ID.
 //
 // The instance may or may not already exist.
-func (c *Controller) tryLockInstance(
+func (t *commandTask) tryLockInstance(
 	ctx context.Context,
-	tx *sql.Tx,
 	instanceID string,
 ) (
-	eventStreamID *uuidpb.UUID,
-	nextOffset eventstream.Offset,
+	streamID *uuidpb.UUID,
+	offset eventstream.Offset,
 	snapshot []byte,
-	exists, locked bool,
+	exists bool,
 	err error,
 ) {
 	// Try to lock the instance and fetch its data in a single round-trip. The
 	// snapshot data is loaded from the CTE that attempts to acquire the lock
 	// with FOR UPDATE SKIP LOCKED so that the snapshot data is only send across
 	// the network if the lock is acquired successfully.
-	row := tx.QueryRowContext(
+	row := t.Tx.QueryRowContext(
 		ctx,
 		`WITH exists AS (
 			SELECT EXISTS (
@@ -409,38 +466,43 @@ func (c *Controller) tryLockInstance(
 		FROM exists
 		LEFT JOIN locked
 		ON true`,
-		xsql.UUID(c.HandlerIdentity.GetKey()),
+		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
 	)
 
-	eventStreamID = &uuidpb.UUID{}
+	streamID = &uuidpb.UUID{}
+	var locked bool
 
 	if err := row.Scan(
-		xsql.UUID(eventStreamID),
-		&nextOffset,
+		xsql.UUID(streamID),
+		&offset,
 		&snapshot,
 		&exists,
 		&locked,
 	); err != nil {
-		return nil, 0, nil, false, false, fmt.Errorf("unable to lock aggregate instance: %w", err)
+		return nil, 0, nil, false, fmt.Errorf("unable to lock aggregate instance: %w", err)
 	}
 
-	return eventStreamID, nextOffset, snapshot, exists, locked, nil
+	if exists && !locked {
+		t.Logger.DebugContext(
+			ctx,
+			"instance is locked by another transaction",
+		)
+		return nil, 0, nil, true, errLocked
+	}
+
+	return streamID, offset, snapshot, exists, nil
 }
 
 // tryCreateInstance attempts to create a new aggregate instance. If it already
 // exists it returns the existing instance's data.
-func (c *Controller) tryCreateInstance(
-	ctx context.Context,
-	tx *sql.Tx,
-	instanceID string,
-) (
-	eventStreamID *uuidpb.UUID,
-	nextOffset eventstream.Offset,
+func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) (
+	streamID *uuidpb.UUID,
+	offset eventstream.Offset,
 	snapshot []byte,
 	err error,
 ) {
-	candidateEventStreamID, err := eventstream.Acquire(ctx, tx)
+	acquiredStreamID, err := eventstream.Acquire(ctx, t.Tx)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -449,7 +511,7 @@ func (c *Controller) tryCreateInstance(
 	// lose the race and block until it completes, in which case we must
 	// honor the event stream binding that the other transaction
 	// established, rather than using the candidate we chose.
-	row := tx.QueryRowContext(
+	row := t.Tx.QueryRowContext(
 		ctx,
 		`INSERT INTO dogma.aggregate_instances (
 			handler_key,
@@ -462,36 +524,34 @@ func (c *Controller) tryCreateInstance(
 			event_stream_id,
 			offset_after_snapshot,
 			snapshot`,
-		xsql.UUID(c.HandlerIdentity.GetKey()),
+		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
-		xsql.UUID(candidateEventStreamID),
+		xsql.UUID(acquiredStreamID),
 	)
 
-	eventStreamID = &uuidpb.UUID{}
+	streamID = &uuidpb.UUID{}
 
 	if err := row.Scan(
-		xsql.UUID(eventStreamID),
-		&nextOffset,
+		xsql.UUID(streamID),
+		&offset,
 		&snapshot,
 	); err != nil {
 		return nil, 0, nil, fmt.Errorf("unable to insert aggregate instance: %w", err)
 	}
 
-	return eventStreamID, nextOffset, snapshot, nil
+	return streamID, offset, snapshot, nil
 }
 
 // applyHistoricalEvents applies all events recorded by the aggregate instance
 // to the aggregate root starting at the given offset.
-func (c *Controller) applyHistoricalEvents(
+func (t *commandTask) applyHistoricalEvents(
 	ctx context.Context,
-	tx *sql.Tx,
-	eventStreamID *uuidpb.UUID,
-	nextOffset eventstream.Offset,
+	streamID *uuidpb.UUID,
+	offset eventstream.Offset,
 	instanceID string,
-	aggregateRoot dogma.AggregateRoot,
-	logger *slog.Logger,
+	root dogma.AggregateRoot,
 ) error {
-	rows, err := tx.QueryContext(
+	rows, err := t.Tx.QueryContext(
 		ctx,
 		`SELECT
 			message_id,
@@ -502,9 +562,9 @@ func (c *Controller) applyHistoricalEvents(
 		AND aggregate_handler_key = $3
 		AND aggregate_instance_id = $4
 		ORDER BY event_stream_offset`,
-		xsql.UUID(eventStreamID),
-		nextOffset,
-		xsql.UUID(c.HandlerIdentity.GetKey()),
+		xsql.UUID(streamID),
+		offset,
+		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
 	)
 	if err != nil {
@@ -536,7 +596,7 @@ func (c *Controller) applyHistoricalEvents(
 			eventEnvelope,
 			&eventForApply,
 		); err != nil {
-			logger.ErrorContext(
+			t.Logger.ErrorContext(
 				ctx,
 				"unable to unmarshal event",
 				slog.Group(
@@ -551,11 +611,11 @@ func (c *Controller) applyHistoricalEvents(
 
 		if err := xerrors.Recover(
 			func() error {
-				aggregateRoot.ApplyEvent(eventForApply)
+				root.ApplyEvent(eventForApply)
 				return nil
 			},
 		); err != nil {
-			logger.ErrorContext(
+			t.Logger.ErrorContext(
 				ctx,
 				"unable to apply event to aggregate root",
 				slog.Group(
@@ -576,19 +636,18 @@ func (c *Controller) applyHistoricalEvents(
 	return nil
 }
 
-func (c *Controller) applySnapshot(
+func (t *commandTask) applySnapshot(
 	ctx context.Context,
-	aggregateRoot dogma.AggregateRoot,
+	root dogma.AggregateRoot,
 	snapshot []byte,
-	logger *slog.Logger,
 ) bool {
 	if err := xerrors.Recover(
 		func() error {
-			return aggregateRoot.UnmarshalBinary(snapshot)
+			return root.UnmarshalBinary(snapshot)
 		},
 	); err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			logger.ErrorContext(
+			t.Logger.ErrorContext(
 				ctx,
 				"unable to unmarshal snapshot",
 				xslog.Error(err),
@@ -601,25 +660,23 @@ func (c *Controller) applySnapshot(
 	return true
 }
 
-func (c *Controller) takeSnapshot(
+func (t *commandTask) takeSnapshot(
 	ctx context.Context,
-	tx *sql.Tx,
 	instanceID string,
-	aggregateRoot dogma.AggregateRoot,
-	nextOffset eventstream.Offset,
-	logger *slog.Logger,
+	root dogma.AggregateRoot,
+	offset eventstream.Offset,
 ) error {
 	var snapshot []byte
 
 	if err := xerrors.Recover(
 		func() error {
 			var err error
-			snapshot, err = aggregateRoot.MarshalBinary()
+			snapshot, err = root.MarshalBinary()
 			return err
 		},
 	); err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			logger.ErrorContext(
+			t.Logger.ErrorContext(
 				ctx,
 				"unable to marshal snapshot",
 				xslog.Error(err),
@@ -631,15 +688,15 @@ func (c *Controller) takeSnapshot(
 
 	if err := xsql.ExecOne(
 		ctx,
-		tx,
+		t.Tx,
 		`UPDATE dogma.aggregate_instances SET
 			offset_after_snapshot = $1,
 			snapshot = $2
 		WHERE handler_key = $3
 		AND instance_id = $4`,
-		nextOffset,
+		offset,
 		snapshot,
-		xsql.UUID(c.HandlerIdentity.GetKey()),
+		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
 	); err != nil {
 		return fmt.Errorf("unable to persist snapshot: %w", err)
