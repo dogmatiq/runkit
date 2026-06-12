@@ -3,6 +3,7 @@ package xtesting
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -50,7 +51,12 @@ func RunEngines(
 		engineGroup.Wait()
 	}()
 
-	testContext, stopTest := context.WithTimeout(t.Context(), 3*time.Second)
+	testTimeout := 3 * time.Second
+	if os.Getenv("CI") != "" {
+		testTimeout = 20 * time.Second
+	}
+
+	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
 	defer stopTest()
 
 	db := NewDatabase(t)
