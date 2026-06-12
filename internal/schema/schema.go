@@ -66,8 +66,23 @@ func Create(ctx context.Context, db *sql.DB) error {
 
 // Drop removes the engine's schema from the given database.
 func Drop(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS dogma CASCADE`); err != nil {
-		return fmt.Errorf("unable to drop schema: %w", err)
+	entries, err := fs.ReadDir(ddlFS, "ddl")
+	if err != nil {
+		return fmt.Errorf("unable to read embedded schema: %w", err)
+	}
+
+	// TODO: remove "dogma" once its tables are moved to dedicated schemas
+	schemas := []string{"dogma"}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			schemas = append(schemas, entry.Name())
+		}
+	}
+
+	for _, schema := range schemas {
+		if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+			return fmt.Errorf("unable to drop schema: %w", err)
+		}
 	}
 
 	return nil

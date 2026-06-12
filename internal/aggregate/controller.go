@@ -118,7 +118,7 @@ func (c *Controller) acquireTask(
 		`SELECT
 			c.message_id,
 			c.envelope
-		FROM dogma.pending_commands AS c
+		FROM commandqueue.commands AS c
 		WHERE message_type_id = ANY($1)
 		AND execute_at <= clock_timestamp()
 		ORDER BY execute_at

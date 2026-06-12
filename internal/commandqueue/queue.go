@@ -41,7 +41,7 @@ func Add(
 	if idempotencyKey == "" {
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO dogma.pending_commands (
+			`INSERT INTO commandqueue.commands (
 				message_id,
 				correlation_id,
 				message_type_id,
@@ -61,7 +61,7 @@ func Add(
 	row := tx.QueryRowContext(
 		ctx,
 		`WITH idempotency_key AS (
-			INSERT INTO dogma.command_idempotency_keys (
+			INSERT INTO commandqueue.idempotency_keys (
 				idempotency_key,
 				message_id
 			)
@@ -71,7 +71,7 @@ func Add(
 				idempotency_key = EXCLUDED.idempotency_key
 			RETURNING message_id
 		), pending_command AS (
-			INSERT INTO dogma.pending_commands (
+			INSERT INTO commandqueue.commands (
 				message_id,
 				correlation_id,
 				message_type_id,
@@ -114,7 +114,7 @@ func Remove(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`DELETE FROM dogma.pending_commands
+		`DELETE FROM commandqueue.commands
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	); err != nil {
@@ -135,7 +135,7 @@ func DeferDueToContention(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE dogma.pending_commands SET
+		`UPDATE commandqueue.commands SET
 			execute_at = clock_timestamp() + $2 * interval '1 millisecond'
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
@@ -157,7 +157,7 @@ func DeferDueToFailure(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE dogma.pending_commands SET
+		`UPDATE commandqueue.commands SET
 			failures = failures + 1,
 			execute_at = clock_timestamp() + LEAST(
 				pow(2, failures) * $2,

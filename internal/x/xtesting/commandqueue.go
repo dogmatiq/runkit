@@ -22,7 +22,7 @@ func ExpectEmptyCommandQueueEventually(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.pending_commands`,
+		FROM commandqueue.commands`,
 	)
 }
 
@@ -41,7 +41,7 @@ func ExpectCommandToBeQueued(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.pending_commands
+		FROM commandqueue.commands
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -62,7 +62,7 @@ func ExpectCommandToBeRemovedFromQueueEventually(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.pending_commands
+		FROM commandqueue.commands
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -83,7 +83,7 @@ func ExpectCommandToBeDeferredDueToFailureEventually(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.pending_commands
+		FROM commandqueue.commands
 		WHERE message_id = $1
 		AND failures >= 1`,
 		xsql.UUID(messageID),

@@ -215,7 +215,7 @@ func possibleFutureEventAt(
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT execute_at
-		FROM dogma.pending_commands
+		FROM commandqueue.commands
 		WHERE correlation_id = $1
 		ORDER BY execute_at
 		LIMIT 1`,
