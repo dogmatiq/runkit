@@ -177,13 +177,13 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 		}
 	case *config.Integration:
 		return &integration.Controller{
-			DB:                    e.DB,
-			Handler:               handlerConfig.Interface(),
-			Identity:              handlerConfig.Identity(),
-			ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
-			Packer:                e.envelopePacker,
-			CommandTypeIDs:        e.collectInboundMessageTypeIDs(handlerConfig),
-			Logger:                e.newLoggerForHandler(handlerConfig),
+			DB:             e.DB,
+			Handler:        handlerConfig.Interface(),
+			Identity:       handlerConfig.Identity(),
+			Concurrency:    handlerConfig.ConcurrencyPreference(),
+			Packer:         e.envelopePacker,
+			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 	default:
 		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))

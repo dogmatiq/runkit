@@ -20,13 +20,13 @@ import (
 
 // Controller manages the state of an integration handler within the application.
 type Controller struct {
-	DB                    *sql.DB
-	Handler               dogma.IntegrationMessageHandler
-	Identity              *identitypb.Identity
-	ConcurrencyPreference dogma.ConcurrencyPreference
-	Packer                *envelopepb.Packer
-	CommandTypeIDs        []string
-	Logger                *slog.Logger
+	DB             *sql.DB
+	Handler        dogma.IntegrationMessageHandler
+	Identity       *identitypb.Identity
+	Concurrency    dogma.ConcurrencyPreference
+	Packer         *envelopepb.Packer
+	CommandTypeIDs []string
+	Logger         *slog.Logger
 }
 
 // Run handles messages for the controller's handler until ctx is canceled.
@@ -131,6 +131,7 @@ func (c *Controller) acquireTask(
 		MessageID:     &uuidpb.UUID{},
 		Handler:       c.Handler,
 		Identity:      c.Identity,
+		Concurrency:   c.Concurrency,
 		Packer:        c.Packer,
 		EnvelopeBytes: []byte{},
 		ParentLogger:  c.Logger,

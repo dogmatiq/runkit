@@ -2,7 +2,9 @@ package integration_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -44,6 +46,7 @@ func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *te
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
+					c.ConcurrencyPreference(dogma.MaximizeConcurrency)
 				},
 				HandleCommandFunc: func(
 					ctx context.Context,
@@ -65,4 +68,53 @@ func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *te
 }
 
 func TestHandlersAreNotInvokedConcurrentlyWhenConcurrencyPreferenceIsMinimize(t *testing.T) {
+	var concurrent atomic.Int32
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			for range 10 {
+				xtesting.ExecuteCommand(
+					t,
+					engine,
+					&stubs.CommandStub[stubs.TypeA]{},
+				)
+			}
+
+			xtesting.ExpectEmptyCommandQueueEventually(
+				t,
+				engine.DB,
+			)
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+					c.ConcurrencyPreference(dogma.MinimizeConcurrency)
+				},
+				HandleCommandFunc: func(
+					context.Context,
+					dogma.IntegrationCommandScope,
+					dogma.Command,
+				) error {
+					n := concurrent.Add(1)
+					defer concurrent.Add(-1)
+
+					if n > 1 {
+						t.Errorf("handler invoked concurrently: %d simultaneous calls", n)
+					}
+
+					// Hold the handler open long enough for a concurrent
+					// dispatch to be observable.
+					time.Sleep(5 * time.Millisecond)
+
+					return nil
+				},
+			},
+		),
+	)
 }

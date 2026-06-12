@@ -92,3 +92,14 @@ CREATE TABLE IF NOT EXISTS dogma.aggregate_instances (
         END
     )
 );
+
+--------------------------------------------------------------------------------
+-- The "integration_handler_locks" table provides row-level locking for
+-- integration handlers that prefer minimized concurrency.
+--
+-- A row is inserted for each handler and then locked with a blocking SELECT FOR
+-- UPDATE to serialize command handling.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dogma.integration_handler_locks (
+    handler_key uuid PRIMARY KEY
+);
