@@ -20,31 +20,48 @@ END $$;
 --
 -- It attempts to acquire an exclusive lock on an existing stream. If all
 -- existing streams are locked, and hence doing so would create stream
--- contention, it starts a new event stream.
+-- contention, it either blocks until a stream becomes available (if a
+-- zero-length stream already exists) or starts a new event stream.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION eventstream.acquire()
 RETURNS uuid
-LANGUAGE sql
+LANGUAGE plpgsql
 AS $$
-    WITH existing AS (
-        SELECT id
+DECLARE
+    acquired_id uuid;
+BEGIN
+    -- Phase 1: try to grab a free stream without blocking.
+    SELECT id INTO acquired_id
+    FROM eventstream.streams
+    ORDER BY next_offset, random()
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1;
+
+    IF acquired_id IS NOT NULL THEN
+        RETURN acquired_id;
+    END IF;
+
+    -- Phase 2: all streams are locked. If a zero-length stream already exists,
+    -- block until any stream becomes available rather than creating a redundant
+    -- empty stream.
+    IF EXISTS (SELECT 1 FROM eventstream.streams WHERE next_offset = 0) THEN
+        SELECT id INTO acquired_id
         FROM eventstream.streams
         ORDER BY next_offset, random()
-        FOR UPDATE SKIP LOCKED
-        LIMIT 1
-    ),
-    created AS (
-        INSERT INTO eventstream.streams (id)
-        SELECT gen_random_uuid()
-        WHERE NOT EXISTS (SELECT 1 FROM existing)
-        RETURNING id
-    )
-    SELECT id FROM existing
-    UNION ALL
-    SELECT id FROM created
-    LIMIT 1;
-$$;
+        FOR UPDATE
+        LIMIT 1;
 
+        RETURN acquired_id;
+    END IF;
+
+    -- Phase 3: no zero-length streams exist, create a new one.
+    INSERT INTO eventstream.streams (id)
+    VALUES (gen_random_uuid())
+    RETURNING id INTO acquired_id;
+
+    RETURN acquired_id;
+END;
+$$;
 
 --------------------------------------------------------------------------------
 -- The "append" function appends events to a specific event stream.
@@ -61,8 +78,8 @@ LANGUAGE sql
 AS $$
     WITH updated_stream AS (
         UPDATE eventstream.streams SET
-            next_offset = next_offset + array_length(events, 1)
-        WHERE id = stream_id
+            next_offset = next_offset + array_length(append.events, 1)
+        WHERE id = append.stream_id
         RETURNING OLD.next_offset AS base_offset
     ),
     event_list AS (
@@ -71,7 +88,7 @@ AS $$
             e.message_type_id,
             e.envelope,
             ordinal - 1 AS ordinal
-        FROM unnest(events) WITH ORDINALITY AS e(
+        FROM unnest(append.events) WITH ORDINALITY AS e(
             message_id,
             message_type_id,
             envelope,
@@ -120,10 +137,10 @@ AS $$
         a.id,
         eventstream.append(
             a.id,
-            correlation_id,
-            aggregate_handler_key,
-            aggregate_instance_id,
-            events
+            append_any.correlation_id,
+            append_any.aggregate_handler_key,
+            append_any.aggregate_instance_id,
+            append_any.events
         )
     FROM acquired AS a;
 $$;

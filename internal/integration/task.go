@@ -39,12 +39,11 @@ func (t *commandTask) Execute(ctx context.Context) error {
 
 	err := t.handleCommand(ctx)
 
-	switch err {
-	case nil:
-		err = commandqueue.Remove(ctx, t.Tx, t.MessageID)
-	case errFailed:
+	if errors.Is(err, errFailed) {
 		err = commandqueue.DeferDueToFailure(ctx, t.Tx, t.MessageID)
-	default:
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -120,9 +119,15 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
-		if err := t.appendEvents(ctx, eventEnvelopes); err != nil {
-			return err
-		}
+		return t.appendEventsAndRemoveCommand(ctx, eventEnvelopes)
+	}
+
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT commandqueue.remove($1)`,
+		xsql.UUID(t.MessageID),
+	); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
 	}
 
 	return nil
@@ -147,21 +152,25 @@ func (t *commandTask) acquireLock(ctx context.Context) error {
 	return nil
 }
 
-func (t *commandTask) appendEvents(ctx context.Context, eventEnvelopes *envelopepb.MultiEnvelope) error {
+// appendEventsAndRemoveCommand removes the command from the queue and appends
+// any events that were recorded during handling in a single database
+// round-trip.
+func (t *commandTask) appendEventsAndRemoveCommand(
+	ctx context.Context,
+	eventEnvelopes *envelopepb.MultiEnvelope,
+) error {
 	var (
 		query strings.Builder
 		args  []any
 	)
 
-	// $1 = correlation_id, $2 = aggregate_handler_key (nil), $3 = aggregate_instance_id (nil)
 	args = append(
 		args,
+		xsql.UUID(t.MessageID),
 		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
-		nil, // aggregate_handler_key
-		nil, // aggregate_instance_id
 	)
 
-	query.WriteString(`SELECT eventstream.append_any($1, $2, $3, ARRAY[`)
+	query.WriteString(`SELECT integration.complete_with_events($1, $2, ARRAY[`)
 
 	first := true
 	for eventEnvelope := range eventEnvelopes.All() {
@@ -189,7 +198,7 @@ func (t *commandTask) appendEvents(ctx context.Context, eventEnvelopes *envelope
 	query.WriteString(`])`)
 
 	if _, err := t.Tx.ExecContext(ctx, query.String(), args...); err != nil {
-		return fmt.Errorf("unable to append events: %w", err)
+		return fmt.Errorf("unable to complete command handling: %w", err)
 	}
 
 	return nil

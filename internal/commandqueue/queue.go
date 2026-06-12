@@ -111,11 +111,9 @@ func Remove(
 	tx *sql.Tx,
 	messageID *uuidpb.UUID,
 ) error {
-	if err := xsql.ExecOne(
+	if _, err := tx.ExecContext(
 		ctx,
-		tx,
-		`DELETE FROM commandqueue.commands
-		WHERE message_id = $1`,
+		`SELECT commandqueue.remove($1)`,
 		xsql.UUID(messageID),
 	); err != nil {
 		return fmt.Errorf("unable to remove command from queue: %w", err)
