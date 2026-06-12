@@ -22,7 +22,7 @@ import (
 // NewDatabase is a variant of [newDatabase] that applies the engine's schema to the
 // database before returning it.
 func NewDatabase(t testing.TB) *sql.DB {
-	db := newDatabase(t)
+	db := NewDatabaseWithoutSchema(t)
 
 	if err := schema.Create(t.Context(), db); err != nil {
 		t.Fatalf("unable to apply database schema: %s", err)
@@ -31,11 +31,11 @@ func NewDatabase(t testing.TB) *sql.DB {
 	return db
 }
 
-// newDatabase returns a database pool that connects to an isolated test
+// NewDatabaseWithoutSchema returns a database pool that connects to an isolated test
 // database.
 //
 // The database is removed when the test ends.
-func newDatabase(t testing.TB) *sql.DB {
+func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	t.Helper()
 
 	container := getContainer(t)

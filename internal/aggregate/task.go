@@ -302,7 +302,7 @@ func (t *commandTask) tryLockInstance(
 		`WITH exists AS (
 			SELECT EXISTS (
 				SELECT 1
-				FROM dogma.aggregate_instances
+				FROM aggregate.instances
 				WHERE handler_key = $1
 				AND instance_id = $2
 			) AS exists
@@ -311,7 +311,7 @@ func (t *commandTask) tryLockInstance(
 				stream_id,
 				offset_after_snapshot,
 				snapshot
-			FROM dogma.aggregate_instances
+			FROM aggregate.instances
 			WHERE handler_key = $1
 			AND instance_id = $2
 			FOR UPDATE SKIP LOCKED
@@ -372,7 +372,7 @@ func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) 
 	// established, rather than using the candidate we chose.
 	row := t.Tx.QueryRowContext(
 		ctx,
-		`INSERT INTO dogma.aggregate_instances (
+		`INSERT INTO aggregate.instances (
 			handler_key,
 			instance_id,
 			stream_id
@@ -548,7 +548,7 @@ func (t *commandTask) takeSnapshot(
 	if err := xsql.ExecOne(
 		ctx,
 		t.Tx,
-		`UPDATE dogma.aggregate_instances SET
+		`UPDATE aggregate.instances SET
 			offset_after_snapshot = $1,
 			snapshot = $2
 		WHERE handler_key = $3

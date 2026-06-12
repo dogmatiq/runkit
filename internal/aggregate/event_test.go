@@ -45,7 +45,7 @@ func TestEventsAreAppendedToTheEventStreamInOrder(t *testing.T) {
 			row := engine.DB.QueryRowContext(
 				t.Context(),
 				`SELECT stream_id
-				FROM dogma.aggregate_instances
+				FROM aggregate.instances
 				WHERE instance_id = '<instance>'`,
 			)
 			if err := row.Scan(xsql.UUID(streamID)); err != nil {

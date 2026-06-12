@@ -133,7 +133,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 func (t *commandTask) acquireLock(ctx context.Context) error {
 	if _, err := t.Tx.ExecContext(
 		ctx,
-		`INSERT INTO dogma.integration_handler_locks (
+		`INSERT INTO integration.handlers (
 			handler_key
 		)
 		VALUES ($1)
