@@ -30,13 +30,13 @@ func Acquire(ctx context.Context, tx *sql.Tx) (*uuidpb.UUID, error) {
 				s.id,
 				s.next_offset,
 				COALESCE(
-					(s.next_offset - e.event_stream_offset) / EXTRACT(EPOCH FROM clock_timestamp() - e.recorded_at),
+					(s.next_offset - e.offset) / EXTRACT(EPOCH FROM clock_timestamp() - e.recorded_at),
 					0
 				) AS events_per_second
 			FROM dogma.event_streams AS s
 			LEFT JOIN dogma.events AS e
-				ON e.event_stream_id = s.id
-				AND e.event_stream_offset = GREATEST(0, s.next_offset - $1)
+				ON e.stream_id = s.id
+				AND e.offset = GREATEST(0, s.next_offset - $1)
 		)
 		SELECT id
 		FROM streams

@@ -80,10 +80,14 @@ func TestAcquire(t *testing.T) {
 		db,
 		`INSERT INTO dogma.events (
 			message_id,
-			event_stream_id,
-			event_stream_offset,
+			correlation_id,
+			message_type_id,
+			stream_id,
+			"offset",
 			envelope
-		) VALUES ($1, $2, $3, $4)`,
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
+		xsql.UUID(uuidpb.Generate()),
+		xsql.UUID(uuidpb.Generate()),
 		xsql.UUID(uuidpb.Generate()),
 		xsql.UUID(firstStreamID),
 		0,

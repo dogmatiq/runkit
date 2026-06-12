@@ -44,7 +44,7 @@ func TestEventsAreAppendedToTheEventStreamInOrder(t *testing.T) {
 			streamID := &uuidpb.UUID{}
 			row := engine.DB.QueryRowContext(
 				t.Context(),
-				`SELECT event_stream_id
+				`SELECT stream_id
 				FROM dogma.aggregate_instances
 				WHERE instance_id = '<instance>'`,
 			)
@@ -139,7 +139,7 @@ func TestAllEventsFromTheSameInstanceAreAppendedToTheSameStream(t *testing.T) {
 				"distinct event stream count for instance-a",
 				1,
 				engine.DB,
-				`SELECT COUNT(DISTINCT event_stream_id)
+				`SELECT COUNT(DISTINCT stream_id)
 				FROM dogma.events
 				WHERE aggregate_instance_id = '<instance-a>'`,
 			)
@@ -149,7 +149,7 @@ func TestAllEventsFromTheSameInstanceAreAppendedToTheSameStream(t *testing.T) {
 				"distinct event stream count for instance-b",
 				1,
 				engine.DB,
-				`SELECT COUNT(DISTINCT event_stream_id)
+				`SELECT COUNT(DISTINCT stream_id)
 				FROM dogma.events
 				WHERE aggregate_instance_id = '<instance-b>'`,
 			)

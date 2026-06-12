@@ -22,26 +22,87 @@ const (
 )
 
 // Add adds a command to the queue.
+//
+// If the envelope has an idempotency key that has already been used, the
+// command is silently discarded, messageID is the ID of the message that
+// originally claimed the idempotency key, and ok is false.
+//
+// Otherwise, the command is added to the queue, messageID is the ID of the
+// newly added command, and ok is true.
 func Add(
 	ctx context.Context,
 	tx *sql.Tx,
 	commandEnvelope *envelopepb.Envelope,
-) error {
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO dogma.pending_commands (
-			message_id,
-			message_type_id,
-			envelope
-		) VALUES ($1, $2, $3)`,
-		xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
-		xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
-		xsql.Envelope(commandEnvelope),
-	); err != nil {
-		return fmt.Errorf("unable to add command to queue: %w", err)
+) (messageID *uuidpb.UUID, ok bool, err error) {
+	idempotencyKey := commandEnvelope.GetBody().GetIdempotencyKey()
+	messageID = commandEnvelope.GetBody().GetMessageId()
+	messageTypeID := commandEnvelope.GetBody().GetMessage().GetTypeId()
+
+	if idempotencyKey == "" {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO dogma.pending_commands (
+				message_id,
+				correlation_id,
+				message_type_id,
+				envelope
+			) VALUES ($1, $2, $3, $4)`,
+			xsql.UUID(messageID),
+			xsql.UUID(commandEnvelope.GetHeader().GetCorrelationId()),
+			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.Envelope(commandEnvelope),
+		); err != nil {
+			return nil, false, fmt.Errorf("unable to add command to queue: %w", err)
+		}
+
+		return messageID, true, nil
 	}
 
-	return nil
+	row := tx.QueryRowContext(
+		ctx,
+		`WITH idempotency_key AS (
+			INSERT INTO dogma.command_idempotency_keys (
+				idempotency_key,
+				message_id
+			)
+			VALUES ($1, $2)
+			ON CONFLICT (idempotency_key)
+			DO UPDATE SET
+				idempotency_key = EXCLUDED.idempotency_key
+			RETURNING message_id
+		), pending_command AS (
+			INSERT INTO dogma.pending_commands (
+				message_id,
+				correlation_id,
+				message_type_id,
+				envelope
+			)
+			SELECT $2, $3, $4, $5
+			FROM idempotency_key
+			WHERE idempotency_key.message_id = $2
+		)
+		SELECT
+			message_id,
+			message_id = $2 AS enqueued
+		FROM idempotency_key`,
+		idempotencyKey,
+		xsql.UUID(messageID),
+		xsql.UUID(commandEnvelope.GetHeader().GetCorrelationId()),
+		xsql.UUID(messageTypeID),
+		xsql.Envelope(commandEnvelope),
+	)
+
+	// Ensure we're not scanning on top of the message ID in the envelope.
+	messageID = &uuidpb.UUID{}
+
+	if err := row.Scan(
+		xsql.UUID(messageID),
+		&ok,
+	); err != nil {
+		return nil, false, fmt.Errorf("unable to add command to queue: %w", err)
+	}
+
+	return messageID, ok, nil
 }
 
 // Remove removes a command from the queue.

@@ -116,7 +116,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 			"aggregate_instance",
 			slog.String("id", instanceID),
 			slog.String("description", root.AggregateInstanceDescription()),
-			xslog.UUID("event_stream_id", streamID),
+			xslog.UUID("stream_id", streamID),
 		),
 	)
 
@@ -308,7 +308,7 @@ func (t *commandTask) tryLockInstance(
 			) AS exists
 		), locked AS (
 			SELECT
-				event_stream_id,
+				stream_id,
 				offset_after_snapshot,
 				snapshot
 			FROM dogma.aggregate_instances
@@ -317,11 +317,11 @@ func (t *commandTask) tryLockInstance(
 			FOR UPDATE SKIP LOCKED
 		)
 		SELECT
-			locked.event_stream_id,
+			locked.stream_id,
 			COALESCE(locked.offset_after_snapshot, 0) AS next_offset,
 			locked.snapshot,
 			exists.exists,
-			locked.event_stream_id IS NOT NULL AS locked
+			locked.stream_id IS NOT NULL AS locked
 		FROM exists
 		LEFT JOIN locked
 		ON true`,
@@ -375,12 +375,12 @@ func (t *commandTask) tryCreateInstance(ctx context.Context, instanceID string) 
 		`INSERT INTO dogma.aggregate_instances (
 			handler_key,
 			instance_id,
-			event_stream_id
+			stream_id
 		) VALUES ($1, $2, $3)
 		ON CONFLICT (handler_key, instance_id) DO UPDATE SET
 			instance_id = EXCLUDED.instance_id
 		RETURNING
-			event_stream_id,
+			stream_id,
 			offset_after_snapshot,
 			snapshot`,
 		xsql.UUID(t.Identity.GetKey()),
@@ -413,14 +413,14 @@ func (t *commandTask) applyHistoricalEvents(
 	rows, err := t.Tx.QueryContext(
 		ctx,
 		`SELECT
-			message_id,
-			envelope
-		FROM dogma.events
-		WHERE event_stream_id = $1
-		AND event_stream_offset >= $2
-		AND aggregate_handler_key = $3
-		AND aggregate_instance_id = $4
-		ORDER BY event_stream_offset`,
+			e.message_id,
+			e.envelope
+		FROM dogma.events AS e
+		WHERE e.stream_id = $1
+		AND e.offset >= $2
+		AND e.aggregate_handler_key = $3
+		AND e.aggregate_instance_id = $4
+		ORDER BY e.offset`,
 		xsql.UUID(streamID),
 		offset,
 		xsql.UUID(t.Identity.GetKey()),

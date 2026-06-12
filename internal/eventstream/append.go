@@ -42,9 +42,11 @@ func Append(
 					OLD.next_offset
 			)
 			INSERT INTO dogma.events (
-				event_stream_id,
-				event_stream_offset,
+				stream_id,
+				"offset",
 				message_id,
+				correlation_id,
+				message_type_id,
 				envelope,
 				aggregate_handler_key,
 				aggregate_instance_id
@@ -55,11 +57,15 @@ func Append(
 				$2,
 				$3,
 				$4,
-				$5
+				$5,
+				$6,
+				$7
 			FROM streams AS s
-			RETURNING event_stream_offset`,
+			RETURNING "offset"`,
 			xsql.UUID(streamID),
 			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
+			xsql.UUID(eventEnvelope.GetHeader().GetCorrelationId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
 			xsql.Envelope(eventEnvelope),
 			xsql.UUID(aggregateHandlerKey),
 			aggregateInstanceID,

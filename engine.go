@@ -14,12 +14,8 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
-	"github.com/dogmatiq/reference-engine/internal/commandqueue"
-	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/reference-engine/internal/integration"
-	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -80,63 +76,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.ready.Set()
 
 	return g.Wait()
-}
-
-// ExecuteCommand submits a [Command] for execution.
-//
-// It returns once the engine has taken ownership of the command. By
-// default, it doesn't wait for handling to finish.
-//
-// See [dogma.CommandExecutor] for more details.
-func (e *Engine) ExecuteCommand(
-	ctx context.Context,
-	command dogma.Command,
-	_ ...dogma.ExecuteCommandOption,
-) error {
-	if err := e.ready.WaitContext(ctx); err != nil {
-		return err
-	}
-
-	commandEnvelope := e.envelopePacker.PackCommand(command)
-
-	contexthook.Invoke(ctx, contexthook.ExecuteCommand{
-		CommandEnvelope: commandEnvelope,
-	})
-
-	if err := command.Validate(
-		xmessage.ValidationScope{
-			IsNewMessage: true,
-			Envelope:     commandEnvelope,
-		},
-	); err != nil {
-		return err
-	}
-
-	if _, ok := e.inboundCommandTypes[reflect.TypeOf(command)]; !ok {
-		return fmt.Errorf("no route found for command type: %T", command)
-	}
-
-	return xsql.Transact(
-		ctx,
-		e.DB,
-		func(ctx context.Context, tx *sql.Tx) error {
-			if err := commandqueue.Add(
-				ctx,
-				tx,
-				commandEnvelope,
-			); err != nil {
-				return err
-			}
-
-			e.Logger.InfoContext(
-				ctx,
-				"enqueued command for execution",
-				xslog.Envelope("command", commandEnvelope),
-			)
-
-			return nil
-		},
-	)
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for

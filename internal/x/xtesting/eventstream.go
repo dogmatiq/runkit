@@ -32,6 +32,25 @@ func ExpectEventStreamCount(
 	)
 }
 
+// ExpectEventCount asserts that the total number of events in the database
+// matches the given value.
+func ExpectEventCount(
+	t testing.TB,
+	q xsql.Querier,
+	want int,
+) {
+	t.Helper()
+
+	ExpectQueryResult(
+		t,
+		"event count",
+		want,
+		q,
+		`SELECT COUNT(*)
+		FROM dogma.events`,
+	)
+}
+
 // ExpectContiguousEvents asserts that an event stream contains the given
 // events, starting at the given offset, with no gaps.
 func ExpectContiguousEvents(
@@ -46,12 +65,12 @@ func ExpectContiguousEvents(
 	rows, err := q.QueryContext(
 		t.Context(),
 		`SELECT
-			event_stream_offset,
-			envelope
-		FROM dogma.events
-		WHERE event_stream_id = $1
-		AND event_stream_offset >= $2
-		ORDER BY event_stream_offset
+			e.offset,
+			e.envelope
+		FROM dogma.events AS e
+		WHERE e.stream_id = $1
+		AND e.offset >= $2
+		ORDER BY e.offset
 		LIMIT $3`,
 		xsql.UUID(streamID),
 		offset,
@@ -116,12 +135,12 @@ func ExpectContiguousEventEnvelopes(
 	rows, err := q.QueryContext(
 		t.Context(),
 		`SELECT
-			event_stream_offset,
-			envelope
-		FROM dogma.events
-		WHERE event_stream_id = $1
-		AND event_stream_offset >= $2
-		ORDER BY event_stream_offset
+			e.offset,
+			e.envelope
+		FROM dogma.events AS e
+		WHERE e.stream_id = $1
+		AND e.offset >= $2
+		ORDER BY e.offset
 		LIMIT $3`,
 		xsql.UUID(streamID),
 		offset,

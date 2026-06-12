@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -141,6 +142,46 @@ func TestEventsRecordedByDifferentCommandsAreDistributedAcrossStreams(t *testing
 				) error {
 					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
 					return nil
+				},
+			},
+		),
+	)
+}
+
+func TestEventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			commandEnvelope := xtesting.ExecuteCommand(
+				t,
+				engine,
+				&stubs.CommandStub[stubs.TypeA]{},
+			)
+
+			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				t,
+				engine.DB,
+				commandEnvelope.GetBody().GetMessageId(),
+			)
+
+			xtesting.ExpectEventCount(t, engine.DB, 0)
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					_ dogma.Command,
+				) error {
+					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					return errors.New("<error>")
 				},
 			},
 		),
