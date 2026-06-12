@@ -47,6 +47,9 @@ func (t *commandTask) Execute(ctx context.Context) error {
 	}
 
 	if err := t.Tx.Commit(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("unable to commit transaction: %w", err)
 	}
 
