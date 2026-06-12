@@ -11,7 +11,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -59,13 +58,23 @@ func (e *Engine) ExecuteCommand(
 		ctx,
 		e.DB,
 		func(ctx context.Context, tx *sql.Tx) error {
-			var (
-				ok  bool
-				err error
+			row := tx.QueryRowContext(
+				ctx,
+				`SELECT
+					actual_message_id,
+					enqueued
+				FROM commandqueue.add($1, $2, $3, $4, $5)`,
+				xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
+				xsql.UUID(commandEnvelope.GetHeader().GetCorrelationId()),
+				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+				xsql.Envelope(commandEnvelope),
+				commandEnvelope.GetBody().GetIdempotencyKey(),
 			)
-			messageID, ok, err = commandqueue.Add(ctx, tx, commandEnvelope)
-			if err != nil {
-				return err
+
+			messageID = &uuidpb.UUID{}
+			var ok bool
+			if err := row.Scan(xsql.UUID(messageID), &ok); err != nil {
+				return fmt.Errorf("unable to add command to queue: %w", err)
 			}
 
 			if ok {

@@ -68,9 +68,9 @@ func ExpectCommandToBeRemovedFromQueueEventually(
 	)
 }
 
-// ExpectCommandToBeDeferredDueToFailureEventually asserts that the command with
-// the given ID has been deferred at least once due to a failure.
-func ExpectCommandToBeDeferredDueToFailureEventually(
+// ExpectCommandToBeBackedOffDueToFailureEventually asserts that the command with
+// the given ID has been backed off at least once due to a failure.
+func ExpectCommandToBeBackedOffDueToFailureEventually(
 	t testing.TB,
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
@@ -79,7 +79,7 @@ func ExpectCommandToBeDeferredDueToFailureEventually(
 
 	ExpectQueryResultEventually(
 		t,
-		fmt.Sprintf("command %q has been deferred due to failure", messageID),
+		fmt.Sprintf("command %q has been backed off due to failure", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)

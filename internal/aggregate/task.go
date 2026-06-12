@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -25,6 +25,8 @@ type commandTask struct {
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
 	MessageID            *uuidpb.UUID
+	BackoffBase          time.Duration
+	BackoffLimit         time.Duration
 	EnvelopeBytes        []byte
 	ParentLogger, Logger *slog.Logger
 }
@@ -39,12 +41,12 @@ var (
 func (t *commandTask) Execute(ctx context.Context) error {
 	defer t.Tx.Rollback()
 
-	err := t.handleCommand(ctx)
+	instanceID, err := t.handleCommand(ctx)
 
 	if errors.Is(err, errLocked) {
-		err = commandqueue.DeferDueToContention(ctx, t.Tx, t.MessageID)
+		err = t.backoffDueToContention(ctx)
 	} else if errors.Is(err, errFailed) {
-		err = commandqueue.DeferDueToFailure(ctx, t.Tx, t.MessageID)
+		err = t.backoffDueToFailure(ctx, instanceID)
 	}
 
 	if err != nil {
@@ -62,7 +64,7 @@ func (t *commandTask) Execute(ctx context.Context) error {
 }
 
 // handleCommand processes the command in the given envelope.
-func (t *commandTask) handleCommand(ctx context.Context) error {
+func (t *commandTask) handleCommand(ctx context.Context) (string, error) {
 	var (
 		commandEnvelope                       = &envelopepb.Envelope{}
 		commandForRouting, commandForHandling dogma.Command
@@ -84,7 +86,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 			xslog.Error(err),
 		)
 
-		return errFailed
+		return "", errFailed
 	}
 
 	t.Logger = t.ParentLogger.With(
@@ -93,7 +95,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 
 	instanceID, err := t.routeCommandToInstance(ctx, commandForRouting)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	t.Logger = t.ParentLogger.With(
@@ -106,7 +108,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 
 	root, streamID, err := t.loadInstance(ctx, instanceID)
 	if err != nil {
-		return err
+		return instanceID, err
 	}
 
 	t.Logger = t.ParentLogger.With(
@@ -146,11 +148,11 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 			xslog.Error(err),
 		)
 
-		return errFailed
+		return instanceID, errFailed
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
-		return t.completeWithEvents(
+		return instanceID, t.completeWithEvents(
 			ctx,
 			instanceID,
 			streamID,
@@ -159,7 +161,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		)
 	}
 
-	return t.completeWithoutEvents(ctx, instanceID)
+	return instanceID, t.completeWithoutEvents(ctx, instanceID)
 }
 
 // routeCommandToInstance routes the instance ID for the given command by
@@ -626,4 +628,47 @@ func (t *commandTask) marshalSnapshot(
 	}
 
 	return snapshot, true
+}
+
+func (t *commandTask) backoffDueToContention(ctx context.Context) error {
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT commandqueue.backoff_due_to_contention($1, $2)`,
+		xsql.UUID(t.MessageID),
+		t.BackoffBase.Milliseconds(),
+	); err != nil {
+		return fmt.Errorf("unable to back off queued command due to contention: %w", err)
+	}
+
+	return nil
+}
+
+func (t *commandTask) backoffDueToFailure(ctx context.Context, instanceID string) error {
+	if instanceID != "" {
+		// If the instance was newly created, delete it in case this command is
+		// not routed to the same instance in the future.
+		if _, err := t.Tx.ExecContext(
+			ctx,
+			`DELETE FROM aggregate.instances
+			WHERE handler_key = $1
+			AND instance_id = $2
+			AND stream_id IS NULL`,
+			xsql.UUID(t.Identity.GetKey()),
+			instanceID,
+		); err != nil {
+			return fmt.Errorf("unable to delete aggregate instance: %w", err)
+		}
+	}
+
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT commandqueue.backoff_due_to_failure($1, $2, $3)`,
+		xsql.UUID(t.MessageID),
+		t.BackoffBase.Milliseconds(),
+		t.BackoffLimit.Milliseconds(),
+	); err != nil {
+		return fmt.Errorf("unable to back off queued command due to failure: %w", err)
+	}
+
+	return nil
 }

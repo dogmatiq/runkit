@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/commandqueue"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -26,6 +26,8 @@ type commandTask struct {
 	Concurrency          dogma.ConcurrencyPreference
 	Packer               *envelopepb.Packer
 	MessageID            *uuidpb.UUID
+	BackoffBase          time.Duration
+	BackoffLimit         time.Duration
 	EnvelopeBytes        []byte
 	ParentLogger, Logger *slog.Logger
 }
@@ -40,7 +42,7 @@ func (t *commandTask) Execute(ctx context.Context) error {
 	err := t.handleCommand(ctx)
 
 	if errors.Is(err, errFailed) {
-		err = commandqueue.DeferDueToFailure(ctx, t.Tx, t.MessageID)
+		err = t.backoffDueToFailure(ctx)
 	}
 
 	if err != nil {
@@ -204,6 +206,20 @@ func (t *commandTask) completeWithEvents(
 
 	if _, err := t.Tx.ExecContext(ctx, query.String(), args...); err != nil {
 		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+func (t *commandTask) backoffDueToFailure(ctx context.Context) error {
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`SELECT commandqueue.backoff_due_to_failure($1, $2, $3)`,
+		xsql.UUID(t.MessageID),
+		t.BackoffBase.Milliseconds(),
+		t.BackoffLimit.Milliseconds(),
+	); err != nil {
+		return fmt.Errorf("unable to back off queued command due to failure: %w", err)
 	}
 
 	return nil

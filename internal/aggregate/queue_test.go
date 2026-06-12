@@ -95,11 +95,11 @@ func TestUnhandledCommandsRemainQueued(t *testing.T) {
 	)
 }
 
-func TestInvalidCommandsAreDeferred(t *testing.T) {
+func TestInvalidCommandsAreBackedOff(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Execute an invalid command so that it will be deferred.
+			// Execute an invalid command so that it will be backed off.
 			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
 				engine,
@@ -110,7 +110,7 @@ func TestInvalidCommandsAreDeferred(t *testing.T) {
 				},
 			)
 
-			// Execute a valid command to verify that the deferred command
+			// Execute a valid command to verify that the backed-off command
 			// does not block handling of other commands.
 			validCommandEnvelope := xtesting.ExecuteCommand(
 				t,
@@ -124,7 +124,7 @@ func TestInvalidCommandsAreDeferred(t *testing.T) {
 				validCommandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 				t,
 				engine.DB,
 				invalidCommandEnvelope.GetBody().GetMessageId(),
@@ -147,7 +147,7 @@ func TestInvalidCommandsAreDeferred(t *testing.T) {
 	)
 }
 
-func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
+func TestCommandIsBackedOffIfStateCannotBeLoaded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -198,9 +198,9 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 				&stubs.CommandStub[stubs.TypeA]{},
 			)
 
-			// The command should be deferred because the instance
+			// The command should be backed off because the instance
 			// state cannot be loaded.
-			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 				t,
 				engine.DB,
 				commandEnvelope.GetBody().GetMessageId(),
@@ -230,7 +230,7 @@ func TestCommandIsDeferredIfStateCannotBeLoaded(t *testing.T) {
 	)
 }
 
-func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
+func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
 	t.Run("in RouteCommandToInstance()", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
@@ -241,7 +241,7 @@ func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
 					&stubs.CommandStub[stubs.TypeA]{},
 				)
 
-				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),
@@ -274,7 +274,7 @@ func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
 					&stubs.CommandStub[stubs.TypeA]{},
 				)
 
-				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),
@@ -337,7 +337,7 @@ func TestCommandIsDeferredWhenApplicationCodePanics(t *testing.T) {
 					&stubs.CommandStub[stubs.TypeA]{},
 				)
 
-				xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),

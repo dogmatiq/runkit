@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
@@ -104,6 +105,11 @@ type controller interface {
 
 // newControllerForHandler creates a controller for the given handler.
 func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controller {
+	const (
+		backoffBase  = 10 * time.Millisecond
+		backoffLimit = 300 * time.Second
+	)
+
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return &aggregate.Controller{
@@ -112,6 +118,8 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Identity:       handlerConfig.Identity(),
 			Packer:         e.envelopePacker,
 			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			BackoffBase:    backoffBase,
+			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 	case *config.Integration:
@@ -122,6 +130,8 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Concurrency:    handlerConfig.ConcurrencyPreference(),
 			Packer:         e.envelopePacker,
 			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			BackoffBase:    backoffBase,
+			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 	default:

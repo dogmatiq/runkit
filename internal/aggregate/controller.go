@@ -26,6 +26,8 @@ type Controller struct {
 	Identity       *identitypb.Identity
 	Packer         *envelopepb.Packer
 	CommandTypeIDs []string
+	BackoffBase    time.Duration
+	BackoffLimit   time.Duration
 	Logger         *slog.Logger
 }
 
@@ -133,6 +135,8 @@ func (c *Controller) acquireTask(
 		Handler:       c.Handler,
 		Identity:      c.Identity,
 		Packer:        c.Packer,
+		BackoffBase:   c.BackoffBase,
+		BackoffLimit:  c.BackoffLimit,
 		EnvelopeBytes: []byte{},
 		ParentLogger:  c.Logger,
 		Logger:        c.Logger,

@@ -145,7 +145,7 @@ func TestEventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
 				&stubs.CommandStub[stubs.TypeA]{},
 			)
 
-			xtesting.ExpectCommandToBeDeferredDueToFailureEventually(
+			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
 				t,
 				engine.DB,
 				commandEnvelope.GetBody().GetMessageId(),

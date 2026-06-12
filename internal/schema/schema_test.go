@@ -8,6 +8,8 @@ import (
 )
 
 func TestCreateAndDrop(t *testing.T) {
+	t.Parallel()
+
 	db := xtesting.NewDatabaseWithoutSchema(t)
 
 	var baseline int
