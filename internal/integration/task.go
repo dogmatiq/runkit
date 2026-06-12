@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/commandqueue"
-	"github.com/dogmatiq/reference-engine/internal/eventstream"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -119,25 +119,13 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		return errFailed
 	}
 
-	eventEnvelopes, ok := packer.Seal()
-	if !ok {
-		// No events were recorded.
-		return nil
+	if eventEnvelopes, ok := packer.Seal(); ok {
+		if err := t.appendEvents(ctx, eventEnvelopes); err != nil {
+			return err
+		}
 	}
 
-	streamID, err := eventstream.Acquire(ctx, t.Tx)
-	if err != nil {
-		return err
-	}
-
-	_, err = eventstream.Append(
-		ctx,
-		t.Tx,
-		streamID,
-		eventEnvelopes,
-	)
-
-	return err
+	return nil
 }
 
 // acquireLock serializes command handling for the handler when it prefers
@@ -154,6 +142,54 @@ func (t *commandTask) acquireLock(ctx context.Context) error {
 		xsql.UUID(t.Identity.GetKey()),
 	); err != nil {
 		return fmt.Errorf("unable to acquire handler lock: %w", err)
+	}
+
+	return nil
+}
+
+func (t *commandTask) appendEvents(ctx context.Context, eventEnvelopes *envelopepb.MultiEnvelope) error {
+	var (
+		query strings.Builder
+		args  []any
+	)
+
+	// $1 = correlation_id, $2 = aggregate_handler_key (nil), $3 = aggregate_instance_id (nil)
+	args = append(
+		args,
+		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
+		nil, // aggregate_handler_key
+		nil, // aggregate_instance_id
+	)
+
+	query.WriteString(`SELECT eventstream.append_any($1, $2, $3, ARRAY[`)
+
+	first := true
+	for eventEnvelope := range eventEnvelopes.All() {
+		if first {
+			first = false
+		} else {
+			query.WriteString(", ")
+		}
+
+		n := len(args)
+		fmt.Fprintf(
+			&query,
+			"ROW($%d, $%d, $%d)::eventstream.event",
+			n+1, n+2, n+3,
+		)
+
+		args = append(
+			args,
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.Envelope(eventEnvelope),
+		)
+	}
+
+	query.WriteString(`])`)
+
+	if _, err := t.Tx.ExecContext(ctx, query.String(), args...); err != nil {
+		return fmt.Errorf("unable to append events: %w", err)
 	}
 
 	return nil

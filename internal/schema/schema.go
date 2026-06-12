@@ -3,14 +3,16 @@ package schema
 import (
 	"context"
 	"database/sql"
+	"embed"
 	_ "embed"
 	"fmt"
+	"io/fs"
 
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-//go:embed schema.sql
-var schemaSQL string
+//go:embed ddl
+var ddlFS embed.FS
 
 // Create applies the PostgreSQL schema to the given database.
 func Create(ctx context.Context, db *sql.DB) error {
@@ -30,8 +32,31 @@ func Create(ctx context.Context, db *sql.DB) error {
 				return fmt.Errorf("unable to lock schema: %w", err)
 			}
 
-			if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
-				return fmt.Errorf("unable to execute DDL: %w", err)
+			if err := fs.WalkDir(
+				ddlFS,
+				".",
+				func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						return fmt.Errorf("unable to read embedded schema: %w", err)
+					}
+
+					if d.IsDir() {
+						return nil
+					}
+
+					ddl, err := ddlFS.ReadFile(path)
+					if err != nil {
+						return fmt.Errorf("unable to read embedded schema: %w", err)
+					}
+
+					if _, err := tx.ExecContext(ctx, string(ddl)); err != nil {
+						return fmt.Errorf("unable to execute DDL: %w", err)
+					}
+
+					return nil
+				},
+			); err != nil {
+				return err
 			}
 
 			return nil

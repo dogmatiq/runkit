@@ -273,15 +273,15 @@ func pollForEvents(
 		)
 		SELECT
 			e.stream_id,
-			e.offset,
+			e.stream_offset,
 			e.envelope
-		FROM dogma.events AS e
+		FROM eventstream.events AS e
 		LEFT JOIN offsets AS o
 			ON o.stream_id = e.stream_id
-		WHERE e.offset >= COALESCE(o.next_offset, 0)
+		WHERE e.stream_offset >= COALESCE(o.next_offset, 0)
 			AND e.correlation_id = $3
 			AND e.message_type_id = ANY($4)
-		ORDER BY e.offset
+		ORDER BY e.stream_offset
 		LIMIT 100`,
 		streamIDs,
 		offsets,

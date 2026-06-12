@@ -28,7 +28,7 @@ func ExpectEventStreamCount(
 		want,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.event_streams`,
+		FROM eventstream.streams`,
 	)
 }
 
@@ -47,7 +47,7 @@ func ExpectEventCount(
 		want,
 		q,
 		`SELECT COUNT(*)
-		FROM dogma.events`,
+		FROM eventstream.events`,
 	)
 }
 
@@ -65,12 +65,12 @@ func ExpectContiguousEvents(
 	rows, err := q.QueryContext(
 		t.Context(),
 		`SELECT
-			e.offset,
+			e.stream_offset,
 			e.envelope
-		FROM dogma.events AS e
+		FROM eventstream.events AS e
 		WHERE e.stream_id = $1
-		AND e.offset >= $2
-		ORDER BY e.offset
+		AND e.stream_offset >= $2
+		ORDER BY e.stream_offset
 		LIMIT $3`,
 		xsql.UUID(streamID),
 		offset,
@@ -135,12 +135,12 @@ func ExpectContiguousEventEnvelopes(
 	rows, err := q.QueryContext(
 		t.Context(),
 		`SELECT
-			e.offset,
+			e.stream_offset,
 			e.envelope
-		FROM dogma.events AS e
+		FROM eventstream.events AS e
 		WHERE e.stream_id = $1
-		AND e.offset >= $2
-		ORDER BY e.offset
+		AND e.stream_offset >= $2
+		ORDER BY e.stream_offset
 		LIMIT $3`,
 		xsql.UUID(streamID),
 		offset,

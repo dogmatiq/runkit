@@ -34,16 +34,16 @@ func Append(
 		row := tx.QueryRowContext(
 			ctx,
 			`WITH streams AS (
-				UPDATE dogma.event_streams SET
+				UPDATE eventstream.streams SET
 					next_offset = next_offset + 1
 				WHERE id = $1
 				RETURNING
 					id,
 					OLD.next_offset
 			)
-			INSERT INTO dogma.events (
+			INSERT INTO eventstream.events (
 				stream_id,
-				"offset",
+				stream_offset,
 				message_id,
 				correlation_id,
 				message_type_id,
@@ -61,7 +61,7 @@ func Append(
 				$6,
 				$7
 			FROM streams AS s
-			RETURNING "offset"`,
+			RETURNING stream_offset`,
 			xsql.UUID(streamID),
 			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(eventEnvelope.GetHeader().GetCorrelationId()),

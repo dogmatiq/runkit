@@ -35,7 +35,7 @@ func TestEventsRecordedByTheSameCommandAreAppendedToAnEventStreamInOrder(t *test
 			row := engine.DB.QueryRowContext(
 				t.Context(),
 				`SELECT id
-				FROM dogma.event_streams`,
+				FROM eventstream.streams`,
 			)
 			if err := row.Scan(xsql.UUID(streamID)); err != nil {
 				t.Fatalf("unable to find event stream: %v", err)
@@ -116,7 +116,7 @@ func TestEventsRecordedByDifferentCommandsAreDistributedAcrossStreams(t *testing
 			row := engine.DB.QueryRowContext(
 				t.Context(),
 				`SELECT COUNT(*)
-				FROM dogma.event_streams
+				FROM eventstream.streams
 				WHERE next_offset > 0`,
 			)
 			if err := row.Scan(&distinctStreams); err != nil {

@@ -461,7 +461,7 @@ func TestSnapshotIsPersistedAfterEveryCommand(t *testing.T) {
 					xtesting.ExecOne(
 						t,
 						tx,
-						`DELETE FROM dogma.events
+						`DELETE FROM eventstream.events
 						WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
 						AND aggregate_instance_id = '<instance>'`,
 					)

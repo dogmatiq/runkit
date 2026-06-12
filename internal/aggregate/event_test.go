@@ -140,7 +140,7 @@ func TestAllEventsFromTheSameInstanceAreAppendedToTheSameStream(t *testing.T) {
 				1,
 				engine.DB,
 				`SELECT COUNT(DISTINCT stream_id)
-				FROM dogma.events
+				FROM eventstream.events
 				WHERE aggregate_instance_id = '<instance-a>'`,
 			)
 
@@ -150,7 +150,7 @@ func TestAllEventsFromTheSameInstanceAreAppendedToTheSameStream(t *testing.T) {
 				1,
 				engine.DB,
 				`SELECT COUNT(DISTINCT stream_id)
-				FROM dogma.events
+				FROM eventstream.events
 				WHERE aggregate_instance_id = '<instance-b>'`,
 			)
 		},

@@ -415,12 +415,12 @@ func (t *commandTask) applyHistoricalEvents(
 		`SELECT
 			e.message_id,
 			e.envelope
-		FROM dogma.events AS e
+		FROM eventstream.events AS e
 		WHERE e.stream_id = $1
-		AND e.offset >= $2
+		AND e.stream_offset >= $2
 		AND e.aggregate_handler_key = $3
 		AND e.aggregate_instance_id = $4
-		ORDER BY e.offset`,
+		ORDER BY e.stream_offset`,
 		xsql.UUID(streamID),
 		offset,
 		xsql.UUID(t.Identity.GetKey()),

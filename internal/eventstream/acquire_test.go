@@ -69,7 +69,7 @@ func TestAcquire(t *testing.T) {
 	xtesting.ExecOne(
 		t,
 		db,
-		`UPDATE dogma.event_streams SET
+		`UPDATE eventstream.streams SET
 			next_offset = $1
 		WHERE id = $2`,
 		Capacity,
@@ -78,12 +78,12 @@ func TestAcquire(t *testing.T) {
 	xtesting.ExecOne(
 		t,
 		db,
-		`INSERT INTO dogma.events (
+		`INSERT INTO eventstream.events (
 			message_id,
 			correlation_id,
 			message_type_id,
 			stream_id,
-			"offset",
+			stream_offset,
 			envelope
 		) VALUES ($1, $2, $3, $4, $5, $6)`,
 		xsql.UUID(uuidpb.Generate()),
