@@ -61,3 +61,15 @@ ON eventstream.events (
     message_type_id,
     stream_offset
 );
+
+--------------------------------------------------------------------------------
+-- The "event_types" table tracks which message types have been recorded on each
+-- stream, along with the latest offset at which each type appears.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS eventstream.event_types (
+    stream_id       uuid   NOT NULL REFERENCES eventstream.streams(id),
+    message_type_id uuid   NOT NULL,
+    latest_offset   bigint NOT NULL CHECK (latest_offset >= 0),
+
+    PRIMARY KEY (stream_id, message_type_id)
+);

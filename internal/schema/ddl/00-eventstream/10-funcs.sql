@@ -92,28 +92,55 @@ AS $$
             envelope,
             ordinal
         )
+    ),
+    inserted_events AS (
+        INSERT INTO eventstream.events (
+            stream_id,
+            stream_offset,
+            message_id,
+            correlation_id,
+            message_type_id,
+            envelope,
+            aggregate_handler_key,
+            aggregate_instance_id
+        )
+        SELECT
+            append.stream_id,
+            s.base_offset + e.ordinal,
+            e.message_id,
+            append.correlation_id,
+            e.message_type_id,
+            e.envelope,
+            append.aggregate_handler_key,
+            append.aggregate_instance_id
+        FROM event_list AS e, updated_stream AS s
+        RETURNING
+            stream_offset,
+            message_type_id
+    ),
+    deduped_types AS (
+        SELECT DISTINCT ON (message_type_id)
+            message_type_id,
+            stream_offset
+        FROM inserted_events
+        ORDER BY message_type_id, stream_offset DESC
+    ),
+    upsert_types AS (
+        INSERT INTO eventstream.event_types (
+            stream_id,
+            message_type_id,
+            latest_offset
+        )
+        SELECT
+            append.stream_id,
+            dt.message_type_id,
+            dt.stream_offset
+        FROM deduped_types AS dt
+        ON CONFLICT (stream_id, message_type_id)
+        DO UPDATE SET latest_offset = EXCLUDED.latest_offset
     )
-    INSERT INTO eventstream.events (
-        stream_id,
-        stream_offset,
-        message_id,
-        correlation_id,
-        message_type_id,
-        envelope,
-        aggregate_handler_key,
-        aggregate_instance_id
-    )
-    SELECT
-        append.stream_id,
-        s.base_offset + e.ordinal,
-        e.message_id,
-        append.correlation_id,
-        e.message_type_id,
-        e.envelope,
-        append.aggregate_handler_key,
-        append.aggregate_instance_id
-    FROM event_list AS e, updated_stream AS s
-    RETURNING stream_offset + 1;
+    SELECT MAX(stream_offset) + 1
+    FROM inserted_events;
 $$;
 
 --------------------------------------------------------------------------------
