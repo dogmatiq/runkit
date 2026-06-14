@@ -33,7 +33,7 @@ func (e *Engine) ExecuteCommand(
 	}
 
 	packOptions, eventTypes, eventObservers := e.resolveExecuteCommandOptions(options)
-	commandEnvelope := e.envelopePacker.PackCommand(command, packOptions...)
+	commandEnvelope := e.packer.PackCommand(command, packOptions...)
 
 	contexthook.Invoke(ctx, contexthook.ExecuteCommand{
 		CommandEnvelope: commandEnvelope,
@@ -48,7 +48,7 @@ func (e *Engine) ExecuteCommand(
 		return err
 	}
 
-	if _, ok := e.inboundCommandTypes[reflect.TypeOf(command)]; !ok {
+	if _, ok := e.commandTypes[reflect.TypeOf(command)]; !ok {
 		return fmt.Errorf("no route found for command type: %T", command)
 	}
 

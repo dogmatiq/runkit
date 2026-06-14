@@ -43,12 +43,12 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
 
-	// envelopePacker is used to pack messages into envelopes for persistence.
-	envelopePacker *envelopepb.Packer
+	// packer is used to pack messages into envelopes for persistence.
+	packer *envelopepb.Packer
 
-	// inboundCommandTypes is the set of command types that the engine accepts for
+	// commandTypes is the set of command types that the engine accepts for
 	// execution.
-	inboundCommandTypes map[reflect.Type]struct{}
+	commandTypes map[reflect.Type]struct{}
 }
 
 // Run starts the engine and blocks until ctx is canceled.
@@ -61,7 +61,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.setupCommandTypes()
 
-	e.envelopePacker = &envelopepb.Packer{
+	e.packer = &envelopepb.Packer{
 		Application: e.appConfig.Identity(),
 	}
 
@@ -90,11 +90,11 @@ func (e *Engine) setupCommandTypes() {
 		).
 		Routes()
 
-	e.inboundCommandTypes = map[reflect.Type]struct{}{}
+	e.commandTypes = map[reflect.Type]struct{}{}
 
 	for route := range inboundCommandRoutes {
 		typ := route.MessageType.Get().ReflectType()
-		e.inboundCommandTypes[typ] = struct{}{}
+		e.commandTypes[typ] = struct{}{}
 	}
 }
 
@@ -116,8 +116,8 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			DB:             e.DB,
 			Handler:        handlerConfig.Interface(),
 			Identity:       handlerConfig.Identity(),
-			Packer:         e.envelopePacker,
-			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			Packer:         e.packer,
+			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
 			BackoffBase:    backoffBase,
 			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
@@ -128,12 +128,13 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Handler:        handlerConfig.Interface(),
 			Identity:       handlerConfig.Identity(),
 			Concurrency:    handlerConfig.ConcurrencyPreference(),
-			Packer:         e.envelopePacker,
-			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig),
+			Packer:         e.packer,
+			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
 			BackoffBase:    backoffBase,
 			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
+
 	default:
 		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))
 	}
@@ -154,9 +155,13 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 // collectInboundMessageTypeIDs returns the message type IDs of all inbound
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
-func (*Engine) collectInboundMessageTypeIDs(handlerConfig config.Handler) []string {
+func (*Engine) collectInboundMessageTypeIDs(
+	handlerConfig config.Handler,
+	messageKind message.Kind,
+) []string {
 	inboundRoutes := handlerConfig.
 		RouteSet().
+		Filter(config.FilterByMessageKind(messageKind)).
 		Filter(config.FilterByMessageDirection(config.InboundDirection)).
 		Routes()
 
