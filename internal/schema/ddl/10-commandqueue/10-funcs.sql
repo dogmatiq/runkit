@@ -1,5 +1,3 @@
-CREATE SCHEMA IF NOT EXISTS commandqueue;
-
 --------------------------------------------------------------------------------
 -- The "add" function enqueues a command for execution.
 --

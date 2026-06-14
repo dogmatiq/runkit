@@ -1,5 +1,3 @@
-CREATE SCHEMA IF NOT EXISTS integration;
-
 --------------------------------------------------------------------------------
 -- The "complete_without_events" function removes a command from the queue when
 -- no events were recorded during handling.

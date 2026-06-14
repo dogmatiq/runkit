@@ -1,8 +1,8 @@
 CREATE SCHEMA IF NOT EXISTS integration;
 
 --------------------------------------------------------------------------------
--- The "handlers" table provides row-level locking for integration handlers that
--- prefer minimized concurrency.
+-- The "handlers" table provides handler-level locking for integration handlers
+-- that prefer minimized concurrency.
 --
 -- A row is inserted for each handler and then locked with a blocking SELECT FOR
 -- UPDATE to serialize command handling.

@@ -1,5 +1,3 @@
-CREATE SCHEMA IF NOT EXISTS eventstream;
-
 --------------------------------------------------------------------------------
 -- The "event" type encapsulates event data for use with the "append" and
 -- "append_any" functions.
