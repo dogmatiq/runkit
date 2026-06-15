@@ -33,9 +33,6 @@ type Controller struct {
 
 // Run handles messages for the controller's handler until ctx is canceled.
 func (c *Controller) Run(ctx context.Context) {
-	c.Logger.DebugContext(ctx, "aggregate controller started")
-	defer c.Logger.DebugContext(ctx, "aggregate controller stopped")
-
 	tasks := make(chan *commandTask)
 
 	var g sync.WaitGroup
@@ -46,7 +43,7 @@ func (c *Controller) Run(ctx context.Context) {
 		for {
 			task, ok, err := c.acquireTask(ctx)
 			if err != nil {
-				if errors.Is(err, ctx.Err()) {
+				if ctx.Err() != nil {
 					return
 				}
 
@@ -58,7 +55,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 
 			if ok {
-				c.Logger.DebugContext(
+				task.Logger.DebugContext(
 					ctx,
 					"acquired task",
 				)
@@ -85,7 +82,7 @@ func (c *Controller) Run(ctx context.Context) {
 		g.Go(func() {
 			for task := range tasks {
 				if err := task.Execute(ctx); err != nil {
-					if errors.Is(err, ctx.Err()) {
+					if ctx.Err() != nil {
 						return
 					}
 

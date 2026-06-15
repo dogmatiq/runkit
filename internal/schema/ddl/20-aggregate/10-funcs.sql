@@ -44,7 +44,7 @@ DECLARE
 BEGIN
     -- If the instance has no bound stream, acquire one and bind it.
     IF complete_with_events.stream_id IS NULL THEN
-        complete_with_events.stream_id := eventstream.acquire();
+        complete_with_events.stream_id := eventstream.acquire_for_write();
 
         UPDATE aggregate.instances SET
             stream_id = complete_with_events.stream_id

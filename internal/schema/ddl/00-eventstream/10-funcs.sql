@@ -13,7 +13,7 @@ END $$;
 
 
 --------------------------------------------------------------------------------
--- The "acquire" function is used to obtain an event stream for append
+-- The "acquire_for_write" function is used to obtain an event stream for append
 -- operations.
 --
 -- It attempts to acquire an exclusive lock on an existing stream. If all
@@ -21,7 +21,7 @@ END $$;
 -- contention, it either blocks until a stream becomes available (if a
 -- zero-length stream already exists) or starts a new event stream.
 --------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION eventstream.acquire()
+CREATE OR REPLACE FUNCTION eventstream.acquire_for_write()
 RETURNS uuid
 LANGUAGE plpgsql
 AS $$
@@ -156,7 +156,7 @@ RETURNS TABLE(stream_id uuid, next_offset bigint)
 LANGUAGE sql
 AS $$
     WITH acquired AS (
-        SELECT eventstream.acquire() AS id
+        SELECT eventstream.acquire_for_write() AS id
     )
     SELECT
         a.id,
@@ -168,4 +168,80 @@ AS $$
             append_any.events
         )
     FROM acquired AS a;
+$$;
+
+--------------------------------------------------------------------------------
+-- The "acquire_for_read" function acquires an event stream for a handler to
+-- read pending events from.
+--
+-- It locks a row in "handler_checkpoints" and returns the stream_id and the
+-- checkpoint_offset at the time of acquisition. If the handler is not yet
+-- tracking a stream that has relevant events, a new row is inserted. Otherwise,
+-- an existing row is locked with FOR UPDATE SKIP LOCKED, choosing the stream
+-- with the largest gap between next_offset and checkpoint_offset.
+--
+-- Returns a single row, or no rows if no stream has pending events of the
+-- relevant types.
+--------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION eventstream.acquire_for_read(
+    handler_key      uuid,
+    message_type_ids uuid[]
+)
+RETURNS TABLE(
+    stream_id         uuid,
+    checkpoint_offset bigint
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    acquired_stream_id uuid;
+BEGIN
+    -- Attempt to insert a checkpoint row for a stream that the handler is not
+    -- yet tracking, but which has events of the relevant types.
+    INSERT INTO eventstream.handler_checkpoints (handler_key, stream_id)
+    SELECT
+        acquire_for_read.handler_key,
+        t.stream_id
+    FROM eventstream.event_types AS t
+    WHERE t.message_type_id = ANY(acquire_for_read.message_type_ids)
+    AND NOT EXISTS (
+        SELECT 1
+        FROM eventstream.handler_checkpoints AS h
+        WHERE h.handler_key = acquire_for_read.handler_key
+        AND h.stream_id = t.stream_id
+    )
+    ORDER BY random()
+    LIMIT 1
+    ON CONFLICT DO NOTHING
+    RETURNING eventstream.handler_checkpoints.stream_id INTO acquired_stream_id;
+
+    -- If the row was inserted successfully it is implicitly locked by this
+    -- transaction and the checkpoint_offset is 0 (the beginning of the stream).
+    IF acquired_stream_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT
+            acquired_stream_id,
+            0::bigint;
+        RETURN;
+    END IF;
+
+    -- Lock an existing checkpoint row for a stream that has pending events of
+    -- the relevant types, choosing the stream with the largest gap.
+    RETURN QUERY
+    SELECT
+        h.stream_id,
+        h.checkpoint_offset
+    FROM eventstream.handler_checkpoints AS h
+    INNER JOIN eventstream.streams AS s
+        ON s.id = h.stream_id
+    INNER JOIN eventstream.event_types AS t
+        ON t.stream_id = h.stream_id
+        AND t.message_type_id = ANY(acquire_for_read.message_type_ids)
+        AND t.latest_offset >= h.checkpoint_offset
+    WHERE h.handler_key = acquire_for_read.handler_key
+    AND s.next_offset > h.checkpoint_offset
+    ORDER BY (s.next_offset - h.checkpoint_offset) DESC
+    FOR UPDATE OF h SKIP LOCKED
+    LIMIT 1;
+END;
 $$;

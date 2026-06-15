@@ -17,6 +17,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/integration"
+	"github.com/dogmatiq/reference-engine/internal/projection"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
@@ -71,6 +72,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		c := e.newControllerForHandler(handlerConfig)
 		g.Go(func() {
 			c.Run(ctx)
+
+			if ctx.Err() == nil {
+				panic(fmt.Sprintf(
+					"controller for handler %s stopped before context was canceled",
+					handlerConfig.Identity(),
+				))
+			}
 		})
 	}
 
@@ -130,6 +138,15 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			BackoffBase:    backoffBase,
 			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
+		}
+
+	case *config.Projection:
+		return &projection.Controller{
+			DB:           e.DB,
+			Handler:      handlerConfig.Interface(),
+			Identity:     handlerConfig.Identity(),
+			EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+			Logger:       e.newLoggerForHandler(handlerConfig),
 		}
 
 	default:
