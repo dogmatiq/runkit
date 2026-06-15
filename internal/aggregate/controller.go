@@ -32,7 +32,10 @@ type Controller struct {
 }
 
 // Run handles messages for the controller's handler until ctx is canceled.
-func (c *Controller) Run(ctx context.Context) (err error) {
+func (c *Controller) Run(ctx context.Context) {
+	c.Logger.DebugContext(ctx, "aggregate controller started")
+	defer c.Logger.DebugContext(ctx, "aggregate controller stopped")
+
 	tasks := make(chan *commandTask)
 
 	var g sync.WaitGroup
@@ -55,6 +58,11 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 			}
 
 			if ok {
+				c.Logger.DebugContext(
+					ctx,
+					"acquired task",
+				)
+
 				select {
 				case <-ctx.Done():
 					task.Tx.Rollback()
@@ -86,14 +94,17 @@ func (c *Controller) Run(ctx context.Context) (err error) {
 						"unable to execute task",
 						xslog.Error(err),
 					)
+				} else {
+					task.Logger.DebugContext(
+						ctx,
+						"executed task",
+					)
 				}
 			}
 		})
 	}
 
 	g.Wait()
-
-	return ctx.Err()
 }
 
 // acquireTask attempts to exclusively lock the next pending command for the
@@ -119,7 +130,8 @@ func (c *Controller) acquireTask(
 		ctx,
 		`SELECT
 			c.message_id,
-			c.envelope
+			c.envelope,
+			c.failures
 		FROM commandqueue.commands AS c
 		WHERE message_type_id = ANY($1)
 		AND execute_at <= clock_timestamp()
@@ -142,9 +154,12 @@ func (c *Controller) acquireTask(
 		Logger:        c.Logger,
 	}
 
+	var failures uint64
+
 	if err := row.Scan(
 		xsql.UUID(task.MessageID),
 		&task.EnvelopeBytes,
+		&failures,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
@@ -158,6 +173,7 @@ func (c *Controller) acquireTask(
 			"command",
 			xslog.UUID("message_id", task.MessageID),
 		),
+		slog.Uint64("attempt", failures+1),
 	)
 
 	return task, true, nil

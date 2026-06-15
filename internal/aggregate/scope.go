@@ -36,7 +36,7 @@ func (s *scope) RecordEvent(event dogma.Event) {
 	eventEnvelope := s.packer.PackEvent(event)
 
 	s.logger.Info(
-		"handler recorded an event",
+		event.MessageDescription(),
 		xslog.Envelope("event", eventEnvelope),
 	)
 }

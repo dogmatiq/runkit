@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -17,7 +18,6 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/integration"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"golang.org/x/sync/errgroup"
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -65,18 +65,19 @@ func (e *Engine) Run(ctx context.Context) error {
 		Application: e.appConfig.Identity(),
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
+	var g sync.WaitGroup
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		c := e.newControllerForHandler(handlerConfig)
-		g.Go(func() error {
-			return c.Run(ctx)
+		g.Go(func() {
+			c.Run(ctx)
 		})
 	}
 
 	e.ready.Set()
+	g.Wait()
 
-	return g.Wait()
+	return ctx.Err()
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for
@@ -98,11 +99,6 @@ func (e *Engine) setupCommandTypes() {
 	}
 }
 
-// controller is the interface implemented by all message handler controllers.
-type controller interface {
-	Run(context.Context) error
-}
-
 // newControllerForHandler creates a controller for the given handler.
 func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controller {
 	const (
@@ -122,6 +118,7 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			BackoffLimit:   backoffLimit,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
+
 	case *config.Integration:
 		return &integration.Controller{
 			DB:             e.DB,

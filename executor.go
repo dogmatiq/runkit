@@ -80,7 +80,7 @@ func (e *Engine) ExecuteCommand(
 			if ok {
 				e.Logger.InfoContext(
 					ctx,
-					"enqueued command for execution",
+					command.MessageDescription(),
 					xslog.Envelope("command", commandEnvelope),
 				)
 			} else {
