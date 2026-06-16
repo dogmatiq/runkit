@@ -18,9 +18,9 @@ $$;
 -- appends events to an event stream in a single operation.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION integration.complete_with_events(
-    message_id    uuid,
+    message_id     uuid,
     correlation_id uuid,
-    events        eventstream.event[]
+    events         eventstream.event[]
 )
 RETURNS void
 LANGUAGE plpgsql

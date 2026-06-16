@@ -134,19 +134,7 @@ func TestEventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 					engine.DB,
 				)
 
-				row := engine.DB.QueryRowContext(
-					t.Context(),
-					`SELECT COUNT(*)
-					FROM eventstream.streams
-					WHERE next_offset > 0`,
-				)
-
-				var streamsInUse int
-				if err := row.Scan(&streamsInUse); err != nil {
-					t.Fatalf("unable to count distinct event streams: %v", err)
-				}
-
-				if streamsInUse > 1 {
+				if xtesting.NonEmptyEventStreamCount(t, engine.DB) > 1 {
 					break
 				}
 			}

@@ -145,6 +145,7 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			DB:           e.DB,
 			Handler:      handlerConfig.Interface(),
 			Identity:     handlerConfig.Identity(),
+			Concurrency:  handlerConfig.ConcurrencyPreference(),
 			EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
 			Logger:       e.newLoggerForHandler(handlerConfig),
 		}

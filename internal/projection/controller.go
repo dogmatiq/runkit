@@ -19,6 +19,7 @@ type Controller struct {
 	DB           *sql.DB
 	Handler      dogma.ProjectionMessageHandler
 	Identity     *identitypb.Identity
+	Concurrency  dogma.ConcurrencyPreference
 	EventTypeIDs []string
 	// BackoffBase  time.Duration
 	// BackoffLimit time.Duration
@@ -105,6 +106,21 @@ func (c *Controller) tick(ctx context.Context) error {
 		return err
 	}
 
+	if c.Concurrency == dogma.MinimizeConcurrency {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO projection.handlers (
+				handler_key
+			)
+			VALUES ($1)
+			ON CONFLICT (handler_key) DO UPDATE SET
+				handler_key = EXCLUDED.handler_key`,
+			xsql.UUID(c.Identity.GetKey()),
+		); err != nil {
+			return fmt.Errorf("unable to acquire handler lock: %w", err)
+		}
+	}
+
 	if len(eventEnvelopes) != 0 {
 		for _, eventEnvelope := range eventEnvelopes {
 			event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
@@ -168,7 +184,7 @@ func (c *Controller) tick(ctx context.Context) error {
 			ctx,
 			tx,
 			`UPDATE eventstream.handler_checkpoints SET
-			checkpoint_offset = $1
+				checkpoint_offset = $1
 			WHERE handler_key = $2
 			AND stream_id = $3`,
 			checkpointOffset,
