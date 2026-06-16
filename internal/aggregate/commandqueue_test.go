@@ -1,7 +1,6 @@
 package aggregate_test
 
 import (
-	"database/sql"
 	"sync/atomic"
 	"testing"
 
@@ -13,20 +12,13 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
+// TestCommandQueue_commandRemovedAfterHandling verifies that a command is
+// removed from the command queue after it is successfully handled.
+func TestCommandQueue_commandRemovedAfterHandling(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
@@ -45,28 +37,31 @@ func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
 	)
 }
 
-func TestUnhandledCommandsRemainQueued(t *testing.T) {
+// TestCommandQueue_unhandledCommandsRemainQueued verifies that if a command is
+// not handled by any handler, it remains in the command queue.
+func TestCommandQueue_unhandledCommandsRemainQueued(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			handledCommandEnvelope := xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			handledCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
 				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
-					// Mangle the command type so that it's something that
-					// is not handled by the aggregate handler.
-					x.CommandEnvelope.GetBody().GetMessage().SetTypeId(uuidpb.Generate())
+					// Mangle the command type so that the handler does not
+					// attempt to handle it. We can't simply execute a different
+					// command type because the engine would reject it since
+					// there is no handler that can handle it.
+					x.CommandEnvelope.
+						GetBody().
+						GetMessage().
+						SetTypeId(uuidpb.Generate())
 				},
 			)
 
-			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				engine.DB,
 				handledCommandEnvelope.GetBody().GetMessageId(),
@@ -95,36 +90,38 @@ func TestUnhandledCommandsRemainQueued(t *testing.T) {
 	)
 }
 
-func TestInvalidCommandsAreBackedOff(t *testing.T) {
+// TestCommandQueue_invalidCommandsArePostponed verifies that if a command
+// cannot be unpacked, it is postponed and it does not prevent the handler from
+// processing other commands.
+func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Execute an invalid command so that it will be backed off.
+			// Execute an invalid command.
 			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
 				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
-					// Corrupt the command so that it cannot be unpacked.
-					x.CommandEnvelope.GetBody().GetMessage().SetData([]byte("<invalid>"))
+					// Corrupt the command envelope so that it cannot be unpacked.
+					x.CommandEnvelope.
+						GetBody().
+						GetMessage().
+						SetData([]byte("<invalid>"))
 				},
 			)
 
-			// Execute a valid command to verify that the backed-off command
-			// does not block handling of other commands.
-			validCommandEnvelope := xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			// Execute a second valid command to verify that the invalid
+			// command does not block handling of other commands.
+			validCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				engine.DB,
 				validCommandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+			xtesting.WaitForCommandToBePostponed(
 				t,
 				engine.DB,
 				invalidCommandEnvelope.GetBody().GetMessageId(),
@@ -147,60 +144,44 @@ func TestInvalidCommandsAreBackedOff(t *testing.T) {
 	)
 }
 
-func TestCommandIsBackedOffIfStateCannotBeLoaded(t *testing.T) {
+// TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed verifies
+// that if an event in an instance's history cannot be unpacked, commands that
+// target the instance are postponed.
+func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			// Execute a command to create the instance and record an
 			// event in its history.
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
 
 			// Corrupt the stored event envelope so that it cannot be
-			// parsed, and clear the snapshot so the engine must attempt
-			// to replay the corrupt event.
-			xtesting.Transact(
+			// unmarshaled.
+			xtesting.ExecOne(
 				t,
 				engine.DB,
-				func(tx *sql.Tx) {
-					xtesting.ExecOne(
-						t,
-						tx,
-						`UPDATE eventstream.events SET
-							envelope = '\x00'::bytea
-						WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
-						AND aggregate_instance_id = '<instance>'`,
-					)
-					xtesting.ExecOne(
-						t,
-						tx,
-						`UPDATE aggregate.instances SET
-							snapshot = NULL,
-							snapshot_offset = NULL
-						WHERE handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
-						AND instance_id = '<instance>'`,
-					)
-				},
+				`UPDATE eventstream.events SET
+					envelope = '\x00'::bytea
+				WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+				AND aggregate_instance_id = '<instance>'`,
 			)
 
-			// Execute another command to the same instance.
-			commandEnvelope := xtesting.ExecuteCommand(
+			// Clear the instance's snapshot so the engine must attempt to
+			// replay the corrupt event.
+			xtesting.ExecOne(
 				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				engine.DB,
+				`UPDATE aggregate.instances SET
+					snapshot = NULL,
+					snapshot_offset = NULL
+				WHERE handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+				AND instance_id = '<instance>'`,
 			)
 
-			// The command should be backed off because the instance
-			// state cannot be loaded.
-			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+			// Execute another command that targets the same instance.
+			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+
+			xtesting.WaitForCommandToBePostponed(
 				t,
 				engine.DB,
 				commandEnvelope.GetBody().GetMessageId(),
@@ -223,25 +204,24 @@ func TestCommandIsBackedOffIfStateCannotBeLoaded(t *testing.T) {
 					s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
 					m dogma.Command,
 				) {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					s.RecordEvent(stubs.EventA1)
 				},
 			},
 		),
 	)
 }
 
-func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
-	t.Run("in RouteCommandToInstance()", func(t *testing.T) {
+// TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed verifies that
+// if handling a command causes the application code to panic, the command is
+// postponed.
+func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.T) {
+	t.Run("panic in RouteCommandToInstance()", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, engine *dogmaengine.Engine) {
-				commandEnvelope := xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
+				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+				xtesting.WaitForCommandToBePostponed(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),
@@ -264,17 +244,13 @@ func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
 		)
 	})
 
-	t.Run("in HandleCommand()", func(t *testing.T) {
+	t.Run("panic in HandleCommand()", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, engine *dogmaengine.Engine) {
-				commandEnvelope := xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
+				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+				xtesting.WaitForCommandToBePostponed(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),
@@ -304,40 +280,28 @@ func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
 		)
 	})
 
-	t.Run("in ApplyEvent()", func(t *testing.T) {
-		// eventApplied is set to true after the first successful call to
-		// ApplyEvent. The first call occurs within scope.RecordEvent during
-		// HandleCommand; subsequent calls occur during state loading when
-		// replaying historical events. Only those subsequent calls panic,
-		// ensuring the first command succeeds (creating history) while the
-		// second command fails during state replay.
-		var eventApplied atomic.Bool
+	t.Run("panic in ApplyEvent() for historical event", func(t *testing.T) {
+		// The first call to ApplyEvent() occurs within RecordEvent() during
+		// HandleCommand(). We need the panic to occur in the second call to
+		// ApplyEvent() to ensure that it occurs during replay of historical
+		// events.
+		//
+		// shouldPanic is set to true after the first successful call to
+		// ApplyEvent().
+		var shouldPanic atomic.Bool
 
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, engine *dogmaengine.Engine) {
-				// Execute a command to create the instance and record an
-				// event in its history.
-				xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
+				// Execute a command to create the instance and record an event
+				// in its history.
+				xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
 
-				xtesting.ExpectEmptyCommandQueueEventually(
-					t,
-					engine.DB,
-				)
-
-				// Execute another command to the same instance. When
+				// Execute another command that targets the same instance. When
 				// loading state, replaying the event will panic.
-				commandEnvelope := xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
+				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-				xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+				xtesting.WaitForCommandToBePostponed(
 					t,
 					engine.DB,
 					commandEnvelope.GetBody().GetMessageId(),
@@ -355,7 +319,7 @@ func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
 					NewFunc: func() *stubs.AggregateRootStub {
 						return &stubs.AggregateRootStub{
 							ApplyEventFunc: func(dogma.Event) {
-								if !eventApplied.CompareAndSwap(false, true) {
+								if !shouldPanic.CompareAndSwap(false, true) {
 									panic("<panic>")
 								}
 							},
@@ -369,7 +333,7 @@ func TestCommandIsBackedOffWhenApplicationCodePanics(t *testing.T) {
 						s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
 						_ dogma.Command,
 					) {
-						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+						s.RecordEvent(stubs.EventA1)
 					},
 				},
 			),

@@ -10,7 +10,9 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
+// TestCommandRouting_commandsAreRoutedToTheCorrectHandler verifies that
+// commands are routed to the correct handler based on their message type.
+func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
 		handlerACalled xsync.Latch
 		handlerBCalled xsync.Latch
@@ -19,17 +21,10 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeB]{},
-			)
+			// Execute two commands of different types, each targetting a
+			// different handler.
+			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			xtesting.ExecuteCommand(t, engine, stubs.CommandB1)
 
 			xtesting.ExpectLatchesSetEventually(
 				t,
@@ -47,7 +42,7 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 					)
 				},
 				RouteCommandToInstanceFunc: func(m dogma.Command) string {
-					return "instance"
+					return "<instance>"
 				},
 				HandleCommandFunc: func(
 					r *stubs.AggregateRootStub,
@@ -75,7 +70,7 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 					)
 				},
 				RouteCommandToInstanceFunc: func(m dogma.Command) string {
-					return "instance"
+					return "<instance>"
 				},
 				HandleCommandFunc: func(
 					r *stubs.AggregateRootStub,
@@ -95,20 +90,18 @@ func TestCommandsAreRoutedToTheCorrectHandler(t *testing.T) {
 			},
 		),
 	)
-
 }
 
-func TestCommandsAreRoutedToTheCorrectInstance(t *testing.T) {
+// TestCommandRouting_commandsAreRoutedToTheCorrectInstance verifies that
+// commands are routed to the correct instance based on the value returned by
+// the handler's RouteCommandToInstance() method.
+func TestCommandRouting_commandsAreRoutedToTheCorrectInstance(t *testing.T) {
 	var handlerCalled xsync.Latch
 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{Content: "<content>"},
-			)
+			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.ExpectLatchesSetEventually(
 				t,
@@ -139,7 +132,7 @@ func TestCommandsAreRoutedToTheCorrectInstance(t *testing.T) {
 				) {
 					defer handlerCalled.Set()
 
-					if got, want := s.InstanceID(), "instance:<content>"; got != want {
+					if got, want := s.InstanceID(), "instance:A1"; got != want {
 						t.Errorf("unexpected instance ID: got %q, want %q", got, want)
 					}
 				},

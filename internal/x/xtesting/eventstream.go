@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -217,8 +218,8 @@ func ExpectContiguousEvents(
 
 		if !reflect.DeepEqual(got, wantEvent) {
 			t.Logf("unexpected event at offset %d:", gotOffset)
-			t.Logf("+++ got:\n%#v", got)
-			t.Logf("--- want:\n%#v", wantEvent)
+			t.Logf("+++ got:\n%s", dapper.Format(got))
+			t.Logf("--- want:\n%s", dapper.Format(wantEvent))
 			t.FailNow()
 		}
 
@@ -316,7 +317,7 @@ func ExpectNoUnconsumedEventsEventually(
 ) {
 	t.Helper()
 
-	ExpectQueryResultEventually(
+	WaitForQueryResult(
 		t,
 		"no unconsumed events",
 		0,
@@ -373,4 +374,20 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 				Build(),
 		).
 		Build()
+}
+
+// ExpectEqualEvents asserts that got and want contain the same events.
+func ExpectEqualEvents(
+	t testing.TB,
+	description string,
+	got []dogma.Event,
+	want ...dogma.Event,
+) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Logf("expectation failed: %s", description)
+		t.Logf("+++ got:\n%s", dapper.Format(got))
+		t.Logf("--- want:\n%s", dapper.Format(want))
+		t.FailNow()
+	}
 }
