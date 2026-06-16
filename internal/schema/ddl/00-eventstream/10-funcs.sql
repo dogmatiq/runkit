@@ -216,12 +216,13 @@ BEGIN
     RETURNING eventstream.handler_checkpoints.stream_id INTO acquired_stream_id;
 
     -- If the row was inserted successfully it is implicitly locked by this
-    -- transaction and the checkpoint_offset is 0 (the beginning of the stream).
+    -- transaction and the checkpoint_offset is unknown. In all likelihood it
+    -- will be zero, but we must fetch this offset from the handler itself.
     IF acquired_stream_id IS NOT NULL THEN
         RETURN QUERY
         SELECT
             acquired_stream_id,
-            0::bigint;
+            NULL::bigint;
         RETURN;
     END IF;
 

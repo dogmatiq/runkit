@@ -66,7 +66,7 @@ func (c *Controller) tick(ctx context.Context) error {
 
 	var (
 		streamID         = &uuidpb.UUID{}
-		checkpointOffset uint64
+		checkpointOffset *uint64
 	)
 
 	if err := row.Scan(
@@ -80,18 +80,26 @@ func (c *Controller) tick(ctx context.Context) error {
 		return fmt.Errorf("unable to acquire stream for read: %w", err)
 	}
 
+	if checkpointOffset == nil {
+		handlerCheckpointOffset, err := c.Handler.CheckpointOffset(ctx, streamID.AsString())
+		if err != nil {
+			return fmt.Errorf("unable to get checkpoint offset from handler: %w", err)
+		}
+		checkpointOffset = &handlerCheckpointOffset
+	}
+
 	c.Logger.DebugContext(
 		ctx,
 		"acquired stream for reading",
 		xslog.UUID("stream_id", streamID),
-		slog.Uint64("checkpoint_offset", checkpointOffset),
+		slog.Uint64("checkpoint_offset", *checkpointOffset),
 	)
 
 	eventEnvelopes, err := c.fetchEvents(
 		ctx,
 		tx,
 		streamID,
-		checkpointOffset,
+		*checkpointOffset,
 	)
 	if err != nil {
 		return err
@@ -114,13 +122,13 @@ func (c *Controller) tick(ctx context.Context) error {
 
 			eventOffset := streamPosition.GetOffset()
 
-			newCheckpointOffset, err := c.Handler.HandleEvent(
+			nextCheckpointOffset, err := c.Handler.HandleEvent(
 				ctx,
 				&scope{
 					streamID:         streamID.AsString(),
 					offset:           eventOffset,
 					recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-					checkpointOffset: checkpointOffset,
+					checkpointOffset: *checkpointOffset,
 					logger:           c.Logger,
 				},
 				event,
@@ -129,21 +137,31 @@ func (c *Controller) tick(ctx context.Context) error {
 				return fmt.Errorf("unable to handle event: %w", err)
 			}
 
+			prevCheckpointOffset := *checkpointOffset
+			*checkpointOffset = nextCheckpointOffset
+
+			if nextCheckpointOffset != eventOffset+1 {
+				c.Logger.WarnContext(
+					ctx,
+					"optimistic concurrency conflict",
+					xslog.UUID("stream_id", streamID),
+					slog.Uint64("event_offset", eventOffset),
+					slog.Uint64("engine_checkpoint_offset", prevCheckpointOffset),
+					slog.Uint64("handler_checkpoint_offset", nextCheckpointOffset),
+					xslog.Envelope("event", eventEnvelope),
+				)
+
+				break
+			}
+
 			c.Logger.DebugContext(
 				ctx,
 				"handled event",
 				xslog.UUID("stream_id", streamID),
 				slog.Uint64("event_offset", eventOffset),
-				slog.Uint64("checkpoint_offset", checkpointOffset),
-				slog.Uint64("new_checkpoint_offset", newCheckpointOffset),
+				slog.Uint64("checkpoint_offset", *checkpointOffset),
 				xslog.Envelope("event", eventEnvelope),
 			)
-
-			if newCheckpointOffset != eventOffset+1 {
-				panic("not implemented: OCC conflict")
-			}
-
-			checkpointOffset = newCheckpointOffset
 		}
 
 		if err := xsql.ExecOne(

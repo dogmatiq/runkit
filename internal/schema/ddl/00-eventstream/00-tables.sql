@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS eventstream.event_types (
 CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
     handler_key       uuid   NOT NULL,
     stream_id         uuid   NOT NULL REFERENCES eventstream.streams(id),
-    checkpoint_offset bigint NOT NULL DEFAULT 0,
+    checkpoint_offset bigint DEFAULT NULL,
 
     PRIMARY KEY (handler_key, stream_id)
 );

@@ -218,3 +218,35 @@ func ExpectContiguousEventEnvelopes(
 		)
 	}
 }
+
+// ExpectNoUnconsumedEventsEventually asserts that the handler with the given
+// key eventually catches up to the tail of all non-empty event streams.
+//
+// It assumes that all events on all streams are of types that the handler
+// consumes. If that is not the case this assertion will hang until it times out.
+func ExpectNoUnconsumedEventsEventually(
+	t testing.TB,
+	q xsql.Querier,
+	handlerKey string,
+) {
+	t.Helper()
+
+	ExpectQueryResultEventually(
+		t,
+		"no unconsumed events",
+		0,
+		q,
+		`SELECT COUNT(*)
+		FROM eventstream.streams AS s
+		LEFT JOIN eventstream.handler_checkpoints AS h
+			ON h.handler_key = $1
+			AND h.stream_id = s.id
+		WHERE s.next_offset > 0
+		AND (
+			h.stream_id IS NULL
+			OR h.checkpoint_offset IS NULL
+			OR h.checkpoint_offset < s.next_offset
+		)`,
+		handlerKey,
+	)
+}
