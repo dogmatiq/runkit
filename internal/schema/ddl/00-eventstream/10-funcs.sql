@@ -78,7 +78,7 @@ AS $$
         UPDATE eventstream.streams SET
             next_offset = next_offset + array_length(append.events, 1)
         WHERE id = append.stream_id
-        RETURNING OLD.next_offset AS base_offset
+        RETURNING next_offset - array_length(append.events, 1) AS base_offset
     ),
     event_list AS (
         SELECT
