@@ -118,6 +118,3 @@ func TestHandlersAreNotInvokedConcurrentlyWhenConcurrencyPreferenceIsMinimize(t 
 		),
 	)
 }
-
-func TestHandlersAreNotInvokedConcurrentlyWithEventsFromTheSameStream(t *testing.T) {
-}
