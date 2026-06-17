@@ -13,20 +13,13 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
+// TestCommandQueue_commandIsRemovedAfterHandling verifies that a command is
+// removed from the command queue after it is successfully handled.
+func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -42,28 +35,31 @@ func TestCommandRemovedFromQueueAfterHandling(t *testing.T) {
 	)
 }
 
-func TestUnhandledCommandsRemainQueued(t *testing.T) {
+// TestCommandQueue_unhandledCommandsRemainInQueue verifies that if a command is
+// not handled by any handler, it remains in the command queue.
+func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			handledCommandEnvelope := xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			handledCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
 				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
-					// Mangle the command type so that it's something that
-					// is not handled by the aggregate handler.
-					x.CommandEnvelope.GetBody().GetMessage().SetTypeId(uuidpb.Generate())
+					// Mangle the command type so that the handler does not
+					// attempt to handle it. We can't simply execute a different
+					// command type because the engine would reject it since
+					// there is no handler that can handle it.
+					x.CommandEnvelope.
+						GetBody().
+						GetMessage().
+						SetTypeId(uuidpb.Generate())
 				},
 			)
 
-			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				engine.DB,
 				handledCommandEnvelope.GetBody().GetMessageId(),
@@ -89,36 +85,38 @@ func TestUnhandledCommandsRemainQueued(t *testing.T) {
 	)
 }
 
-func TestInvalidCommandsAreBackedOff(t *testing.T) {
+// TestCommandQueue_invalidCommandsArePostponed verifies that if a command
+// cannot be unpacked, it is postponed and it does not prevent the handler from
+// processing other commands.
+func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Execute an invalid command so that it will be backed off.
+			// Execute an invalid command.
 			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
 				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
-					// Corrupt the command so that it cannot be unpacked.
-					x.CommandEnvelope.GetBody().GetMessage().SetData([]byte("<invalid>"))
+					// Corrupt the command envelope so that it cannot be unpacked.
+					x.CommandEnvelope.
+						GetBody().
+						GetMessage().
+						SetData([]byte("<invalid>"))
 				},
 			)
 
-			// Execute a valid command to verify that the backed-off command
-			// does not block handling of other commands.
-			validCommandEnvelope := xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			// Execute a second valid command to verify that the invalid
+			// command does not block handling of other commands.
+			validCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-			xtesting.ExpectCommandToBeRemovedFromQueueEventually(
+			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				engine.DB,
 				validCommandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+			xtesting.WaitForCommandToBePostponed(
 				t,
 				engine.DB,
 				invalidCommandEnvelope.GetBody().GetMessageId(),
@@ -138,7 +136,10 @@ func TestInvalidCommandsAreBackedOff(t *testing.T) {
 	)
 }
 
-func TestCommandIsBackedOffWhenHandlerFails(t *testing.T) {
+// TestCommandQueue_handlerFailuresCauseCommandToBePostponed verifies that if
+// handling a command fails (either via error return or panic), the command is
+// postponed.
+func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 	cases := []struct {
 		Name              string
 		HandleCommandFunc func(
@@ -174,13 +175,9 @@ func TestCommandIsBackedOffWhenHandlerFails(t *testing.T) {
 			xtesting.RunEngines(
 				t,
 				func(t testing.TB, engine *dogmaengine.Engine) {
-					commandEnvelope := xtesting.ExecuteCommand(
-						t,
-						engine,
-						&stubs.CommandStub[stubs.TypeA]{},
-					)
+					commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-					xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+					xtesting.WaitForCommandToBePostponed(
 						t,
 						engine.DB,
 						commandEnvelope.GetBody().GetMessageId(),

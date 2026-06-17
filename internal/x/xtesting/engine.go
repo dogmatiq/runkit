@@ -114,6 +114,45 @@ func ExecuteCommand(
 	)
 }
 
+// ExecuteCommandAndWait executes the given command on the engine and waits for it to be removed from the command queue.
+func ExecuteCommandAndWait(
+	t testing.TB,
+	engine *dogmaengine.Engine,
+	command dogma.Command,
+	options ...dogma.ExecuteCommandOption,
+) *envelopepb.Envelope {
+	t.Helper()
+
+	commandEnvelope := ExecuteCommand(t, engine, command, options...)
+
+	WaitForCommandToBeRemovedFromQueue(
+		t,
+		engine.DB,
+		commandEnvelope.GetBody().GetMessageId(),
+	)
+
+	return commandEnvelope
+}
+
+// ExecuteCommandsSequentially executes the given commands on the engine
+// sequentially, and fails the test if any of them returns an error.
+func ExecuteCommandsSequentially(
+	t testing.TB,
+	engine *dogmaengine.Engine,
+	commands ...dogma.Command,
+) []*envelopepb.Envelope {
+	t.Helper()
+
+	var commandEnvelopes []*envelopepb.Envelope
+
+	for _, command := range commands {
+		commandEnvelope := ExecuteCommandAndWait(t, engine, command)
+		commandEnvelopes = append(commandEnvelopes, commandEnvelope)
+	}
+
+	return commandEnvelopes
+}
+
 // ExecuteCommandWithHook executes the given command on the engine, and fails
 // the test if it returns an error.
 func ExecuteCommandWithHook(

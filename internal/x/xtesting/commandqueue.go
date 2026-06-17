@@ -8,17 +8,17 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// ExpectEmptyCommandQueueEventually asserts that all pending commands are
-// eventually removed from the queue.
-func ExpectEmptyCommandQueueEventually(
+// WaitForEmptyCommandQueue waits until the command queue is empty. If this does
+// not occur within [WaitTimeout], the test fails.
+func WaitForEmptyCommandQueue(
 	t testing.TB,
 	q xsql.Querier,
 ) {
 	t.Helper()
 
-	ExpectQueryResultEventually(
+	WaitForQueryResult(
 		t,
-		"command queue drained",
+		"wait for empty command queue",
 		0,
 		q,
 		`SELECT COUNT(*)
@@ -37,7 +37,7 @@ func ExpectCommandToBeQueued(
 
 	ExpectQueryResult(
 		t,
-		fmt.Sprintf("command queue contains message %q", messageID),
+		fmt.Sprintf("expect command %q to be queued", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)
@@ -47,18 +47,19 @@ func ExpectCommandToBeQueued(
 	)
 }
 
-// ExpectCommandToBeRemovedFromQueueEventually asserts that the command with the
-// given ID is eventually removed from the queue.
-func ExpectCommandToBeRemovedFromQueueEventually(
+// WaitForCommandToBeRemovedFromQueue waits until the command with the given ID
+// is removed from the queue. If this does not occur within [WaitTimeout], the
+// test fails.
+func WaitForCommandToBeRemovedFromQueue(
 	t testing.TB,
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
 ) {
 	t.Helper()
 
-	ExpectQueryResultEventually(
+	WaitForQueryResult(
 		t,
-		fmt.Sprintf("command queue does not contain message %q", messageID),
+		fmt.Sprintf("wait for command %q to be removed from queue", messageID),
 		0,
 		q,
 		`SELECT COUNT(*)
@@ -68,18 +69,21 @@ func ExpectCommandToBeRemovedFromQueueEventually(
 	)
 }
 
-// ExpectCommandToBeBackedOffDueToFailureEventually asserts that the command with
-// the given ID has been backed off at least once due to a failure.
-func ExpectCommandToBeBackedOffDueToFailureEventually(
+// WaitForCommandToBePostponed waits until the command with the given ID has
+// been postponed due to a failure. If this does not occur within [WaitTimeout],
+// the test fails.
+//
+// It does not test any specifics of the back-off algorithm.
+func WaitForCommandToBePostponed(
 	t testing.TB,
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
 ) {
 	t.Helper()
 
-	ExpectQueryResultEventually(
+	WaitForQueryResult(
 		t,
-		fmt.Sprintf("command %q has been backed off due to failure", messageID),
+		fmt.Sprintf("wait for command %q to be backed off due to failure", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)

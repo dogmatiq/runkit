@@ -3,6 +3,7 @@ module github.com/dogmatiq/reference-engine
 go 1.26
 
 require (
+	github.com/dogmatiq/dapper v0.6.1
 	github.com/dogmatiq/dogma v0.25.0
 	github.com/dogmatiq/enginekit v0.26.5
 	github.com/dogmatiq/spruce v0.2.3
@@ -28,6 +29,7 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
+	github.com/dogmatiq/jumble v0.1.0 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

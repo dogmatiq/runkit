@@ -12,9 +12,9 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-// TestCommandQueue_commandRemovedAfterHandling verifies that a command is
+// TestCommandQueue_commandIsRemovedAfterHandling verifies that a command is
 // removed from the command queue after it is successfully handled.
-func TestCommandQueue_commandRemovedAfterHandling(t *testing.T) {
+func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -37,9 +37,9 @@ func TestCommandQueue_commandRemovedAfterHandling(t *testing.T) {
 	)
 }
 
-// TestCommandQueue_unhandledCommandsRemainQueued verifies that if a command is
+// TestCommandQueue_unhandledCommandsRemainInQueue verifies that if a command is
 // not handled by any handler, it remains in the command queue.
-func TestCommandQueue_unhandledCommandsRemainQueued(t *testing.T) {
+func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {

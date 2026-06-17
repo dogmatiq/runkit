@@ -224,10 +224,10 @@ func ExpectQueryResult[T comparable](
 	}
 }
 
-// ExpectQueryResultEventually executes a database query and fails the test if
-// it does not produce a row with the wanted value in the first column within
+// WaitForQueryResult executes a database query and fails the test if it does
+// not produce a row with the wanted value in the first column within
 // [WaitTimeout].
-func ExpectQueryResultEventually[T comparable](
+func WaitForQueryResult[T comparable](
 	t testing.TB,
 	description string,
 	want T,

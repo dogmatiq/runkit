@@ -13,20 +13,14 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestEventsRecordedByTheSameCommandAreAppendedToAnEventStreamInOrder(t *testing.T) {
+// TestEventStream_eventsAreAppendedInOrder verifies that events recorded by a
+// single command are appended to an event stream in the order they are
+// recorded.
+func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
 
 			// Find the stream that was used for these events.
 			streamID := &uuidpb.UUID{}
@@ -73,7 +67,9 @@ func TestEventsRecordedByTheSameCommandAreAppendedToAnEventStreamInOrder(t *test
 	)
 }
 
-func TestEventsRecordedByDifferentCommandsAreDistributedAcrossStreams(t *testing.T) {
+// TestEventStream_eventsAreDistributedAcrossStreams verifies that events
+// recorded by different commands are distributed across multiple event streams.
+func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -84,18 +80,7 @@ func TestEventsRecordedByDifferentCommandsAreDistributedAcrossStreams(t *testing
 			// Send commands sequentially, waiting between each so that each
 			// Acquire() call sees the updated next_offset from the prior
 			// command's events.
-			for range 3 {
-				xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
-
-				xtesting.ExpectEmptyCommandQueueEventually(
-					t,
-					engine.DB,
-				)
-			}
+			xtesting.ExecuteCommandsSequentially(t, engine, stubs.CommandA1, stubs.CommandA1, stubs.CommandA1)
 
 			// Verify that events were distributed across more than one
 			// stream.
@@ -135,17 +120,15 @@ func TestEventsRecordedByDifferentCommandsAreDistributedAcrossStreams(t *testing
 	)
 }
 
-func TestEventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
+// TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError verifies that
+// events are discarded when the handler returns an error.
+func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			commandEnvelope := xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-			xtesting.ExpectCommandToBeBackedOffDueToFailureEventually(
+			xtesting.WaitForCommandToBePostponed(
 				t,
 				engine.DB,
 				commandEnvelope.GetBody().GetMessageId(),

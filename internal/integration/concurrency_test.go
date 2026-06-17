@@ -12,31 +12,22 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *testing.T) {
-	// barrier is used to prove concurrency: one handler sends, the other
-	// receives. If both handlers are not running concurrently, the send blocks
+// TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreference
+// verifies that a handler with the MaximizeConcurrency preference handles
+// commands concurrently.
+func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreference(t *testing.T) {
+	// barrier is used to prove concurrency: one invocation sends, the other
+	// receives. If the handler is not invoked concurrently, the send blocks
 	// forever and the test times out.
 	barrier := make(chan struct{})
 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
+			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-			xtesting.ExecuteCommand(
-				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
-			)
-
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -67,24 +58,20 @@ func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *te
 	)
 }
 
-func TestHandlersAreNotInvokedConcurrentlyWhenConcurrencyPreferenceIsMinimize(t *testing.T) {
+// TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference
+// verifies that a handler with the MinimizeConcurrency preference handles
+// commands serially.
+func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference(t *testing.T) {
 	var concurrent atomic.Int32
 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			for range 10 {
-				xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
+				xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 			}
 
-			xtesting.ExpectEmptyCommandQueueEventually(
-				t,
-				engine.DB,
-			)
+			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{

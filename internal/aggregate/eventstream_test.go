@@ -163,3 +163,44 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 		),
 	)
 }
+
+// TestEventStream_eventsAreNotRecordedWhenHandlerPanics verifies that events
+// recorded before the handler panics are discarded.
+func TestEventStream_eventsAreNotRecordedWhenHandlerPanics(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+
+			xtesting.WaitForCommandToBePostponed(
+				t,
+				engine.DB,
+				commandEnvelope.GetBody().GetMessageId(),
+			)
+
+			xtesting.ExpectEventCount(t, engine.DB, 0)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+				HandleCommandFunc: func(
+					r *stubs.AggregateRootStub,
+					s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+					m dogma.Command,
+				) {
+					s.RecordEvent(stubs.EventA1)
+					panic("<panic>")
+				},
+			},
+		),
+	)
+}

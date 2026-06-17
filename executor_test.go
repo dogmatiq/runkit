@@ -34,7 +34,7 @@ func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
 
 			xtesting.ExpectEventCount(t, engine.DB, 1)
 		},
@@ -85,7 +85,7 @@ func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
 
 			xtesting.ExpectEventCount(t, engine.DB, 2)
 		},
@@ -246,7 +246,7 @@ func TestExecuteCommandInvokesObserversWhenCommandIsDeduplicated(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
 
 			// Second call is deduplicated, but observer sees the original events.
 			var called bool
