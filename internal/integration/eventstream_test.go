@@ -112,7 +112,7 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 					s dogma.IntegrationCommandScope,
 					_ dogma.Command,
 				) error {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					s.RecordEvent(stubs.EventA1)
 					return nil
 				},
 			},
@@ -150,7 +150,7 @@ func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T)
 					s dogma.IntegrationCommandScope,
 					_ dogma.Command,
 				) error {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					s.RecordEvent(stubs.EventA1)
 					return errors.New("<error>")
 				},
 			},

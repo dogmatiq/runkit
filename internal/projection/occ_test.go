@@ -7,15 +7,16 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestEventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
-	const (
-		handlerKey = "cf5fe7ce-4311-455f-be14-03a3b647cc7a"
-		eventCount = 5
-	)
+// TestOCC_eventsAreDeliveredStartingAtTheCheckpointOffset verifies that the
+// handler only receives events starting at its checkpoint offset, skipping
+// previously consumed events.
+func TestOCC_eventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
+	const handlerKey = "cf5fe7ce-4311-455f-be14-03a3b647cc7a"
 
 	var (
 		checkpointMutex  sync.Mutex
@@ -25,14 +26,18 @@ func TestEventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
+			const eventCount = 5
+
+			xtesting.PopulateEventStreams(
 				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				eventCount,
 			)
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
-			xtesting.ExpectNoUnconsumedEventsEventually(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -41,27 +46,6 @@ func TestEventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
 				t.Errorf("unexpected final checkpoint offset: got %d, want %d", checkpointOffset, eventCount)
 			}
 		},
-		dogma.ViaIntegration(
-			&stubs.IntegrationMessageHandlerStub{
-				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<event-producer>", "e5f6a7b8-9c0d-4e1f-8a2b-3c4d5e6f7a8b")
-					c.Routes(
-						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-					)
-				},
-				HandleCommandFunc: func(
-					_ context.Context,
-					s dogma.IntegrationCommandScope,
-					_ dogma.Command,
-				) error {
-					for range eventCount {
-						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
-					}
-					return nil
-				},
-			},
-		),
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
@@ -97,11 +81,11 @@ func TestEventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
 	)
 }
 
-func TestOCCConflictWithHigherCheckpointOffset(t *testing.T) {
-	const (
-		handlerKey = "a2b3c4d5-6e7f-4a8b-9c0d-1e2f3a4b5c6d"
-		eventCount = 3
-	)
+// TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents verifies that when the
+// handler returns a checkpoint offset higher than expected, intermediate events
+// are skipped.
+func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
+	const handlerKey = "a2b3c4d5-6e7f-4a8b-9c0d-1e2f3a4b5c6d"
 
 	var (
 		checkpointMutex  sync.Mutex
@@ -111,14 +95,18 @@ func TestOCCConflictWithHigherCheckpointOffset(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
+			const eventCount = 3
+
+			xtesting.PopulateEventStreams(
 				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				eventCount,
 			)
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
-			xtesting.ExpectNoUnconsumedEventsEventually(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -130,27 +118,6 @@ func TestOCCConflictWithHigherCheckpointOffset(t *testing.T) {
 				t.Errorf("unexpected final checkpoint offset: got %d, want %d", got, want)
 			}
 		},
-		dogma.ViaIntegration(
-			&stubs.IntegrationMessageHandlerStub{
-				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<event-producer>", "e5f6a7b8-9c0d-4e1f-8a2b-3c4d5e6f7a8b")
-					c.Routes(
-						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-					)
-				},
-				HandleCommandFunc: func(
-					_ context.Context,
-					s dogma.IntegrationCommandScope,
-					_ dogma.Command,
-				) error {
-					for range eventCount {
-						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
-					}
-					return nil
-				},
-			},
-		),
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
@@ -190,11 +157,11 @@ func TestOCCConflictWithHigherCheckpointOffset(t *testing.T) {
 	)
 }
 
-func TestOCCConflictWithLowerCheckpointOffset(t *testing.T) {
-	const (
-		handlerKey = "b3c4d5e6-7f8a-4b9c-8d1e-2f3a4b5c6d7e"
-		eventCount = 2
-	)
+// TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents verifies that when
+// the handler returns a checkpoint offset lower than expected, previously
+// delivered events are redelivered.
+func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
+	const handlerKey = "b3c4d5e6-7f8a-4b9c-8d1e-2f3a4b5c6d7e"
 
 	var (
 		checkpointMutex  sync.Mutex
@@ -205,14 +172,18 @@ func TestOCCConflictWithLowerCheckpointOffset(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
+			const eventCount = 2
+
+			xtesting.PopulateEventStreams(
 				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				eventCount,
 			)
 
-			xtesting.ExpectEmptyCommandQueueEventually(t, engine.DB)
-			xtesting.ExpectNoUnconsumedEventsEventually(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -224,27 +195,6 @@ func TestOCCConflictWithLowerCheckpointOffset(t *testing.T) {
 				t.Errorf("unexpected final checkpoint offset: got %d, want %d", got, want)
 			}
 		},
-		dogma.ViaIntegration(
-			&stubs.IntegrationMessageHandlerStub{
-				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<event-producer>", "c4d5e6f7-8a9b-4c0d-9e2f-3a4b5c6d7e8f")
-					c.Routes(
-						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-					)
-				},
-				HandleCommandFunc: func(
-					_ context.Context,
-					s dogma.IntegrationCommandScope,
-					_ dogma.Command,
-				) error {
-					for range eventCount {
-						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
-					}
-					return nil
-				},
-			},
-		),
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {

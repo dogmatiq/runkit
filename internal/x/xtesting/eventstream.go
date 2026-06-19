@@ -117,31 +117,6 @@ func ExpectEventStreamCount(
 	)
 }
 
-// NonEmptyEventStreamCount returns the number of event streams that have at
-// least one event appended to them.
-//
-// Deprecated: use [PopulateEventStreams] instead
-func NonEmptyEventStreamCount(
-	t testing.TB,
-	q xsql.Querier,
-) int {
-	t.Helper()
-
-	row := q.QueryRowContext(
-		t.Context(),
-		`SELECT COUNT(*)
-		FROM eventstream.streams
-		WHERE next_offset > 0`,
-	)
-
-	var n int
-	if err := row.Scan(&n); err != nil {
-		t.Fatalf("unable to count non-empty event streams: %v", err)
-	}
-
-	return n
-}
-
 // ExpectEventCount asserts that the total number of events in the database
 // matches the given value.
 func ExpectEventCount(
@@ -305,12 +280,13 @@ func ExpectContiguousEventEnvelopes(
 	}
 }
 
-// ExpectNoUnconsumedEventsEventually asserts that the handler with the given
-// key eventually catches up to the tail of all non-empty event streams.
+// WaitForHandlerToConsumeAllEvents waits until the handler with the given key
+// has caught up to the tail of all non-empty event streams. If this does not
+// occur within [WaitTimeout], the test fails.
 //
 // It assumes that all events on all streams are of types that the handler
 // consumes. If that is not the case this assertion will hang until it times out.
-func ExpectNoUnconsumedEventsEventually(
+func WaitForHandlerToConsumeAllEvents(
 	t testing.TB,
 	q xsql.Querier,
 	handlerKey string,

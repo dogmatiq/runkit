@@ -20,7 +20,7 @@ func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
 			); err != nil {
 				t.Fatal(err)
@@ -28,7 +28,7 @@ func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
 
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
 			); err != nil {
 				t.Fatal(err)
@@ -56,7 +56,7 @@ func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
 						t.Error("unexpected second call to handler")
 					} else {
 						handled.Set()
-						s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+						s.RecordEvent(stubs.EventA1)
 					}
 					return nil
 				},
@@ -71,7 +71,7 @@ func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key-1>"),
 			); err != nil {
 				t.Fatal(err)
@@ -79,7 +79,7 @@ func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
 
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key-2>"),
 			); err != nil {
 				t.Fatal(err)
@@ -103,7 +103,7 @@ func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
 					s dogma.IntegrationCommandScope,
 					_ dogma.Command,
 				) error {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
+					s.RecordEvent(stubs.EventA1)
 					return nil
 				},
 			},
@@ -240,7 +240,7 @@ func TestExecuteCommandInvokesObserversWhenCommandIsDeduplicated(t *testing.T) {
 		func(t testing.TB, engine *dogmaengine.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
 			); err != nil {
 				t.Fatal(err)
@@ -252,7 +252,7 @@ func TestExecuteCommandInvokesObserversWhenCommandIsDeduplicated(t *testing.T) {
 			var called bool
 			if err := engine.ExecuteCommand(
 				t.Context(),
-				&stubs.CommandStub[stubs.TypeA]{},
+				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
 				dogma.WithEventObserver(
 					func(

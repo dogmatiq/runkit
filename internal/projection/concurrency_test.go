@@ -2,7 +2,6 @@ package projection_test
 
 import (
 	"context"
-	"database/sql"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,25 +13,26 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *testing.T) {
-	// barrier is used to prove concurrency: one handler sends, the other
-	// receives. If both handlers are not running concurrently, the send blocks
+// TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreference
+// verifies that a handler with the MaximizeConcurrency preference handles
+// events concurrently.
+func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreference(t *testing.T) {
+	// barrier is used to prove concurrency: one invocation sends, the other
+	// receives. If the handler is not invoked concurrently, the send blocks
 	// forever and the test times out.
 	barrier := make(chan struct{})
 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
-				xtesting.PopulateEventStreams(
-					t,
-					tx,
-					func(*uuidpb.UUID, uint64) dogma.Event {
-						return &stubs.EventStub[stubs.TypeA]{}
-					},
-					1, 1, // 2 streams, 1 event each
-				)
-			})
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1, 1, // 2 streams, 1 event each
+			)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -62,7 +62,10 @@ func TestHandlersAreInvokedConcurrentlyWhenConcurrencyPreferenceIsMaximize(t *te
 	)
 }
 
-func TestHandlersAreNotInvokedConcurrentlyWhenConcurrencyPreferenceIsMinimize(t *testing.T) {
+// TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference
+// verifies that a handler with the MinimizeConcurrency preference handles
+// events serially.
+func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference(t *testing.T) {
 	const handlerKey = "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
 
 	var concurrent atomic.Int32
@@ -70,22 +73,16 @@ func TestHandlersAreNotInvokedConcurrentlyWhenConcurrencyPreferenceIsMinimize(t 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
-				xtesting.PopulateEventStreams(
-					t,
-					tx,
-					func(*uuidpb.UUID, uint64) dogma.Event {
-						return &stubs.EventStub[stubs.TypeA]{}
-					},
-					10, 10, // 2 streams, 10 events each
-				)
-			})
-
-			xtesting.ExpectNoUnconsumedEventsEventually(
+			xtesting.PopulateEventStreams(
 				t,
 				engine.DB,
-				handlerKey,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				10, 10, // 2 streams, 10 events each
 			)
+
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

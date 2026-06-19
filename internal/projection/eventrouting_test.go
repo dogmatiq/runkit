@@ -6,12 +6,16 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestEventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
+// TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler verifies
+// that events of different types on the same stream are routed to the correct
+// handler based on their message type.
+func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
 		handlerACalled xsync.Latch
 		handlerBCalled xsync.Latch
@@ -20,10 +24,16 @@ func TestEventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommand(
+			xtesting.PopulateEventStreams(
 				t,
-				engine,
-				&stubs.CommandStub[stubs.TypeA]{},
+				engine.DB,
+				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					if offset == 0 {
+						return stubs.EventA1
+					}
+					return stubs.EventB1
+				},
+				2, // one stream, two events of different types
 			)
 
 			xtesting.ExpectLatchesSetEventually(
@@ -32,27 +42,6 @@ func TestEventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 				&handlerBCalled,
 			)
 		},
-		dogma.ViaIntegration(
-			&stubs.IntegrationMessageHandlerStub{
-				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<event-producer>", "2a20dee8-ea25-481a-b470-14926c509a3a")
-					c.Routes(
-						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
-					)
-				},
-				HandleCommandFunc: func(
-					_ context.Context,
-					s dogma.IntegrationCommandScope,
-					_ dogma.Command,
-				) error {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
-					s.RecordEvent(&stubs.EventStub[stubs.TypeB]{})
-					return nil
-				},
-			},
-		),
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
@@ -106,7 +95,10 @@ func TestEventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 	)
 }
 
-func TestEventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
+// TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler
+// verifies that events on different streams are routed to the correct handler
+// based on their message type.
+func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
 		handlerACalled xsync.Latch
 		handlerBCalled xsync.Latch
@@ -115,29 +107,23 @@ func TestEventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Pre-create multiple streams so that events can be distributed
-			// across them.
-			xtesting.CreateEventStreams(t, engine.DB, 2)
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1, // one stream with one TypeA event
+			)
 
-			// Keep sending commands until events land on more than one
-			// stream. This avoids coupling to the specifics of
-			// acquire_for_write().
-			for {
-				xtesting.ExecuteCommand(
-					t,
-					engine,
-					&stubs.CommandStub[stubs.TypeA]{},
-				)
-
-				xtesting.ExpectEmptyCommandQueueEventually(
-					t,
-					engine.DB,
-				)
-
-				if xtesting.NonEmptyEventStreamCount(t, engine.DB) > 1 {
-					break
-				}
-			}
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventB1
+				},
+				1, // one stream with one TypeB event
+			)
 
 			xtesting.ExpectLatchesSetEventually(
 				t,
@@ -145,27 +131,6 @@ func TestEventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 				&handlerBCalled,
 			)
 		},
-		dogma.ViaIntegration(
-			&stubs.IntegrationMessageHandlerStub{
-				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<event-producer>", "f4a8e6c1-1b2d-4c3e-9a4f-5b6c7d8e9f0a")
-					c.Routes(
-						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
-					)
-				},
-				HandleCommandFunc: func(
-					_ context.Context,
-					s dogma.IntegrationCommandScope,
-					_ dogma.Command,
-				) error {
-					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{})
-					s.RecordEvent(&stubs.EventStub[stubs.TypeB]{})
-					return nil
-				},
-			},
-		),
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
