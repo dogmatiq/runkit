@@ -21,8 +21,8 @@ type Controller struct {
 	Identity     *identitypb.Identity
 	Concurrency  dogma.ConcurrencyPreference
 	EventTypeIDs []string
-	// BackoffBase  time.Duration
-	// BackoffLimit time.Duration
+	// BackoffBase time.Duration
+	// BackoffCap  time.Duration
 	Logger *slog.Logger
 }
 

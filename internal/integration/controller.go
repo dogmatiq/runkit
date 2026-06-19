@@ -27,7 +27,7 @@ type Controller struct {
 	Packer         *envelopepb.Packer
 	CommandTypeIDs []string
 	BackoffBase    time.Duration
-	BackoffLimit   time.Duration
+	BackoffCap     time.Duration
 	Logger         *slog.Logger
 }
 
@@ -146,7 +146,7 @@ func (c *Controller) acquireTask(
 		Concurrency:   c.Concurrency,
 		Packer:        c.Packer,
 		BackoffBase:   c.BackoffBase,
-		BackoffLimit:  c.BackoffLimit,
+		BackoffCap:    c.BackoffCap,
 		EnvelopeBytes: []byte{},
 		ParentLogger:  c.Logger,
 		Logger:        c.Logger,

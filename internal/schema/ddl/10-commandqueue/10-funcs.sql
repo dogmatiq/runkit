@@ -86,15 +86,15 @@ $$;
 -- It raises an exception if the command does not exist.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION commandqueue.postpone(
-    message_id      uuid,
-    backoff_base_ms bigint
+    message_id uuid,
+    delay      interval
 )
 RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
     UPDATE commandqueue.commands SET
-        execute_at = clock_timestamp() + postpone.backoff_base_ms * interval '1 millisecond'
+        execute_at = clock_timestamp() + postpone.delay
     WHERE commandqueue.commands.message_id = postpone.message_id;
 
     IF NOT FOUND THEN
@@ -111,9 +111,9 @@ $$;
 -- It raises an exception if the command does not exist.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION commandqueue.fail_and_postpone(
-    message_id       uuid,
-    backoff_base_ms  bigint,
-    backoff_limit_ms bigint
+    message_id   uuid,
+    backoff_base interval,
+    backoff_cap  interval
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -121,10 +121,11 @@ AS $$
 BEGIN
     UPDATE commandqueue.commands SET
         failures = failures + 1,
-        execute_at = clock_timestamp() + LEAST(
-            pow(2, failures) * fail_and_postpone.backoff_base_ms,
-            fail_and_postpone.backoff_limit_ms
-        ) * interval '1 millisecond'
+        execute_at = clock_timestamp() + common.exponential_backoff(
+            failures,
+            fail_and_postpone.backoff_base,
+            fail_and_postpone.backoff_cap
+        )
     WHERE commandqueue.commands.message_id = fail_and_postpone.message_id;
 
     IF NOT FOUND THEN

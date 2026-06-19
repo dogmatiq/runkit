@@ -110,8 +110,8 @@ func (e *Engine) setupCommandTypes() {
 // newControllerForHandler creates a controller for the given handler.
 func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controller {
 	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffLimit = 300 * time.Second
+		backoffBase = 10 * time.Millisecond
+		backoffCap  = 300 * time.Second
 	)
 
 	switch handlerConfig := handlerConfig.(type) {
@@ -123,7 +123,7 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Packer:         e.packer,
 			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
 			BackoffBase:    backoffBase,
-			BackoffLimit:   backoffLimit,
+			BackoffCap:     backoffCap,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 
@@ -136,7 +136,7 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Packer:         e.packer,
 			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
 			BackoffBase:    backoffBase,
-			BackoffLimit:   backoffLimit,
+			BackoffCap:     backoffCap,
 			Logger:         e.newLoggerForHandler(handlerConfig),
 		}
 

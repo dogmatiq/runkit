@@ -26,7 +26,7 @@ type commandTask struct {
 	Packer               *envelopepb.Packer
 	MessageID            *uuidpb.UUID
 	BackoffBase          time.Duration
-	BackoffLimit         time.Duration
+	BackoffCap           time.Duration
 	EnvelopeBytes        []byte
 	ParentLogger, Logger *slog.Logger
 }
@@ -635,7 +635,7 @@ func (t *commandTask) postpone(ctx context.Context) error {
 		ctx,
 		`SELECT commandqueue.postpone($1, $2)`,
 		xsql.UUID(t.MessageID),
-		t.BackoffBase.Milliseconds(),
+		t.BackoffBase,
 	); err != nil {
 		return fmt.Errorf("unable to postpone queued command: %w", err)
 	}
@@ -664,8 +664,8 @@ func (t *commandTask) failAndPostpone(ctx context.Context, instanceID string) er
 		ctx,
 		`SELECT commandqueue.fail_and_postpone($1, $2, $3)`,
 		xsql.UUID(t.MessageID),
-		t.BackoffBase.Milliseconds(),
-		t.BackoffLimit.Milliseconds(),
+		t.BackoffBase,
+		t.BackoffCap,
 	); err != nil {
 		return fmt.Errorf("unable to postpone queued command after failure: %w", err)
 	}
