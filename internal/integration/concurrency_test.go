@@ -35,7 +35,6 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 					c.ConcurrencyPreference(dogma.MaximizeConcurrency)
 				},
@@ -79,7 +78,6 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 					c.ConcurrencyPreference(dogma.MinimizeConcurrency)
 				},

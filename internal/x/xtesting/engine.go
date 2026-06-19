@@ -10,20 +10,22 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/contexthook"
 	"github.com/dogmatiq/spruce"
 	"golang.org/x/sync/errgroup"
 )
 
-// RunEngines runs the given Dogma application in a test engine and executes the given
-// function while the engine is running.
+// appKey is the unique key used for Dogma applications within tests.
+const appKey = "f1d3a3b4-5b6c-4d7e-8f9a-0b1c2d3e4f5a"
+
+// RunEngines runs the given Dogma application in a test engine and executes the
+// given function while the engine is running.
 //
 // Multiple engines are run concurrently to ensure that behavior is consistent
 // when multiple engines running against the same database.
 //
-// If any of the engines stops before fn returns, the context passed to fn is
+// If any of the engines stop before fn returns, the context passed to fn is
 // canceled, and the test fails.
 func RunEngines(
 	t *testing.T,
@@ -38,7 +40,7 @@ func RunEngines(
 
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
-			c.Identity(t.Name(), uuidpb.Generate().AsString())
+			c.Identity(t.Name(), appKey)
 			c.Routes(routes...)
 		},
 	}

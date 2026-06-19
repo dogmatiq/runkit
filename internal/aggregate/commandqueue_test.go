@@ -3,6 +3,7 @@ package aggregate_test
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -339,4 +340,49 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 			),
 		)
 	})
+}
+
+// TestCommandQueue_postponedCommandsAreNotHandled verifies that commands with
+// execute_at in the future are not dispatched to the handler.
+func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			postponedEnvelope := xtesting.EnqueuePostponedCommand(
+				t,
+				engine.DB,
+				stubs.CommandA1,
+			)
+
+			// Allow several poll cycles to pass.
+			time.Sleep(50 * time.Millisecond)
+
+			xtesting.ExpectCommandToBeUnattempted(
+				t,
+				engine.DB,
+				postponedEnvelope.GetBody().GetMessageId(),
+			)
+		},
+		dogma.ViaAggregate(
+			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+				ConfigureFunc: func(c dogma.AggregateConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				RouteCommandToInstanceFunc: func(dogma.Command) string {
+					return "<instance>"
+				},
+				HandleCommandFunc: func(
+					_ *stubs.AggregateRootStub,
+					s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+					_ dogma.Command,
+				) {
+					t.Error("handler was called for the postponed command")
+				},
+			},
+		),
+	)
 }

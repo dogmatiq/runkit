@@ -1,12 +1,14 @@
 package xtesting
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -328,12 +330,14 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 
 	id := uuidpb.Generate()
 
-	return envelopepb.NewEnvelopeBuilder().
+	env := envelopepb.NewEnvelopeBuilder().
 		WithHeader(
 			envelopepb.NewHeaderBuilder().
 				WithCausationId(id).
 				WithCorrelationId(id).
-				WithSource(envelopepb.NewSourceBuilder().Build()).
+				WithSource(envelopepb.NewSourceBuilder().
+					WithApplication(identitypb.New("test", uuidpb.MustParse(appKey))).
+					Build()).
 				Build(),
 		).
 		WithBody(
@@ -350,6 +354,12 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 				Build(),
 		).
 		Build()
+
+	if err := env.Validate(); err != nil {
+		t.Fatalf("invalid envelope: %v", err)
+	}
+
+	return env
 }
 
 // ExpectEqualEvents asserts that got and want contain the same events.

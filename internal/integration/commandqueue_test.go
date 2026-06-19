@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -27,7 +28,6 @@ func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 				},
 			},
@@ -77,7 +77,6 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 				},
 			},
@@ -128,7 +127,6 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 				},
 			},
@@ -189,7 +187,6 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 							c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
 							c.Routes(
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
-								dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 							)
 						},
 						HandleCommandFunc: c.HandleCommandFunc,
@@ -198,4 +195,46 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 			)
 		})
 	}
+}
+
+// TestCommandQueue_postponedCommandsAreNotHandled verifies that commands with
+// execute_at in the future are not dispatched to the handler.
+func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			postponedEnvelope := xtesting.EnqueuePostponedCommand(
+				t,
+				engine.DB,
+				stubs.CommandA1,
+			)
+
+			// Allow several poll cycles to pass.
+			time.Sleep(50 * time.Millisecond)
+
+			xtesting.ExpectCommandToBeUnattempted(
+				t,
+				engine.DB,
+				postponedEnvelope.GetBody().GetMessageId(),
+			)
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					m dogma.Command,
+				) error {
+					t.Error("handler was called for the postponed command")
+					return nil
+				},
+			},
+		),
+	)
 }
