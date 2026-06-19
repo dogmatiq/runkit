@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS commandqueue.commands (
     message_type_id       uuid        NOT NULL,
     envelope              bytea       NOT NULL,
     failures              int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    enqueued_at           timestamptz NOT NULL DEFAULT clock_timestamp(),
     execute_at            timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 

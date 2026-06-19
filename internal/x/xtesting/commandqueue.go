@@ -70,10 +70,7 @@ func WaitForCommandToBeRemovedFromQueue(
 }
 
 // WaitForCommandToBePostponed waits until the command with the given ID has
-// been postponed due to a failure. If this does not occur within [WaitTimeout],
-// the test fails.
-//
-// It does not test any specifics of the back-off algorithm.
+// been postponed. If this does not occur within [WaitTimeout], the test fails.
 func WaitForCommandToBePostponed(
 	t testing.TB,
 	q xsql.Querier,
@@ -83,13 +80,13 @@ func WaitForCommandToBePostponed(
 
 	WaitForQueryResult(
 		t,
-		fmt.Sprintf("wait for command %q to be backed off due to failure", messageID),
+		fmt.Sprintf("wait for command %q to be postponed", messageID),
 		1,
 		q,
 		`SELECT COUNT(*)
 		FROM commandqueue.commands
 		WHERE message_id = $1
-		AND failures >= 1`,
+		AND execute_at > enqueued_at`,
 		xsql.UUID(messageID),
 	)
 }

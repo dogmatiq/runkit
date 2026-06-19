@@ -44,9 +44,9 @@ func (t *commandTask) Execute(ctx context.Context) error {
 	instanceID, err := t.handleCommand(ctx)
 
 	if errors.Is(err, errLocked) {
-		err = t.backoffDueToContention(ctx)
+		err = t.postpone(ctx)
 	} else if errors.Is(err, errFailed) {
-		err = t.backoffDueToFailure(ctx, instanceID)
+		err = t.failAndPostpone(ctx, instanceID)
 	}
 
 	if err != nil {
@@ -630,20 +630,20 @@ func (t *commandTask) marshalSnapshot(
 	return snapshot, true
 }
 
-func (t *commandTask) backoffDueToContention(ctx context.Context) error {
+func (t *commandTask) postpone(ctx context.Context) error {
 	if _, err := t.Tx.ExecContext(
 		ctx,
-		`SELECT commandqueue.backoff_due_to_contention($1, $2)`,
+		`SELECT commandqueue.postpone($1, $2)`,
 		xsql.UUID(t.MessageID),
 		t.BackoffBase.Milliseconds(),
 	); err != nil {
-		return fmt.Errorf("unable to back off queued command due to contention: %w", err)
+		return fmt.Errorf("unable to postpone queued command: %w", err)
 	}
 
 	return nil
 }
 
-func (t *commandTask) backoffDueToFailure(ctx context.Context, instanceID string) error {
+func (t *commandTask) failAndPostpone(ctx context.Context, instanceID string) error {
 	if instanceID != "" {
 		// If the instance was newly created, delete it in case this command is
 		// not routed to the same instance in the future.
@@ -662,12 +662,12 @@ func (t *commandTask) backoffDueToFailure(ctx context.Context, instanceID string
 
 	if _, err := t.Tx.ExecContext(
 		ctx,
-		`SELECT commandqueue.backoff_due_to_failure($1, $2, $3)`,
+		`SELECT commandqueue.fail_and_postpone($1, $2, $3)`,
 		xsql.UUID(t.MessageID),
 		t.BackoffBase.Milliseconds(),
 		t.BackoffLimit.Milliseconds(),
 	); err != nil {
-		return fmt.Errorf("unable to back off queued command due to failure: %w", err)
+		return fmt.Errorf("unable to postpone queued command after failure: %w", err)
 	}
 
 	return nil

@@ -42,7 +42,7 @@ func (t *commandTask) Execute(ctx context.Context) error {
 	err := t.handleCommand(ctx)
 
 	if errors.Is(err, errFailed) {
-		err = t.backoffDueToFailure(ctx)
+		err = t.failAndPostpone(ctx)
 	}
 
 	if err != nil {
@@ -211,15 +211,15 @@ func (t *commandTask) completeWithEvents(
 	return nil
 }
 
-func (t *commandTask) backoffDueToFailure(ctx context.Context) error {
+func (t *commandTask) failAndPostpone(ctx context.Context) error {
 	if _, err := t.Tx.ExecContext(
 		ctx,
-		`SELECT commandqueue.backoff_due_to_failure($1, $2, $3)`,
+		`SELECT commandqueue.fail_and_postpone($1, $2, $3)`,
 		xsql.UUID(t.MessageID),
 		t.BackoffBase.Milliseconds(),
 		t.BackoffLimit.Milliseconds(),
 	); err != nil {
-		return fmt.Errorf("unable to back off queued command due to failure: %w", err)
+		return fmt.Errorf("unable to postpone queued command after failure: %w", err)
 	}
 
 	return nil

@@ -80,13 +80,12 @@ END;
 $$;
 
 --------------------------------------------------------------------------------
--- The "backoff_due_to_contention" function backs off a command by a fixed delay
--- without incrementing its failure count. It is used when a command cannot be
--- processed due to transient contention rather than an error.
+-- The "postpone" function postpones a command by rescheduling it after a fixed
+-- delay without incrementing its failure count.
 --
 -- It raises an exception if the command does not exist.
 --------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION commandqueue.backoff_due_to_contention(
+CREATE OR REPLACE FUNCTION commandqueue.postpone(
     message_id      uuid,
     backoff_base_ms bigint
 )
@@ -95,8 +94,8 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     UPDATE commandqueue.commands SET
-        execute_at = clock_timestamp() + backoff_due_to_contention.backoff_base_ms * interval '1 millisecond'
-    WHERE commandqueue.commands.message_id = backoff_due_to_contention.message_id;
+        execute_at = clock_timestamp() + postpone.backoff_base_ms * interval '1 millisecond'
+    WHERE commandqueue.commands.message_id = postpone.message_id;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'command % does not exist in the queue', message_id;
@@ -105,12 +104,13 @@ END;
 $$;
 
 --------------------------------------------------------------------------------
--- The "backoff_due_to_failure" function backs off a command by an exponentially
--- increasing delay based on its failure count.
+-- The "fail_and_postpone" function records a failure against a command and
+-- postpones it by rescheduling it after an exponentially increasing delay based
+-- on its failure count.
 --
 -- It raises an exception if the command does not exist.
 --------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION commandqueue.backoff_due_to_failure(
+CREATE OR REPLACE FUNCTION commandqueue.fail_and_postpone(
     message_id       uuid,
     backoff_base_ms  bigint,
     backoff_limit_ms bigint
@@ -122,10 +122,10 @@ BEGIN
     UPDATE commandqueue.commands SET
         failures = failures + 1,
         execute_at = clock_timestamp() + LEAST(
-            pow(2, failures) * backoff_due_to_failure.backoff_base_ms,
-            backoff_due_to_failure.backoff_limit_ms
+            pow(2, failures) * fail_and_postpone.backoff_base_ms,
+            fail_and_postpone.backoff_limit_ms
         ) * interval '1 millisecond'
-    WHERE commandqueue.commands.message_id = backoff_due_to_failure.message_id;
+    WHERE commandqueue.commands.message_id = fail_and_postpone.message_id;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'command % does not exist in the queue', message_id;
