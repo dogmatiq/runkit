@@ -12,7 +12,10 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
 
-func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
+// TestCommandExecutor_duplicateIdempotencyKeyIsIgnored verifies that executing
+// a command with the same idempotency key twice results in the handler being
+// invoked only once.
+func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
@@ -65,7 +68,9 @@ func TestCommandWithDuplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	)
 }
 
-func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
+// TestCommandExecutor_differentIdempotencyKeysDoNotInterfere verifies that
+// commands with different idempotency keys are handled independently.
+func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -111,7 +116,9 @@ func TestDifferentIdempotencyKeysDoNotInterfereWithEachOther(t *testing.T) {
 	)
 }
 
-func TestExecuteCommandInvokesEventObservers(t *testing.T) {
+// TestCommandExecutor_eventObserverIsInvokedWithRecordedEvents verifies that
+// event observers are called with events recorded by the handler.
+func TestCommandExecutor_eventObserverIsInvokedWithRecordedEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -159,7 +166,10 @@ func TestExecuteCommandInvokesEventObservers(t *testing.T) {
 	)
 }
 
-func TestExecuteCommandReturnsAnErrorWhenNoEventObserversAreSatisfied(t *testing.T) {
+// TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
+// that ExecuteCommand returns ErrEventObserverNotSatisfied when no observer
+// returns true.
+func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -199,7 +209,10 @@ func TestExecuteCommandReturnsAnErrorWhenNoEventObserversAreSatisfied(t *testing
 	)
 }
 
-func TestExecuteCommandReturnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+// TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded verifies that
+// ExecuteCommand returns ErrEventObserverNotSatisfied when the handler does not
+// record any events.
+func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -232,7 +245,10 @@ func TestExecuteCommandReturnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	)
 }
 
-func TestExecuteCommandInvokesObserversWhenCommandIsDeduplicated(t *testing.T) {
+// TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated verifies
+// that event observers are invoked with the original events when a command is
+// deduplicated via its idempotency key.
+func TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
