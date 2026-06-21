@@ -238,11 +238,32 @@ BEGIN
     INNER JOIN eventstream.event_types AS t
         ON t.stream_id = h.stream_id
         AND t.message_type_id = ANY(acquire_for_read.message_type_ids)
-        AND t.latest_offset >= h.checkpoint_offset
+        AND t.latest_offset >= COALESCE(h.checkpoint_offset, 0)
     WHERE h.handler_key = acquire_for_read.handler_key
-    AND s.next_offset > h.checkpoint_offset
-    ORDER BY (s.next_offset - h.checkpoint_offset) DESC
+    AND h.resume_at <= clock_timestamp()
+    AND s.next_offset > COALESCE(h.checkpoint_offset, 0)
+    ORDER BY (s.next_offset - COALESCE(h.checkpoint_offset, 0)) DESC
     FOR UPDATE OF h SKIP LOCKED
     LIMIT 1;
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION eventstream.fail_and_postpone(
+    handler_key  uuid,
+    stream_id    uuid,
+    backoff_base interval,
+    backoff_cap  interval
+)
+RETURNS void
+LANGUAGE sql
+AS $$
+    UPDATE eventstream.handler_checkpoints SET
+        failures = failures + 1,
+        resume_at = clock_timestamp() + common.exponential_backoff(
+            failures,
+            fail_and_postpone.backoff_base,
+            fail_and_postpone.backoff_cap
+        )
+    WHERE handler_key = fail_and_postpone.handler_key
+    AND stream_id = fail_and_postpone.stream_id;
 $$;

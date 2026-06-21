@@ -315,6 +315,31 @@ func WaitForHandlerToConsumeAllEvents(
 	)
 }
 
+// WaitForHandlerToPostponeConsumingStream waits until the handler with the
+// given key has postponed consuming events from the given stream.
+func WaitForHandlerToPostponeConsumingStream(
+	t testing.TB,
+	q xsql.Querier,
+	handlerKey string,
+	streamID *uuidpb.UUID,
+) {
+	t.Helper()
+
+	WaitForQueryResult(
+		t,
+		fmt.Sprintf("handler %q has postponed consuming from stream %q", handlerKey, streamID),
+		1,
+		q,
+		`SELECT COUNT(*)
+		FROM eventstream.handler_checkpoints
+		WHERE handler_key = $1
+		AND stream_id = $2
+		AND resume_at > clock_timestamp()`,
+		handlerKey,
+		xsql.UUID(streamID),
+	)
+}
+
 func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 	t.Helper()
 

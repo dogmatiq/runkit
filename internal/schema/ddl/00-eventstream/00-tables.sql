@@ -82,9 +82,11 @@ CREATE TABLE IF NOT EXISTS eventstream.event_types (
 -- processing for a specific handler/stream pair.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
-    handler_key       uuid   NOT NULL,
-    stream_id         uuid   NOT NULL REFERENCES eventstream.streams(id),
-    checkpoint_offset bigint DEFAULT NULL,
+    handler_key       uuid        NOT NULL,
+    stream_id         uuid        NOT NULL REFERENCES eventstream.streams(id),
+    checkpoint_offset bigint      DEFAULT NULL,
+    failures          int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    resume_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     PRIMARY KEY (handler_key, stream_id)
 );

@@ -147,6 +147,8 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 			Identity:     handlerConfig.Identity(),
 			Concurrency:  handlerConfig.ConcurrencyPreference(),
 			EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+			BackoffBase:  backoffBase,
+			BackoffCap:   backoffCap,
 			Logger:       e.newLoggerForHandler(handlerConfig),
 		}
 

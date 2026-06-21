@@ -11,6 +11,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
@@ -21,9 +22,9 @@ type Controller struct {
 	Identity     *identitypb.Identity
 	Concurrency  dogma.ConcurrencyPreference
 	EventTypeIDs []string
-	// BackoffBase time.Duration
-	// BackoffCap  time.Duration
-	Logger *slog.Logger
+	BackoffBase  time.Duration
+	BackoffCap   time.Duration
+	Logger       *slog.Logger
 }
 
 func (c *Controller) Run(ctx context.Context) {
@@ -138,19 +139,50 @@ func (c *Controller) tick(ctx context.Context) error {
 
 			eventOffset := streamPosition.GetOffset()
 
-			nextCheckpointOffset, err := c.Handler.HandleEvent(
-				ctx,
-				&scope{
-					streamID:         streamID.AsString(),
-					offset:           eventOffset,
-					recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-					checkpointOffset: *checkpointOffset,
-					logger:           c.Logger,
+			var nextCheckpointOffset uint64
+
+			if err := xerrors.Recover(
+				func() error {
+					var err error
+					nextCheckpointOffset, err = c.Handler.HandleEvent(
+						ctx,
+						&scope{
+							streamID:         streamID.AsString(),
+							offset:           eventOffset,
+							recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
+							checkpointOffset: *checkpointOffset,
+							logger:           c.Logger,
+						},
+						event,
+					)
+					return err
 				},
-				event,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to handle event: %w", err)
+			); err != nil {
+				c.Logger.ErrorContext(
+					ctx,
+					"unable to handle event",
+					xslog.UUID("stream_id", streamID),
+					slog.Uint64("event_offset", eventOffset),
+					xslog.Envelope("event", eventEnvelope),
+					xslog.Error(err),
+				)
+
+				if _, err := tx.ExecContext(
+					ctx,
+					`SELECT eventstream.fail_and_postpone($1, $2, $3, $4)`,
+					xsql.UUID(c.Identity.GetKey()),
+					xsql.UUID(streamID),
+					c.BackoffBase,
+					c.BackoffCap,
+				); err != nil {
+					return fmt.Errorf("unable to postpone stream consumption after failure: %w", err)
+				}
+
+				if err := tx.Commit(); err != nil {
+					return fmt.Errorf("unable to commit transaction: %w", err)
+				}
+
+				return nil
 			}
 
 			prevCheckpointOffset := *checkpointOffset

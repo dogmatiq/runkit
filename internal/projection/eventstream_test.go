@@ -154,3 +154,83 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 		),
 	)
 }
+
+// TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed verifies
+// that if handling an event fails (either via error return or panic),
+// consumption of the stream is postponed.
+//
+// TODO: Add a test analogous to TestCommandQueue_postponedCommandsAreNotHandled
+// that verifies events on a postponed stream are not delivered to the handler
+// during the postponement window.
+//
+// TODO: Add a test that verifies failures is reset to zero after a successful
+// HandleEvent call.
+func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testing.T) {
+	const handlerKey = "87f5a992-a3a6-494a-be1c-c01c6fff8ff0"
+
+	cases := []struct {
+		Name            string
+		HandleEventFunc func(
+			context.Context,
+			dogma.ProjectionEventScope,
+			dogma.Event,
+		) (uint64, error)
+	}{
+		{
+			"returns error",
+			func(
+				context.Context,
+				dogma.ProjectionEventScope,
+				dogma.Event,
+			) (uint64, error) {
+				return 0, fmt.Errorf("<handler error>")
+			},
+		},
+		{
+			"panics",
+			func(
+				context.Context,
+				dogma.ProjectionEventScope,
+				dogma.Event,
+			) (uint64, error) {
+				panic("<handler panic>")
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, engine *dogmaengine.Engine) {
+					streamIDs := xtesting.PopulateEventStreams(
+						t,
+						engine.DB,
+						func(*uuidpb.UUID, uint64) dogma.Event {
+							return stubs.EventA1
+						},
+						1,
+					)
+
+					xtesting.WaitForHandlerToPostponeConsumingStream(
+						t,
+						engine.DB,
+						handlerKey,
+						streamIDs[0],
+					)
+				},
+				dogma.ViaProjection(
+					&stubs.ProjectionMessageHandlerStub{
+						ConfigureFunc: func(c dogma.ProjectionConfigurer) {
+							c.Identity("<handler>", handlerKey)
+							c.Routes(
+								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+							)
+						},
+						HandleEventFunc: c.HandleEventFunc,
+					},
+				),
+			)
+		})
+	}
+}
