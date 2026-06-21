@@ -69,6 +69,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	var g sync.WaitGroup
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
+		if handlerConfig.IsDisabled() {
+			continue
+		}
+
 		c := e.newControllerForHandler(handlerConfig)
 		g.Go(func() {
 			c.Run(ctx)
