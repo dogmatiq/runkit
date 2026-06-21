@@ -340,6 +340,35 @@ func WaitForHandlerToPostponeConsumingStream(
 	)
 }
 
+// PostponeStreamConsumption inserts a handler_checkpoints row with resume_at
+// set 24 hours in the future, preventing the handler from consuming the stream.
+func PostponeStreamConsumption(
+	t testing.TB,
+	x xsql.Executor,
+	handlerKey string,
+	streamID *uuidpb.UUID,
+) {
+	t.Helper()
+
+	if _, err := x.ExecContext(
+		t.Context(),
+		`INSERT INTO eventstream.handler_checkpoints (
+			handler_key,
+			stream_id,
+			resume_at
+		) VALUES (
+			$1, $2,
+			clock_timestamp() + INTERVAL '24 hours'
+		)
+		ON CONFLICT (handler_key, stream_id) DO UPDATE SET
+			resume_at = clock_timestamp() + INTERVAL '24 hours'`,
+		handlerKey,
+		xsql.UUID(streamID),
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 	t.Helper()
 
