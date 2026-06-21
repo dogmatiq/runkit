@@ -216,7 +216,8 @@ func (c *Controller) tick(ctx context.Context) error {
 			ctx,
 			tx,
 			`UPDATE eventstream.handler_checkpoints SET
-				checkpoint_offset = $1
+				checkpoint_offset = $1,
+				failures = 0
 			WHERE handler_key = $2
 			AND stream_id = $3`,
 			checkpointOffset,
