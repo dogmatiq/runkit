@@ -84,17 +84,19 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 
-		c := e.newControllerForHandler(handlerConfig)
-		g.Go(func() {
-			c.Run(ctx)
+		for _, c := range e.newComponentsForHandler(handlerConfig) {
+			g.Go(func() {
+				c.Run(ctx)
 
-			if ctx.Err() == nil {
-				panic(fmt.Sprintf(
-					"controller for handler %s stopped before context was canceled",
-					handlerConfig.Identity(),
-				))
-			}
-		})
+				if ctx.Err() == nil {
+					panic(fmt.Sprintf(
+						"%T component for handler %s stopped before context was canceled",
+						c,
+						handlerConfig.Identity(),
+					))
+				}
+			})
+		}
 	}
 
 	e.ready.Set()
@@ -122,8 +124,8 @@ func (e *Engine) setupCommandTypes() {
 	}
 }
 
-// newControllerForHandler creates a controller for the given handler.
-func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controller {
+// newComponentsForHandler creates engine components for the given handler.
+func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []component {
 	const (
 		backoffBase = 10 * time.Millisecond
 		backoffCap  = 300 * time.Second
@@ -136,41 +138,53 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
-		return &aggregate.Controller{
-			DB:             e.DB,
-			Handler:        handlerConfig.Interface(),
-			Identity:       handlerConfig.Identity(),
-			Packer:         e.packer,
-			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
-			BackoffBase:    backoffBase,
-			BackoffCap:     backoffCap,
-			Logger:         e.newLoggerForHandler(handlerConfig),
+		return []component{
+			&aggregate.MessagePump{
+				DB:             e.DB,
+				Handler:        handlerConfig.Interface(),
+				Identity:       handlerConfig.Identity(),
+				Packer:         e.packer,
+				CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+				BackoffBase:    backoffBase,
+				BackoffCap:     backoffCap,
+				Logger:         e.newLoggerForHandler(handlerConfig),
+			},
 		}
 
 	case *config.Integration:
-		return &integration.Controller{
-			DB:             e.DB,
-			Handler:        handlerConfig.Interface(),
-			Identity:       handlerConfig.Identity(),
-			Concurrency:    handlerConfig.ConcurrencyPreference(),
-			Packer:         e.packer,
-			CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
-			BackoffBase:    backoffBase,
-			BackoffCap:     backoffCap,
-			Logger:         e.newLoggerForHandler(handlerConfig),
+		return []component{
+			&integration.MessagePump{
+				DB:             e.DB,
+				Handler:        handlerConfig.Interface(),
+				Identity:       handlerConfig.Identity(),
+				Concurrency:    handlerConfig.ConcurrencyPreference(),
+				Packer:         e.packer,
+				CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+				BackoffBase:    backoffBase,
+				BackoffCap:     backoffCap,
+				Logger:         e.newLoggerForHandler(handlerConfig),
+			},
 		}
 
 	case *config.Projection:
-		return &projection.Controller{
-			DB:              e.DB,
-			Handler:         handlerConfig.Interface(),
-			Identity:        handlerConfig.Identity(),
-			Concurrency:     handlerConfig.ConcurrencyPreference(),
-			EventTypeIDs:    e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
-			BackoffBase:     backoffBase,
-			BackoffCap:      backoffCap,
-			CompactInterval: projectionCompactInterval,
-			Logger:          e.newLoggerForHandler(handlerConfig),
+		return []component{
+			&projection.MessagePump{
+				DB:           e.DB,
+				Handler:      handlerConfig.Interface(),
+				Identity:     handlerConfig.Identity(),
+				Concurrency:  handlerConfig.ConcurrencyPreference(),
+				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       e.newLoggerForHandler(handlerConfig),
+			},
+			&projection.Compactor{
+				DB:       e.DB,
+				Handler:  handlerConfig.Interface(),
+				Identity: handlerConfig.Identity(),
+				Interval: projectionCompactInterval,
+				Logger:   e.newLoggerForHandler(handlerConfig),
+			},
 		}
 
 	default:

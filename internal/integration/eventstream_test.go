@@ -73,7 +73,7 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Force creation of multiple event streams so that the controller
+			// Force creation of multiple event streams so that the message pump
 			// doesn't just create a single stream and use it continuously.
 			xtesting.CreateEventStreams(t, engine.DB, 3)
 

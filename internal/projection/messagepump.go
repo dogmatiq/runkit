@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -17,28 +16,22 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-type Controller struct {
-	DB              *sql.DB
-	Handler         dogma.ProjectionMessageHandler
-	Identity        *identitypb.Identity
-	Concurrency     dogma.ConcurrencyPreference
-	EventTypeIDs    []string
-	BackoffBase     time.Duration
-	BackoffCap      time.Duration
-	CompactInterval time.Duration
-	Logger          *slog.Logger
+// MessagePump is an engine component that periodically attempts to acquire
+// pending events for dispatch to a projection message handler of a specific
+// type.
+type MessagePump struct {
+	DB           *sql.DB
+	Handler      dogma.ProjectionMessageHandler
+	Identity     *identitypb.Identity
+	Concurrency  dogma.ConcurrencyPreference
+	EventTypeIDs []string
+	BackoffBase  time.Duration
+	BackoffCap   time.Duration
+	Logger       *slog.Logger
 }
 
-func (c *Controller) Run(ctx context.Context) {
-	var g sync.WaitGroup
-
-	g.Go(func() { c.handle(ctx) })
-	g.Go(func() { c.compact(ctx) })
-
-	g.Wait()
-}
-
-func (c *Controller) handle(ctx context.Context) {
+// Run runs the message pump until ctx is canceled.
+func (c *MessagePump) Run(ctx context.Context) {
 	for {
 		if err := c.tick(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -47,7 +40,7 @@ func (c *Controller) handle(ctx context.Context) {
 
 			c.Logger.ErrorContext(
 				ctx,
-				"projection controller tick failed",
+				"unable to process events",
 				xslog.Error(err),
 			)
 		}
@@ -60,93 +53,7 @@ func (c *Controller) handle(ctx context.Context) {
 	}
 }
 
-func (c *Controller) compact(ctx context.Context) {
-	for {
-		if err := c.tryCompact(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			c.Logger.ErrorContext(
-				ctx,
-				"projection compaction failed",
-				xslog.Error(err),
-			)
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(c.CompactInterval):
-		}
-	}
-}
-
-func (c *Controller) tryCompact(ctx context.Context) error {
-	if _, err := c.DB.ExecContext(
-		ctx,
-		`INSERT INTO projection.compaction (handler_key)
-		VALUES ($1)
-		ON CONFLICT (handler_key) DO NOTHING`,
-		xsql.UUID(c.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to initialize compaction row: %w", err)
-	}
-
-	tx, err := c.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("unable to begin compaction transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	row := tx.QueryRowContext(
-		ctx,
-		`SELECT handler_key
-		FROM projection.compaction
-		WHERE handler_key = $1
-			AND clock_timestamp() - last_compacted_at >= $2
-		FOR UPDATE SKIP LOCKED`,
-		xsql.UUID(c.Identity.GetKey()),
-		c.CompactInterval,
-	)
-
-	var handlerKey uuidpb.UUID
-	if err := row.Scan(xsql.UUID(&handlerKey)); err != nil {
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return fmt.Errorf("unable to acquire compaction lock: %w", err)
-	}
-
-	if err := xerrors.Recover(
-		func() error {
-			return c.Handler.Compact(
-				ctx,
-				&compactScope{c.Logger},
-			)
-		},
-	); err != nil {
-		return err
-	}
-
-	if _, err := tx.ExecContext(
-		ctx,
-		`UPDATE projection.compaction
-		SET last_compacted_at = clock_timestamp()
-		WHERE handler_key = $1`,
-		xsql.UUID(c.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to update compaction timestamp: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("unable to commit transaction: %w", err)
-	}
-
-	return nil
-}
-
-func (c *Controller) tick(ctx context.Context) error {
+func (c *MessagePump) tick(ctx context.Context) error {
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("unable to begin transaction: %w", err)
@@ -332,7 +239,7 @@ func (c *Controller) tick(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) fetchEvents(
+func (c *MessagePump) fetchEvents(
 	ctx context.Context,
 	tx *sql.Tx,
 	streamID *uuidpb.UUID,
@@ -385,4 +292,36 @@ func (c *Controller) fetchEvents(
 	}
 
 	return eventEnvelopes, nil
+}
+
+// messageScope implements [dogma.ProjectionEventScope].
+type messageScope struct {
+	streamID                 string
+	offset, checkpointOffset uint64
+	recordedAt               time.Time
+	logger                   *slog.Logger
+}
+
+func (s *messageScope) Now() time.Time {
+	return time.Now()
+}
+
+func (s *messageScope) Log(format string, args ...any) {
+	s.logger.Info(fmt.Sprintf(format, args...))
+}
+
+func (s *messageScope) StreamID() string {
+	return s.streamID
+}
+
+func (s *messageScope) Offset() uint64 {
+	return s.offset
+}
+
+func (s *messageScope) CheckpointOffset() uint64 {
+	return s.checkpointOffset
+}
+
+func (s *messageScope) RecordedAt() time.Time {
+	return s.recordedAt
 }

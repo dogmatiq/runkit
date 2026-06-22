@@ -18,8 +18,10 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// Controller manages the state of an integration handler within the application.
-type Controller struct {
+// MessagePump is an engine component that periodically attempts to acquire
+// pending commands for dispatch to an integration message handler of a specific
+// type.
+type MessagePump struct {
 	DB             *sql.DB
 	Handler        dogma.IntegrationMessageHandler
 	Identity       *identitypb.Identity
@@ -31,8 +33,8 @@ type Controller struct {
 	Logger         *slog.Logger
 }
 
-// Run handles messages for the controller's handler until ctx is canceled.
-func (c *Controller) Run(ctx context.Context) {
+// Run runs the message pump until ctx is canceled.
+func (c *MessagePump) Run(ctx context.Context) {
 	tasks := make(chan *commandTask)
 
 	var g sync.WaitGroup
@@ -106,7 +108,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 // acquireTask attempts to exclusively lock the next pending command for the
 // handler and return its message ID and envelope data.
-func (c *Controller) acquireTask(
+func (c *MessagePump) acquireTask(
 	ctx context.Context,
 ) (
 	task *commandTask,
