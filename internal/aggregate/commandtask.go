@@ -127,7 +127,7 @@ func (t *commandTask) handleCommand(ctx context.Context) (string, error) {
 		envelopepb.WithInstanceID(instanceID),
 	)
 
-	if err := xerrors.Recover(
+	if err := xerrors.ConvertPanicToError(
 		func() error {
 			t.Handler.HandleCommand(
 				root,
@@ -170,7 +170,7 @@ func (t *commandTask) routeCommandToInstance(
 	ctx context.Context,
 	commandForRouting dogma.Command,
 ) (instanceID string, err error) {
-	if err := xerrors.Recover(
+	if err := xerrors.ConvertPanicToError(
 		func() error {
 			instanceID = t.Handler.RouteCommandToInstance(commandForRouting)
 			if instanceID == "" {
@@ -256,7 +256,7 @@ func (t *commandTask) loadInstance(
 func (t *commandTask) newRoot(ctx context.Context) (dogma.AggregateRoot, error) {
 	var root dogma.AggregateRoot
 
-	if err := xerrors.Recover(
+	if err := xerrors.ConvertPanicToError(
 		func() error {
 			root = t.Handler.New()
 			return nil
@@ -464,7 +464,7 @@ func (t *commandTask) applyHistoricalEvents(
 			return errFailed
 		}
 
-		if err := xerrors.Recover(
+		if err := xerrors.ConvertPanicToError(
 			func() error {
 				root.ApplyEvent(eventForApply)
 				return nil
@@ -496,7 +496,7 @@ func (t *commandTask) applySnapshot(
 	root dogma.AggregateRoot,
 	snapshot []byte,
 ) bool {
-	if err := xerrors.Recover(
+	if err := xerrors.ConvertPanicToError(
 		func() error {
 			return root.UnmarshalBinary(snapshot)
 		},
@@ -609,7 +609,7 @@ func (t *commandTask) marshalSnapshot(
 ) ([]byte, bool) {
 	var snapshot []byte
 
-	if err := xerrors.Recover(
+	if err := xerrors.ConvertPanicToError(
 		func() error {
 			var err error
 			snapshot, err = root.MarshalBinary()

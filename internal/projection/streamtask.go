@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/concurrency"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -52,12 +53,6 @@ func (t *streamTask) Execute(ctx context.Context) error {
 	}
 
 	if len(eventEnvelopes) != 0 {
-		if t.Concurrency == dogma.MinimizeConcurrency {
-			if err := t.acquireLock(ctx); err != nil {
-				return err
-			}
-		}
-
 		handleErr := t.handleEvents(ctx, eventEnvelopes)
 		if handleErr != nil && !errors.Is(handleErr, errFailed) {
 			return handleErr
@@ -164,25 +159,6 @@ func (t *streamTask) fetchEvents(ctx context.Context) ([]*envelopepb.Envelope, e
 	return eventEnvelopes, nil
 }
 
-// acquireLock serializes event handling for the handler when it prefers
-// minimized concurrency. It blocks until no other transaction holds the lock.
-func (t *streamTask) acquireLock(ctx context.Context) error {
-	if _, err := t.Tx.ExecContext(
-		ctx,
-		`INSERT INTO projection.handlers (
-			handler_key
-		)
-		VALUES ($1)
-		ON CONFLICT (handler_key) DO UPDATE SET
-			handler_key = EXCLUDED.handler_key`,
-		xsql.UUID(t.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to acquire handler lock: %w", err)
-	}
-
-	return nil
-}
-
 // handleEvents iterates over a batch of event envelopes, dispatching each to
 // the handler. It returns errFailed if a handler invocation fails, or nil if all
 // events were handled (or an OCC conflict stopped iteration early).
@@ -229,21 +205,29 @@ func (t *streamTask) handleEvent(
 
 	var nextCheckpointOffset uint64
 
-	if err := xerrors.Recover(
+	if err := concurrency.EnforceConcurrencyPreference(
+		ctx,
+		t.Tx,
+		t.Identity.GetKey(),
+		t.Concurrency,
 		func() error {
-			var err error
-			nextCheckpointOffset, err = t.Handler.HandleEvent(
-				ctx,
-				&messageScope{
-					streamID:         t.StreamID.AsString(),
-					offset:           eventOffset,
-					recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-					checkpointOffset: *t.CheckpointOffset,
-					logger:           eventLogger,
+			return xerrors.ConvertPanicToError(
+				func() error {
+					var err error
+					nextCheckpointOffset, err = t.Handler.HandleEvent(
+						ctx,
+						&messageScope{
+							streamID:         t.StreamID.AsString(),
+							offset:           eventOffset,
+							recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
+							checkpointOffset: *t.CheckpointOffset,
+							logger:           eventLogger,
+						},
+						event,
+					)
+					return err
 				},
-				event,
 			)
-			return err
 		},
 	); err != nil {
 		eventLogger.ErrorContext(

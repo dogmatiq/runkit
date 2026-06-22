@@ -20,8 +20,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// NewDatabase is a variant of [newDatabase] that applies the engine's schema to the
-// database before returning it.
+// NewDatabase returns a database pool that connects to an isolated test
+// database that has the engine's schema DDL applied.
+//
+// The database is removed when the test ends.
 func NewDatabase(t testing.TB) *sql.DB {
 	db := NewDatabaseWithoutSchema(t)
 
@@ -32,8 +34,8 @@ func NewDatabase(t testing.TB) *sql.DB {
 	return db
 }
 
-// NewDatabaseWithoutSchema returns a database pool that connects to an isolated test
-// database.
+// NewDatabaseWithoutSchema returns a database pool that connects to an isolated
+// test database that does not have the engine's schema DDL applied.
 //
 // The database is removed when the test ends.
 func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {

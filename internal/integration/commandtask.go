@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/concurrency"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -93,21 +94,23 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		t.Identity,
 	)
 
-	if t.Concurrency == dogma.MinimizeConcurrency {
-		if err := t.acquireLock(ctx); err != nil {
-			return err
-		}
-	}
-
-	if err := xerrors.Recover(
+	if err := concurrency.EnforceConcurrencyPreference(
+		ctx,
+		t.Tx,
+		t.Identity.GetKey(),
+		t.Concurrency,
 		func() error {
-			return t.Handler.HandleCommand(
-				ctx,
-				&messageScope{
-					packer: packer,
-					logger: t.Logger,
+			return xerrors.ConvertPanicToError(
+				func() error {
+					return t.Handler.HandleCommand(
+						ctx,
+						&messageScope{
+							packer: packer,
+							logger: t.Logger,
+						},
+						commandForHandling,
+					)
 				},
-				commandForHandling,
 			)
 		},
 	); err != nil {
@@ -125,25 +128,6 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 	}
 
 	return t.completeWithoutEvents(ctx)
-}
-
-// acquireLock serializes command handling for the handler when it prefers
-// minimized concurrency. It blocks until no other transaction holds the lock.
-func (t *commandTask) acquireLock(ctx context.Context) error {
-	if _, err := t.Tx.ExecContext(
-		ctx,
-		`INSERT INTO integration.handlers (
-			handler_key
-		)
-		VALUES ($1)
-		ON CONFLICT (handler_key) DO UPDATE SET
-			handler_key = EXCLUDED.handler_key`,
-		xsql.UUID(t.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to acquire handler lock: %w", err)
-	}
-
-	return nil
 }
 
 // completeWithoutEvents removes the command from the queue when no events were
