@@ -103,7 +103,7 @@ func (t *commandTask) handleCommand(ctx context.Context) error {
 		func() error {
 			return t.Handler.HandleCommand(
 				ctx,
-				&scope{
+				&messageScope{
 					packer: packer,
 					logger: t.Logger,
 				},

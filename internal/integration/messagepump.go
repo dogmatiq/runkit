@@ -178,3 +178,26 @@ func (c *MessagePump) acquireTask(
 
 	return task, true, nil
 }
+
+// messageScope implements [dogma.IntegrationCommandScope].
+type messageScope struct {
+	packer *envelopepb.EffectPacker
+	logger *slog.Logger
+}
+
+func (s *messageScope) Now() time.Time {
+	return time.Now()
+}
+
+func (s *messageScope) Log(format string, args ...any) {
+	s.logger.Info(fmt.Sprintf(format, args...))
+}
+
+func (s *messageScope) RecordEvent(event dogma.Event) {
+	eventEnvelope := s.packer.PackEvent(event)
+
+	s.logger.Info(
+		event.MessageDescription(),
+		xslog.Envelope("event", eventEnvelope),
+	)
+}

@@ -131,7 +131,7 @@ func (t *commandTask) handleCommand(ctx context.Context) (string, error) {
 		func() error {
 			t.Handler.HandleCommand(
 				root,
-				&scope{
+				&messageScope{
 					instanceID: instanceID,
 					root:       root,
 					packer:     packer,
