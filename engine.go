@@ -21,6 +21,12 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
+const (
+	// DefaultProjectionCompactInterval is the default minimum time between
+	// projection compaction attempts.
+	DefaultProjectionCompactInterval = 6 * time.Hour
+)
+
 // Engine is a Dogma engine backed by a single PostgreSQL database.
 //
 // It implements [dogma.CommandExecutor].
@@ -35,6 +41,11 @@ type Engine struct {
 	//
 	// If it is nil, [slog.Default] is used.
 	Logger *slog.Logger
+
+	// ProjectionCompactInterval is the minimum time between projection
+	// compaction attempts. If non-positive [DefaultProjectionCompactInterval]
+	// is used.
+	ProjectionCompactInterval time.Duration
 
 	// ready is a latch that is set when the engine is ready to accept commands
 	// for execution. It is used to block ExecuteCommand() from proceeding until
@@ -118,6 +129,11 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 		backoffCap  = 300 * time.Second
 	)
 
+	projectionCompactInterval := e.ProjectionCompactInterval
+	if projectionCompactInterval <= 0 {
+		projectionCompactInterval = DefaultProjectionCompactInterval
+	}
+
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return &aggregate.Controller{
@@ -146,14 +162,15 @@ func (e *Engine) newControllerForHandler(handlerConfig config.Handler) controlle
 
 	case *config.Projection:
 		return &projection.Controller{
-			DB:           e.DB,
-			Handler:      handlerConfig.Interface(),
-			Identity:     handlerConfig.Identity(),
-			Concurrency:  handlerConfig.ConcurrencyPreference(),
-			EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			Logger:       e.newLoggerForHandler(handlerConfig),
+			DB:              e.DB,
+			Handler:         handlerConfig.Interface(),
+			Identity:        handlerConfig.Identity(),
+			Concurrency:     handlerConfig.ConcurrencyPreference(),
+			EventTypeIDs:    e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+			BackoffBase:     backoffBase,
+			BackoffCap:      backoffCap,
+			CompactInterval: projectionCompactInterval,
+			Logger:          e.newLoggerForHandler(handlerConfig),
 		}
 
 	default:

@@ -69,9 +69,10 @@ func RunEngines(
 
 	for idx := range numEngines {
 		e := &dogmaengine.Engine{
-			DB:     db,
-			App:    app,
-			Logger: logger.With("engine", idx),
+			DB:                        db,
+			App:                       app,
+			ProjectionCompactInterval: 10 * time.Millisecond,
+			Logger:                    logger.With("engine", idx),
 		}
 
 		if engine == nil {

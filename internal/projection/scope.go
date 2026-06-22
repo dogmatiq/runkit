@@ -6,33 +6,47 @@ import (
 	"time"
 )
 
-type scope struct {
+// messageScope implements [dogma.ProjectionEventScope].
+type messageScope struct {
 	streamID                 string
 	offset, checkpointOffset uint64
 	recordedAt               time.Time
 	logger                   *slog.Logger
 }
 
-func (s *scope) Now() time.Time {
+func (s *messageScope) Now() time.Time {
 	return time.Now()
 }
 
-func (s *scope) Log(format string, args ...any) {
+func (s *messageScope) Log(format string, args ...any) {
 	s.logger.Info(fmt.Sprintf(format, args...))
 }
 
-func (s *scope) StreamID() string {
+func (s *messageScope) StreamID() string {
 	return s.streamID
 }
 
-func (s *scope) Offset() uint64 {
+func (s *messageScope) Offset() uint64 {
 	return s.offset
 }
 
-func (s *scope) CheckpointOffset() uint64 {
+func (s *messageScope) CheckpointOffset() uint64 {
 	return s.checkpointOffset
 }
 
-func (s *scope) RecordedAt() time.Time {
+func (s *messageScope) RecordedAt() time.Time {
 	return s.recordedAt
+}
+
+// compactScope implements [dogma.ProjectionCompactScope].
+type compactScope struct {
+	logger *slog.Logger
+}
+
+func (s *compactScope) Now() time.Time {
+	return time.Now()
+}
+
+func (s *compactScope) Log(format string, args ...any) {
+	s.logger.Info(fmt.Sprintf(format, args...))
 }
