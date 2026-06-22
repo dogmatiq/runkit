@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -52,6 +53,9 @@ func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	if err != nil {
 		t.Fatalf("unable to open PostgreSQL connection pool: %s", err)
 	}
+
+	db.SetMaxOpenConns(10 * runtime.GOMAXPROCS(0))
+
 	t.Cleanup(func() {
 		db.Close()
 	})
@@ -145,6 +149,11 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		postgres.BasicWaitStrategies(),
 		postgres.WithUsername(username),
 		postgres.WithPassword(password),
+		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Cmd: []string{"-c", "max_connections=1000"},
+			},
+		}),
 	)
 	if err != nil {
 		t.Fatalf("unable to start PostgreSQL container: %s", err)

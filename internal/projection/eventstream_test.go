@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -300,21 +301,25 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			streamIDs := xtesting.PopulateEventStreams(
-				t,
-				engine.DB,
-				func(*uuidpb.UUID, uint64) dogma.Event {
-					return stubs.EventA1
-				},
-				1,
-			)
+			var streamIDs []*uuidpb.UUID
 
-			xtesting.PostponeStreamConsumption(
-				t,
-				engine.DB,
-				handlerKey,
-				streamIDs[0],
-			)
+			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
+				streamIDs = xtesting.PopulateEventStreams(
+					t,
+					tx,
+					func(*uuidpb.UUID, uint64) dogma.Event {
+						return stubs.EventA1
+					},
+					1,
+				)
+
+				xtesting.PostponeStreamConsumption(
+					t,
+					tx,
+					handlerKey,
+					streamIDs[0],
+				)
+			})
 
 			// Allow several poll cycles to pass.
 			time.Sleep(50 * time.Millisecond)
