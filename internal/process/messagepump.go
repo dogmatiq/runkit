@@ -1,4 +1,4 @@
-package aggregate
+package process
 
 import (
 	"context"
@@ -19,21 +19,23 @@ import (
 )
 
 // MessagePump is an engine component that periodically attempts to acquire
-// pending commands for dispatch to an aggregate message handler of a specific
-// type.
+// pending events and deadlines for dispatch to a process message handler of a
+// specific type.
 type MessagePump struct {
 	DB                      *sql.DB
-	Handler                 dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity                *identitypb.Identity
 	Packer                  *envelopepb.Packer
-	CommandTypeIDs          []string
+	EventTypeIDs            []string
 	BackoffBase, BackoffCap time.Duration
 	Logger                  *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
 func (p *MessagePump) Run(ctx context.Context) {
-	tasks := make(chan *commandTask)
+	tasks := make(chan *streamTask)
+
+	// TODO: capture current stream offsets if this is a brand new handler
 
 	var g sync.WaitGroup
 
@@ -104,12 +106,12 @@ func (p *MessagePump) Run(ctx context.Context) {
 	g.Wait()
 }
 
-// acquireTask attempts to exclusively lock the next pending command for the
-// handler and return its message ID and envelope data.
+// acquireTask attempts to exclusively lock the next pending stream for the
+// handler and return it as a task.
 func (p *MessagePump) acquireTask(
 	ctx context.Context,
 ) (
-	task *commandTask,
+	task *streamTask,
 	ok bool,
 	err error,
 ) {
@@ -126,61 +128,56 @@ func (p *MessagePump) acquireTask(
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
-			c.message_id,
-			c.envelope,
-			c.failures
-		FROM commandqueue.commands AS c
-		WHERE message_type_id = ANY($1)
-		AND execute_at <= clock_timestamp()
-		ORDER BY execute_at
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED`,
-		p.CommandTypeIDs,
+			stream_id,
+			checkpoint_offset
+		FROM eventstream.acquire_for_read($1, $2)`,
+		xsql.UUID(p.Identity.GetKey()),
+		p.EventTypeIDs,
 	)
 
-	task = &commandTask{
-		Tx:            tx,
-		MessageID:     &uuidpb.UUID{},
-		Handler:       p.Handler,
-		Identity:      p.Identity,
-		Packer:        p.Packer,
-		BackoffBase:   p.BackoffBase,
-		BackoffCap:    p.BackoffCap,
-		EnvelopeBytes: []byte{},
-		ParentLogger:  p.Logger,
-		Logger:        p.Logger,
+	task = &streamTask{
+		Tx:           tx,
+		Handler:      p.Handler,
+		Identity:     p.Identity,
+		StreamID:     &uuidpb.UUID{},
+		EventTypeIDs: p.EventTypeIDs,
+		BackoffBase:  p.BackoffBase,
+		BackoffCap:   p.BackoffCap,
+		ParentLogger: p.Logger,
+		Logger:       p.Logger,
 	}
 
-	var failures uint64
+	var checkpointOffset *uint64
 
 	if err := row.Scan(
-		xsql.UUID(task.MessageID),
-		&task.EnvelopeBytes,
-		&failures,
+		xsql.UUID(task.StreamID),
+		&checkpointOffset,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 
-		return nil, false, fmt.Errorf("unable to scan pending command: %w", err)
+		return nil, false, fmt.Errorf("unable to acquire stream for read: %w", err)
+	}
+
+	if checkpointOffset != nil {
+		task.CheckpointOffset = *checkpointOffset
 	}
 
 	task.Logger = p.Logger.With(
-		slog.Group(
-			"command",
-			xslog.UUID("message_id", task.MessageID),
-		),
-		slog.Uint64("attempt", failures+1),
+		xslog.UUID("stream_id", task.StreamID),
 	)
 
 	return task, true, nil
 }
 
-// messageScope implements [dogma.AggregateCommandScope].
+// messageScope implements [dogma.ProcessEventScope] and
+// [dogma.ProcessDeadlineScope].
 type messageScope struct {
 	instanceID string
-	root       dogma.AggregateRoot
+	root       dogma.ProcessRoot
 	packer     *envelopepb.EffectPacker
+	time       time.Time
 	logger     *slog.Logger
 }
 
@@ -196,13 +193,26 @@ func (s *messageScope) InstanceID() string {
 	return s.instanceID
 }
 
-func (s *messageScope) RecordEvent(event dogma.Event) {
-	s.root.ApplyEvent(event)
+func (s *messageScope) Mutate(func(dogma.ProcessRoot)) {
+	panic("not implemented")
+}
 
-	eventEnvelope := s.packer.PackEvent(event)
+func (s *messageScope) End() {
+	panic("not implemented")
+}
 
-	s.logger.Info(
-		event.MessageDescription(),
-		xslog.Envelope("event", eventEnvelope),
-	)
+func (s *messageScope) ExecuteCommand(dogma.Command) {
+	panic("not implemented")
+}
+
+func (s *messageScope) ScheduleDeadline(dogma.Deadline, time.Time) {
+	panic("not implemented")
+}
+
+func (s *messageScope) RecordedAt() time.Time {
+	return s.time
+}
+
+func (s *messageScope) ScheduledFor() time.Time {
+	return s.time
 }

@@ -21,17 +21,17 @@ import (
 // pending events for dispatch to a projection message handler of a specific
 // type.
 type MessagePump struct {
-	DB           *sql.DB
-	Handler      dogma.ProjectionMessageHandler
-	Identity     *identitypb.Identity
-	Concurrency  dogma.ConcurrencyPreference
-	EventTypeIDs []string
+	DB                      *sql.DB
+	Handler                 dogma.ProjectionMessageHandler
+	Identity                *identitypb.Identity
+	Concurrency             dogma.ConcurrencyPreference
+	EventTypeIDs            []string
 	BackoffBase, BackoffCap time.Duration
-	Logger       *slog.Logger
+	Logger                  *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
-func (c *MessagePump) Run(ctx context.Context) {
+func (p *MessagePump) Run(ctx context.Context) {
 	tasks := make(chan *streamTask)
 
 	var g sync.WaitGroup
@@ -40,13 +40,13 @@ func (c *MessagePump) Run(ctx context.Context) {
 		defer close(tasks)
 
 		for {
-			task, ok, err := c.acquireTask(ctx)
+			task, ok, err := p.acquireTask(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
 
-				c.Logger.ErrorContext(
+				p.Logger.ErrorContext(
 					ctx,
 					"unable to acquire task",
 					xslog.Error(err),
@@ -105,14 +105,14 @@ func (c *MessagePump) Run(ctx context.Context) {
 
 // acquireTask attempts to exclusively lock the next pending stream for the
 // handler and return it as a task.
-func (c *MessagePump) acquireTask(
+func (p *MessagePump) acquireTask(
 	ctx context.Context,
 ) (
 	task *streamTask,
 	ok bool,
 	err error,
 ) {
-	tx, err := c.DB.BeginTx(ctx, nil)
+	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
 	}
@@ -128,21 +128,21 @@ func (c *MessagePump) acquireTask(
 			stream_id,
 			checkpoint_offset
 		FROM eventstream.acquire_for_read($1, $2)`,
-		xsql.UUID(c.Identity.GetKey()),
-		c.EventTypeIDs,
+		xsql.UUID(p.Identity.GetKey()),
+		p.EventTypeIDs,
 	)
 
 	task = &streamTask{
 		Tx:           tx,
-		Handler:      c.Handler,
-		Identity:     c.Identity,
-		Concurrency:  c.Concurrency,
+		Handler:      p.Handler,
+		Identity:     p.Identity,
+		Concurrency:  p.Concurrency,
 		StreamID:     &uuidpb.UUID{},
-		EventTypeIDs: c.EventTypeIDs,
-		BackoffBase:  c.BackoffBase,
-		BackoffCap:   c.BackoffCap,
-		ParentLogger: c.Logger,
-		Logger:       c.Logger,
+		EventTypeIDs: p.EventTypeIDs,
+		BackoffBase:  p.BackoffBase,
+		BackoffCap:   p.BackoffCap,
+		ParentLogger: p.Logger,
+		Logger:       p.Logger,
 	}
 
 	if err := row.Scan(
@@ -156,7 +156,7 @@ func (c *MessagePump) acquireTask(
 		return nil, false, fmt.Errorf("unable to acquire stream for read: %w", err)
 	}
 
-	task.Logger = c.Logger.With(
+	task.Logger = p.Logger.With(
 		xslog.UUID("stream_id", task.StreamID),
 	)
 

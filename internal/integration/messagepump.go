@@ -22,18 +22,18 @@ import (
 // pending commands for dispatch to an integration message handler of a specific
 // type.
 type MessagePump struct {
-	DB             *sql.DB
-	Handler        dogma.IntegrationMessageHandler
-	Identity       *identitypb.Identity
-	Concurrency    dogma.ConcurrencyPreference
-	Packer         *envelopepb.Packer
-	CommandTypeIDs []string
+	DB                      *sql.DB
+	Handler                 dogma.IntegrationMessageHandler
+	Identity                *identitypb.Identity
+	Concurrency             dogma.ConcurrencyPreference
+	Packer                  *envelopepb.Packer
+	CommandTypeIDs          []string
 	BackoffBase, BackoffCap time.Duration
-	Logger         *slog.Logger
+	Logger                  *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
-func (c *MessagePump) Run(ctx context.Context) {
+func (p *MessagePump) Run(ctx context.Context) {
 	tasks := make(chan *commandTask)
 
 	var g sync.WaitGroup
@@ -42,13 +42,13 @@ func (c *MessagePump) Run(ctx context.Context) {
 		defer close(tasks)
 
 		for {
-			task, ok, err := c.acquireTask(ctx)
+			task, ok, err := p.acquireTask(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
 
-				c.Logger.ErrorContext(
+				p.Logger.ErrorContext(
 					ctx,
 					"unable to acquire task",
 					xslog.Error(err),
@@ -107,14 +107,14 @@ func (c *MessagePump) Run(ctx context.Context) {
 
 // acquireTask attempts to exclusively lock the next pending command for the
 // handler and return its message ID and envelope data.
-func (c *MessagePump) acquireTask(
+func (p *MessagePump) acquireTask(
 	ctx context.Context,
 ) (
 	task *commandTask,
 	ok bool,
 	err error,
 ) {
-	tx, err := c.DB.BeginTx(ctx, nil)
+	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
 	}
@@ -136,21 +136,21 @@ func (c *MessagePump) acquireTask(
 		ORDER BY execute_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
-		c.CommandTypeIDs,
+		p.CommandTypeIDs,
 	)
 
 	task = &commandTask{
 		Tx:            tx,
 		MessageID:     &uuidpb.UUID{},
-		Handler:       c.Handler,
-		Identity:      c.Identity,
-		Concurrency:   c.Concurrency,
-		Packer:        c.Packer,
-		BackoffBase:   c.BackoffBase,
-		BackoffCap:    c.BackoffCap,
+		Handler:       p.Handler,
+		Identity:      p.Identity,
+		Concurrency:   p.Concurrency,
+		Packer:        p.Packer,
+		BackoffBase:   p.BackoffBase,
+		BackoffCap:    p.BackoffCap,
 		EnvelopeBytes: []byte{},
-		ParentLogger:  c.Logger,
-		Logger:        c.Logger,
+		ParentLogger:  p.Logger,
+		Logger:        p.Logger,
 	}
 
 	var failures uint64
@@ -167,7 +167,7 @@ func (c *MessagePump) acquireTask(
 		return nil, false, fmt.Errorf("unable to scan pending command: %w", err)
 	}
 
-	task.Logger = c.Logger.With(
+	task.Logger = p.Logger.With(
 		slog.Group(
 			"command",
 			xslog.UUID("message_id", task.MessageID),

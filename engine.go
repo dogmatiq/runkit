@@ -17,6 +17,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/integration"
+	"github.com/dogmatiq/reference-engine/internal/process"
 	"github.com/dogmatiq/reference-engine/internal/projection"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
@@ -184,6 +185,20 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				Identity: handlerConfig.Identity(),
 				Interval: projectionCompactInterval,
 				Logger:   e.newLoggerForHandler(handlerConfig),
+			},
+		}
+
+	case *config.Process:
+		return []component{
+			&process.MessagePump{
+				DB:           e.DB,
+				Handler:      handlerConfig.Interface(),
+				Identity:     handlerConfig.Identity(),
+				Packer:       e.packer,
+				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       e.newLoggerForHandler(handlerConfig),
 			},
 		}
 
