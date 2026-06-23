@@ -159,7 +159,7 @@ func (t *streamTask) handleEvent(
 	ctx context.Context,
 	eventEnvelope *envelopepb.Envelope,
 ) (oerr error) {
-	event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
+	eventForRouting, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
 	if err != nil {
 		return err
 	}
@@ -179,16 +179,34 @@ func (t *streamTask) handleEvent(
 		xslog.Envelope("event", eventEnvelope),
 	)
 
+	instanceID, ok, err := t.routeEventToInstance(ctx, eventForRouting)
+	if !ok || err != nil {
+		return err
+	}
+
+	t.Logger = t.ParentLogger.With(
+		xslog.Envelope("event", eventEnvelope),
+		slog.Group(
+			"process_instance",
+			slog.String("id", instanceID),
+		),
+	)
+
+	root := t.Handler.New()
+
 	if err := xerrors.ConvertPanicToError(
 		func() error {
 			return t.Handler.HandleEvent(
 				ctx,
-				t.Handler.New(),
+				root,
 				&messageScope{
-					time:   eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-					logger: eventLogger,
+					instanceID: instanceID,
+					root:       root,
+					packer:     &envelopepb.EffectPacker{},
+					time:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
+					logger:     eventLogger,
 				},
-				event,
+				eventForRouting,
 			)
 		},
 	); err != nil {
@@ -202,6 +220,36 @@ func (t *streamTask) handleEvent(
 	}
 
 	return nil
+}
+
+func (t *streamTask) routeEventToInstance(
+	ctx context.Context,
+	event dogma.Event,
+) (instanceID string, ok bool, err error) {
+	if err := xerrors.ConvertPanicToError(
+		func() error {
+			instanceID, ok, err = t.Handler.RouteEventToInstance(ctx, event)
+			if err != nil {
+				return err
+			}
+
+			if ok && instanceID == "" {
+				return fmt.Errorf("handler returned empty instance ID")
+			}
+
+			return nil
+		},
+	); err != nil {
+		t.Logger.ErrorContext(
+			ctx,
+			"unable to route event to instance",
+			xslog.Error(err),
+		)
+
+		return "", false, errFailed
+	}
+
+	return instanceID, ok, nil
 }
 
 func (t *streamTask) failAndPostpone(ctx context.Context) error {

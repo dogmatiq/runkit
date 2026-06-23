@@ -20,14 +20,14 @@ import (
 )
 
 type commandTask struct {
-	Tx                   *sql.Tx
-	Handler              dogma.AggregateMessageHandler[dogma.AggregateRoot]
-	Identity             *identitypb.Identity
-	Packer               *envelopepb.Packer
-	MessageID            *uuidpb.UUID
+	Tx                      *sql.Tx
+	Handler                 dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Identity                *identitypb.Identity
+	Packer                  *envelopepb.Packer
+	MessageID               *uuidpb.UUID
 	BackoffBase, BackoffCap time.Duration
-	EnvelopeBytes        []byte
-	ParentLogger, Logger *slog.Logger
+	EnvelopeBytes           []byte
+	ParentLogger, Logger    *slog.Logger
 }
 
 var (
@@ -185,7 +185,6 @@ func (t *commandTask) routeCommandToInstance(
 		)
 
 		return "", errFailed
-
 	}
 
 	return instanceID, nil

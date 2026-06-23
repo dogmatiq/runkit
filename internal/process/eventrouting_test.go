@@ -51,6 +51,12 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
 					)
 				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
 				HandleEventFunc: func(
 					_ context.Context,
 					_ *stubs.ProcessRootStub,
@@ -77,6 +83,12 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
 					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
 				},
 				HandleEventFunc: func(
 					_ context.Context,
@@ -144,6 +156,12 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
 					)
 				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
 				HandleEventFunc: func(
 					_ context.Context,
 					_ *stubs.ProcessRootStub,
@@ -170,6 +188,12 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
 					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
 				},
 				HandleEventFunc: func(
 					_ context.Context,
@@ -201,6 +225,15 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1, // one stream with one TypeA event
+			)
+
 			xtesting.ExpectLatchesSetEventually(
 				t,
 				&handlerCalled,
@@ -249,5 +282,71 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 // events are skipped when the handler's RouteEventToInstance() method returns
 // false.
 func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
-	t.Skip("not implemented")
+	var handlerCalled xsync.Latch
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					if offset == 0 {
+						return stubs.EventA1 // TypeA not routed to an instance
+					}
+					return stubs.EventB1 // TypeB routed to an instance
+				},
+				2, // one stream with two events
+			)
+
+			xtesting.ExpectLatchesSetEventually(
+				t,
+				&handlerCalled,
+			)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					_ context.Context,
+					m dogma.Event,
+				) (string, bool, error) {
+					switch m.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						return "", false, nil
+					case *stubs.EventStub[stubs.TypeB]:
+						return "<instance>", true, nil
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					m dogma.Event,
+				) error {
+					defer handlerCalled.Set()
+
+					switch m := m.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						t.Errorf("unexpected event type routed to handler: %T", m)
+					case *stubs.EventStub[stubs.TypeB]:
+						// expected
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+
+					return nil
+				},
+			},
+		),
+	)
 }
