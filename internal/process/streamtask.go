@@ -219,6 +219,8 @@ func (t *streamTask) handleEvent(
 		return errFailed
 	}
 
+	t.CheckpointOffset = eventOffset + 1
+
 	return nil
 }
 

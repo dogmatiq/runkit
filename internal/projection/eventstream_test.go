@@ -98,7 +98,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 		done         xsync.Latch
 		handlerMutex sync.Mutex
 		seen         = map[uint64]bool{}
-		handled      uint64
+		handled      int
 	)
 
 	xtesting.RunEngines(
