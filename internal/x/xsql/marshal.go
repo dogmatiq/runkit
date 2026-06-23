@@ -1,6 +1,7 @@
 package xsql
 
 import (
+	_ "database/sql" // imported for documentation linking
 	"database/sql/driver"
 	"fmt"
 

@@ -1,6 +1,10 @@
 package contexthook
 
-import "github.com/dogmatiq/enginekit/protobuf/envelopepb"
+import (
+	_ "github.com/dogmatiq/dogma" // imported for documentation linking
+
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+)
 
 // ExecuteCommand a hook type that is invoked when a command is executed
 // directly via the engine's [dogma.CommandExecutor] implementation.

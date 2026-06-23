@@ -1,3 +1,3 @@
-// Package projection manages the consumption of event streams by projection
-// message handlers.
+// Package projection provides engine components that orchestrate the execution
+// of projection message handlers.
 package projection

@@ -1,3 +1,3 @@
-// Package aggregate manages the state of aggregate instances within the
-// application.
+// Package aggregate provides engine components that orchestrate the execution
+// of aggregate message handlers.
 package aggregate

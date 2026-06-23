@@ -1,3 +1,3 @@
-// Package integration manages the state of integration handlers within the
-// application.
+// Package integration provides engine components that orchestrate the
+// execution of integration message handlers.
 package integration
