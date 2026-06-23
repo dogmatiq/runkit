@@ -21,16 +21,15 @@ import (
 )
 
 type commandTask struct {
-	Tx                   *sql.Tx
-	Handler              dogma.IntegrationMessageHandler
-	Identity             *identitypb.Identity
-	Concurrency          dogma.ConcurrencyPreference
-	Packer               *envelopepb.Packer
-	MessageID            *uuidpb.UUID
-	BackoffBase          time.Duration
-	BackoffCap           time.Duration
-	EnvelopeBytes        []byte
-	ParentLogger, Logger *slog.Logger
+	Tx                      *sql.Tx
+	Handler                 dogma.IntegrationMessageHandler
+	Identity                *identitypb.Identity
+	Concurrency             dogma.ConcurrencyPreference
+	Packer                  *envelopepb.Packer
+	MessageID               *uuidpb.UUID
+	BackoffBase, BackoffCap time.Duration
+	EnvelopeBytes           []byte
+	ParentLogger, Logger    *slog.Logger
 }
 
 var errFailed = errors.New("unable to handle command")

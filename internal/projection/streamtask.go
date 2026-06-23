@@ -19,16 +19,15 @@ import (
 )
 
 type streamTask struct {
-	Tx                   *sql.Tx
-	Handler              dogma.ProjectionMessageHandler
-	Identity             *identitypb.Identity
-	Concurrency          dogma.ConcurrencyPreference
-	StreamID             *uuidpb.UUID
-	CheckpointOffset     *uint64
-	EventTypeIDs         []string
-	BackoffBase          time.Duration
-	BackoffCap           time.Duration
-	ParentLogger, Logger *slog.Logger
+	Tx                      *sql.Tx
+	Handler                 dogma.ProjectionMessageHandler
+	Identity                *identitypb.Identity
+	Concurrency             dogma.ConcurrencyPreference
+	StreamID                *uuidpb.UUID
+	CheckpointOffset        *uint64
+	EventTypeIDs            []string
+	BackoffBase, BackoffCap time.Duration
+	ParentLogger, Logger    *slog.Logger
 }
 
 var errFailed = errors.New("unable to handle event")

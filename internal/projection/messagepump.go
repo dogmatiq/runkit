@@ -26,8 +26,7 @@ type MessagePump struct {
 	Identity     *identitypb.Identity
 	Concurrency  dogma.ConcurrencyPreference
 	EventTypeIDs []string
-	BackoffBase  time.Duration
-	BackoffCap   time.Duration
+	BackoffBase, BackoffCap time.Duration
 	Logger       *slog.Logger
 }
 

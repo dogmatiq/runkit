@@ -25,8 +25,7 @@ type commandTask struct {
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
 	MessageID            *uuidpb.UUID
-	BackoffBase          time.Duration
-	BackoffCap           time.Duration
+	BackoffBase, BackoffCap time.Duration
 	EnvelopeBytes        []byte
 	ParentLogger, Logger *slog.Logger
 }

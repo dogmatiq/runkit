@@ -28,8 +28,7 @@ type MessagePump struct {
 	Concurrency    dogma.ConcurrencyPreference
 	Packer         *envelopepb.Packer
 	CommandTypeIDs []string
-	BackoffBase    time.Duration
-	BackoffCap     time.Duration
+	BackoffBase, BackoffCap time.Duration
 	Logger         *slog.Logger
 }
 

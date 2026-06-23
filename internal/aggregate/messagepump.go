@@ -22,14 +22,13 @@ import (
 // pending commands for dispatch to an aggregate message handler of a specific
 // type.
 type MessagePump struct {
-	DB             *sql.DB
-	Handler        dogma.AggregateMessageHandler[dogma.AggregateRoot]
-	Identity       *identitypb.Identity
-	Packer         *envelopepb.Packer
-	CommandTypeIDs []string
-	BackoffBase    time.Duration
-	BackoffCap     time.Duration
-	Logger         *slog.Logger
+	DB                      *sql.DB
+	Handler                 dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Identity                *identitypb.Identity
+	Packer                  *envelopepb.Packer
+	CommandTypeIDs          []string
+	BackoffBase, BackoffCap time.Duration
+	Logger                  *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
