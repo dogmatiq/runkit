@@ -140,7 +140,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return []component{
-			&aggregate.MessagePump{
+			&aggregate.CommandPump{
 				DB:             e.DB,
 				Handler:        handlerConfig.Interface(),
 				Identity:       handlerConfig.Identity(),
@@ -154,7 +154,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 
 	case *config.Integration:
 		return []component{
-			&integration.MessagePump{
+			&integration.CommandPump{
 				DB:             e.DB,
 				Handler:        handlerConfig.Interface(),
 				Identity:       handlerConfig.Identity(),
@@ -169,7 +169,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 
 	case *config.Projection:
 		return []component{
-			&projection.MessagePump{
+			&projection.EventPump{
 				DB:           e.DB,
 				Handler:      handlerConfig.Interface(),
 				Identity:     handlerConfig.Identity(),
@@ -190,7 +190,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 
 	case *config.Process:
 		return []component{
-			&process.MessagePump{
+			&process.EventPump{
 				DB:           e.DB,
 				Handler:      handlerConfig.Interface(),
 				Identity:     handlerConfig.Identity(),

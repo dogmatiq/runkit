@@ -1,4 +1,4 @@
-package projection
+package process
 
 import (
 	"context"
@@ -11,28 +11,31 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// MessagePump is an engine component that periodically attempts to acquire
-// pending events for dispatch to a projection message handler of a specific
-// type.
-type MessagePump struct {
+// EventPump is an engine component that periodically attempts to acquire
+// pending events and deadlines for dispatch to a process message handler of a
+// specific type.
+type EventPump struct {
 	DB                      *sql.DB
-	Handler                 dogma.ProjectionMessageHandler
+	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity                *identitypb.Identity
-	Concurrency             dogma.ConcurrencyPreference
+	Packer                  *envelopepb.Packer
 	EventTypeIDs            []string
 	BackoffBase, BackoffCap time.Duration
 	Logger                  *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
-func (p *MessagePump) Run(ctx context.Context) {
+func (p *EventPump) Run(ctx context.Context) {
 	tasks := make(chan *streamTask)
+
+	// TODO: capture current stream offsets if this is a brand new handler
 
 	var g sync.WaitGroup
 
@@ -105,7 +108,7 @@ func (p *MessagePump) Run(ctx context.Context) {
 
 // acquireTask attempts to exclusively lock the next pending stream for the
 // handler and return it as a task.
-func (p *MessagePump) acquireTask(
+func (p *EventPump) acquireTask(
 	ctx context.Context,
 ) (
 	task *streamTask,
@@ -136,7 +139,6 @@ func (p *MessagePump) acquireTask(
 		Tx:           tx,
 		Handler:      p.Handler,
 		Identity:     p.Identity,
-		Concurrency:  p.Concurrency,
 		StreamID:     &uuidpb.UUID{},
 		EventTypeIDs: p.EventTypeIDs,
 		BackoffBase:  p.BackoffBase,
@@ -145,15 +147,21 @@ func (p *MessagePump) acquireTask(
 		Logger:       p.Logger,
 	}
 
+	var checkpointOffset *uint64
+
 	if err := row.Scan(
 		xsql.UUID(task.StreamID),
-		&task.CheckpointOffset,
+		&checkpointOffset,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 
 		return nil, false, fmt.Errorf("unable to acquire stream for read: %w", err)
+	}
+
+	if checkpointOffset != nil {
+		task.CheckpointOffset = *checkpointOffset
 	}
 
 	task.Logger = p.Logger.With(
@@ -163,12 +171,14 @@ func (p *MessagePump) acquireTask(
 	return task, true, nil
 }
 
-// messageScope implements [dogma.ProjectionEventScope].
+// messageScope implements [dogma.ProcessEventScope] and
+// [dogma.ProcessDeadlineScope].
 type messageScope struct {
-	streamID                 string
-	offset, checkpointOffset uint64
-	recordedAt               time.Time
-	logger                   *slog.Logger
+	instanceID string
+	root       dogma.ProcessRoot
+	packer     *envelopepb.EffectPacker
+	time       time.Time
+	logger     *slog.Logger
 }
 
 func (s *messageScope) Now() time.Time {
@@ -179,18 +189,30 @@ func (s *messageScope) Log(format string, args ...any) {
 	s.logger.Info(fmt.Sprintf(format, args...))
 }
 
-func (s *messageScope) StreamID() string {
-	return s.streamID
+func (s *messageScope) InstanceID() string {
+	return s.instanceID
 }
 
-func (s *messageScope) Offset() uint64 {
-	return s.offset
+func (s *messageScope) Mutate(func(dogma.ProcessRoot)) {
+	panic("not implemented")
 }
 
-func (s *messageScope) CheckpointOffset() uint64 {
-	return s.checkpointOffset
+func (s *messageScope) End() {
+	panic("not implemented")
+}
+
+func (s *messageScope) ExecuteCommand(dogma.Command) {
+	panic("not implemented")
+}
+
+func (s *messageScope) ScheduleDeadline(dogma.Deadline, time.Time) {
+	panic("not implemented")
 }
 
 func (s *messageScope) RecordedAt() time.Time {
-	return s.recordedAt
+	return s.time
+}
+
+func (s *messageScope) ScheduledFor() time.Time {
+	return s.time
 }

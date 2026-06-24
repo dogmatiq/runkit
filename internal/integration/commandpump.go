@@ -1,4 +1,4 @@
-package aggregate
+package integration
 
 import (
 	"context"
@@ -18,13 +18,14 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// MessagePump is an engine component that periodically attempts to acquire
-// pending commands for dispatch to an aggregate message handler of a specific
+// CommandPump is an engine component that periodically attempts to acquire
+// pending commands for dispatch to an integration message handler of a specific
 // type.
-type MessagePump struct {
+type CommandPump struct {
 	DB                      *sql.DB
-	Handler                 dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Handler                 dogma.IntegrationMessageHandler
 	Identity                *identitypb.Identity
+	Concurrency             dogma.ConcurrencyPreference
 	Packer                  *envelopepb.Packer
 	CommandTypeIDs          []string
 	BackoffBase, BackoffCap time.Duration
@@ -32,7 +33,7 @@ type MessagePump struct {
 }
 
 // Run runs the message pump until ctx is canceled.
-func (p *MessagePump) Run(ctx context.Context) {
+func (p *CommandPump) Run(ctx context.Context) {
 	tasks := make(chan *commandTask)
 
 	var g sync.WaitGroup
@@ -106,7 +107,7 @@ func (p *MessagePump) Run(ctx context.Context) {
 
 // acquireTask attempts to exclusively lock the next pending command for the
 // handler and return its message ID and envelope data.
-func (p *MessagePump) acquireTask(
+func (p *CommandPump) acquireTask(
 	ctx context.Context,
 ) (
 	task *commandTask,
@@ -143,6 +144,7 @@ func (p *MessagePump) acquireTask(
 		MessageID:     &uuidpb.UUID{},
 		Handler:       p.Handler,
 		Identity:      p.Identity,
+		Concurrency:   p.Concurrency,
 		Packer:        p.Packer,
 		BackoffBase:   p.BackoffBase,
 		BackoffCap:    p.BackoffCap,
@@ -176,12 +178,10 @@ func (p *MessagePump) acquireTask(
 	return task, true, nil
 }
 
-// messageScope implements [dogma.AggregateCommandScope].
+// messageScope implements [dogma.IntegrationCommandScope].
 type messageScope struct {
-	instanceID string
-	root       dogma.AggregateRoot
-	packer     *envelopepb.EffectPacker
-	logger     *slog.Logger
+	packer *envelopepb.EffectPacker
+	logger *slog.Logger
 }
 
 func (s *messageScope) Now() time.Time {
@@ -192,13 +192,7 @@ func (s *messageScope) Log(format string, args ...any) {
 	s.logger.Info(fmt.Sprintf(format, args...))
 }
 
-func (s *messageScope) InstanceID() string {
-	return s.instanceID
-}
-
 func (s *messageScope) RecordEvent(event dogma.Event) {
-	s.root.ApplyEvent(event)
-
 	eventEnvelope := s.packer.PackEvent(event)
 
 	s.logger.Info(
