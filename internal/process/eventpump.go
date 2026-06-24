@@ -19,8 +19,7 @@ import (
 )
 
 // EventPump is an engine component that periodically attempts to acquire
-// pending events and deadlines for dispatch to a process message handler of a
-// specific type.
+// pending events for dispatch to a process message handler of a specific type.
 type EventPump struct {
 	DB                      *sql.DB
 	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
@@ -33,7 +32,7 @@ type EventPump struct {
 
 // Run runs the message pump until ctx is canceled.
 func (p *EventPump) Run(ctx context.Context) {
-	tasks := make(chan *streamTask)
+	tasks := make(chan *eventTask)
 
 	// TODO: capture current stream offsets if this is a brand new handler
 
@@ -106,12 +105,12 @@ func (p *EventPump) Run(ctx context.Context) {
 	g.Wait()
 }
 
-// acquireTask attempts to exclusively lock the next pending stream for the
+// acquireTask attempts to exclusively lock the next pending event for the
 // handler and return it as a task.
 func (p *EventPump) acquireTask(
 	ctx context.Context,
 ) (
-	task *streamTask,
+	task *eventTask,
 	ok bool,
 	err error,
 ) {
@@ -128,44 +127,47 @@ func (p *EventPump) acquireTask(
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
-			stream_id,
-			checkpoint_offset
-		FROM eventstream.acquire_for_read($1, $2)`,
+			a.stream_id,
+			e.stream_offset,
+			e.envelope
+		FROM eventstream.acquire_for_read($1, $2) AS a
+		INNER JOIN eventstream.events AS e
+			ON e.stream_id = a.stream_id
+			AND e.stream_offset >= COALESCE(a.checkpoint_offset, 0)
+			AND e.message_type_id = ANY($2)
+		ORDER BY e.stream_offset
+		LIMIT 1`,
 		xsql.UUID(p.Identity.GetKey()),
 		p.EventTypeIDs,
 	)
 
-	task = &streamTask{
+	task = &eventTask{
 		Tx:           tx,
 		Handler:      p.Handler,
 		Identity:     p.Identity,
+		Packer:       p.Packer,
 		StreamID:     &uuidpb.UUID{},
-		EventTypeIDs: p.EventTypeIDs,
 		BackoffBase:  p.BackoffBase,
 		BackoffCap:   p.BackoffCap,
 		ParentLogger: p.Logger,
 		Logger:       p.Logger,
 	}
 
-	var checkpointOffset *uint64
-
 	if err := row.Scan(
 		xsql.UUID(task.StreamID),
-		&checkpointOffset,
+		&task.EventOffset,
+		&task.EnvelopeBytes,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 
-		return nil, false, fmt.Errorf("unable to acquire stream for read: %w", err)
-	}
-
-	if checkpointOffset != nil {
-		task.CheckpointOffset = *checkpointOffset
+		return nil, false, fmt.Errorf("unable to acquire pending event: %w", err)
 	}
 
 	task.Logger = p.Logger.With(
 		xslog.UUID("stream_id", task.StreamID),
+		slog.Uint64("event_offset", task.EventOffset),
 	)
 
 	return task, true, nil
@@ -176,6 +178,7 @@ func (p *EventPump) acquireTask(
 type messageScope struct {
 	instanceID string
 	root       dogma.ProcessRoot
+	mutated    bool
 	packer     *envelopepb.EffectPacker
 	time       time.Time
 	logger     *slog.Logger
@@ -193,8 +196,9 @@ func (s *messageScope) InstanceID() string {
 	return s.instanceID
 }
 
-func (s *messageScope) Mutate(func(dogma.ProcessRoot)) {
-	panic("not implemented")
+func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
+	fn(s.root)
+	s.mutated = true
 }
 
 func (s *messageScope) End() {
