@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS commandqueue.commands (
     envelope              bytea       NOT NULL,
     failures              int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     enqueued_at           timestamptz NOT NULL DEFAULT clock_timestamp(),
-    execute_at            timestamptz NOT NULL DEFAULT clock_timestamp()
+    deliver_at            timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 -- Create an index for finding commands that are ready to be processed by their
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS commandqueue.commands (
 CREATE INDEX IF NOT EXISTS pending_commands_by_type
 ON commandqueue.commands (
     message_type_id,
-    execute_at
+    deliver_at
 );
 
 -- Create an index for finding commands that are part of a particular causal
@@ -27,7 +27,7 @@ ON commandqueue.commands (
 CREATE INDEX IF NOT EXISTS pending_commands_by_correlation_id
 ON commandqueue.commands (
     correlation_id,
-    execute_at
+    deliver_at
 );
 
 --------------------------------------------------------------------------------

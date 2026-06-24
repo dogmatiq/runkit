@@ -94,7 +94,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     UPDATE commandqueue.commands SET
-        execute_at = clock_timestamp() + postpone.delay
+        deliver_at = clock_timestamp() + postpone.delay
     WHERE commandqueue.commands.message_id = postpone.message_id;
 
     IF NOT FOUND THEN
@@ -121,7 +121,7 @@ AS $$
 BEGIN
     UPDATE commandqueue.commands SET
         failures = failures + 1,
-        execute_at = clock_timestamp() + common.exponential_backoff(
+        deliver_at = clock_timestamp() + common.exponential_backoff(
             failures,
             fail_and_postpone.backoff_base,
             fail_and_postpone.backoff_cap

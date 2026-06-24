@@ -132,8 +132,8 @@ func (p *CommandPump) acquireTask(
 			c.failures
 		FROM commandqueue.commands AS c
 		WHERE message_type_id = ANY($1)
-		AND execute_at <= clock_timestamp()
-		ORDER BY execute_at
+		AND deliver_at <= clock_timestamp()
+		ORDER BY deliver_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		p.CommandTypeIDs,

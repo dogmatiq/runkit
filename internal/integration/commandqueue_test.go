@@ -198,7 +198,7 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 }
 
 // TestCommandQueue_postponedCommandsAreNotHandled verifies that commands with
-// execute_at in the future are not dispatched to the handler.
+// deliver_at in the future are not dispatched to the handler.
 func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 	xtesting.RunEngines(
 		t,

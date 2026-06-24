@@ -222,10 +222,10 @@ func possibleFutureEventAt(
 	// TODO: union with deadlines table when they're implemented.
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT execute_at
+		`SELECT deliver_at
 		FROM commandqueue.commands
 		WHERE correlation_id = $1
-		ORDER BY execute_at
+		ORDER BY deliver_at
 		LIMIT 1`,
 		xsql.UUID(correlationID),
 	)
