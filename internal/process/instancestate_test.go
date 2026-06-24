@@ -301,19 +301,21 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 					// serialized, concurrent handlers would read the same
 					// counter value and produce a final count less than
 					// totalEvents.
-					var n int
+					var value int
+
 					if r.Value != nil {
 						// JSON unmarshals numbers as float64 when the target
 						// type is any.
-						n = int(r.Value.(float64))
+						value = int(r.Value.(float64))
 					}
-					n++
+
+					value++
 
 					s.Mutate(func(root *stubs.ProcessRootStub) {
-						root.Value = n
+						root.Value = value
 					})
 
-					if n == totalEvents {
+					if value == totalEvents {
 						done.Set()
 					}
 

@@ -350,3 +350,78 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 		),
 	)
 }
+
+// TestEventRouting_eventsAreNotRoutedToEndedInstances verifies that once a
+// process instance has been ended via [dogma.ProcessScope].End(), subsequent
+// events routed to the same instance ID are not delivered to the handler.
+func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
+	var done xsync.Latch
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					switch offset {
+					case 0:
+						return stubs.EventA1 // creates and ends the instance
+					case 1:
+						return stubs.EventB1 // routed to the same (ended) instance
+					default:
+						return stubs.EventX1 // routed to a different instance to signal completion
+					}
+				},
+				3,
+			)
+
+			xtesting.ExpectLatchesSetEventually(t, &done)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeX]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					_ context.Context,
+					m dogma.Event,
+				) (string, bool, error) {
+					switch m.(type) {
+					case *stubs.EventStub[stubs.TypeA], *stubs.EventStub[stubs.TypeB]:
+						return "<instance>", true, nil
+					case *stubs.EventStub[stubs.TypeX]:
+						return "<other-instance>", true, nil
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					r *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					m dogma.Event,
+				) error {
+					switch m.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						s.End()
+					case *stubs.EventStub[stubs.TypeB]:
+						t.Errorf("event was routed to an ended instance")
+					case *stubs.EventStub[stubs.TypeX]:
+						done.Set()
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+
+					return nil
+				},
+			},
+		),
+	)
+}

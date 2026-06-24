@@ -82,10 +82,11 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 	)
 
 	instanceID, ok, err := t.routeEventToInstance(ctx, event)
-	if !ok || err != nil {
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
+	}
+
+	if !ok {
 		return t.advanceCheckpoint(ctx)
 	}
 
@@ -97,9 +98,13 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		),
 	)
 
-	root, err := t.loadInstance(ctx, instanceID)
+	root, ok, err := t.loadInstance(ctx, instanceID)
 	if err != nil {
 		return err
+	}
+
+	if !ok {
+		return t.advanceCheckpoint(ctx)
 	}
 
 	scope := &messageScope{
@@ -128,7 +133,11 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		return errFailed
 	}
 
-	if scope.mutated {
+	if scope.ended {
+		if err := t.endInstance(ctx, instanceID); err != nil {
+			return err
+		}
+	} else if scope.mutated {
 		if err := t.saveInstance(ctx, instanceID, root); err != nil {
 			return err
 		}
@@ -138,11 +147,11 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 }
 
 // loadInstance loads the process instance with the given ID and returns its
-// root. If the instance does not exist, a new root is created.
+// root. If the instance has been ended, it returns a nil root and false.
 func (t *eventTask) loadInstance(
 	ctx context.Context,
 	instanceID string,
-) (dogma.ProcessRoot, error) {
+) (dogma.ProcessRoot, bool, error) {
 	root := t.Handler.New()
 
 	// Upsert with a dummy update to acquire a row lock, guaranteeing
@@ -153,14 +162,22 @@ func (t *eventTask) loadInstance(
 		VALUES ($1, $2)
 		ON CONFLICT (handler_key, instance_id) DO UPDATE SET
 			handler_key = EXCLUDED.handler_key
-		RETURNING state`,
+		RETURNING ended, state`,
 		xsql.UUID(t.Identity.GetKey()),
 		instanceID,
 	)
 
-	var state []byte
-	if err := row.Scan(&state); err != nil {
-		return nil, fmt.Errorf("unable to load process instance: %w", err)
+	var (
+		ended bool
+		state []byte
+	)
+
+	if err := row.Scan(&ended, &state); err != nil {
+		return nil, false, fmt.Errorf("unable to load process instance: %w", err)
+	}
+
+	if ended {
+		return nil, false, nil
 	}
 
 	if state != nil {
@@ -174,11 +191,33 @@ func (t *eventTask) loadInstance(
 				"unable to unmarshal process instance state",
 				xslog.Error(err),
 			)
-			return nil, errFailed
+			return nil, false, errFailed
 		}
 	}
 
-	return root, nil
+	return root, true, nil
+}
+
+// endInstance marks the process instance as ended and clears its state.
+func (t *eventTask) endInstance(
+	ctx context.Context,
+	instanceID string,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		t.Tx,
+		`UPDATE process.instances SET
+			ended = true,
+			state = NULL
+		WHERE handler_key = $1
+		AND instance_id = $2`,
+		xsql.UUID(t.Identity.GetKey()),
+		instanceID,
+	); err != nil {
+		return fmt.Errorf("unable to end process instance: %w", err)
+	}
+
+	return nil
 }
 
 // saveInstance persists the process root state for the given instance.

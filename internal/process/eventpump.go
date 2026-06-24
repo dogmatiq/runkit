@@ -179,6 +179,7 @@ type messageScope struct {
 	instanceID string
 	root       dogma.ProcessRoot
 	mutated    bool
+	ended      bool
 	packer     *envelopepb.EffectPacker
 	time       time.Time
 	logger     *slog.Logger
@@ -202,7 +203,7 @@ func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
 }
 
 func (s *messageScope) End() {
-	panic("not implemented")
+	s.ended = true
 }
 
 func (s *messageScope) ExecuteCommand(dogma.Command) {
