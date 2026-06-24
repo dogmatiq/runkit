@@ -12,3 +12,24 @@ CREATE TABLE IF NOT EXISTS process.instances (
     PRIMARY KEY (handler_key, instance_id),
     CHECK (NOT ended OR state IS NULL)
 );
+
+--------------------------------------------------------------------------------
+-- The "deadlines" table is a queue of pending deadline messages that have not
+-- yet been delivered to their target process instance.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS process.deadlines (
+    message_id  uuid        PRIMARY KEY,
+    handler_key uuid        NOT NULL,
+    instance_id text        NOT NULL CHECK (instance_id != ''),
+    envelope    bytea       NOT NULL,
+    failures    int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    deliver_at  timestamptz NOT NULL
+);
+
+-- Create an index for finding deadlines that are ready to be processed by a
+-- specific handler.
+CREATE INDEX IF NOT EXISTS pending_deadlines_by_handler
+ON process.deadlines (
+    handler_key,
+    deliver_at
+);

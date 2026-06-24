@@ -200,6 +200,15 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				BackoffCap:   backoffCap,
 				Logger:       e.newLoggerForHandler(handlerConfig),
 			},
+			&process.DeadlinePump{
+				DB:          e.DB,
+				Handler:     handlerConfig.Interface(),
+				Identity:    handlerConfig.Identity(),
+				Packer:      e.packer,
+				BackoffBase: backoffBase,
+				BackoffCap:  backoffCap,
+				Logger:      e.newLoggerForHandler(handlerConfig),
+			},
 		}
 
 	default:

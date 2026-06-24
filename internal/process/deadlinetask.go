@@ -18,26 +18,24 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-type eventTask struct {
+type deadlineTask struct {
 	Tx                      *sql.Tx
 	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity                *identitypb.Identity
 	Packer                  *envelopepb.Packer
-	StreamID                *uuidpb.UUID
-	EventOffset             uint64
+	MessageID               *uuidpb.UUID
+	InstanceID              string
 	EnvelopeBytes           []byte
 	BackoffBase, BackoffCap time.Duration
-	ParentLogger, Logger    *slog.Logger
+	Logger                  *slog.Logger
 }
 
-var errFailed = errors.New("unable to handle event")
-
-// Execute processes the task by handling its event and committing the
+// Execute processes the task by handling its deadline and committing the
 // transaction.
-func (t *eventTask) Execute(ctx context.Context) error {
+func (t *deadlineTask) Execute(ctx context.Context) error {
 	defer t.Tx.Rollback()
 
-	err := t.handleEvent(ctx)
+	err := t.handleDeadline(ctx)
 
 	if errors.Is(err, errFailed) {
 		err = t.failAndPostpone(ctx)
@@ -57,122 +55,99 @@ func (t *eventTask) Execute(ctx context.Context) error {
 	return nil
 }
 
-// handleEvent unpacks the event envelope and dispatches it to the handler.
-func (t *eventTask) handleEvent(ctx context.Context) error {
+// handleDeadline unpacks the deadline envelope and dispatches it to the
+// handler.
+func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 	var (
-		eventEnvelope = &envelopepb.Envelope{}
-		event         dogma.Event
+		deadlineEnvelope = &envelopepb.Envelope{}
+		deadline         dogma.Deadline
 	)
 
 	if err := xmessage.Unpack(
 		t.EnvelopeBytes,
-		eventEnvelope,
-		&event,
+		deadlineEnvelope,
+		&deadline,
 	); err != nil {
 		t.Logger.ErrorContext(
 			ctx,
-			"unable to unmarshal event",
+			"unable to unmarshal deadline",
 			xslog.Error(err),
 		)
 		return errFailed
 	}
 
-	t.Logger = t.ParentLogger.With(
-		xslog.Envelope("event", eventEnvelope),
+	t.Logger = t.Logger.With(
+		xslog.Envelope("deadline", deadlineEnvelope),
 	)
 
-	instanceID, ok, err := t.routeEventToInstance(ctx, event)
+	root, ok, err := t.loadInstance(ctx)
 	if err != nil {
 		return err
 	}
 
 	if !ok {
-		return t.advanceCheckpoint(ctx)
-	}
-
-	t.Logger = t.ParentLogger.With(
-		xslog.Envelope("event", eventEnvelope),
-		slog.Group(
-			"process_instance",
-			slog.String("id", instanceID),
-		),
-	)
-
-	root, ok, err := t.loadInstance(ctx, instanceID)
-	if err != nil {
-		return err
-	}
-
-	if !ok {
-		return t.advanceCheckpoint(ctx)
+		return t.deleteDeadline(ctx)
 	}
 
 	scope := &messageScope{
-		instanceID: instanceID,
+		instanceID: t.InstanceID,
 		root:       root,
-		packer: t.Packer.PackEffects(
-			eventEnvelope,
-			t.Identity,
-			envelopepb.WithInstanceID(instanceID),
-		),
-		time:   eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-		logger: t.Logger,
+		packer:     t.Packer.PackEffects(deadlineEnvelope, t.Identity, envelopepb.WithInstanceID(t.InstanceID)),
+		time:       deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
+		logger:     t.Logger,
 	}
 
 	if err := xerrors.ConvertPanicToError(
 		func() error {
-			return t.Handler.HandleEvent(
+			return t.Handler.HandleDeadline(
 				ctx,
 				root,
 				scope,
-				event,
+				deadline,
 			)
 		},
 	); err != nil {
 		t.Logger.ErrorContext(
 			ctx,
-			"unable to handle event",
+			"unable to handle deadline",
 			xslog.Error(err),
 		)
 		return errFailed
 	}
 
 	if scope.ended {
-		if err := t.endInstance(ctx, instanceID); err != nil {
+		if err := t.endInstance(ctx); err != nil {
 			return err
 		}
 	} else if scope.mutated {
-		if err := t.saveInstance(ctx, instanceID, root); err != nil {
+		if err := t.saveInstance(ctx, root); err != nil {
 			return err
 		}
 	}
 
-	if err := t.persistDeadlines(ctx, instanceID, scope.packer); err != nil {
+	if err := t.persistDeadlines(ctx, scope.packer); err != nil {
 		return err
 	}
 
-	return t.advanceCheckpoint(ctx)
+	return t.deleteDeadline(ctx)
 }
 
-// loadInstance loads the process instance with the given ID and returns its
-// root. If the instance has been ended, it returns a nil root and false.
-func (t *eventTask) loadInstance(
+// loadInstance loads the process instance and returns its root. If the
+// instance has been ended, it returns a nil root and false.
+func (t *deadlineTask) loadInstance(
 	ctx context.Context,
-	instanceID string,
 ) (dogma.ProcessRoot, bool, error) {
 	root := t.Handler.New()
 
-	// Upsert with a dummy update to acquire a row lock, guaranteeing
-	// serialized access even for brand-new instances.
 	row := t.Tx.QueryRowContext(
 		ctx,
-		`INSERT INTO process.instances (handler_key, instance_id)
-		VALUES ($1, $2)
-		ON CONFLICT (handler_key, instance_id) DO UPDATE SET
-			handler_key = EXCLUDED.handler_key
-		RETURNING ended, state`,
+		`SELECT ended, state
+		FROM process.instances
+		WHERE handler_key = $1
+		AND instance_id = $2
+		FOR UPDATE`,
 		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
+		t.InstanceID,
 	)
 
 	var (
@@ -207,10 +182,7 @@ func (t *eventTask) loadInstance(
 }
 
 // endInstance marks the process instance as ended and clears its state.
-func (t *eventTask) endInstance(
-	ctx context.Context,
-	instanceID string,
-) error {
+func (t *deadlineTask) endInstance(ctx context.Context) error {
 	if err := xsql.ExecOne(
 		ctx,
 		t.Tx,
@@ -220,7 +192,7 @@ func (t *eventTask) endInstance(
 		WHERE handler_key = $1
 		AND instance_id = $2`,
 		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
+		t.InstanceID,
 	); err != nil {
 		return fmt.Errorf("unable to end process instance: %w", err)
 	}
@@ -230,9 +202,8 @@ func (t *eventTask) endInstance(
 
 // persistDeadlines inserts any deadlines scheduled by the handler into the
 // process.deadlines table.
-func (t *eventTask) persistDeadlines(
+func (t *deadlineTask) persistDeadlines(
 	ctx context.Context,
-	instanceID string,
 	packer *envelopepb.EffectPacker,
 ) error {
 	multi, ok := packer.Seal()
@@ -257,7 +228,7 @@ func (t *eventTask) persistDeadlines(
 			) VALUES ($1, $2, $3, $4, $5)`,
 			xsql.UUID(env.GetBody().GetMessageId()),
 			xsql.UUID(t.Identity.GetKey()),
-			instanceID,
+			t.InstanceID,
 			data,
 			env.GetBody().GetScheduledFor().AsTime(),
 		); err != nil {
@@ -269,9 +240,8 @@ func (t *eventTask) persistDeadlines(
 }
 
 // saveInstance persists the process root state for the given instance.
-func (t *eventTask) saveInstance(
+func (t *deadlineTask) saveInstance(
 	ctx context.Context,
-	instanceID string,
 	root dogma.ProcessRoot,
 ) error {
 	var state []byte
@@ -300,7 +270,7 @@ func (t *eventTask) saveInstance(
 		AND instance_id = $3`,
 		state,
 		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
+		t.InstanceID,
 	); err != nil {
 		return fmt.Errorf("unable to save process instance: %w", err)
 	}
@@ -308,70 +278,35 @@ func (t *eventTask) saveInstance(
 	return nil
 }
 
-// advanceCheckpoint updates the handler's checkpoint offset for this stream.
-func (t *eventTask) advanceCheckpoint(ctx context.Context) error {
+// deleteDeadline removes the processed deadline from the queue.
+func (t *deadlineTask) deleteDeadline(ctx context.Context) error {
 	if err := xsql.ExecOne(
 		ctx,
 		t.Tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			checkpoint_offset = $1,
-			failures = 0
-		WHERE handler_key = $2
-		AND stream_id = $3`,
-		t.EventOffset+1,
-		xsql.UUID(t.Identity.GetKey()),
-		xsql.UUID(t.StreamID),
+		`DELETE FROM process.deadlines
+		WHERE message_id = $1`,
+		xsql.UUID(t.MessageID),
 	); err != nil {
-		return fmt.Errorf("unable to update handler checkpoint: %w", err)
+		return fmt.Errorf("unable to delete deadline: %w", err)
 	}
 
 	return nil
 }
 
-// routeEventToInstance routes the event to a process instance by calling the
-// handler's RouteEventToInstance() method.
-func (t *eventTask) routeEventToInstance(
-	ctx context.Context,
-	event dogma.Event,
-) (instanceID string, ok bool, err error) {
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			instanceID, ok, err = t.Handler.RouteEventToInstance(ctx, event)
-			if err != nil {
-				return err
-			}
-
-			if ok && instanceID == "" {
-				return fmt.Errorf("handler returned empty instance ID")
-			}
-
-			return nil
-		},
-	); err != nil {
-		t.Logger.ErrorContext(
-			ctx,
-			"unable to route event to instance",
-			xslog.Error(err),
-		)
-
-		return "", false, errFailed
-	}
-
-	return instanceID, ok, nil
-}
-
-// failAndPostpone increments the failure counter and postpones the stream so
-// that consumption is retried after an exponential backoff period.
-func (t *eventTask) failAndPostpone(ctx context.Context) error {
+// failAndPostpone increments the failure counter and postpones the deadline
+// so that processing is retried after an exponential backoff period.
+func (t *deadlineTask) failAndPostpone(ctx context.Context) error {
 	if _, err := t.Tx.ExecContext(
 		ctx,
-		`SELECT eventstream.fail_and_postpone($1, $2, $3, $4)`,
-		xsql.UUID(t.Identity.GetKey()),
-		xsql.UUID(t.StreamID),
+		`UPDATE process.deadlines SET
+			failures = failures + 1,
+			deliver_at = clock_timestamp() + LEAST($2 * (2 ^ failures), $3)
+		WHERE message_id = $1`,
+		xsql.UUID(t.MessageID),
 		t.BackoffBase,
 		t.BackoffCap,
 	); err != nil {
-		return fmt.Errorf("unable to postpone stream consumption after failure: %w", err)
+		return fmt.Errorf("unable to postpone deadline after failure: %w", err)
 	}
 
 	return nil

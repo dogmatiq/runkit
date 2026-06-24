@@ -210,8 +210,8 @@ func (s *messageScope) ExecuteCommand(dogma.Command) {
 	panic("not implemented")
 }
 
-func (s *messageScope) ScheduleDeadline(dogma.Deadline, time.Time) {
-	panic("not implemented")
+func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
+	s.packer.PackDeadline(d, envelopepb.WithScheduledFor(t))
 }
 
 func (s *messageScope) RecordedAt() time.Time {
