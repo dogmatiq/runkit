@@ -4,6 +4,7 @@ import (
 	_ "database/sql" // imported for documentation linking
 	"database/sql/driver"
 	"fmt"
+	"iter"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -37,6 +38,27 @@ func UUID(id *uuidpb.UUID) ScannerValuer {
 			return string(data), err
 		},
 	}
+}
+
+// UUIDs returns a []string containing the text representation of each UUID,
+// suitable for use with PostgreSQL's ANY($n) operator.
+func UUIDs(ids ...*uuidpb.UUID) any {
+	values := make([]string, len(ids))
+	for idx, id := range ids {
+		values[idx] = id.AsString()
+	}
+	return values
+}
+
+// UUIDSeq collects UUIDs from an iterator into a []string containing the text
+// representation of each UUID, suitable for use with PostgreSQL's ANY($n)
+// operator.
+func UUIDSeq(seq iter.Seq[*uuidpb.UUID]) any {
+	var values []string
+	for id := range seq {
+		values = append(values, id.AsString())
+	}
+	return values
 }
 
 // Envelope returns a value that marshals and unmarshals an envelope to/from its

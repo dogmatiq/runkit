@@ -340,6 +340,32 @@ func WaitForHandlerToPostponeConsumingStream(
 	)
 }
 
+// WaitForStreamFailureCounterToReset waits until the handler with the given
+// key has its failures counter reset to zero for each of the given streams.
+func WaitForStreamFailureCounterToReset(
+	t testing.TB,
+	q xsql.Querier,
+	handlerKey string,
+	streamIDs ...*uuidpb.UUID,
+) {
+	t.Helper()
+
+	WaitForQueryResult(
+		t,
+		fmt.Sprintf("handler %q has failures reset to zero on the given streams", handlerKey),
+		0,
+		q,
+		`SELECT COUNT(*)
+		FROM eventstream.handler_checkpoints
+		WHERE handler_key = $1
+		AND stream_id = ANY($2)
+		AND checkpoint_offset IS NOT NULL
+		AND failures != 0`,
+		handlerKey,
+		xsql.UUIDs(streamIDs...),
+	)
+}
+
 // PostponeStreamConsumption inserts a handler_checkpoints row with resume_at
 // set 24 hours in the future, preventing the handler from consuming the stream.
 func PostponeStreamConsumption(

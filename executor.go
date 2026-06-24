@@ -253,18 +253,13 @@ func pollForEvents(
 	nextOffsets uuidpb.Map[uint64],
 ) (satisfied bool, err error) {
 	var (
-		streamIDs    []string
-		offsets      []uint64
-		eventTypeIDs []string
+		streamIDs []string
+		offsets   []uint64
 	)
 
 	for streamID, offset := range nextOffsets.All() {
 		streamIDs = append(streamIDs, streamID.AsString())
 		offsets = append(offsets, offset)
-	}
-
-	for eventTypeID := range eventTypes.All() {
-		eventTypeIDs = append(eventTypeIDs, eventTypeID.AsString())
 	}
 
 	rows, err := q.QueryContext(
@@ -294,7 +289,7 @@ func pollForEvents(
 		streamIDs,
 		offsets,
 		xsql.UUID(correlationID),
-		eventTypeIDs,
+		xsql.UUIDSeq(eventTypes.All()),
 	)
 	if err != nil {
 		return false, fmt.Errorf("unable to query events: %w", err)

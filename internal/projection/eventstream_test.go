@@ -245,7 +245,7 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.PopulateEventStreams(
+			streamIDs := xtesting.PopulateEventStreams(
 				t,
 				engine.DB,
 				func(*uuidpb.UUID, uint64) dogma.Event {
@@ -254,16 +254,11 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 				1,
 			)
 
-			xtesting.WaitForQueryResult(
+			xtesting.WaitForStreamFailureCounterToReset(
 				t,
-				fmt.Sprintf("handler %q has failures reset to zero", handlerKey),
-				0,
 				engine.DB,
-				`SELECT failures
-				FROM eventstream.handler_checkpoints
-				WHERE handler_key = $1
-				AND checkpoint_offset IS NOT NULL`,
 				handlerKey,
+				streamIDs...,
 			)
 
 			done.Set()

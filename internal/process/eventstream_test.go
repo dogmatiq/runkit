@@ -2,10 +2,13 @@ package process_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -163,202 +166,216 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 	)
 }
 
-// // TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed verifies
-// // that if handling an event fails (either via error return or panic),
-// // consumption of the stream is postponed.
-// func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testing.T) {
-// 	const handlerKey = "87f5a992-a3a6-494a-be1c-c01c6fff8ff0"
+// TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed verifies
+// that if handling an event fails (either via error return or panic),
+// consumption of the stream is postponed.
+func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testing.T) {
+	const handlerKey = "87f5a992-a3a6-494a-be1c-c01c6fff8ff0"
 
-// 	cases := []struct {
-// 		Name            string
-// 		HandleEventFunc func(
-// 			context.Context,
-// 			dogma.ProjectionEventScope,
-// 			dogma.Event,
-// 		) (uint64, error)
-// 	}{
-// 		{
-// 			"returns error",
-// 			func(
-// 				context.Context,
-// 				dogma.ProjectionEventScope,
-// 				dogma.Event,
-// 			) (uint64, error) {
-// 				return 0, fmt.Errorf("<handler error>")
-// 			},
-// 		},
-// 		{
-// 			"panics",
-// 			func(
-// 				context.Context,
-// 				dogma.ProjectionEventScope,
-// 				dogma.Event,
-// 			) (uint64, error) {
-// 				panic("<handler panic>")
-// 			},
-// 		},
-// 	}
+	cases := []struct {
+		Name            string
+		HandleEventFunc func(
+			context.Context,
+			*stubs.ProcessRootStub,
+			dogma.ProcessEventScope[*stubs.ProcessRootStub],
+			dogma.Event,
+		) error
+	}{
+		{
+			"returns error",
+			func(
+				context.Context,
+				*stubs.ProcessRootStub,
+				dogma.ProcessEventScope[*stubs.ProcessRootStub],
+				dogma.Event,
+			) error {
+				return fmt.Errorf("<handler error>")
+			},
+		},
+		{
+			"panics",
+			func(
+				context.Context,
+				*stubs.ProcessRootStub,
+				dogma.ProcessEventScope[*stubs.ProcessRootStub],
+				dogma.Event,
+			) error {
+				panic("<handler panic>")
+			},
+		},
+	}
 
-// 	for _, c := range cases {
-// 		t.Run(c.Name, func(t *testing.T) {
-// 			xtesting.RunEngines(
-// 				t,
-// 				func(t testing.TB, engine *dogmaengine.Engine) {
-// 					streamIDs := xtesting.PopulateEventStreams(
-// 						t,
-// 						engine.DB,
-// 						func(*uuidpb.UUID, uint64) dogma.Event {
-// 							return stubs.EventA1
-// 						},
-// 						1,
-// 					)
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, engine *dogmaengine.Engine) {
+					streamIDs := xtesting.PopulateEventStreams(
+						t,
+						engine.DB,
+						func(*uuidpb.UUID, uint64) dogma.Event {
+							return stubs.EventA1
+						},
+						1,
+					)
 
-// 					xtesting.WaitForHandlerToPostponeConsumingStream(
-// 						t,
-// 						engine.DB,
-// 						handlerKey,
-// 						streamIDs[0],
-// 					)
-// 				},
-// 				dogma.ViaProjection(
-// 					&stubs.ProjectionMessageHandlerStub{
-// 						ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-// 							c.Identity("<handler>", handlerKey)
-// 							c.Routes(
-// 								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-// 							)
-// 						},
-// 						HandleEventFunc: c.HandleEventFunc,
-// 					},
-// 				),
-// 			)
-// 		})
-// 	}
-// }
+					xtesting.WaitForHandlerToPostponeConsumingStream(
+						t,
+						engine.DB,
+						handlerKey,
+						streamIDs[0],
+					)
+				},
+				dogma.ViaProcess(
+					&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+						ConfigureFunc: func(c dogma.ProcessConfigurer) {
+							c.Identity("<handler>", handlerKey)
+							c.Routes(
+								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+								dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+							)
+						},
+						RouteEventToInstanceFunc: func(
+							context.Context,
+							dogma.Event,
+						) (string, bool, error) {
+							return "<instance>", true, nil
+						},
+						HandleEventFunc: c.HandleEventFunc,
+					},
+				),
+			)
+		})
+	}
+}
 
-// // TestEventStream_failureCounterIsResetOnSuccess verifies that after a handler
-// // fails and then subsequently succeeds, the failures counter is reset to zero.
-// func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
-// 	const handlerKey = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+// TestEventStream_failureCounterIsResetOnSuccess verifies that after a handler
+// fails and then subsequently succeeds, the failures counter is reset to zero.
+func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
+	const handlerKey = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
 
-// 	var (
-// 		done      xsync.Latch
-// 		hasFailed atomic.Bool
-// 	)
+	var (
+		done      xsync.Latch
+		hasFailed atomic.Bool
+	)
 
-// 	xtesting.RunEngines(
-// 		t,
-// 		func(t testing.TB, engine *dogmaengine.Engine) {
-// 			xtesting.PopulateEventStreams(
-// 				t,
-// 				engine.DB,
-// 				func(*uuidpb.UUID, uint64) dogma.Event {
-// 					return stubs.EventA1
-// 				},
-// 				1,
-// 			)
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			streamIDs := xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1,
+			)
 
-// 			xtesting.WaitForQueryResult(
-// 				t,
-// 				fmt.Sprintf("handler %q has failures reset to zero", handlerKey),
-// 				0,
-// 				engine.DB,
-// 				`SELECT failures
-// 				FROM eventstream.handler_checkpoints
-// 				WHERE handler_key = $1
-// 				AND checkpoint_offset IS NOT NULL`,
-// 				handlerKey,
-// 			)
+			xtesting.WaitForStreamFailureCounterToReset(
+				t,
+				engine.DB,
+				handlerKey,
+				streamIDs...,
+			)
 
-// 			done.Set()
-// 			xtesting.ExpectLatchesSetEventually(t, &done)
-// 		},
-// 		dogma.ViaProjection(
-// 			&stubs.ProjectionMessageHandlerStub{
-// 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-// 					c.Identity("<handler>", handlerKey)
-// 					c.Routes(
-// 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-// 					)
-// 				},
-// 				HandleEventFunc: func(
-// 					_ context.Context,
-// 					s dogma.ProjectionEventScope,
-// 					_ dogma.Event,
-// 				) (uint64, error) {
-// 					if hasFailed.CompareAndSwap(false, true) {
-// 						return 0, errors.New("<error>")
-// 					}
+			done.Set()
+			xtesting.ExpectLatchesSetEventually(t, &done)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					_ dogma.Event,
+				) error {
+					if hasFailed.CompareAndSwap(false, true) {
+						return errors.New("<error>")
+					}
 
-// 					return s.Offset() + 1, nil
-// 				},
-// 			},
-// 		),
-// 	)
-// }
+					return nil
+				},
+			},
+		),
+	)
+}
 
-// // TestEventStream_postponedStreamsAreNotConsumed verifies that a stream with
-// // resume_at in the future is not acquired for reading.
-// func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
-// 	const handlerKey = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+// TestEventStream_postponedStreamsAreNotConsumed verifies that a stream with
+// resume_at in the future is not acquired for reading.
+func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
+	const handlerKey = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
-// 	xtesting.RunEngines(
-// 		t,
-// 		func(t testing.TB, engine *dogmaengine.Engine) {
-// 			var streamIDs []*uuidpb.UUID
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			var streamIDs []*uuidpb.UUID
 
-// 			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
-// 				streamIDs = xtesting.PopulateEventStreams(
-// 					t,
-// 					tx,
-// 					func(*uuidpb.UUID, uint64) dogma.Event {
-// 						return stubs.EventA1
-// 					},
-// 					1,
-// 				)
+			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
+				streamIDs = xtesting.PopulateEventStreams(
+					t,
+					tx,
+					func(*uuidpb.UUID, uint64) dogma.Event {
+						return stubs.EventA1
+					},
+					1,
+				)
 
-// 				xtesting.PostponeStreamConsumption(
-// 					t,
-// 					tx,
-// 					handlerKey,
-// 					streamIDs[0],
-// 				)
-// 			})
+				xtesting.PostponeStreamConsumption(
+					t,
+					tx,
+					handlerKey,
+					streamIDs[0],
+				)
+			})
 
-// 			// Allow several poll cycles to pass.
-// 			time.Sleep(50 * time.Millisecond)
+			// Allow several poll cycles to pass.
+			time.Sleep(50 * time.Millisecond)
 
-// 			xtesting.WaitForQueryResult(
-// 				t,
-// 				fmt.Sprintf("handler %q still has resume_at in the future", handlerKey),
-// 				1,
-// 				engine.DB,
-// 				`SELECT COUNT(*)
-// 				FROM eventstream.handler_checkpoints
-// 				WHERE handler_key = $1
-// 				AND stream_id = $2
-// 				AND resume_at > clock_timestamp()`,
-// 				handlerKey,
-// 				xsql.UUID(streamIDs[0]),
-// 			)
-// 		},
-// 		dogma.ViaProjection(
-// 			&stubs.ProjectionMessageHandlerStub{
-// 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-// 					c.Identity("<handler>", handlerKey)
-// 					c.Routes(
-// 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-// 					)
-// 				},
-// 				HandleEventFunc: func(
-// 					context.Context,
-// 					dogma.ProjectionEventScope,
-// 					dogma.Event,
-// 				) (uint64, error) {
-// 					t.Error("handler was called for a postponed stream")
-// 					return 0, nil
-// 				},
-// 			},
-// 		),
-// 	)
-// }
+			xtesting.WaitForHandlerToPostponeConsumingStream(
+				t,
+				engine.DB,
+				handlerKey,
+				streamIDs[0],
+			)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					context.Context,
+					*stubs.ProcessRootStub,
+					dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					dogma.Event,
+				) error {
+					t.Error("handler was called for a postponed stream")
+					return nil
+				},
+			},
+		),
+	)
+}
