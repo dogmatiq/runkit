@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/concurrency"
+	"github.com/dogmatiq/reference-engine/internal/messagepump"
+	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
+	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
@@ -34,102 +37,21 @@ type CommandPump struct {
 
 // Run runs the message pump until ctx is canceled.
 func (p *CommandPump) Run(ctx context.Context) {
-	tasks := make(chan *commandTask)
-
-	var g sync.WaitGroup
-
-	g.Go(func() {
-		defer close(tasks)
-
-		for {
-			task, ok, err := p.acquireTask(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-
-				p.Logger.ErrorContext(
-					ctx,
-					"unable to acquire task",
-					xslog.Error(err),
-				)
-			}
-
-			if ok {
-				task.Logger.DebugContext(
-					ctx,
-					"acquired task",
-				)
-
-				select {
-				case <-ctx.Done():
-					task.Tx.Rollback()
-					return
-				case tasks <- task:
-					continue
-				}
-			} else {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(25 * time.Millisecond):
-					continue
-				}
-			}
-		}
-	})
-
-	for range runtime.GOMAXPROCS(0) {
-		g.Go(func() {
-			for task := range tasks {
-				if err := task.Execute(ctx); err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-
-					xsql.PanicOnDeadlock(err)
-
-					task.Logger.ErrorContext(
-						ctx,
-						"unable to execute task",
-						xslog.Error(err),
-					)
-				} else {
-					task.Logger.DebugContext(
-						ctx,
-						"executed task",
-					)
-				}
-			}
-		})
-	}
-
-	g.Wait()
+	messagepump.Run(
+		ctx,
+		p.DB,
+		p.Logger,
+		p.acquireNextCommand,
+		p.handleDelivery,
+	)
 }
 
-// acquireTask attempts to exclusively lock the next pending command for the
-// handler and return its message ID and envelope data.
-func (p *CommandPump) acquireTask(
-	ctx context.Context,
-) (
-	task *commandTask,
-	ok bool,
-	err error,
-) {
-	tx, err := p.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
-	}
-	defer func() {
-		if !ok {
-			tx.Rollback()
-		}
-	}()
-
+func (p *CommandPump) acquireNextCommand(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
 			c.message_id,
+			c.message_type_id,
 			c.envelope,
 			c.failures
 		FROM commandqueue.commands AS c
@@ -141,64 +63,183 @@ func (p *CommandPump) acquireTask(
 		p.CommandTypeIDs,
 	)
 
-	task = &commandTask{
-		Tx:            tx,
+	del := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
-		Handler:       p.Handler,
-		Identity:      p.Identity,
-		Concurrency:   p.Concurrency,
-		Packer:        p.Packer,
-		BackoffBase:   p.BackoffBase,
-		BackoffCap:    p.BackoffCap,
-		EnvelopeBytes: []byte{},
-		ParentLogger:  p.Logger,
-		Logger:        p.Logger,
+		MessageTypeID: &uuidpb.UUID{},
 	}
-
-	var failures uint64
 
 	if err := row.Scan(
-		xsql.UUID(task.MessageID),
-		&task.EnvelopeBytes,
-		&failures,
+		xsql.UUID(del.MessageID),
+		xsql.UUID(del.MessageTypeID),
+		&del.EnvelopeBytes,
+		&del.FailureCount,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, false, nil
+			return messagepump.Delivery{}, false, nil
 		}
 
-		return nil, false, fmt.Errorf("unable to scan pending command: %w", err)
+		return messagepump.Delivery{}, false, fmt.Errorf("unable to scan pending command: %w", err)
 	}
 
-	task.Logger = p.Logger.With(
-		slog.Group(
-			"command",
-			xslog.UUID("message_id", task.MessageID),
-		),
-		slog.Uint64("attempt", failures+1),
+	return del, true, nil
+}
+
+// errFailed is a sentinel error that indicates a command could not be handled
+// and should be postponed for re-delivery.
+var errFailed = errors.New("unable to handle command")
+
+func (p *CommandPump) handleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	err := p.handleCommand(ctx, dc)
+
+	if errors.Is(err, errFailed) {
+		err = p.failAndPostpone(ctx, dc)
+	}
+
+	return err
+}
+
+func (p *CommandPump) handleCommand(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	var (
+		commandEnvelope    = &envelopepb.Envelope{}
+		commandForHandling dogma.Command
 	)
 
-	return task, true, nil
-}
+	if err := xmessage.Unpack(
+		dc.EnvelopeBytes,
+		commandEnvelope,
+		&commandForHandling,
+	); err != nil {
+		dc.Logger.ErrorContext(
+			ctx,
+			"unable to unmarshal command",
+			xslog.Error(err),
+		)
+		return errFailed
+	}
 
-// messageScope implements [dogma.IntegrationCommandScope].
-type messageScope struct {
-	packer *envelopepb.EffectPacker
-	logger *slog.Logger
-}
-
-func (s *messageScope) Now() time.Time {
-	return time.Now()
-}
-
-func (s *messageScope) Log(format string, args ...any) {
-	s.logger.Info(fmt.Sprintf(format, args...))
-}
-
-func (s *messageScope) RecordEvent(event dogma.Event) {
-	eventEnvelope := s.packer.PackEvent(event)
-
-	s.logger.Info(
-		event.MessageDescription(),
-		xslog.Envelope("event", eventEnvelope),
+	logger := dc.Logger.With(
+		xslog.Envelope("command", commandEnvelope),
 	)
+
+	packer := p.Packer.PackEffects(
+		commandEnvelope,
+		p.Identity,
+	)
+
+	if err := concurrency.EnforceConcurrencyPreference(
+		ctx,
+		dc.Tx,
+		p.Identity.GetKey(),
+		p.Concurrency,
+		func() error {
+			return xerrors.ConvertPanicToError(
+				func() error {
+					return p.Handler.HandleCommand(
+						ctx,
+						&commandScope{
+							packer: packer,
+							logger: logger,
+						},
+						commandForHandling,
+					)
+				},
+			)
+		},
+	); err != nil {
+		logger.ErrorContext(
+			ctx,
+			"unable to handle command",
+			xslog.Error(err),
+		)
+
+		return errFailed
+	}
+
+	if eventEnvelopes, ok := packer.Seal(); ok {
+		return p.completeWithEvents(ctx, dc, eventEnvelopes)
+	}
+
+	return p.completeWithoutEvents(ctx, dc)
+}
+
+// completeWithEvents removes the command from the queue and appends events that
+// were recorded during handling in a single database round-trip.
+func (p *CommandPump) completeWithEvents(
+	ctx context.Context,
+	dc *messagepump.DeliveryContext,
+	eventEnvelopes *envelopepb.MultiEnvelope,
+) error {
+	var (
+		query strings.Builder
+		args  []any
+	)
+
+	args = append(
+		args,
+		xsql.UUID(dc.MessageID),
+		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
+	)
+
+	query.WriteString(`SELECT integration.complete_with_events($1, $2, ARRAY[`)
+
+	first := true
+	for eventEnvelope := range eventEnvelopes.All() {
+		if first {
+			first = false
+		} else {
+			query.WriteString(", ")
+		}
+
+		n := len(args)
+		fmt.Fprintf(
+			&query,
+			"ROW($%d, $%d, $%d)::eventstream.event",
+			n+1, n+2, n+3,
+		)
+
+		args = append(
+			args,
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.Envelope(eventEnvelope),
+		)
+	}
+
+	query.WriteString(`])`)
+
+	if _, err := dc.Tx.ExecContext(ctx, query.String(), args...); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+// completeWithoutEvents removes the command from the queue when no events were
+// recorded during handling.
+func (p *CommandPump) completeWithoutEvents(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	if _, err := dc.Tx.ExecContext(
+		ctx,
+		`SELECT integration.complete_without_events($1)`,
+		xsql.UUID(dc.MessageID),
+	); err != nil {
+		return fmt.Errorf("unable to complete command handling: %w", err)
+	}
+
+	return nil
+}
+
+// failAndPostpone marks the command as failed and postpones it for re-delivery
+// according to the configured backoff parameters.
+func (p *CommandPump) failAndPostpone(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	if _, err := dc.Tx.ExecContext(
+		ctx,
+		`SELECT commandqueue.fail_and_postpone($1, $2, $3)`,
+		xsql.UUID(dc.MessageID),
+		p.BackoffBase,
+		p.BackoffCap,
+	); err != nil {
+		return fmt.Errorf("unable to postpone queued command: %w", err)
+	}
+
+	return nil
 }
