@@ -25,6 +25,7 @@ type deadlineTask struct {
 	Packer                  *envelopepb.Packer
 	MessageID               *uuidpb.UUID
 	InstanceID              string
+	InstanceStateBytes      []byte
 	EnvelopeBytes           []byte
 	BackoffBase, BackoffCap time.Duration
 	Logger                  *slog.Logger
@@ -80,13 +81,21 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		xslog.Envelope("deadline", deadlineEnvelope),
 	)
 
-	root, ok, err := t.loadInstance(ctx)
-	if err != nil {
-		return err
-	}
+	root := t.Handler.New()
 
-	if !ok {
-		return t.deleteDeadline(ctx)
+	if t.InstanceStateBytes != nil {
+		if err := xerrors.ConvertPanicToError(
+			func() error {
+				return root.UnmarshalBinary(t.InstanceStateBytes)
+			},
+		); err != nil {
+			t.Logger.ErrorContext(
+				ctx,
+				"unable to unmarshal process instance state",
+				xslog.Error(err),
+			)
+			return errFailed
+		}
 	}
 
 	scope := &messageScope{
@@ -119,7 +128,10 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		if err := t.endInstance(ctx); err != nil {
 			return err
 		}
-	} else if scope.mutated {
+		return nil
+	}
+
+	if scope.mutated {
 		if err := t.saveInstance(ctx, root); err != nil {
 			return err
 		}
@@ -130,55 +142,6 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 	}
 
 	return t.deleteDeadline(ctx)
-}
-
-// loadInstance loads the process instance and returns its root. If the
-// instance has been ended, it returns a nil root and false.
-func (t *deadlineTask) loadInstance(
-	ctx context.Context,
-) (dogma.ProcessRoot, bool, error) {
-	root := t.Handler.New()
-
-	row := t.Tx.QueryRowContext(
-		ctx,
-		`SELECT ended, state
-		FROM process.instances
-		WHERE handler_key = $1
-		AND instance_id = $2
-		FOR UPDATE`,
-		xsql.UUID(t.Identity.GetKey()),
-		t.InstanceID,
-	)
-
-	var (
-		ended bool
-		state []byte
-	)
-
-	if err := row.Scan(&ended, &state); err != nil {
-		return nil, false, fmt.Errorf("unable to load process instance: %w", err)
-	}
-
-	if ended {
-		return nil, false, nil
-	}
-
-	if state != nil {
-		if err := xerrors.ConvertPanicToError(
-			func() error {
-				return root.UnmarshalBinary(state)
-			},
-		); err != nil {
-			t.Logger.ErrorContext(
-				ctx,
-				"unable to unmarshal process instance state",
-				xslog.Error(err),
-			)
-			return nil, false, errFailed
-		}
-	}
-
-	return root, true, nil
 }
 
 // endInstance marks the process instance as ended and clears its state.
@@ -195,6 +158,17 @@ func (t *deadlineTask) endInstance(ctx context.Context) error {
 		t.InstanceID,
 	); err != nil {
 		return fmt.Errorf("unable to end process instance: %w", err)
+	}
+
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`DELETE FROM process.deadlines
+		WHERE handler_key = $1
+		AND instance_id = $2`,
+		xsql.UUID(t.Identity.GetKey()),
+		t.InstanceID,
+	); err != nil {
+		return fmt.Errorf("unable to delete deadlines for ended instance: %w", err)
 	}
 
 	return nil

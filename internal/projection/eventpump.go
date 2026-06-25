@@ -85,6 +85,8 @@ func (p *EventPump) Run(ctx context.Context) {
 						return
 					}
 
+					xsql.PanicOnDeadlock(err)
+
 					task.Logger.ErrorContext(
 						ctx,
 						"unable to execute task",

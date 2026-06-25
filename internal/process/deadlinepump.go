@@ -84,6 +84,8 @@ func (p *DeadlinePump) Run(ctx context.Context) {
 						return
 					}
 
+					xsql.PanicOnDeadlock(err)
+
 					task.Logger.ErrorContext(
 						ctx,
 						"unable to execute deadline task",
@@ -124,13 +126,17 @@ func (p *DeadlinePump) acquireTask(
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
-			message_id,
-			instance_id,
-			envelope
-		FROM process.deadlines
-		WHERE handler_key = $1
-		AND deliver_at <= clock_timestamp()
-		ORDER BY deliver_at
+			d.message_id,
+			d.instance_id,
+			d.envelope,
+			i.state
+		FROM process.deadlines AS d
+		INNER JOIN process.instances AS i
+			ON i.handler_key = d.handler_key
+			AND i.instance_id = d.instance_id
+		WHERE d.handler_key = $1
+		AND d.deliver_at <= clock_timestamp()
+		ORDER BY d.deliver_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUID(p.Identity.GetKey()),
@@ -151,6 +157,7 @@ func (p *DeadlinePump) acquireTask(
 		xsql.UUID(task.MessageID),
 		&task.InstanceID,
 		&task.EnvelopeBytes,
+		&task.InstanceStateBytes,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil

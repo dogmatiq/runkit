@@ -139,3 +139,201 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 		),
 	)
 }
+
+func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) {
+	var ended xsync.Latch
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					switch offset {
+					case 0:
+						return stubs.EventA1 // creates instance, schedules deadline
+					default:
+						return stubs.EventB1 // ends the instance
+					}
+				},
+				2,
+			)
+
+			xtesting.ExpectLatchesSetEventually(t, &ended)
+			xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					m dogma.Event,
+				) error {
+					switch m.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						s.ScheduleDeadline(
+							stubs.DeadlineA1,
+							time.Now().Add(1*time.Second),
+						)
+					case *stubs.EventStub[stubs.TypeB]:
+						s.End()
+						ended.Set()
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					context.Context,
+					*stubs.ProcessRootStub,
+					dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					dogma.Deadline,
+				) error {
+					t.Errorf("deadline was delivered to an ended instance")
+					return nil
+				},
+			},
+		),
+	)
+}
+
+func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t *testing.T) {
+	t.Run("via HandleEvent", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				xtesting.PopulateEventStreams(
+					t,
+					engine.DB,
+					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+						return stubs.EventA1
+					},
+					1,
+				)
+
+				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, "ef0660b4-a68e-4383-b156-5857ac294dce")
+				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+			},
+			dogma.ViaProcess(
+				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+					ConfigureFunc: func(c dogma.ProcessConfigurer) {
+						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Routes(
+							dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+							dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+							dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+						)
+					},
+					RouteEventToInstanceFunc: func(
+						context.Context,
+						dogma.Event,
+					) (string, bool, error) {
+						return "<instance>", true, nil
+					},
+					HandleEventFunc: func(
+						_ context.Context,
+						_ *stubs.ProcessRootStub,
+						s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+						_ dogma.Event,
+					) error {
+						s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
+						s.End()
+						return nil
+					},
+					HandleDeadlineFunc: func(
+						context.Context,
+						*stubs.ProcessRootStub,
+						dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+						dogma.Deadline,
+					) error {
+						t.Errorf("deadline was delivered to an ended instance")
+						return nil
+					},
+				},
+			),
+		)
+	})
+
+	t.Run("via HandleDeadline", func(t *testing.T) {
+		var ended xsync.Latch
+
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *dogmaengine.Engine) {
+				xtesting.PopulateEventStreams(
+					t,
+					engine.DB,
+					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+						return stubs.EventA1
+					},
+					1,
+				)
+
+				xtesting.ExpectLatchesSetEventually(t, &ended)
+				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+			},
+			dogma.ViaProcess(
+				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+					ConfigureFunc: func(c dogma.ProcessConfigurer) {
+						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Routes(
+							dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+							dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+							dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+							dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeB]](),
+						)
+					},
+					RouteEventToInstanceFunc: func(
+						context.Context,
+						dogma.Event,
+					) (string, bool, error) {
+						return "<instance>", true, nil
+					},
+					HandleEventFunc: func(
+						_ context.Context,
+						_ *stubs.ProcessRootStub,
+						s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+						_ dogma.Event,
+					) error {
+						s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
+						return nil
+					},
+					HandleDeadlineFunc: func(
+						_ context.Context,
+						_ *stubs.ProcessRootStub,
+						s dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+						d dogma.Deadline,
+					) error {
+						switch d.(type) {
+						case *stubs.DeadlineStub[stubs.TypeA]:
+							s.ScheduleDeadline(stubs.DeadlineB1, time.Now())
+							s.End()
+							ended.Set()
+						default:
+							t.Errorf("deadline was delivered to an ended instance")
+						}
+						return nil
+					},
+				},
+			),
+		)
+	})
+}

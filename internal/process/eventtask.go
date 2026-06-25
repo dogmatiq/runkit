@@ -141,14 +141,16 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		if err := t.endInstance(ctx, instanceID); err != nil {
 			return err
 		}
-	} else if scope.mutated {
-		if err := t.saveInstance(ctx, instanceID, root); err != nil {
+	} else {
+		if scope.mutated {
+			if err := t.saveInstance(ctx, instanceID, root); err != nil {
+				return err
+			}
+		}
+
+		if err := t.persistDeadlines(ctx, instanceID, scope.packer); err != nil {
 			return err
 		}
-	}
-
-	if err := t.persistDeadlines(ctx, instanceID, scope.packer); err != nil {
-		return err
 	}
 
 	return t.advanceCheckpoint(ctx)
@@ -223,6 +225,17 @@ func (t *eventTask) endInstance(
 		instanceID,
 	); err != nil {
 		return fmt.Errorf("unable to end process instance: %w", err)
+	}
+
+	if _, err := t.Tx.ExecContext(
+		ctx,
+		`DELETE FROM process.deadlines
+		WHERE handler_key = $1
+		AND instance_id = $2`,
+		xsql.UUID(t.Identity.GetKey()),
+		instanceID,
+	); err != nil {
+		return fmt.Errorf("unable to delete deadlines for ended instance: %w", err)
 	}
 
 	return nil
