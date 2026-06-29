@@ -18,6 +18,10 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
+// EventBatchSize is the maximum number of events that will be handled in a single
+// transaction.
+const EventBatchSize = 10
+
 type streamTask struct {
 	Tx                      *sql.Tx
 	Handler                 dogma.ProjectionMessageHandler
@@ -30,7 +34,10 @@ type streamTask struct {
 	ParentLogger, Logger    *slog.Logger
 }
 
-var errFailed = errors.New("unable to handle event")
+var (
+	errFailed   = errors.New("unable to handle event")
+	errConflict = errors.New("optimistic concurrency conflict")
+)
 
 // Execute processes the task by handling pending events on the stream and
 // committing the transaction.
@@ -46,37 +53,42 @@ func (t *streamTask) Execute(ctx context.Context) error {
 		slog.Uint64("checkpoint_offset", *t.CheckpointOffset),
 	)
 
-	eventEnvelopes, err := t.fetchEvents(ctx)
+	eventEnvelopes, batchCheckpointOffset, err := t.fetchEvents(ctx)
 	if err != nil {
 		return err
 	}
 
 	if len(eventEnvelopes) != 0 {
 		handleErr := t.handleEvents(ctx, eventEnvelopes)
-		if handleErr != nil && !errors.Is(handleErr, errFailed) {
-			return handleErr
-		}
-
-		if err := xsql.ExecOne(
-			ctx,
-			t.Tx,
-			`UPDATE eventstream.handler_checkpoints SET
-				checkpoint_offset = $1,
-				failures = 0
-			WHERE handler_key = $2
-			AND stream_id = $3`,
-			t.CheckpointOffset,
-			xsql.UUID(t.Identity.GetKey()),
-			xsql.UUID(t.StreamID),
-		); err != nil {
-			return fmt.Errorf("unable to update handler checkpoint: %w", err)
-		}
 
 		if handleErr != nil {
-			if err := t.failAndPostpone(ctx); err != nil {
-				return err
+			// If an error occurred, we can only update the checkpoint offset to
+			// the offset after the last successfully handled event.
+			batchCheckpointOffset = *t.CheckpointOffset
+
+			if errors.Is(handleErr, errFailed) {
+				if err := t.failAndPostpone(ctx); err != nil {
+					return err
+				}
+			} else if !errors.Is(handleErr, errConflict) {
+				return handleErr
 			}
 		}
+	}
+
+	if err := xsql.ExecOne(
+		ctx,
+		t.Tx,
+		`UPDATE eventstream.handler_checkpoints SET
+			checkpoint_offset = $1,
+			failures = 0
+		WHERE handler_key = $2
+		AND stream_id = $3`,
+		batchCheckpointOffset,
+		xsql.UUID(t.Identity.GetKey()),
+		xsql.UUID(t.StreamID),
+	); err != nil {
+		return fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
 
 	if err := t.Tx.Commit(); err != nil {
@@ -108,63 +120,96 @@ func (t *streamTask) loadCheckpointOffset(ctx context.Context) error {
 
 // fetchEvents queries the event stream for pending events starting at the
 // checkpoint offset.
-func (t *streamTask) fetchEvents(ctx context.Context) ([]*envelopepb.Envelope, error) {
+//
+// batchCheckpointOffset is the checkpoint offset the handler should resume from
+// on the next poll, assuming all events in the batch are handled successfully.
+func (t *streamTask) fetchEvents(ctx context.Context) (
+	eventEnvelopes []*envelopepb.Envelope,
+	batchCheckpointOffset uint64,
+	err error,
+) {
+	batchCheckpointOffset = *t.CheckpointOffset
+
 	rows, err := t.Tx.QueryContext(
 		ctx,
 		`SELECT
 			e.stream_offset,
-			e.envelope
-		FROM eventstream.events AS e
-		WHERE e.stream_id = $1
-		AND e.stream_offset >= $2
-		AND e.message_type_id = ANY($3)
-		ORDER BY e.stream_offset
-		LIMIT 10`,
+			e.envelope,
+			s.next_offset
+		FROM eventstream.streams AS s
+		LEFT JOIN eventstream.events AS e
+			ON e.stream_id = s.id
+			AND e.stream_offset >= $2
+			AND e.message_type_id = ANY($3)
+		WHERE s.id = $1
+		ORDER BY e.stream_offset NULLS LAST
+		LIMIT $4`,
 		xsql.UUID(t.StreamID),
 		*t.CheckpointOffset,
 		t.EventTypeIDs,
+		EventBatchSize,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("unable to query pending events: %w", err)
+		return nil, 0, fmt.Errorf("unable to query pending events: %w", err)
 	}
 	defer rows.Close()
 
-	var eventEnvelopes []*envelopepb.Envelope
+	var lastEventOffset uint64
 
 	for rows.Next() {
 		var (
-			offset        uint64
-			eventEnvelope = &envelopepb.Envelope{}
+			eventOffset   *uint64
+			envelopeBytes []byte
 		)
 
 		if err := rows.Scan(
-			&offset,
-			xsql.Envelope(eventEnvelope),
+			&eventOffset,
+			&envelopeBytes,
+			&batchCheckpointOffset,
 		); err != nil {
-			return nil, fmt.Errorf("unable to scan pending event: %w", err)
+			return nil, 0, fmt.Errorf("unable to scan pending event: %w", err)
+		}
+
+		if eventOffset == nil {
+			// LEFT JOIN produced a row with no matching event; this means
+			// there are no relevant events on the stream after the checkpoint.
+			break
+		}
+
+		eventEnvelope := &envelopepb.Envelope{}
+		if err := eventEnvelope.UnmarshalBinary(envelopeBytes); err != nil {
+			return nil, 0, fmt.Errorf("unable to unmarshal event envelope: %w", err)
 		}
 
 		envelopepb.SetExtension(
 			eventEnvelope.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
 				WithStreamId(t.StreamID).
-				WithOffset(offset).
+				WithOffset(*eventOffset).
 				Build(),
 		)
 
 		eventEnvelopes = append(eventEnvelopes, eventEnvelope)
+		lastEventOffset = *eventOffset
 	}
 
-	return eventEnvelopes, nil
+	// If the batch is full there may be more matching events to handle before
+	// we reach the end of the stream, so we can only safely skip to the offset
+	// after the last event in the batch.
+	if len(eventEnvelopes) == EventBatchSize {
+		batchCheckpointOffset = lastEventOffset + 1
+	}
+
+	return eventEnvelopes, batchCheckpointOffset, nil
 }
 
 // handleEvents iterates over a batch of event envelopes, dispatching each to
-// the handler. It returns errFailed if a handler invocation fails, or nil if all
-// events were handled (or an OCC conflict stopped iteration early).
+// the handler. It returns [errFailed] if a handler invocation fails,
+// [errConflict] if an OCC conflict stopped iteration early, or nil if all
+// events were handled successfully.
 func (t *streamTask) handleEvents(ctx context.Context, eventEnvelopes []*envelopepb.Envelope) error {
 	for _, eventEnvelope := range eventEnvelopes {
-		ok, err := t.handleEvent(ctx, eventEnvelope)
-		if !ok || err != nil {
+		if err := t.handleEvent(ctx, eventEnvelope); err != nil {
 			return err
 		}
 	}
@@ -173,26 +218,23 @@ func (t *streamTask) handleEvents(ctx context.Context, eventEnvelopes []*envelop
 }
 
 // handleEvent unpacks a single event envelope and dispatches it to the handler.
-// It returns errFailed if the handler returns an error or panics.
-//
-// ok is false if the handler returned an optimistic concurrency conflict, in
-// which case the task should stop processing further events and commit the
-// transaction to update the checkpoint offset.
+// It returns [errFailed] if the handler returns an error or panics, or
+// [errConflict] if the handler returned an optimistic concurrency conflict.
 func (t *streamTask) handleEvent(
 	ctx context.Context,
 	eventEnvelope *envelopepb.Envelope,
-) (ok bool, err error) {
+) error {
 	event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	streamPosition, ok, err := envelopepb.GetExtension[*envelopepb.EventStreamPosition](eventEnvelope.GetBody())
 	if err != nil {
-		return false, fmt.Errorf("unable to get event stream position extension: %w", err)
+		return fmt.Errorf("unable to get event stream position extension: %w", err)
 	}
 	if !ok {
-		return false, fmt.Errorf("event stream position extension not found on event envelope")
+		return fmt.Errorf("event stream position extension not found on event envelope")
 	}
 
 	eventOffset := streamPosition.GetOffset()
@@ -215,7 +257,7 @@ func (t *streamTask) handleEvent(
 					var err error
 					nextCheckpointOffset, err = t.Handler.HandleEvent(
 						ctx,
-						&messageScope{
+						&eventScope{
 							streamID:         t.StreamID.AsString(),
 							offset:           eventOffset,
 							recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
@@ -235,7 +277,7 @@ func (t *streamTask) handleEvent(
 			xslog.Error(err),
 		)
 
-		return false, errFailed
+		return errFailed
 	}
 
 	prevCheckpointOffset := *t.CheckpointOffset
@@ -249,10 +291,10 @@ func (t *streamTask) handleEvent(
 			slog.Uint64("handler_checkpoint_offset", nextCheckpointOffset),
 		)
 
-		return false, nil
+		return errConflict
 	}
 
-	return true, nil
+	return nil
 }
 
 func (t *streamTask) failAndPostpone(ctx context.Context) error {

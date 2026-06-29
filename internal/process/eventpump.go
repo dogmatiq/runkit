@@ -34,8 +34,6 @@ type EventPump struct {
 func (p *EventPump) Run(ctx context.Context) {
 	tasks := make(chan *eventTask)
 
-	// TODO: capture current stream offsets if this is a brand new handler
-
 	var g sync.WaitGroup
 
 	g.Go(func() {
@@ -126,14 +124,19 @@ func (p *EventPump) acquireTask(
 		}
 	}()
 
+	// Acquire a stream for reading and select the next relevant event
+	// after the checkpoint offset for that stream.
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
-			a.stream_id,
+			s.id,
+			s.next_offset,
 			e.stream_offset,
 			e.envelope
-		FROM eventstream.acquire_for_read($1, $2) AS a
-		INNER JOIN eventstream.events AS e
+		FROM eventstream.acquire_for_read($1) AS a
+		INNER JOIN eventstream.streams AS s
+			ON s.id = a.stream_id
+		LEFT JOIN eventstream.events AS e
 			ON e.stream_id = a.stream_id
 			AND e.stream_offset >= COALESCE(a.checkpoint_offset, 0)
 			AND e.message_type_id = ANY($2)
@@ -143,22 +146,18 @@ func (p *EventPump) acquireTask(
 		p.EventTypeIDs,
 	)
 
-	task = &eventTask{
-		Tx:           tx,
-		Handler:      p.Handler,
-		Identity:     p.Identity,
-		Packer:       p.Packer,
-		StreamID:     &uuidpb.UUID{},
-		BackoffBase:  p.BackoffBase,
-		BackoffCap:   p.BackoffCap,
-		ParentLogger: p.Logger,
-		Logger:       p.Logger,
-	}
+	var (
+		streamID      = &uuidpb.UUID{}
+		nextOffset    uint64
+		eventOffset   *uint64
+		envelopeBytes []byte
+	)
 
 	if err := row.Scan(
-		xsql.UUID(task.StreamID),
-		&task.EventOffset,
-		&task.EnvelopeBytes,
+		xsql.UUID(streamID),
+		&nextOffset,
+		&eventOffset,
+		&envelopeBytes,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
@@ -167,59 +166,46 @@ func (p *EventPump) acquireTask(
 		return nil, false, fmt.Errorf("unable to acquire pending event: %w", err)
 	}
 
-	task.Logger = p.Logger.With(
-		xslog.UUID("stream_id", task.StreamID),
-		slog.Uint64("event_offset", task.EventOffset),
-	)
+	// If we found a pending event, return a task for processing it.
+	if eventOffset != nil {
+		return &eventTask{
+			Tx:            tx,
+			Handler:       p.Handler,
+			Identity:      p.Identity,
+			Packer:        p.Packer,
+			StreamID:      streamID,
+			EventOffset:   *eventOffset,
+			EnvelopeBytes: envelopeBytes,
+			BackoffBase:   p.BackoffBase,
+			BackoffCap:    p.BackoffCap,
+			ParentLogger:  p.Logger,
+			Logger: p.Logger.With(
+				xslog.UUID("stream_id", streamID),
+				slog.Uint64("event_offset", *eventOffset),
+			),
+		}, true, nil
+	}
 
-	return task, true, nil
-}
+	// Otherwise, advance the checkpoint offset for the stream to the end of the
+	// stream.
+	if err := xsql.ExecOne(
+		ctx,
+		tx,
+		`UPDATE eventstream.handler_checkpoints SET
+			checkpoint_offset = $1,
+			failures = 0
+		WHERE handler_key = $2
+			AND stream_id = $3`,
+		nextOffset,
+		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(streamID),
+	); err != nil {
+		return nil, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
+	}
 
-// messageScope implements [dogma.ProcessEventScope] and
-// [dogma.ProcessDeadlineScope].
-type messageScope struct {
-	instanceID string
-	root       dogma.ProcessRoot
-	mutated    bool
-	ended      bool
-	packer     *envelopepb.EffectPacker
-	time       time.Time
-	logger     *slog.Logger
-}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("unable to commit transaction: %w", err)
+	}
 
-func (s *messageScope) Now() time.Time {
-	return time.Now()
-}
-
-func (s *messageScope) Log(format string, args ...any) {
-	s.logger.Info(fmt.Sprintf(format, args...))
-}
-
-func (s *messageScope) InstanceID() string {
-	return s.instanceID
-}
-
-func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
-	fn(s.root)
-	s.mutated = true
-}
-
-func (s *messageScope) End() {
-	s.ended = true
-}
-
-func (s *messageScope) ExecuteCommand(dogma.Command) {
-	panic("not implemented")
-}
-
-func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
-	s.packer.PackDeadline(d, envelopepb.WithScheduledFor(t))
-}
-
-func (s *messageScope) RecordedAt() time.Time {
-	return s.time
-}
-
-func (s *messageScope) ScheduledFor() time.Time {
-	return s.time
+	return nil, false, nil
 }

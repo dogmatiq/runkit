@@ -100,6 +100,38 @@ func PopulateEventStreams(
 	}
 }
 
+// AppendToEventStream appends events to an existing event stream.
+func AppendToEventStream(
+	t testing.TB,
+	x xsql.Executor,
+	streamID *uuidpb.UUID,
+	events ...dogma.Event,
+) {
+	t.Helper()
+
+	for _, event := range events {
+		env := packTestEvent(t, event)
+
+		if _, err := x.ExecContext(
+			t.Context(),
+			`SELECT eventstream.append(
+				$1,
+				$2,
+				NULL, -- aggregate handler key
+				NULL, -- aggregate instance ID
+				ARRAY[ROW($3, $4, $5)::eventstream.event]
+			)`,
+			xsql.UUID(streamID),
+			xsql.UUID(env.GetHeader().GetCorrelationId()),
+			xsql.UUID(env.GetBody().GetMessageId()),
+			xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
+			xsql.Envelope(env),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // ExpectEventStreamCount asserts that the number of event streams in the database
 // matches the given value.
 func ExpectEventStreamCount(

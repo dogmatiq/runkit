@@ -177,34 +177,3 @@ func (p *CommandPump) acquireTask(
 
 	return task, true, nil
 }
-
-// messageScope implements [dogma.AggregateCommandScope].
-type messageScope struct {
-	instanceID string
-	root       dogma.AggregateRoot
-	packer     *envelopepb.EffectPacker
-	logger     *slog.Logger
-}
-
-func (s *messageScope) Now() time.Time {
-	return time.Now()
-}
-
-func (s *messageScope) Log(format string, args ...any) {
-	s.logger.Info(fmt.Sprintf(format, args...))
-}
-
-func (s *messageScope) InstanceID() string {
-	return s.instanceID
-}
-
-func (s *messageScope) RecordEvent(event dogma.Event) {
-	s.root.ApplyEvent(event)
-
-	eventEnvelope := s.packer.PackEvent(event)
-
-	s.logger.Info(
-		event.MessageDescription(),
-		xslog.Envelope("event", eventEnvelope),
-	)
-}

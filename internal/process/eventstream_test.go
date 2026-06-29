@@ -321,23 +321,25 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			var streamIDs []*uuidpb.UUID
+			var streamID *uuidpb.UUID
+
+			xtesting.WaitForProcessHandlerInitialization(t, engine.DB, handlerKey)
 
 			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
-				streamIDs = xtesting.PopulateEventStreams(
+				streamID = xtesting.PopulateEventStreams(
 					t,
 					tx,
 					func(*uuidpb.UUID, uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
-				)
+				)[0]
 
 				xtesting.PostponeStreamConsumption(
 					t,
 					tx,
 					handlerKey,
-					streamIDs[0],
+					streamID,
 				)
 			})
 
@@ -348,7 +350,7 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 				t,
 				engine.DB,
 				handlerKey,
-				streamIDs[0],
+				streamID,
 			)
 		},
 		dogma.ViaProcess(

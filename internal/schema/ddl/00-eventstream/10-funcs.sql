@@ -176,16 +176,14 @@ $$;
 --
 -- It locks a row in "handler_checkpoints" and returns the stream_id and the
 -- checkpoint_offset at the time of acquisition. If the handler is not yet
--- tracking a stream that has relevant events, a new row is inserted. Otherwise,
--- an existing row is locked with FOR UPDATE SKIP LOCKED, choosing the stream
--- with the largest gap between next_offset and checkpoint_offset.
+-- tracking a stream, a new row is inserted. Otherwise, an existing row is
+-- locked with FOR UPDATE SKIP LOCKED, choosing the stream with the largest gap
+-- between next_offset and checkpoint_offset.
 --
--- Returns a single row, or no rows if no stream has pending events of the
--- relevant types.
+-- Returns a single row, or no rows if no stream has pending events.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION eventstream.acquire_for_read(
-    handler_key      uuid,
-    message_type_ids uuid[]
+    handler_key uuid
 )
 RETURNS TABLE(
     stream_id         uuid,
@@ -197,18 +195,20 @@ DECLARE
     acquired_stream_id uuid;
 BEGIN
     -- Attempt to insert a checkpoint row for a stream that the handler is not
-    -- yet tracking, but which has events of the relevant types.
-    INSERT INTO eventstream.handler_checkpoints (handler_key, stream_id)
+    -- yet tracking.
+    INSERT INTO eventstream.handler_checkpoints (
+        handler_key,
+        stream_id
+    )
     SELECT
         acquire_for_read.handler_key,
-        t.stream_id
-    FROM eventstream.event_types AS t
-    WHERE t.message_type_id = ANY(acquire_for_read.message_type_ids)
-    AND NOT EXISTS (
+        s.id
+    FROM eventstream.streams AS s
+    WHERE NOT EXISTS (
         SELECT 1
         FROM eventstream.handler_checkpoints AS h
         WHERE h.handler_key = acquire_for_read.handler_key
-        AND h.stream_id = t.stream_id
+            AND h.stream_id = s.id
     )
     ORDER BY random()
     LIMIT 1
@@ -216,8 +216,9 @@ BEGIN
     RETURNING eventstream.handler_checkpoints.stream_id INTO acquired_stream_id;
 
     -- If the row was inserted successfully it is implicitly locked by this
-    -- transaction and the checkpoint_offset is unknown. In all likelihood it
-    -- will be zero, but we must fetch this offset from the handler itself.
+    -- transaction.
+    --
+    -- The desired checkpoint_offset is unknown, represented by NULL.
     IF acquired_stream_id IS NOT NULL THEN
         RETURN QUERY
         SELECT
@@ -226,22 +227,18 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Lock an existing checkpoint row for a stream that has pending events of
-    -- the relevant types, choosing the stream with the largest gap.
+    -- We didn't find a new stream, so lock an existing checkpoint row for a
+    -- stream that has pending events choosing the stream with the largest gap.
     RETURN QUERY
     SELECT
-        h.stream_id,
+        s.id,
         h.checkpoint_offset
-    FROM eventstream.handler_checkpoints AS h
-    INNER JOIN eventstream.streams AS s
-        ON s.id = h.stream_id
-    INNER JOIN eventstream.event_types AS t
-        ON t.stream_id = h.stream_id
-        AND t.message_type_id = ANY(acquire_for_read.message_type_ids)
-        AND t.latest_offset >= COALESCE(h.checkpoint_offset, 0)
+    FROM eventstream.streams AS s
+    INNER JOIN eventstream.handler_checkpoints AS h
+        ON h.stream_id = s.id
     WHERE h.handler_key = acquire_for_read.handler_key
-    AND h.resume_at <= clock_timestamp()
-    AND s.next_offset > COALESCE(h.checkpoint_offset, 0)
+        AND h.resume_at <= clock_timestamp()
+        AND s.next_offset > COALESCE(h.checkpoint_offset, 0)
     ORDER BY (s.next_offset - COALESCE(h.checkpoint_offset, 0)) DESC
     FOR UPDATE OF h SKIP LOCKED
     LIMIT 1;

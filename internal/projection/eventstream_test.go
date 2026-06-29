@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	dogmaengine "github.com/dogmatiq/reference-engine"
+	. "github.com/dogmatiq/reference-engine/internal/projection"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
@@ -22,70 +23,94 @@ import (
 // TestEventStream_eventsAreDeliveredInOrder verifies that events on the same
 // stream are delivered to the handler in the order they were recorded.
 func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
-	const eventCount = 5
+	cases := []struct {
+		Name       string
+		EventCount uint64
+	}{
+		{
+			"smaller than batch size",
+			EventBatchSize - 1,
+		},
+		{
+			"greater than batch size",
+			EventBatchSize + 1,
+		},
+		{
+			"multiple batches",
+			(EventBatchSize * 2) + 1,
+		},
+		{
+			"exactly batch size",
+			EventBatchSize,
+		},
+	}
 
-	var (
-		done             xsync.Latch
-		handlerMutex     sync.Mutex
-		checkpointOffset uint64
-	)
-
-	xtesting.RunEngines(
-		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.PopulateEventStreams(
-				t,
-				engine.DB,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
-					return &stubs.EventStub[stubs.TypeA]{
-						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
-					}
-				},
-				eventCount,
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			var (
+				done             xsync.Latch
+				handlerMutex     sync.Mutex
+				checkpointOffset uint64
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
-		},
-		dogma.ViaProjection(
-			&stubs.ProjectionMessageHandlerStub{
-				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e")
-					c.Routes(
-						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, engine *dogmaengine.Engine) {
+					xtesting.PopulateEventStreams(
+						t,
+						engine.DB,
+						func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+							return &stubs.EventStub[stubs.TypeA]{
+								Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
+							}
+						},
+						c.EventCount,
 					)
+
+					xtesting.ExpectLatchesSetEventually(t, &done)
 				},
-				HandleEventFunc: func(
-					_ context.Context,
-					s dogma.ProjectionEventScope,
-					m dogma.Event,
-				) (uint64, error) {
-					handlerMutex.Lock()
-					defer handlerMutex.Unlock()
+				dogma.ViaProjection(
+					&stubs.ProjectionMessageHandlerStub{
+						ConfigureFunc: func(c dogma.ProjectionConfigurer) {
+							c.Identity("<handler>", "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e")
+							c.Routes(
+								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+							)
+						},
+						HandleEventFunc: func(
+							_ context.Context,
+							s dogma.ProjectionEventScope,
+							m dogma.Event,
+						) (uint64, error) {
+							handlerMutex.Lock()
+							defer handlerMutex.Unlock()
 
-					gotOffset := s.Offset()
-					wantOffset := checkpointOffset
+							gotOffset := s.Offset()
+							wantOffset := checkpointOffset
 
-					if gotOffset != wantOffset {
-						t.Errorf("unexpected event offset: got %d, want %d", gotOffset, wantOffset)
-					}
+							if gotOffset != wantOffset {
+								t.Errorf("unexpected event offset: got %d, want %d", gotOffset, wantOffset)
+							}
 
-					gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
-					wantContent := stubs.TypeA(fmt.Sprintf("event-%d", gotOffset))
+							gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
+							wantContent := stubs.TypeA(fmt.Sprintf("event-%d", gotOffset))
 
-					if gotContent != wantContent {
-						t.Errorf("unexpected event content at offset %d: got %q, want %q", gotOffset, gotContent, wantContent)
-					}
+							if gotContent != wantContent {
+								t.Errorf("unexpected event content at offset %d: got %q, want %q", gotOffset, gotContent, wantContent)
+							}
 
-					checkpointOffset++
-					if checkpointOffset == eventCount {
-						done.Set()
-					}
+							checkpointOffset++
+							if checkpointOffset == c.EventCount {
+								done.Set()
+							}
 
-					return checkpointOffset, nil
-				},
-			},
-		),
-	)
+							return checkpointOffset, nil
+						},
+					},
+				),
+			)
+		})
+	}
 }
 
 // TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError verifies

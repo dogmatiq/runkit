@@ -98,12 +98,14 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		}
 	}
 
-	scope := &messageScope{
-		instanceID: t.InstanceID,
-		root:       root,
-		packer:     t.Packer.PackEffects(deadlineEnvelope, t.Identity, envelopepb.WithInstanceID(t.InstanceID)),
-		time:       deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
-		logger:     t.Logger,
+	scope := &deadlineScope{
+		messageScope{
+			instanceID: t.InstanceID,
+			root:       root,
+			packer:     t.Packer.PackEffects(deadlineEnvelope, t.Identity, envelopepb.WithInstanceID(t.InstanceID)),
+			logger:     t.Logger,
+		},
+		deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
 	}
 
 	if err := xerrors.ConvertPanicToError(

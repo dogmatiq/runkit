@@ -107,16 +107,18 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		return t.advanceCheckpoint(ctx)
 	}
 
-	scope := &messageScope{
-		instanceID: instanceID,
-		root:       root,
-		packer: t.Packer.PackEffects(
-			eventEnvelope,
-			t.Identity,
-			envelopepb.WithInstanceID(instanceID),
-		),
-		time:   eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-		logger: t.Logger,
+	scope := &eventScope{
+		messageScope{
+			instanceID: instanceID,
+			root:       root,
+			packer: t.Packer.PackEffects(
+				eventEnvelope,
+				t.Identity,
+				envelopepb.WithInstanceID(instanceID),
+			),
+			logger: t.Logger,
+		},
+		eventEnvelope.GetBody().GetCreatedAt().AsTime(),
 	}
 
 	if err := xerrors.ConvertPanicToError(

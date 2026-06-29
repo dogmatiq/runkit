@@ -74,11 +74,21 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.setupCommandTypes()
 
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		if err := e.initializeHandler(ctx, handlerConfig); err != nil {
+			return fmt.Errorf(
+				"unable to initialize handler %s: %w",
+				handlerConfig.Identity(),
+				err,
+			)
+		}
+	}
+
 	e.packer = &envelopepb.Packer{
 		Application: e.appConfig.Identity(),
 	}
 
-	var g sync.WaitGroup
+	var runGroup sync.WaitGroup
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if handlerConfig.IsDisabled() {
@@ -86,7 +96,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 
 		for _, c := range e.newComponentsForHandler(handlerConfig) {
-			g.Go(func() {
+			runGroup.Go(func() {
 				c.Run(ctx)
 
 				if ctx.Err() == nil {
@@ -101,9 +111,18 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.ready.Set()
-	g.Wait()
-
+	runGroup.Wait()
 	return ctx.Err()
+}
+
+// Ready returns a channel that is closed when the engine is ready to accept
+// commands for execution.
+//
+// It is exposed as an operational signal. For example, to signal readiness to a
+// load balancer. It is not an error to attempt command execution before the
+// engine is ready.
+func (e *Engine) Ready() <-chan struct{} {
+	return e.ready.Chan()
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for
@@ -122,6 +141,21 @@ func (e *Engine) setupCommandTypes() {
 	for route := range inboundCommandRoutes {
 		typ := route.MessageType.Get().ReflectType()
 		e.commandTypes[typ] = struct{}{}
+	}
+}
+
+// initializeHandler initializes the engine's state for a handler.
+//
+// Even though they are not executed at runtime, it is called with
+// configurations for disabled handlers.
+func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Handler) error {
+	switch handlerConfig := handlerConfig.(type) {
+	case *config.Projection:
+		return projection.InitializeHandler(ctx, e.DB, handlerConfig)
+	case *config.Process:
+		return process.InitializeHandler(ctx, e.DB, handlerConfig)
+	default:
+		return nil
 	}
 }
 
@@ -167,27 +201,6 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 			},
 		}
 
-	case *config.Projection:
-		return []component{
-			&projection.EventPump{
-				DB:           e.DB,
-				Handler:      handlerConfig.Interface(),
-				Identity:     handlerConfig.Identity(),
-				Concurrency:  handlerConfig.ConcurrencyPreference(),
-				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       e.newLoggerForHandler(handlerConfig),
-			},
-			&projection.Compactor{
-				DB:       e.DB,
-				Handler:  handlerConfig.Interface(),
-				Identity: handlerConfig.Identity(),
-				Interval: projectionCompactInterval,
-				Logger:   e.newLoggerForHandler(handlerConfig),
-			},
-		}
-
 	case *config.Process:
 		return []component{
 			&process.EventPump{
@@ -208,6 +221,27 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
 				Logger:      e.newLoggerForHandler(handlerConfig),
+			},
+		}
+
+	case *config.Projection:
+		return []component{
+			&projection.EventPump{
+				DB:           e.DB,
+				Handler:      handlerConfig.Interface(),
+				Identity:     handlerConfig.Identity(),
+				Concurrency:  handlerConfig.ConcurrencyPreference(),
+				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       e.newLoggerForHandler(handlerConfig),
+			},
+			&projection.Compactor{
+				DB:       e.DB,
+				Handler:  handlerConfig.Interface(),
+				Identity: handlerConfig.Identity(),
+				Interval: projectionCompactInterval,
+				Logger:   e.newLoggerForHandler(handlerConfig),
 			},
 		}
 

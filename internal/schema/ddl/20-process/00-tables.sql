@@ -1,6 +1,15 @@
 CREATE SCHEMA IF NOT EXISTS process;
 
 --------------------------------------------------------------------------------
+-- The "handlers" table keeps track of handlers that exist or have existed
+-- within the application.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS process.handlers (
+    handler_key            uuid PRIMARY KEY,
+    has_checkpoint_offsets boolean NOT NULL DEFAULT false
+);
+
+--------------------------------------------------------------------------------
 -- The "instances" table stores the state of each process instance.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS process.instances (

@@ -2,6 +2,7 @@ package xtesting
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"testing"
@@ -36,7 +37,43 @@ func RunEngines(
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
+
+	SetupThenRunEngines(
+		t,
+		func(testing.TB, *sql.DB) {},
+		fn,
+		routes...,
+	)
+}
+
+// SetupThenRunEngines is like [RunEngines] but accepts a setup function that
+// receives the test database before any engine starts.
+func SetupThenRunEngines(
+	t *testing.T,
+	setup func(testing.TB, *sql.DB),
+	fn func(testing.TB, *dogmaengine.Engine),
+	routes ...dogma.HandlerRoute,
+) {
+	t.Helper()
 	t.Parallel()
+
+	db := NewDatabase(t)
+	setup(t, db)
+
+	RunEnginesWithDB(t, db, fn, routes...)
+}
+
+// RunEnginesWithDB is like [RunEngines] but uses the given database instead of
+// creating one.
+//
+// Unlike [RunEngines] and [SetupThenRunEngines], it does not call t.Parallel().
+func RunEnginesWithDB(
+	t *testing.T,
+	db *sql.DB,
+	fn func(testing.TB, *dogmaengine.Engine),
+	routes ...dogma.HandlerRoute,
+) {
+	t.Helper()
 
 	app := &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
@@ -61,7 +98,6 @@ func RunEngines(
 	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
 	defer stopTest()
 
-	db := NewDatabase(t)
 	logger := spruce.NewTestLogger(t)
 
 	const numEngines = 3
@@ -90,6 +126,12 @@ func RunEngines(
 
 			return err
 		})
+
+	}
+
+	select {
+	case <-engineContext.Done():
+	case <-engine.Ready():
 	}
 
 	fn(

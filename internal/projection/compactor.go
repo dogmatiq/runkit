@@ -49,16 +49,6 @@ func (c *Compactor) Run(ctx context.Context) {
 }
 
 func (c *Compactor) tryCompact(ctx context.Context) error {
-	if _, err := c.DB.ExecContext(
-		ctx,
-		`INSERT INTO projection.compaction (handler_key)
-		VALUES ($1)
-		ON CONFLICT (handler_key) DO NOTHING`,
-		xsql.UUID(c.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to initialize compaction row: %w", err)
-	}
-
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("unable to begin compaction transaction: %w", err)
@@ -68,7 +58,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT handler_key
-		FROM projection.compaction
+		FROM projection.handlers
 		WHERE handler_key = $1
 			AND clock_timestamp() - last_compacted_at >= $2
 		FOR UPDATE SKIP LOCKED`,
@@ -97,7 +87,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`UPDATE projection.compaction
+		`UPDATE projection.handlers
 		SET last_compacted_at = clock_timestamp()
 		WHERE handler_key = $1`,
 		xsql.UUID(c.Identity.GetKey()),

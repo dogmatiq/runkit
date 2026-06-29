@@ -17,11 +17,14 @@ import (
 // a deadline scheduled by a process instance is delivered back to that same
 // instance.
 func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.T) {
+	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
+
 	var done xsync.Latch
 
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
+
 			xtesting.PopulateEventStreams(
 				t,
 				engine.DB,
@@ -36,7 +39,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", handlerKey)
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -216,6 +219,8 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 }
 
 func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t *testing.T) {
+	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
+
 	t.Run("via HandleEvent", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
@@ -229,13 +234,13 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 					1,
 				)
 
-				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, "ef0660b4-a68e-4383-b156-5857ac294dce")
+				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
 				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
 			},
 			dogma.ViaProcess(
 				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 					ConfigureFunc: func(c dogma.ProcessConfigurer) {
-						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Identity("<handler>", handlerKey)
 						c.Routes(
 							dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
