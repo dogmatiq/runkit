@@ -128,7 +128,6 @@ func (t *streamTask) fetchEvents(ctx context.Context) (
 	batchCheckpointOffset uint64,
 	err error,
 ) {
-	batchCheckpointOffset = *t.CheckpointOffset
 
 	rows, err := t.Tx.QueryContext(
 		ctx,
@@ -154,7 +153,7 @@ func (t *streamTask) fetchEvents(ctx context.Context) (
 	}
 	defer rows.Close()
 
-	var lastEventOffset uint64
+	var streamNextOffset, lastEventOffset uint64
 
 	for rows.Next() {
 		var (
@@ -165,9 +164,19 @@ func (t *streamTask) fetchEvents(ctx context.Context) (
 		if err := rows.Scan(
 			&eventOffset,
 			&envelopeBytes,
-			&batchCheckpointOffset,
+			&streamNextOffset,
 		); err != nil {
 			return nil, 0, fmt.Errorf("unable to scan pending event: %w", err)
+		}
+
+		if *t.CheckpointOffset > streamNextOffset {
+			t.Logger.ErrorContext(
+				ctx,
+				"handler reported checkpoint offset beyond the end of the stream",
+				slog.Uint64("stream_next_offset", streamNextOffset),
+			)
+
+			return nil, 0, errFailed
 		}
 
 		if eventOffset == nil {
@@ -193,11 +202,15 @@ func (t *streamTask) fetchEvents(ctx context.Context) (
 		lastEventOffset = *eventOffset
 	}
 
-	// If the batch is full there may be more matching events to handle before
-	// we reach the end of the stream, so we can only safely skip to the offset
-	// after the last event in the batch.
 	if len(eventEnvelopes) == EventBatchSize {
+		// If the batch is full there may be more matching events to handle
+		// after this batch, so we can only safely skip to the offset after the
+		// last event in the batch.
 		batchCheckpointOffset = lastEventOffset + 1
+	} else {
+		// Otherwise we can advance to the end of the stream, as there are no
+		// more relevant events to handle after this batch.
+		batchCheckpointOffset = streamNextOffset
 	}
 
 	return eventEnvelopes, batchCheckpointOffset, nil
