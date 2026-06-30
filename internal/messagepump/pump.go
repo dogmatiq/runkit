@@ -75,11 +75,18 @@ type Delivery struct {
 	EnvelopeBytes []byte
 	Failures      uint64
 
-	// StreamID and StreamOffset describe the position of the message within an
-	// event stream. They are set by stream-based pumps and are zero for
-	// queue-based pumps.
-	StreamID     *uuidpb.UUID
-	StreamOffset uint64
+	// Stream describes the position of the message within an event stream. It
+	// is set by stream-based pumps and is nil for queue-based pumps.
+	Stream *Stream
+}
+
+// Stream describes the position of a message within an event stream, and the
+// engine's recorded checkpoint offset for that stream at the moment the
+// delivery was acquired.
+type Stream struct {
+	ID               *uuidpb.UUID
+	EventOffset      uint64
+	CheckpointOffset uint64
 }
 
 // DeliveryContext encapsulates a [Delivery] and the transaction in which it was
@@ -214,11 +221,12 @@ func (p *MessagePump) doAcquire(ctx context.Context) (dc *DeliveryContext, ok bo
 		slog.Uint64("attempt", del.Failures+1),
 	}
 
-	if del.StreamID != nil {
+	if del.Stream != nil {
 		attrs = append(
 			attrs,
-			xslog.UUID("stream_id", del.StreamID),
-			slog.Uint64("stream_offset", del.StreamOffset),
+			xslog.UUID("stream_id", del.Stream.ID),
+			slog.Uint64("event_offset", del.Stream.EventOffset),
+			slog.Uint64("checkpoint_offset", del.Stream.CheckpointOffset),
 		)
 	}
 

@@ -313,6 +313,63 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 	)
 }
 
+// TestEventStream_failureCounterGrowsAcrossFailures verifies that consecutive
+// handler failures cause the failures counter to grow, so that the backoff
+// window widens with each retry.
+func TestEventStream_failureCounterGrowsAcrossFailures(t *testing.T) {
+	const (
+		handlerKey  = "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a"
+		minFailures = 3
+	)
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			streamIDs := xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1,
+			)
+
+			xtesting.WaitForStreamFailureCounter(
+				t,
+				engine.DB,
+				handlerKey,
+				minFailures,
+				streamIDs...,
+			)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					context.Context,
+					*stubs.ProcessRootStub,
+					dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					dogma.Event,
+				) error {
+					return errors.New("<error>")
+				},
+			},
+		),
+	)
+}
+
 // TestEventStream_postponedStreamsAreNotConsumed verifies that a stream with
 // resume_at in the future is not acquired for reading.
 func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {

@@ -172,6 +172,8 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		projectionCompactInterval = DefaultProjectionCompactInterval
 	}
 
+	logger := e.newLoggerForHandler(handlerConfig)
+
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return []component{
@@ -186,7 +188,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				DB:          e.DB,
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
-				Logger:      e.newLoggerForHandler(handlerConfig),
+				Logger:      logger,
 			},
 		}
 
@@ -204,7 +206,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				DB:          e.DB,
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
-				Logger:      e.newLoggerForHandler(handlerConfig),
+				Logger:      logger,
 			},
 		}
 
@@ -221,7 +223,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				DB:          e.DB,
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
-				Logger:      e.newLoggerForHandler(handlerConfig),
+				Logger:      logger,
 			},
 			&messagepump.MessagePump{
 				Driver: &process.DeadlinePump{
@@ -233,28 +235,32 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				DB:          e.DB,
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
-				Logger:      e.newLoggerForHandler(handlerConfig),
+				Logger:      logger,
 			},
 		}
 
 	case *config.Projection:
 		return []component{
-			&projection.EventPump{
-				DB:           e.DB,
-				Handler:      handlerConfig.Interface(),
-				Identity:     handlerConfig.Identity(),
-				Concurrency:  handlerConfig.ConcurrencyPreference(),
-				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       e.newLoggerForHandler(handlerConfig),
+			&messagepump.MessagePump{
+				Driver: &projection.EventPump{
+					DB:           e.DB,
+					Handler:      handlerConfig.Interface(),
+					Identity:     handlerConfig.Identity(),
+					Concurrency:  handlerConfig.ConcurrencyPreference(),
+					EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+					Logger:       logger,
+				},
+				DB:          e.DB,
+				BackoffBase: backoffBase,
+				BackoffCap:  backoffCap,
+				Logger:      logger,
 			},
 			&projection.Compactor{
 				DB:       e.DB,
 				Handler:  handlerConfig.Interface(),
 				Identity: handlerConfig.Identity(),
 				Interval: projectionCompactInterval,
-				Logger:   e.newLoggerForHandler(handlerConfig),
+				Logger:   logger,
 			},
 		}
 

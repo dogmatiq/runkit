@@ -249,23 +249,3 @@ BEGIN
     LIMIT 1;
 END;
 $$;
-
-CREATE OR REPLACE FUNCTION eventstream.fail_and_postpone(
-    handler_key  uuid,
-    stream_id    uuid,
-    backoff_base interval,
-    backoff_cap  interval
-)
-RETURNS void
-LANGUAGE sql
-AS $$
-    UPDATE eventstream.handler_checkpoints SET
-        failures = failures + 1,
-        resume_at = clock_timestamp() + common.exponential_backoff(
-            failures,
-            fail_and_postpone.backoff_base,
-            fail_and_postpone.backoff_cap
-        )
-    WHERE handler_key = fail_and_postpone.handler_key
-    AND stream_id = fail_and_postpone.stream_id;
-$$;

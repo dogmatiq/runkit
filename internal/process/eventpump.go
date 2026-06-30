@@ -41,6 +41,7 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 		`SELECT
 			s.id,
 			s.next_offset,
+			COALESCE(a.checkpoint_offset, 0),
 			a.failures,
 			COALESCE(e.stream_offset, s.next_offset),
 			e.message_id,
@@ -64,14 +65,17 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 	del := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
 		MessageTypeID: &uuidpb.UUID{},
-		StreamID:      &uuidpb.UUID{},
+		Stream: &messagepump.Stream{
+			ID: &uuidpb.UUID{},
+		},
 	}
 
 	if err := row.Scan(
-		xsql.UUID(del.StreamID),
+		xsql.UUID(del.Stream.ID),
 		&nextStreamOffset,
+		&del.Stream.CheckpointOffset,
 		&del.Failures,
-		&del.StreamOffset,
+		&del.Stream.EventOffset,
 		xsql.UUID(del.MessageID),
 		xsql.UUID(del.MessageTypeID),
 		&del.EnvelopeBytes,
@@ -84,7 +88,7 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 	}
 
 	// If we found a pending event, return a delivery for it.
-	if del.StreamOffset < nextStreamOffset {
+	if del.Stream.EventOffset < nextStreamOffset {
 		return del, true, nil
 	}
 
@@ -101,7 +105,7 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 			AND stream_id = $3`,
 		nextStreamOffset,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(del.StreamID),
+		xsql.UUID(del.Stream.ID),
 	); err != nil {
 		return messagepump.Delivery{}, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
@@ -282,9 +286,9 @@ func (p *EventPump) advanceCheckpoint(ctx context.Context, dc *messagepump.Deliv
 			failures = 0
 		WHERE handler_key = $2
 		AND stream_id = $3`,
-		dc.StreamOffset+1,
+		dc.Stream.EventOffset+1,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(dc.StreamID),
+		xsql.UUID(dc.Stream.ID),
 	); err != nil {
 		return fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
@@ -309,7 +313,7 @@ func (p *EventPump) PostponeDelivery(
 		WHERE handler_key = $1
 			AND stream_id = $2`,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(dc.StreamID),
+		xsql.UUID(dc.Stream.ID),
 		failures,
 		delay,
 	); err != nil {
