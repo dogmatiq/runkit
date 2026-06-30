@@ -102,8 +102,17 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		messageScope{
 			instanceID: t.InstanceID,
 			root:       root,
-			packer:     t.Packer.PackEffects(deadlineEnvelope, t.Identity, envelopepb.WithInstanceID(t.InstanceID)),
-			logger:     t.Logger,
+			commandPacker: t.Packer.PackEffects(
+				deadlineEnvelope,
+				t.Identity,
+				envelopepb.WithInstanceID(t.InstanceID),
+			),
+			deadlinePacker: t.Packer.PackEffects(
+				deadlineEnvelope,
+				t.Identity,
+				envelopepb.WithInstanceID(t.InstanceID),
+			),
+			logger: t.Logger,
 		},
 		deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
 	}
@@ -126,6 +135,10 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		return errFailed
 	}
 
+	if err := addCommandsToQueue(ctx, t.Tx, scope.commandPacker); err != nil {
+		return err
+	}
+
 	if scope.ended {
 		if err := t.endInstance(ctx); err != nil {
 			return err
@@ -139,7 +152,7 @@ func (t *deadlineTask) handleDeadline(ctx context.Context) error {
 		}
 	}
 
-	if err := t.persistDeadlines(ctx, scope.packer); err != nil {
+	if err := t.persistDeadlines(ctx, scope.deadlinePacker); err != nil {
 		return err
 	}
 
@@ -187,8 +200,8 @@ func (t *deadlineTask) persistDeadlines(
 		return nil
 	}
 
-	for env := range multi.All() {
-		data, err := env.MarshalBinary()
+	for deadlineEnvelope := range multi.All() {
+		data, err := deadlineEnvelope.MarshalBinary()
 		if err != nil {
 			return fmt.Errorf("unable to marshal deadline envelope: %w", err)
 		}
@@ -202,11 +215,11 @@ func (t *deadlineTask) persistDeadlines(
 				envelope,
 				deliver_at
 			) VALUES ($1, $2, $3, $4, $5)`,
-			xsql.UUID(env.GetBody().GetMessageId()),
+			xsql.UUID(deadlineEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(t.Identity.GetKey()),
 			t.InstanceID,
 			data,
-			env.GetBody().GetScheduledFor().AsTime(),
+			deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
 		); err != nil {
 			return fmt.Errorf("unable to persist deadline: %w", err)
 		}

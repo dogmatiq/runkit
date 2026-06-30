@@ -12,12 +12,13 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
-	instanceID string
-	root       dogma.ProcessRoot
-	mutated    bool
-	ended      bool
-	packer     *envelopepb.EffectPacker
-	logger     *slog.Logger
+	instanceID     string
+	root           dogma.ProcessRoot
+	mutated        bool
+	ended          bool
+	commandPacker  *envelopepb.EffectPacker
+	deadlinePacker *envelopepb.EffectPacker
+	logger         *slog.Logger
 }
 
 func (s *messageScope) Now() time.Time {
@@ -45,12 +46,12 @@ func (s *messageScope) End() {
 	s.ended = true
 }
 
-func (s *messageScope) ExecuteCommand(dogma.Command) {
+func (s *messageScope) ExecuteCommand(c dogma.Command) {
 	if s.ended {
 		panic("cannot execute command after process instance has ended")
 	}
 
-	panic("not implemented")
+	s.commandPacker.PackCommand(c)
 }
 
 func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
@@ -58,5 +59,5 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic("cannot schedule deadline after process instance has ended")
 	}
 
-	s.packer.PackDeadline(d, envelopepb.WithScheduledFor(t))
+	s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))
 }

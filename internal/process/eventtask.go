@@ -111,7 +111,12 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		messageScope{
 			instanceID: instanceID,
 			root:       root,
-			packer: t.Packer.PackEffects(
+			commandPacker: t.Packer.PackEffects(
+				eventEnvelope,
+				t.Identity,
+				envelopepb.WithInstanceID(instanceID),
+			),
+			deadlinePacker: t.Packer.PackEffects(
 				eventEnvelope,
 				t.Identity,
 				envelopepb.WithInstanceID(instanceID),
@@ -139,6 +144,10 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		return errFailed
 	}
 
+	if err := addCommandsToQueue(ctx, t.Tx, scope.commandPacker); err != nil {
+		return err
+	}
+
 	if scope.ended {
 		if err := t.endInstance(ctx, instanceID); err != nil {
 			return err
@@ -150,7 +159,7 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 			}
 		}
 
-		if err := t.persistDeadlines(ctx, instanceID, scope.packer); err != nil {
+		if err := t.persistDeadlines(ctx, instanceID, scope.deadlinePacker); err != nil {
 			return err
 		}
 	}
