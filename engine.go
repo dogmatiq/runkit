@@ -17,6 +17,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/integration"
+	"github.com/dogmatiq/reference-engine/internal/messagepump"
 	"github.com/dogmatiq/reference-engine/internal/process"
 	"github.com/dogmatiq/reference-engine/internal/projection"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
@@ -174,50 +175,62 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return []component{
-			&aggregate.CommandPump{
-				DB:             e.DB,
-				Handler:        handlerConfig.Interface(),
-				Identity:       handlerConfig.Identity(),
-				Packer:         e.packer,
-				CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
-				BackoffBase:    backoffBase,
-				BackoffCap:     backoffCap,
-				Logger:         e.newLoggerForHandler(handlerConfig),
+			&messagepump.MessagePump{
+				Driver: &aggregate.CommandPump{
+					DB:             e.DB,
+					Handler:        handlerConfig.Interface(),
+					Identity:       handlerConfig.Identity(),
+					Packer:         e.packer,
+					CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+				},
+				DB:          e.DB,
+				BackoffBase: backoffBase,
+				BackoffCap:  backoffCap,
+				Logger:      e.newLoggerForHandler(handlerConfig),
 			},
 		}
 
 	case *config.Integration:
 		return []component{
-			&integration.CommandPump{
-				DB:             e.DB,
-				Handler:        handlerConfig.Interface(),
-				Identity:       handlerConfig.Identity(),
-				Concurrency:    handlerConfig.ConcurrencyPreference(),
-				Packer:         e.packer,
-				CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
-				BackoffBase:    backoffBase,
-				BackoffCap:     backoffCap,
-				Logger:         e.newLoggerForHandler(handlerConfig),
+			&messagepump.MessagePump{
+				Driver: &integration.CommandPump{
+					DB:             e.DB,
+					Handler:        handlerConfig.Interface(),
+					Identity:       handlerConfig.Identity(),
+					Concurrency:    handlerConfig.ConcurrencyPreference(),
+					Packer:         e.packer,
+					CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+				},
+				DB:          e.DB,
+				BackoffBase: backoffBase,
+				BackoffCap:  backoffCap,
+				Logger:      e.newLoggerForHandler(handlerConfig),
 			},
 		}
 
 	case *config.Process:
 		return []component{
-			&process.EventPump{
-				DB:           e.DB,
-				Handler:      handlerConfig.Interface(),
-				Identity:     handlerConfig.Identity(),
-				Packer:       e.packer,
-				EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       e.newLoggerForHandler(handlerConfig),
-			},
-			&process.DeadlinePump{
+			&messagepump.MessagePump{
+				Driver: &process.EventPump{
+					DB:           e.DB,
+					Handler:      handlerConfig.Interface(),
+					Identity:     handlerConfig.Identity(),
+					Packer:       e.packer,
+					EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+				},
 				DB:          e.DB,
-				Handler:     handlerConfig.Interface(),
-				Identity:    handlerConfig.Identity(),
-				Packer:      e.packer,
+				BackoffBase: backoffBase,
+				BackoffCap:  backoffCap,
+				Logger:      e.newLoggerForHandler(handlerConfig),
+			},
+			&messagepump.MessagePump{
+				Driver: &process.DeadlinePump{
+					DB:       e.DB,
+					Handler:  handlerConfig.Interface(),
+					Identity: handlerConfig.Identity(),
+					Packer:   e.packer,
+				},
+				DB:          e.DB,
 				BackoffBase: backoffBase,
 				BackoffCap:  backoffCap,
 				Logger:      e.newLoggerForHandler(handlerConfig),

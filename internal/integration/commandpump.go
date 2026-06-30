@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -21,32 +20,20 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// CommandPump is an engine component that periodically attempts to acquire
-// pending commands for dispatch to an integration message handler of a specific
-// type.
+// CommandPump is a [messagepump.Driver] that delivers pending commands to an
+// integration message handler of a specific type.
 type CommandPump struct {
-	DB                      *sql.DB
-	Handler                 dogma.IntegrationMessageHandler
-	Identity                *identitypb.Identity
-	Concurrency             dogma.ConcurrencyPreference
-	Packer                  *envelopepb.Packer
-	CommandTypeIDs          []string
-	BackoffBase, BackoffCap time.Duration
-	Logger                  *slog.Logger
+	DB             *sql.DB
+	Handler        dogma.IntegrationMessageHandler
+	Identity       *identitypb.Identity
+	Concurrency    dogma.ConcurrencyPreference
+	Packer         *envelopepb.Packer
+	CommandTypeIDs []string
 }
 
-// Run runs the message pump until ctx is canceled.
-func (p *CommandPump) Run(ctx context.Context) {
-	messagepump.Run(
-		ctx,
-		p.DB,
-		p.Logger,
-		p.acquireNextCommand,
-		p.handleDelivery,
-	)
-}
-
-func (p *CommandPump) acquireNextCommand(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+// AcquireDelivery attempts to acquire the next pending command for an
+// integration handler of one of the configured types.
+func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -72,7 +59,7 @@ func (p *CommandPump) acquireNextCommand(ctx context.Context, tx *sql.Tx) (messa
 		xsql.UUID(del.MessageID),
 		xsql.UUID(del.MessageTypeID),
 		&del.EnvelopeBytes,
-		&del.FailureCount,
+		&del.Failures,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messagepump.Delivery{}, false, nil
@@ -84,21 +71,8 @@ func (p *CommandPump) acquireNextCommand(ctx context.Context, tx *sql.Tx) (messa
 	return del, true, nil
 }
 
-// errFailed is a sentinel error that indicates a command could not be handled
-// and should be postponed for re-delivery.
-var errFailed = errors.New("unable to handle command")
-
-func (p *CommandPump) handleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	err := p.handleCommand(ctx, dc)
-
-	if errors.Is(err, errFailed) {
-		err = p.failAndPostpone(ctx, dc)
-	}
-
-	return err
-}
-
-func (p *CommandPump) handleCommand(ctx context.Context, dc *messagepump.DeliveryContext) error {
+// HandleDelivery dispatches a command to the integration handler.
+func (p *CommandPump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
 	var (
 		commandEnvelope    = &envelopepb.Envelope{}
 		commandForHandling dogma.Command
@@ -114,7 +88,7 @@ func (p *CommandPump) handleCommand(ctx context.Context, dc *messagepump.Deliver
 			"unable to unmarshal command",
 			xslog.Error(err),
 		)
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	logger := dc.Logger.With(
@@ -152,7 +126,7 @@ func (p *CommandPump) handleCommand(ctx context.Context, dc *messagepump.Deliver
 			xslog.Error(err),
 		)
 
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
@@ -228,15 +202,24 @@ func (p *CommandPump) completeWithoutEvents(ctx context.Context, dc *messagepump
 	return nil
 }
 
-// failAndPostpone marks the command as failed and postpones it for re-delivery
-// according to the configured backoff parameters.
-func (p *CommandPump) failAndPostpone(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	if _, err := dc.Tx.ExecContext(
+// PostponeDelivery reschedules the command for redelivery after delay,
+// recording failures as its new failure count.
+func (p *CommandPump) PostponeDelivery(
+	ctx context.Context,
+	dc *messagepump.DeliveryContext,
+	failures uint64,
+	delay time.Duration,
+) error {
+	if err := xsql.ExecOne(
 		ctx,
-		`SELECT commandqueue.fail_and_postpone($1, $2, $3)`,
+		dc.Tx,
+		`UPDATE commandqueue.commands SET
+			failures = $2,
+			deliver_at = clock_timestamp() + $3
+		WHERE message_id = $1`,
 		xsql.UUID(dc.MessageID),
-		p.BackoffBase,
-		p.BackoffCap,
+		failures,
+		delay,
 	); err != nil {
 		return fmt.Errorf("unable to postpone queued command: %w", err)
 	}

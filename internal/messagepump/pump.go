@@ -3,8 +3,10 @@ package messagepump
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"runtime"
 	"sync"
 	"time"
@@ -24,11 +26,46 @@ const (
 	ConcurrencyMultiplier = 10
 )
 
-// AcquireFunc is a function that attempts to acquire a delivery.
-type AcquireFunc func(context.Context, *sql.Tx) (Delivery, bool, error)
+// ErrFailed is returned by [Driver.HandleDelivery] to indicate that the
+// delivery failed and should be postponed for redelivery after an exponential
+// backoff.
+//
+// Returning [ErrFailed] increments the delivery's failure count.
+var ErrFailed = errors.New("delivery failed")
 
-// HandleFunc is a function that handles a delivery.
-type HandleFunc func(context.Context, *DeliveryContext) error
+// ErrBusy is returned by [Driver.HandleDelivery] to indicate that the delivery
+// target is temporarily unavailable (e.g. locked by another transaction) and
+// should be retried soon.
+//
+// Returning [ErrBusy] does not increment the delivery's failure count.
+var ErrBusy = errors.New("delivery target is busy")
+
+// Driver provides the storage-specific operations that the [MessagePump]
+// orchestrates.
+type Driver interface {
+	// AcquireDelivery attempts to acquire the next pending [Delivery] within
+	// tx. It returns ok = false if no delivery is available.
+	AcquireDelivery(ctx context.Context, tx *sql.Tx) (del Delivery, ok bool, err error)
+
+	// HandleDelivery processes a [Delivery] within the transaction held by dc.
+	//
+	// It returns [ErrFailed] to indicate that the delivery should be postponed
+	// for redelivery with an incremented failure count, or [ErrBusy] to
+	// indicate that the delivery should be retried soon without incrementing
+	// the failure count.
+	HandleDelivery(ctx context.Context, dc *DeliveryContext) error
+
+	// PostponeDelivery reschedules redelivery for delay from now, recording
+	// failures as the delivery's new failure count. It is invoked within the
+	// same transaction as the [Driver.HandleDelivery] call that produced the
+	// request to postpone.
+	PostponeDelivery(
+		ctx context.Context,
+		dc *DeliveryContext,
+		failures uint64,
+		delay time.Duration,
+	) error
+}
 
 // Delivery is a unit of work scoped to the delivery of a single message to a
 // single handler.
@@ -36,7 +73,7 @@ type Delivery struct {
 	MessageID     *uuidpb.UUID
 	MessageTypeID *uuidpb.UUID
 	EnvelopeBytes []byte
-	FailureCount  uint64
+	Failures      uint64
 
 	// StreamID and StreamOffset describe the position of the message within an
 	// event stream. They are set by stream-based pumps and are zero for
@@ -54,14 +91,17 @@ type DeliveryContext struct {
 	Logger *slog.Logger
 }
 
+// MessagePump is a helper for implementing a message pump that acquires and
+// handles deliveries concurrently.
+type MessagePump struct {
+	Driver                  Driver
+	DB                      *sql.DB
+	BackoffBase, BackoffCap time.Duration
+	Logger                  *slog.Logger
+}
+
 // Run runs the message pump until ctx is canceled.
-func Run(
-	ctx context.Context,
-	db *sql.DB,
-	logger *slog.Logger,
-	acquire AcquireFunc,
-	handle HandleFunc,
-) {
+func (p *MessagePump) Run(ctx context.Context) {
 	var (
 		group    sync.WaitGroup
 		contexts = make(chan *DeliveryContext)
@@ -73,7 +113,7 @@ func Run(
 	for range workers {
 		group.Go(func() {
 			for dc := range contexts {
-				if err := doHandle(ctx, handle, dc); err != nil {
+				if err := p.doHandle(ctx, dc); err != nil {
 					if ctx.Err() != nil {
 						return
 					}
@@ -84,11 +124,6 @@ func Run(
 						ctx,
 						"unable to handle delivery",
 						xslog.Error(err),
-					)
-				} else {
-					dc.Logger.DebugContext(
-						ctx,
-						"handled delivery",
 					)
 				}
 			}
@@ -101,13 +136,13 @@ func Run(
 
 		for {
 			// Attempt to acquire a delivery.
-			dc, ok, err := doAcquire(ctx, db, logger, acquire)
+			dc, ok, err := p.doAcquire(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
 
-				logger.ErrorContext(
+				p.Logger.ErrorContext(
 					ctx,
 					"unable to acquire delivery",
 					xslog.Error(err),
@@ -148,13 +183,8 @@ func Run(
 //
 // It returns a [DeliveryContext] for the delivery, or false if no delivery was
 // available to acquire.
-func doAcquire(
-	ctx context.Context,
-	db *sql.DB,
-	logger *slog.Logger,
-	acquire AcquireFunc,
-) (dc *DeliveryContext, ok bool, err error) {
-	tx, err := db.BeginTx(ctx, nil)
+func (p *MessagePump) doAcquire(ctx context.Context) (dc *DeliveryContext, ok bool, err error) {
+	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
 	}
@@ -164,7 +194,7 @@ func doAcquire(
 		}
 	}()
 
-	del, ok, err := acquire(ctx, tx)
+	del, ok, err := p.Driver.AcquireDelivery(ctx, tx)
 	if err != nil {
 		return nil, false, fmt.Errorf("unable to acquire delivery: %w", err)
 	}
@@ -181,7 +211,7 @@ func doAcquire(
 		xslog.UUID("id", uuidpb.Generate()),
 		xslog.UUID("message_id", del.MessageID),
 		xslog.UUID("message_type_id", del.MessageTypeID),
-		slog.Uint64("attempt", del.FailureCount+1),
+		slog.Uint64("attempt", del.Failures+1),
 	}
 
 	if del.StreamID != nil {
@@ -195,7 +225,7 @@ func doAcquire(
 	return &DeliveryContext{
 		del,
 		tx,
-		logger.With(
+		p.Logger.With(
 			slog.Group("delivery", attrs...),
 		),
 	}, true, nil
@@ -203,14 +233,50 @@ func doAcquire(
 
 // doHandle handles the delivery within a transaction, rolling back the
 // transaction if an error occurs.
-func doHandle(
-	ctx context.Context,
-	handle HandleFunc,
-	dc *DeliveryContext,
-) error {
+//
+// If [Driver.HandleDelivery] returns [ErrFailed] or [ErrBusy], the pump invokes
+// [Driver.PostponeDelivery] within the same transaction to reschedule
+// redelivery, then commits.
+func (p *MessagePump) doHandle(ctx context.Context, dc *DeliveryContext) error {
 	defer dc.Tx.Rollback()
 
-	if err := handle(ctx, dc); err != nil {
+	err := p.Driver.HandleDelivery(ctx, dc)
+
+	switch {
+	case err == nil:
+		dc.Logger.DebugContext(
+			ctx,
+			"handled delivery",
+		)
+
+	case errors.Is(err, ErrFailed):
+		failures := dc.Failures + 1
+		delay := p.computeBackoff(failures)
+
+		if err := p.Driver.PostponeDelivery(ctx, dc, failures, delay); err != nil {
+			return fmt.Errorf("unable to postpone delivery: %w", err)
+		}
+
+		dc.Logger.DebugContext(
+			ctx,
+			"postponed redelivery due to failure",
+			slog.Duration("delay", delay),
+		)
+
+	case errors.Is(err, ErrBusy):
+		delay := p.BackoffBase
+
+		if err := p.Driver.PostponeDelivery(ctx, dc, dc.Failures, delay); err != nil {
+			return fmt.Errorf("unable to postpone delivery: %w", err)
+		}
+
+		dc.Logger.DebugContext(
+			ctx,
+			"postponed redelivery due to contention",
+			slog.Duration("delay", delay),
+		)
+
+	default:
 		return err
 	}
 
@@ -219,4 +285,22 @@ func doHandle(
 	}
 
 	return nil
+}
+
+// computeBackoff returns a delay computed from a capped, equal-jitter
+// exponential backoff window for a delivery that has failed n times.
+func (p *MessagePump) computeBackoff(n uint64) time.Duration {
+	if p.BackoffBase <= 0 || p.BackoffCap <= p.BackoffBase {
+		return p.BackoffBase
+	}
+
+	limit := p.BackoffBase << n
+
+	// base << iterations may overflow time.Duration (int64 nanoseconds) for
+	// large iteration counts, hence the check for limit <= 0.
+	if limit <= 0 || limit > p.BackoffCap {
+		limit = p.BackoffCap
+	}
+
+	return p.BackoffBase + rand.N(limit-p.BackoffBase)
 }

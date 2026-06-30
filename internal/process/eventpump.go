@@ -19,36 +19,23 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// EventPump is an engine component that periodically attempts to acquire
-// pending events for dispatch to a process message handler of a specific type.
+// EventPump is a [messagepump.Driver] that delivers pending events to a
+// process message handler.
 type EventPump struct {
-	DB                      *sql.DB
-	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
-	Identity                *identitypb.Identity
-	Packer                  *envelopepb.Packer
-	EventTypeIDs            []string
-	BackoffBase, BackoffCap time.Duration
-	Logger                  *slog.Logger
+	DB           *sql.DB
+	Handler      dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity     *identitypb.Identity
+	Packer       *envelopepb.Packer
+	EventTypeIDs []string
 }
 
-// Run runs the event pump until ctx is canceled.
-func (p *EventPump) Run(ctx context.Context) {
-	messagepump.Run(
-		ctx,
-		p.DB,
-		p.Logger,
-		p.acquireNextEvent,
-		p.handleDelivery,
-	)
-}
-
-// acquireNextEvent attempts to acquire a stream for reading, and the next
-// relevant event after the checkpoint offset for that stream.
+// AcquireDelivery attempts to acquire the next pending event for the handler on
+// one of its tracked event streams.
 //
-// If there are no relevant events available, it advances the checkpoint offset
-// to the end of the stream so that this stream is not re-acquired until new
-// events arrive.
-func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+// If there are no relevant events available on the chosen stream, it advances
+// the checkpoint offset to the end of the stream so that the stream is not
+// re-acquired until new events arrive.
+func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -72,21 +59,18 @@ func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepu
 		p.EventTypeIDs,
 	)
 
-	var (
-		streamID         = &uuidpb.UUID{}
-		nextStreamOffset uint64
-	)
+	var nextStreamOffset uint64
 
 	del := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
 		MessageTypeID: &uuidpb.UUID{},
-		StreamID:      streamID,
+		StreamID:      &uuidpb.UUID{},
 	}
 
 	if err := row.Scan(
 		xsql.UUID(del.StreamID),
 		&nextStreamOffset,
-		&del.FailureCount,
+		&del.Failures,
 		&del.StreamOffset,
 		xsql.UUID(del.MessageID),
 		xsql.UUID(del.MessageTypeID),
@@ -105,7 +89,7 @@ func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepu
 	}
 
 	// Otherwise, no matching events are available on this stream. Advance the
-	// checkpoint offset to the end of the stream so that this stream is not
+	// checkpoint offset to the end of the stream so that the stream is not
 	// re-acquired until new events arrive.
 	if err := xsql.ExecOne(
 		ctx,
@@ -117,7 +101,7 @@ func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepu
 			AND stream_id = $3`,
 		nextStreamOffset,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(streamID),
+		xsql.UUID(del.StreamID),
 	); err != nil {
 		return messagepump.Delivery{}, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
@@ -125,21 +109,8 @@ func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepu
 	return messagepump.Delivery{}, false, nil
 }
 
-// errFailed is a sentinel error that indicates a message could not be handled
-// and should be postponed for re-delivery.
-var errFailed = errors.New("unable to handle event")
-
-func (p *EventPump) handleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	err := p.handleEvent(ctx, dc)
-
-	if errors.Is(err, errFailed) {
-		err = p.failAndPostpone(ctx, dc)
-	}
-
-	return err
-}
-
-func (p *EventPump) handleEvent(ctx context.Context, dc *messagepump.DeliveryContext) error {
+// HandleDelivery dispatches an event to the process handler.
+func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
 	var (
 		eventEnvelope = &envelopepb.Envelope{}
 		event         dogma.Event
@@ -155,7 +126,7 @@ func (p *EventPump) handleEvent(ctx context.Context, dc *messagepump.DeliveryCon
 			"unable to unmarshal event",
 			xslog.Error(err),
 		)
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	logger := dc.Logger.With(
@@ -230,7 +201,7 @@ func (p *EventPump) handleEvent(ctx context.Context, dc *messagepump.DeliveryCon
 			"unable to handle event",
 			xslog.Error(err),
 		)
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	if err := addCommandsToQueue(ctx, dc.Tx, scope.commandPacker); err != nil {
@@ -295,7 +266,7 @@ func (p *EventPump) routeEventToInstance(
 			xslog.Error(err),
 		)
 
-		return "", false, errFailed
+		return "", false, messagepump.ErrFailed
 	}
 
 	return instanceID, ok, nil
@@ -321,18 +292,28 @@ func (p *EventPump) advanceCheckpoint(ctx context.Context, dc *messagepump.Deliv
 	return nil
 }
 
-// failAndPostpone increments the failure counter and postpones the stream so
-// that consumption is retried after an exponential backoff period.
-func (p *EventPump) failAndPostpone(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	if _, err := dc.Tx.ExecContext(
+// PostponeDelivery reschedules consumption of the stream after delay,
+// recording failures as the checkpoint's new failure count.
+func (p *EventPump) PostponeDelivery(
+	ctx context.Context,
+	dc *messagepump.DeliveryContext,
+	failures uint64,
+	delay time.Duration,
+) error {
+	if err := xsql.ExecOne(
 		ctx,
-		`SELECT eventstream.fail_and_postpone($1, $2, $3, $4)`,
+		dc.Tx,
+		`UPDATE eventstream.handler_checkpoints SET
+			failures = $3,
+			resume_at = clock_timestamp() + $4
+		WHERE handler_key = $1
+			AND stream_id = $2`,
 		xsql.UUID(p.Identity.GetKey()),
 		xsql.UUID(dc.StreamID),
-		p.BackoffBase,
-		p.BackoffCap,
+		failures,
+		delay,
 	); err != nil {
-		return fmt.Errorf("unable to postpone stream consumption after failure: %w", err)
+		return fmt.Errorf("unable to postpone stream consumption: %w", err)
 	}
 
 	return nil

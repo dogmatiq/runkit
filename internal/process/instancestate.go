@@ -10,6 +10,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/messagepump"
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
@@ -67,7 +68,7 @@ func loadInstance(
 				"unable to unmarshal process instance state",
 				xslog.Error(err),
 			)
-			return false, errFailed
+			return false, messagepump.ErrFailed
 		}
 	}
 
@@ -97,7 +98,8 @@ func saveInstance(
 			"unable to marshal process instance state",
 			xslog.Error(err),
 		)
-		return errFailed
+
+		return messagepump.ErrFailed
 	}
 
 	if err := xsql.ExecOne(
@@ -143,7 +145,7 @@ func endInstance(
 		ctx,
 		`DELETE FROM process.deadlines
 		WHERE handler_key = $1
-		AND instance_id = $2`,
+			AND instance_id = $2`,
 		xsql.UUID(handlerKey),
 		instanceID,
 	); err != nil {

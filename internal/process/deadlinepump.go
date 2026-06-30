@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -19,29 +18,18 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// DeadlinePump is an engine component that periodically attempts to acquire
-// pending deadlines for dispatch to a process message handler.
+// DeadlinePump is a [messagepump.Driver] that delivers pending deadlines to a
+// process message handler.
 type DeadlinePump struct {
-	DB                      *sql.DB
-	Handler                 dogma.ProcessMessageHandler[dogma.ProcessRoot]
-	Identity                *identitypb.Identity
-	Packer                  *envelopepb.Packer
-	BackoffBase, BackoffCap time.Duration
-	Logger                  *slog.Logger
+	DB       *sql.DB
+	Handler  dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity *identitypb.Identity
+	Packer   *envelopepb.Packer
 }
 
-// Run runs the deadline pump until ctx is canceled.
-func (p *DeadlinePump) Run(ctx context.Context) {
-	messagepump.Run(
-		ctx,
-		p.DB,
-		p.Logger,
-		p.acquireNextDeadline,
-		p.handleDelivery,
-	)
-}
-
-func (p *DeadlinePump) acquireNextDeadline(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+// AcquireDelivery attempts to acquire the next pending deadline for the
+// handler.
+func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
 	// The JOIN against process.instances is not used to read any data, but is
 	// required to lock the instance row in the same statement that locks the
 	// deadline row.
@@ -79,7 +67,7 @@ func (p *DeadlinePump) acquireNextDeadline(ctx context.Context, tx *sql.Tx) (mes
 		xsql.UUID(del.MessageID),
 		xsql.UUID(del.MessageTypeID),
 		&del.EnvelopeBytes,
-		&del.FailureCount,
+		&del.Failures,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messagepump.Delivery{}, false, nil
@@ -91,17 +79,8 @@ func (p *DeadlinePump) acquireNextDeadline(ctx context.Context, tx *sql.Tx) (mes
 	return del, true, nil
 }
 
-func (p *DeadlinePump) handleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	err := p.handleDeadline(ctx, dc)
-
-	if errors.Is(err, errFailed) {
-		err = p.failAndPostpone(ctx, dc)
-	}
-
-	return err
-}
-
-func (p *DeadlinePump) handleDeadline(ctx context.Context, dc *messagepump.DeliveryContext) error {
+// HandleDelivery dispatches a deadline to the process handler.
+func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
 	var (
 		deadlineEnvelope = &envelopepb.Envelope{}
 		deadline         dogma.Deadline
@@ -117,7 +96,7 @@ func (p *DeadlinePump) handleDeadline(ctx context.Context, dc *messagepump.Deliv
 			"unable to unmarshal deadline",
 			xslog.Error(err),
 		)
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	logger := dc.Logger.With(
@@ -142,7 +121,7 @@ func (p *DeadlinePump) handleDeadline(ctx context.Context, dc *messagepump.Deliv
 		// This _should_ be unreachable code because deadlines are deleted when
 		// process instances are ended.
 		logger.ErrorContext(ctx, "process instance has ended")
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	scope := &deadlineScope{
@@ -180,7 +159,7 @@ func (p *DeadlinePump) handleDeadline(ctx context.Context, dc *messagepump.Deliv
 			xslog.Error(err),
 		)
 
-		return errFailed
+		return messagepump.ErrFailed
 	}
 
 	if err := addCommandsToQueue(ctx, dc.Tx, scope.commandPacker); err != nil {
@@ -234,20 +213,26 @@ func (*DeadlinePump) deleteDeadline(ctx context.Context, dc *messagepump.Deliver
 	return nil
 }
 
-// failAndPostpone increments the failure counter and postpones the deadline so
-// that processing is retried after an exponential backoff period.
-func (p *DeadlinePump) failAndPostpone(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	if _, err := dc.Tx.ExecContext(
+// PostponeDelivery reschedules the deadline for redelivery after delay,
+// recording failures as its new failure count.
+func (*DeadlinePump) PostponeDelivery(
+	ctx context.Context,
+	dc *messagepump.DeliveryContext,
+	failures uint64,
+	delay time.Duration,
+) error {
+	if err := xsql.ExecOne(
 		ctx,
+		dc.Tx,
 		`UPDATE process.deadlines SET
-			failures = failures + 1,
-			deliver_at = clock_timestamp() + LEAST($2 * (2 ^ failures), $3)
+			failures = $2,
+			deliver_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
 		xsql.UUID(dc.MessageID),
-		p.BackoffBase,
-		p.BackoffCap,
+		failures,
+		delay,
 	); err != nil {
-		return fmt.Errorf("unable to postpone deadline after failure: %w", err)
+		return fmt.Errorf("unable to postpone deadline: %w", err)
 	}
 
 	return nil
