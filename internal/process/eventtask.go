@@ -154,12 +154,19 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		}
 	} else {
 		if scope.mutated {
-			if err := t.saveInstance(ctx, instanceID, root); err != nil {
+			if err := saveInstance(
+				ctx,
+				t.Tx,
+				t.Identity.GetKey(),
+				instanceID,
+				root,
+				t.Logger,
+			); err != nil {
 				return err
 			}
 		}
 
-		if err := t.persistDeadlines(ctx, instanceID, scope.deadlinePacker); err != nil {
+		if err := persistDeadlines(ctx, t.Tx, scope.deadlinePacker); err != nil {
 			return err
 		}
 	}
@@ -247,86 +254,6 @@ func (t *eventTask) endInstance(
 		instanceID,
 	); err != nil {
 		return fmt.Errorf("unable to delete deadlines for ended instance: %w", err)
-	}
-
-	return nil
-}
-
-// persistDeadlines inserts any deadlines scheduled by the handler into the
-// process.deadlines table.
-func (t *eventTask) persistDeadlines(
-	ctx context.Context,
-	instanceID string,
-	packer *envelopepb.EffectPacker,
-) error {
-	multi, ok := packer.Seal()
-	if !ok {
-		return nil
-	}
-
-	for env := range multi.All() {
-		data, err := env.MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("unable to marshal deadline envelope: %w", err)
-		}
-
-		if _, err := t.Tx.ExecContext(
-			ctx,
-			`INSERT INTO process.deadlines (
-				message_id,
-				handler_key,
-				instance_id,
-				envelope,
-				deliver_at
-			) VALUES ($1, $2, $3, $4, $5)`,
-			xsql.UUID(env.GetBody().GetMessageId()),
-			xsql.UUID(t.Identity.GetKey()),
-			instanceID,
-			data,
-			env.GetBody().GetScheduledFor().AsTime(),
-		); err != nil {
-			return fmt.Errorf("unable to persist deadline: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// saveInstance persists the process root state for the given instance.
-func (t *eventTask) saveInstance(
-	ctx context.Context,
-	instanceID string,
-	root dogma.ProcessRoot,
-) error {
-	var state []byte
-
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			var err error
-			state, err = root.MarshalBinary()
-			return err
-		},
-	); err != nil {
-		t.Logger.ErrorContext(
-			ctx,
-			"unable to marshal process instance state",
-			xslog.Error(err),
-		)
-		return errFailed
-	}
-
-	if err := xsql.ExecOne(
-		ctx,
-		t.Tx,
-		`UPDATE process.instances SET
-			state = $1
-		WHERE handler_key = $2
-		AND instance_id = $3`,
-		state,
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	); err != nil {
-		return fmt.Errorf("unable to save process instance: %w", err)
 	}
 
 	return nil
