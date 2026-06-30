@@ -66,7 +66,7 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 // verifies that a handler with the MinimizeConcurrency preference handles
 // events serially.
 func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference(t *testing.T) {
-	const handlerKey = "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+	const handlerKey = "ca363143-d35b-4e71-81f1-2ecd3458ae59"
 
 	var concurrent atomic.Int32
 

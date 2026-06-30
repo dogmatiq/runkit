@@ -2,8 +2,10 @@ package xtesting
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
@@ -30,9 +32,9 @@ func WaitForEmptyCommandQueue(
 	)
 }
 
-// ExpectCommandToBeQueued asserts that the command with the given ID is present
+// ExpectCommandIDToBeQueued asserts that the command with the given ID is present
 // in the queue.
-func ExpectCommandToBeQueued(
+func ExpectCommandIDToBeQueued(
 	t testing.TB,
 	q xsql.Querier,
 	messageID *uuidpb.UUID,
@@ -49,6 +51,50 @@ func ExpectCommandToBeQueued(
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
+}
+
+// ExpectCommandToBeQueued asserts that the command queue contains the given
+// command.
+func ExpectCommandToBeQueued(
+	t testing.TB,
+	q xsql.Querier,
+	want dogma.Command,
+) {
+	t.Helper()
+
+	rows, err := q.QueryContext(
+		t.Context(),
+		`SELECT
+			c.envelope
+		FROM commandqueue.commands AS c`,
+	)
+	if err != nil {
+		t.Fatalf("unable to query events: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		env := &envelopepb.Envelope{}
+		if err := rows.Scan(xsql.Envelope(env)); err != nil {
+			t.Fatalf("unable to scan event: %v", err)
+		}
+
+		got, err := envelopepb.Unpack[dogma.Command](env)
+		if err != nil {
+			t.Fatalf("unable to unpack command: %v", err)
+		}
+
+		if reflect.DeepEqual(got, want) {
+			return
+		}
+
+		t.Logf("command does not match:")
+		t.Logf("+++ got:\n%s", dapper.Format(got))
+		t.Logf("--- want:\n%s", dapper.Format(want))
+
+	}
+
+	t.Fatal("command is not on the queue")
 }
 
 // ExpectCommandToBeUnattempted asserts that the command with the given ID is

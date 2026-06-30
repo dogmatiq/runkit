@@ -46,7 +46,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "8d159878-4322-496c-bede-a3e0f4c12634")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -101,7 +101,7 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "1385128f-5ddb-4ae8-95c9-1d9e7ab3090b")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -139,7 +139,7 @@ func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T)
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "7e36acd8-8d9a-4740-9732-0f6ebf819f48")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),

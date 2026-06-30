@@ -36,7 +36,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler-a>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler-a>", "f22f32d4-0b83-4ae8-ba29-b9645ad6ecce")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 					)
@@ -62,7 +62,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler-b>", "3d55fb34-c7b6-4dea-a5de-8da4a006d64d")
+					c.Identity("<handler-b>", "c227bace-062e-4b11-a20c-cda75272d35b")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
 					)

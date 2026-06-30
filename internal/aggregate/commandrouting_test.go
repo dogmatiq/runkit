@@ -35,7 +35,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler-a>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler-a>", "5ccb274f-4116-41bd-92f4-3f3b8676891c")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -111,7 +111,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectInstance(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "5fbf4e46-2626-44eb-abe3-74717de849b0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),

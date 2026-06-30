@@ -25,7 +25,7 @@ func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "8113645c-7410-439b-87fc-11d4f6fff787")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 					)
@@ -65,7 +65,7 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 				handledCommandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectCommandToBeQueued(
+			xtesting.ExpectCommandIDToBeQueued(
 				t,
 				engine.DB,
 				ignoredCommandEnvelope.GetBody().GetMessageId(),
@@ -74,7 +74,7 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "f9fe8b96-a131-47bb-a2b8-e99eb33a7d97")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 					)
@@ -124,7 +124,7 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "4c37d97c-7e69-4dd0-b26c-327bb758a8fa")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 					)
@@ -184,7 +184,7 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 				dogma.ViaIntegration(
 					&stubs.IntegrationMessageHandlerStub{
 						ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-							c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+							c.Identity("<handler>", "c343e9d5-b86f-4017-aef7-a9dd0193af03")
 							c.Routes(
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 							)
@@ -221,7 +221,7 @@ func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
 				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
-					c.Identity("<handler>", "87f5a992-a3a6-494a-be1c-c01c6fff8ff0")
+					c.Identity("<handler>", "3a93aaf7-7e24-4d78-b7d7-5cae3420711e")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 					)

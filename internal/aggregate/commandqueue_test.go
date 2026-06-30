@@ -24,7 +24,7 @@ func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "95f0ea4a-28be-4b24-9939-476d0a8fcab8")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -68,7 +68,7 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 				handledCommandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectCommandToBeQueued(
+			xtesting.ExpectCommandIDToBeQueued(
 				t,
 				engine.DB,
 				ignoredCommandEnvelope.GetBody().GetMessageId(),
@@ -77,7 +77,7 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "3379c8b6-847c-4ab3-a366-0f05eb602d24")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -131,7 +131,7 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "c666f31b-de7e-436a-bb3c-894d4b4639bf")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -149,6 +149,8 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 // that if an event in an instance's history cannot be unpacked, commands that
 // target the instance are postponed.
 func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testing.T) {
+	const handlerKey = "77bdd91e-5161-48f1-95e4-e62cb8fe89db"
+
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -163,8 +165,9 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 				engine.DB,
 				`UPDATE eventstream.events SET
 					envelope = '\x00'::bytea
-				WHERE aggregate_handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+				WHERE aggregate_handler_key = $1
 				AND aggregate_instance_id = '<instance>'`,
+				handlerKey,
 			)
 
 			// Clear the instance's snapshot so the engine must attempt to
@@ -175,8 +178,9 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 				`UPDATE aggregate.instances SET
 					snapshot = NULL,
 					snapshot_offset = NULL
-				WHERE handler_key = 'ef0660b4-a68e-4383-b156-5857ac294dce'
+				WHERE handler_key = $1
 				AND instance_id = '<instance>'`,
+				handlerKey,
 			)
 
 			// Execute another command that targets the same instance.
@@ -191,7 +195,7 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", handlerKey)
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -231,7 +235,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 			dogma.ViaAggregate(
 				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 					ConfigureFunc: func(c dogma.AggregateConfigurer) {
-						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Identity("<handler>", "937ee67a-8e25-4a1f-b724-a3ac9e5591aa")
 						c.Routes(
 							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -260,7 +264,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 			dogma.ViaAggregate(
 				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 					ConfigureFunc: func(c dogma.AggregateConfigurer) {
-						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Identity("<handler>", "58155c6b-29fa-463b-ae45-6b0267972389")
 						c.Routes(
 							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -311,7 +315,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 			dogma.ViaAggregate(
 				&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 					ConfigureFunc: func(c dogma.AggregateConfigurer) {
-						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Identity("<handler>", "49763d2c-d375-4d96-850c-aa2ca2ff2e72")
 						c.Routes(
 							dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 							dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -366,7 +370,7 @@ func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "9fff5609-5f37-4a13-8e38-42d31364dd52")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),

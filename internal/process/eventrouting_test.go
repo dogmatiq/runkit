@@ -243,7 +243,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "78ba34d7-513d-46f8-b349-5b644eaa55ec")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -308,7 +308,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "14f3e1e9-01a3-4570-8d7f-e68441b9e5ee")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
@@ -382,7 +382,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "72929657-b659-49f8-a3f8-5698e4cf60c8")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
@@ -431,7 +431,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 // deployed for the first time does not receive events that were recorded before
 // it started.
 func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
-	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
+	const handlerKey = "aab7927f-5d67-439c-8649-3b5bc4fdb57c"
 
 	var (
 		streamID *uuidpb.UUID
@@ -512,7 +512,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T) {
 	t.Parallel()
 
-	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
+	const handlerKey = "4727c77a-8c9c-42bc-856e-2cf14a7df161"
 
 	db := xtesting.NewDatabase(t)
 	var streamID *uuidpb.UUID

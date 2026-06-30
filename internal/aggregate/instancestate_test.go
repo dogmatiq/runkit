@@ -23,7 +23,7 @@ func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "cd577a96-cd1d-43b1-9686-e382e498c434")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -83,7 +83,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "a026c7b5-b464-4104-b1b8-cd25aacd1026")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
@@ -140,7 +140,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "ddc5eff8-0eaa-46db-9a25-8b3d6c455639")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -207,7 +207,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "35782b17-cb1b-4099-9538-4249287ce65b")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -283,7 +283,7 @@ func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "9ca20b0e-98cf-4249-8b7f-f6be581b57b0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -355,7 +355,7 @@ func TestInstanceState_snapshotMarshalingFailuresAreNonFatal(t *testing.T) {
 				dogma.ViaAggregate(
 					&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 						ConfigureFunc: func(c dogma.AggregateConfigurer) {
-							c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+							c.Identity("<handler>", "9ebb0074-2351-4086-abfa-fc576a6620e5")
 							c.Routes(
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -434,7 +434,7 @@ func TestInstanceState_snapshotUnmarshalingFailuresAreNonFatal(t *testing.T) {
 				dogma.ViaAggregate(
 					&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 						ConfigureFunc: func(c dogma.AggregateConfigurer) {
-							c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+							c.Identity("<handler>", "d1e64375-6ff8-4f97-aa91-71a5ee4f022b")
 							c.Routes(
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeX]](),

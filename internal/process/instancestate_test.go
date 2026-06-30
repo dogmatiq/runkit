@@ -109,7 +109,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "5ca74d02-8dde-4148-8f35-cec0e4c3b241")
+					c.Identity("<handler>", "dbe022b0-b52c-489a-b855-638e68f6b709")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
@@ -193,7 +193,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "2b711639-5838-429d-9884-7c687bb06a75")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeX]](),
@@ -279,7 +279,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "d5fce239-6c7f-4153-895c-ecb047693319")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),

@@ -60,7 +60,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "1735e561-a373-4aa0-9461-1d517a3f36c0")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -133,7 +133,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "81010834-6322-4dc7-9b9c-1b876e31864c")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
@@ -183,7 +183,7 @@ func TestEventStream_eventsAreNotRecordedWhenHandlerPanics(t *testing.T) {
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
 				ConfigureFunc: func(c dogma.AggregateConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "84a76232-e660-469f-bce0-714a21c6fad1")
 					c.Routes(
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),

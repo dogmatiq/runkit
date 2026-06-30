@@ -17,8 +17,6 @@ import (
 // a deadline scheduled by a process instance is delivered back to that same
 // instance.
 func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.T) {
-	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
-
 	var done xsync.Latch
 
 	xtesting.RunEngines(
@@ -39,7 +37,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", handlerKey)
+					c.Identity("<handler>", "ec809a3b-ebc8-4c36-b0da-a8118c3022e7")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -102,7 +100,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "f088972b-4c15-4c68-ba92-fa2f96d93b30")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
@@ -169,7 +167,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+					c.Identity("<handler>", "bc3e3035-3473-49cc-8f36-598bc7ec218c")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
@@ -219,9 +217,9 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 }
 
 func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t *testing.T) {
-	const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
-
 	t.Run("via HandleEvent", func(t *testing.T) {
+		const handlerKey = "ef0660b4-a68e-4383-b156-5857ac294dce"
+
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, engine *dogmaengine.Engine) {
@@ -298,7 +296,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 			dogma.ViaProcess(
 				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 					ConfigureFunc: func(c dogma.ProcessConfigurer) {
-						c.Identity("<handler>", "ef0660b4-a68e-4383-b156-5857ac294dce")
+						c.Identity("<handler>", "77cb6923-ab95-4074-91b6-3dab39344f74")
 						c.Routes(
 							dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),

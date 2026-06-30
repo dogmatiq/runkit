@@ -72,7 +72,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
 						ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-							c.Identity("<handler>", "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e")
+							c.Identity("<handler>", "98e312ca-2d4c-4b59-bf47-c80428904919")
 							c.Routes(
 								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							)
@@ -145,7 +145,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", "d4e5f6a7-8b9c-4d0e-9f2a-3b4c5d6e7f8a")
+					c.Identity("<handler>", "37807f8b-d00b-4929-831b-8a156220334f")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
@@ -188,8 +188,6 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 // that if handling an event fails (either via error return or panic),
 // consumption of the stream is postponed.
 func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testing.T) {
-	const handlerKey = "87f5a992-a3a6-494a-be1c-c01c6fff8ff0"
-
 	cases := []struct {
 		Name            string
 		HandleEventFunc func(
@@ -221,6 +219,8 @@ func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testi
 	}
 
 	for _, c := range cases {
+		const handlerKey = "626fb93e-35a2-4aa8-a5b4-b5ebbaedc5ff"
+
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
@@ -260,7 +260,7 @@ func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testi
 // TestEventStream_failureCounterIsResetOnSuccess verifies that after a handler
 // fails and then subsequently succeeds, the failures counter is reset to zero.
 func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
-	const handlerKey = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+	const handlerKey = "128649ef-b2d5-4247-a00c-c3d615abd8a5"
 
 	var (
 		done      xsync.Latch
@@ -316,7 +316,7 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 // TestEventStream_postponedStreamsAreNotConsumed verifies that a stream with
 // resume_at in the future is not acquired for reading.
 func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
-	const handlerKey = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	const handlerKey = "42e8b109-35f0-45d9-9ec4-959e34cf113e"
 
 	xtesting.RunEngines(
 		t,
