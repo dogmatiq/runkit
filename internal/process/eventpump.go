@@ -6,14 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/reference-engine/internal/messagepump"
+	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
+	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
@@ -30,108 +31,33 @@ type EventPump struct {
 	Logger                  *slog.Logger
 }
 
-// Run runs the message pump until ctx is canceled.
+// Run runs the event pump until ctx is canceled.
 func (p *EventPump) Run(ctx context.Context) {
-	tasks := make(chan *eventTask)
-
-	var g sync.WaitGroup
-
-	g.Go(func() {
-		defer close(tasks)
-
-		for {
-			task, ok, err := p.acquireTask(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-
-				p.Logger.ErrorContext(
-					ctx,
-					"unable to acquire task",
-					xslog.Error(err),
-				)
-			}
-
-			if ok {
-				task.Logger.DebugContext(
-					ctx,
-					"acquired task",
-				)
-
-				select {
-				case <-ctx.Done():
-					task.Tx.Rollback()
-					return
-				case tasks <- task:
-					continue
-				}
-			} else {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(25 * time.Millisecond):
-					continue
-				}
-			}
-		}
-	})
-
-	for range runtime.GOMAXPROCS(0) {
-		g.Go(func() {
-			for task := range tasks {
-				if err := task.Execute(ctx); err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-
-					xsql.PanicOnDeadlock(err)
-
-					task.Logger.ErrorContext(
-						ctx,
-						"unable to execute task",
-						xslog.Error(err),
-					)
-				} else {
-					task.Logger.DebugContext(
-						ctx,
-						"executed task",
-					)
-				}
-			}
-		})
-	}
-
-	g.Wait()
+	messagepump.Run(
+		ctx,
+		p.DB,
+		p.Logger,
+		p.acquireNextEvent,
+		p.handleDelivery,
+	)
 }
 
-// acquireTask attempts to exclusively lock the next pending event for the
-// handler and return it as a task.
-func (p *EventPump) acquireTask(
-	ctx context.Context,
-) (
-	task *eventTask,
-	ok bool,
-	err error,
-) {
-	tx, err := p.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
-	}
-	defer func() {
-		if !ok {
-			tx.Rollback()
-		}
-	}()
-
-	// Acquire a stream for reading and select the next relevant event
-	// after the checkpoint offset for that stream.
+// acquireNextEvent attempts to acquire a stream for reading, and the next
+// relevant event after the checkpoint offset for that stream.
+//
+// If there are no relevant events available, it advances the checkpoint offset
+// to the end of the stream so that this stream is not re-acquired until new
+// events arrive.
+func (p *EventPump) acquireNextEvent(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
 			s.id,
 			s.next_offset,
-			e.stream_offset,
+			a.failures,
+			COALESCE(e.stream_offset, s.next_offset),
+			e.message_id,
+			e.message_type_id,
 			e.envelope
 		FROM eventstream.acquire_for_read($1) AS a
 		INNER JOIN eventstream.streams AS s
@@ -147,47 +73,40 @@ func (p *EventPump) acquireTask(
 	)
 
 	var (
-		streamID      = &uuidpb.UUID{}
-		nextOffset    uint64
-		eventOffset   *uint64
-		envelopeBytes []byte
+		streamID         = &uuidpb.UUID{}
+		nextStreamOffset uint64
 	)
 
+	del := messagepump.Delivery{
+		MessageID:     &uuidpb.UUID{},
+		MessageTypeID: &uuidpb.UUID{},
+		StreamID:      streamID,
+	}
+
 	if err := row.Scan(
-		xsql.UUID(streamID),
-		&nextOffset,
-		&eventOffset,
-		&envelopeBytes,
+		xsql.UUID(del.StreamID),
+		&nextStreamOffset,
+		&del.FailureCount,
+		&del.StreamOffset,
+		xsql.UUID(del.MessageID),
+		xsql.UUID(del.MessageTypeID),
+		&del.EnvelopeBytes,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, false, nil
+			return messagepump.Delivery{}, false, nil
 		}
 
-		return nil, false, fmt.Errorf("unable to acquire pending event: %w", err)
+		return messagepump.Delivery{}, false, fmt.Errorf("unable to acquire pending event: %w", err)
 	}
 
-	// If we found a pending event, return a task for processing it.
-	if eventOffset != nil {
-		return &eventTask{
-			Tx:            tx,
-			Handler:       p.Handler,
-			Identity:      p.Identity,
-			Packer:        p.Packer,
-			StreamID:      streamID,
-			EventOffset:   *eventOffset,
-			EnvelopeBytes: envelopeBytes,
-			BackoffBase:   p.BackoffBase,
-			BackoffCap:    p.BackoffCap,
-			ParentLogger:  p.Logger,
-			Logger: p.Logger.With(
-				xslog.UUID("stream_id", streamID),
-				slog.Uint64("event_offset", *eventOffset),
-			),
-		}, true, nil
+	// If we found a pending event, return a delivery for it.
+	if del.StreamOffset < nextStreamOffset {
+		return del, true, nil
 	}
 
-	// Otherwise, advance the checkpoint offset for the stream to the end of the
-	// stream.
+	// Otherwise, no matching events are available on this stream. Advance the
+	// checkpoint offset to the end of the stream so that this stream is not
+	// re-acquired until new events arrive.
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
@@ -196,16 +115,225 @@ func (p *EventPump) acquireTask(
 			failures = 0
 		WHERE handler_key = $2
 			AND stream_id = $3`,
-		nextOffset,
+		nextStreamOffset,
 		xsql.UUID(p.Identity.GetKey()),
 		xsql.UUID(streamID),
 	); err != nil {
-		return nil, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
+		return messagepump.Delivery{}, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, false, fmt.Errorf("unable to commit transaction: %w", err)
+	return messagepump.Delivery{}, false, nil
+}
+
+// errFailed is a sentinel error that indicates a message could not be handled
+// and should be postponed for re-delivery.
+var errFailed = errors.New("unable to handle event")
+
+func (p *EventPump) handleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	err := p.handleEvent(ctx, dc)
+
+	if errors.Is(err, errFailed) {
+		err = p.failAndPostpone(ctx, dc)
 	}
 
-	return nil, false, nil
+	return err
+}
+
+func (p *EventPump) handleEvent(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	var (
+		eventEnvelope = &envelopepb.Envelope{}
+		event         dogma.Event
+	)
+
+	if err := xmessage.Unpack(
+		dc.EnvelopeBytes,
+		eventEnvelope,
+		&event,
+	); err != nil {
+		dc.Logger.ErrorContext(
+			ctx,
+			"unable to unmarshal event",
+			xslog.Error(err),
+		)
+		return errFailed
+	}
+
+	logger := dc.Logger.With(
+		xslog.Envelope("event", eventEnvelope),
+	)
+
+	instanceID, ok, err := p.routeEventToInstance(ctx, logger, event)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return p.advanceCheckpoint(ctx, dc)
+	}
+
+	logger = logger.With(
+		slog.Group(
+			"process_instance",
+			slog.String("id", instanceID),
+		),
+	)
+
+	root := p.Handler.New()
+
+	ok, err = loadInstance(
+		ctx,
+		dc.Tx,
+		p.Identity.GetKey(),
+		instanceID,
+		root,
+		logger,
+	)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return p.advanceCheckpoint(ctx, dc)
+	}
+
+	scope := &eventScope{
+		messageScope{
+			instanceID: instanceID,
+			root:       root,
+			commandPacker: p.Packer.PackEffects(
+				eventEnvelope,
+				p.Identity,
+				envelopepb.WithInstanceID(instanceID),
+			),
+			deadlinePacker: p.Packer.PackEffects(
+				eventEnvelope,
+				p.Identity,
+				envelopepb.WithInstanceID(instanceID),
+			),
+			logger: logger,
+		},
+		eventEnvelope.GetBody().GetCreatedAt().AsTime(),
+	}
+
+	if err := xerrors.ConvertPanicToError(
+		func() error {
+			return p.Handler.HandleEvent(
+				ctx,
+				root,
+				scope,
+				event,
+			)
+		},
+	); err != nil {
+		logger.ErrorContext(
+			ctx,
+			"unable to handle event",
+			xslog.Error(err),
+		)
+		return errFailed
+	}
+
+	if err := addCommandsToQueue(ctx, dc.Tx, scope.commandPacker); err != nil {
+		return err
+	}
+
+	if scope.ended {
+		if err := endInstance(
+			ctx,
+			dc.Tx,
+			p.Identity.GetKey(),
+			instanceID,
+		); err != nil {
+			return err
+		}
+	} else {
+		if scope.mutated {
+			if err := saveInstance(
+				ctx,
+				dc.Tx,
+				p.Identity.GetKey(),
+				instanceID,
+				root,
+				logger,
+			); err != nil {
+				return err
+			}
+		}
+
+		if err := persistDeadlines(ctx, dc.Tx, scope.deadlinePacker); err != nil {
+			return err
+		}
+	}
+
+	return p.advanceCheckpoint(ctx, dc)
+}
+
+// routeEventToInstance routes the event to a process instance by calling the
+// handler's RouteEventToInstance() method.
+func (p *EventPump) routeEventToInstance(
+	ctx context.Context,
+	logger *slog.Logger,
+	event dogma.Event,
+) (instanceID string, ok bool, err error) {
+	if err := xerrors.ConvertPanicToError(
+		func() error {
+			instanceID, ok, err = p.Handler.RouteEventToInstance(ctx, event)
+			if err != nil {
+				return err
+			}
+
+			if ok && instanceID == "" {
+				return fmt.Errorf("handler returned empty instance ID")
+			}
+
+			return nil
+		},
+	); err != nil {
+		logger.ErrorContext(
+			ctx,
+			"unable to route event to instance",
+			xslog.Error(err),
+		)
+
+		return "", false, errFailed
+	}
+
+	return instanceID, ok, nil
+}
+
+// advanceCheckpoint updates the handler's checkpoint offset for this stream.
+func (p *EventPump) advanceCheckpoint(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	if err := xsql.ExecOne(
+		ctx,
+		dc.Tx,
+		`UPDATE eventstream.handler_checkpoints SET
+			checkpoint_offset = $1,
+			failures = 0
+		WHERE handler_key = $2
+		AND stream_id = $3`,
+		dc.StreamOffset+1,
+		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(dc.StreamID),
+	); err != nil {
+		return fmt.Errorf("unable to update handler checkpoint: %w", err)
+	}
+
+	return nil
+}
+
+// failAndPostpone increments the failure counter and postpones the stream so
+// that consumption is retried after an exponential backoff period.
+func (p *EventPump) failAndPostpone(ctx context.Context, dc *messagepump.DeliveryContext) error {
+	if _, err := dc.Tx.ExecContext(
+		ctx,
+		`SELECT eventstream.fail_and_postpone($1, $2, $3, $4)`,
+		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(dc.StreamID),
+		p.BackoffBase,
+		p.BackoffCap,
+	); err != nil {
+		return fmt.Errorf("unable to postpone stream consumption after failure: %w", err)
+	}
+
+	return nil
 }

@@ -37,6 +37,12 @@ type Delivery struct {
 	MessageTypeID *uuidpb.UUID
 	EnvelopeBytes []byte
 	FailureCount  uint64
+
+	// StreamID and StreamOffset describe the position of the message within an
+	// event stream. They are set by stream-based pumps and are zero for
+	// queue-based pumps.
+	StreamID     *uuidpb.UUID
+	StreamOffset uint64
 }
 
 // DeliveryContext encapsulates a [Delivery] and the transaction in which it was
@@ -153,7 +159,7 @@ func doAcquire(
 		return nil, false, fmt.Errorf("unable to begin transaction: %w", err)
 	}
 	defer func() {
-		if !ok {
+		if err != nil {
 			tx.Rollback()
 		}
 	}()
@@ -164,20 +170,33 @@ func doAcquire(
 	}
 
 	if !ok {
+		if err := tx.Commit(); err != nil {
+			return nil, false, fmt.Errorf("unable to commit transaction: %w", err)
+		}
+
 		return nil, false, nil
+	}
+
+	attrs := []any{
+		xslog.UUID("id", uuidpb.Generate()),
+		xslog.UUID("message_id", del.MessageID),
+		xslog.UUID("message_type_id", del.MessageTypeID),
+		slog.Uint64("attempt", del.FailureCount+1),
+	}
+
+	if del.StreamID != nil {
+		attrs = append(
+			attrs,
+			xslog.UUID("stream_id", del.StreamID),
+			slog.Uint64("stream_offset", del.StreamOffset),
+		)
 	}
 
 	return &DeliveryContext{
 		del,
 		tx,
 		logger.With(
-			slog.Group(
-				"delivery",
-				xslog.UUID("id", uuidpb.Generate()),
-				xslog.UUID("message_id", del.MessageID),
-				xslog.UUID("message_type_id", del.MessageTypeID),
-				slog.Uint64("attempt", del.FailureCount+1),
-			),
+			slog.Group("delivery", attrs...),
 		),
 	}, true, nil
 }

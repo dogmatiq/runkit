@@ -174,11 +174,12 @@ $$;
 -- The "acquire_for_read" function acquires an event stream for a handler to
 -- read pending events from.
 --
--- It locks a row in "handler_checkpoints" and returns the stream_id and the
--- checkpoint_offset at the time of acquisition. If the handler is not yet
--- tracking a stream, a new row is inserted. Otherwise, an existing row is
--- locked with FOR UPDATE SKIP LOCKED, choosing the stream with the largest gap
--- between next_offset and checkpoint_offset.
+-- It locks a row in "handler_checkpoints" and returns the stream_id, the
+-- checkpoint_offset and the failure counter at the time of acquisition.
+--
+-- If the handler is not yet tracking a stream, a new row is inserted.
+-- Otherwise, an existing row is locked with FOR UPDATE SKIP LOCKED, choosing
+-- the stream with the largest gap between next_offset and checkpoint_offset.
 --
 -- Returns a single row, or no rows if no stream has pending events.
 --------------------------------------------------------------------------------
@@ -187,7 +188,8 @@ CREATE OR REPLACE FUNCTION eventstream.acquire_for_read(
 )
 RETURNS TABLE(
     stream_id         uuid,
-    checkpoint_offset bigint
+    checkpoint_offset bigint,
+    failures          int
 )
 LANGUAGE plpgsql
 AS $$
@@ -218,12 +220,14 @@ BEGIN
     -- If the row was inserted successfully it is implicitly locked by this
     -- transaction.
     --
-    -- The desired checkpoint_offset is unknown, represented by NULL.
+    -- The desired checkpoint_offset is unknown, represented by NULL. The
+    -- failures counter is zero for newly inserted rows.
     IF acquired_stream_id IS NOT NULL THEN
         RETURN QUERY
         SELECT
             acquired_stream_id,
-            NULL::bigint;
+            NULL::bigint,
+            0;
         RETURN;
     END IF;
 
@@ -232,7 +236,8 @@ BEGIN
     RETURN QUERY
     SELECT
         s.id,
-        h.checkpoint_offset
+        h.checkpoint_offset,
+        h.failures
     FROM eventstream.streams AS s
     INNER JOIN eventstream.handler_checkpoints AS h
         ON h.stream_id = s.id
