@@ -250,12 +250,16 @@ func (p *MessagePump) doHandle(ctx context.Context, dc *DeliveryContext) error {
 
 	err := p.Driver.HandleDelivery(ctx, dc)
 
+	var afterCommit func()
+
 	switch {
 	case err == nil:
-		dc.Logger.DebugContext(
-			ctx,
-			"handled delivery",
-		)
+		afterCommit = func() {
+			dc.Logger.DebugContext(
+				ctx,
+				"handled delivery",
+			)
+		}
 
 	case errors.Is(err, ErrFailed):
 		failures := dc.Failures + 1
@@ -265,11 +269,13 @@ func (p *MessagePump) doHandle(ctx context.Context, dc *DeliveryContext) error {
 			return fmt.Errorf("unable to postpone delivery: %w", err)
 		}
 
-		dc.Logger.DebugContext(
-			ctx,
-			"postponed redelivery due to failure",
-			slog.Duration("delay", delay),
-		)
+		afterCommit = func() {
+			dc.Logger.DebugContext(
+				ctx,
+				"postponed redelivery due to failure",
+				slog.Duration("delay", delay),
+			)
+		}
 
 	case errors.Is(err, ErrBusy):
 		delay := p.BackoffBase
@@ -278,11 +284,13 @@ func (p *MessagePump) doHandle(ctx context.Context, dc *DeliveryContext) error {
 			return fmt.Errorf("unable to postpone delivery: %w", err)
 		}
 
-		dc.Logger.DebugContext(
-			ctx,
-			"postponed redelivery due to contention",
-			slog.Duration("delay", delay),
-		)
+		afterCommit = func() {
+			dc.Logger.DebugContext(
+				ctx,
+				"postponed redelivery due to contention",
+				slog.Duration("delay", delay),
+			)
+		}
 
 	default:
 		return err
@@ -291,6 +299,8 @@ func (p *MessagePump) doHandle(ctx context.Context, dc *DeliveryContext) error {
 	if err := dc.Tx.Commit(); err != nil {
 		return fmt.Errorf("unable to commit transaction: %w", err)
 	}
+
+	afterCommit()
 
 	return nil
 }

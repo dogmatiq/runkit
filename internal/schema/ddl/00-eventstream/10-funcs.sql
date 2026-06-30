@@ -206,12 +206,10 @@ BEGIN
         acquire_for_read.handler_key,
         s.id
     FROM eventstream.streams AS s
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM eventstream.handler_checkpoints AS h
-        WHERE h.handler_key = acquire_for_read.handler_key
-            AND h.stream_id = s.id
-    )
+    LEFT JOIN eventstream.handler_checkpoints AS h
+        ON h.handler_key = acquire_for_read.handler_key
+        AND h.stream_id = s.id
+    WHERE h.stream_id IS NULL
     ORDER BY random()
     LIMIT 1
     ON CONFLICT DO NOTHING
