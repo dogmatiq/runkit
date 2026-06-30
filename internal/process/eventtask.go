@@ -98,7 +98,16 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 		),
 	)
 
-	root, ok, err := t.loadInstance(ctx, instanceID)
+	root := t.Handler.New()
+
+	ok, err = loadInstance(
+		ctx,
+		t.Tx,
+		t.Identity.GetKey(),
+		instanceID,
+		root,
+		t.Logger,
+	)
 	if err != nil {
 		return err
 	}
@@ -149,7 +158,12 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 	}
 
 	if scope.ended {
-		if err := t.endInstance(ctx, instanceID); err != nil {
+		if err := endInstance(
+			ctx,
+			t.Tx,
+			t.Identity.GetKey(),
+			instanceID,
+		); err != nil {
 			return err
 		}
 	} else {
@@ -172,91 +186,6 @@ func (t *eventTask) handleEvent(ctx context.Context) error {
 	}
 
 	return t.advanceCheckpoint(ctx)
-}
-
-// loadInstance loads the process instance with the given ID and returns its
-// root. If the instance has been ended, it returns a nil root and false.
-func (t *eventTask) loadInstance(
-	ctx context.Context,
-	instanceID string,
-) (dogma.ProcessRoot, bool, error) {
-	root := t.Handler.New()
-
-	// Upsert with a dummy update to acquire a row lock, guaranteeing
-	// serialized access even for brand-new instances.
-	row := t.Tx.QueryRowContext(
-		ctx,
-		`INSERT INTO process.instances (handler_key, instance_id)
-		VALUES ($1, $2)
-		ON CONFLICT (handler_key, instance_id) DO UPDATE SET
-			handler_key = EXCLUDED.handler_key
-		RETURNING ended, state`,
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	)
-
-	var (
-		ended bool
-		state []byte
-	)
-
-	if err := row.Scan(&ended, &state); err != nil {
-		return nil, false, fmt.Errorf("unable to load process instance: %w", err)
-	}
-
-	if ended {
-		return nil, false, nil
-	}
-
-	if state != nil {
-		if err := xerrors.ConvertPanicToError(
-			func() error {
-				return root.UnmarshalBinary(state)
-			},
-		); err != nil {
-			t.Logger.ErrorContext(
-				ctx,
-				"unable to unmarshal process instance state",
-				xslog.Error(err),
-			)
-			return nil, false, errFailed
-		}
-	}
-
-	return root, true, nil
-}
-
-// endInstance marks the process instance as ended and clears its state.
-func (t *eventTask) endInstance(
-	ctx context.Context,
-	instanceID string,
-) error {
-	if err := xsql.ExecOne(
-		ctx,
-		t.Tx,
-		`UPDATE process.instances SET
-			ended = true,
-			state = NULL
-		WHERE handler_key = $1
-		AND instance_id = $2`,
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	); err != nil {
-		return fmt.Errorf("unable to end process instance: %w", err)
-	}
-
-	if _, err := t.Tx.ExecContext(
-		ctx,
-		`DELETE FROM process.deadlines
-		WHERE handler_key = $1
-		AND instance_id = $2`,
-		xsql.UUID(t.Identity.GetKey()),
-		instanceID,
-	); err != nil {
-		return fmt.Errorf("unable to delete deadlines for ended instance: %w", err)
-	}
-
-	return nil
 }
 
 // advanceCheckpoint updates the handler's checkpoint offset for this stream.

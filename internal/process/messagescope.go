@@ -7,6 +7,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
 // messageScope implements [dogma.ProcessEventScope] and
@@ -51,7 +52,12 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 		panic("cannot execute command after process instance has ended")
 	}
 
-	s.commandPacker.PackCommand(c)
+	commandEnvelope := s.commandPacker.PackCommand(c)
+
+	s.logger.Info(
+		c.MessageDescription(),
+		xslog.Envelope("command", commandEnvelope),
+	)
 }
 
 func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
@@ -59,5 +65,10 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic("cannot schedule deadline after process instance has ended")
 	}
 
-	s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))
+	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))
+
+	s.logger.Info(
+		d.MessageDescription(),
+		xslog.Envelope("deadline", deadlineEnvelope),
+	)
 }

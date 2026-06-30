@@ -27,12 +27,13 @@ CREATE TABLE IF NOT EXISTS process.instances (
 -- yet been delivered to their target process instance.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS process.deadlines (
-    message_id  uuid        PRIMARY KEY,
-    handler_key uuid        NOT NULL,
-    instance_id text        NOT NULL CHECK (instance_id != ''),
-    envelope    bytea       NOT NULL,
-    failures    int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
-    deliver_at  timestamptz NOT NULL
+    message_id      uuid        PRIMARY KEY,
+    message_type_id uuid        NOT NULL,
+    handler_key     uuid        NOT NULL,
+    instance_id     text        NOT NULL CHECK (instance_id != ''),
+    envelope        bytea       NOT NULL,
+    failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    deliver_at      timestamptz NOT NULL
 );
 
 -- Create an index for finding deadlines that are ready to be processed by a

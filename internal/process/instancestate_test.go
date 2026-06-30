@@ -3,6 +3,7 @@ package process_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -245,17 +246,20 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 	)
 }
 
-// TestInstanceState_writesAreSerialized verifies that concurrent events from
-// multiple streams targeting the same process instance are serialized, such
-// that each event observes the cumulative state produced by all prior events.
+// TestInstanceState_writesAreSerialized verifies that concurrent events and
+// deadlines targeting the same process instance are serialized, such that each
+// handler invocation observes the cumulative state produced by all prior
+// invocations, regardless of whether they originated from the event pump or the
+// deadline pump.
 func TestInstanceState_writesAreSerialized(t *testing.T) {
+	const handlerKey = "d5fce239-6c7f-4153-895c-ecb047693319"
+
 	const (
 		streamCount     = 4
 		eventsPerStream = 5
 		totalEvents     = streamCount * eventsPerStream
+		totalIncrements = totalEvents * 2 // each event, plus one deadline per event
 	)
-
-	var done xsync.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -274,15 +278,32 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 				counts...,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			// Wait for all events to be consumed before publishing the final
+			// event that will assert that the process state is cumulative
+			// across all events and deadlines.
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+
+			// Publish the final event that will assert that the process state
+			// is cumulative across all events and deadlines.
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventX1
+				},
+				1,
+			)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
 				ConfigureFunc: func(c dogma.ProcessConfigurer) {
-					c.Identity("<handler>", "d5fce239-6c7f-4153-895c-ecb047693319")
+					c.Identity("<handler>", handlerKey)
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeX]](),
 						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
 					)
 				},
 				RouteEventToInstanceFunc: func(
@@ -295,29 +316,46 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 					_ context.Context,
 					r *stubs.ProcessRootStub,
 					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
-					m dogma.Event,
+					e dogma.Event,
 				) error {
-					// Each event increments the counter. If writes are not
-					// serialized, concurrent handlers would read the same
-					// counter value and produce a final count less than
-					// totalEvents.
-					var value int
+					switch e.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						s.Mutate(func(root *stubs.ProcessRootStub) {
+							if r.Value == nil {
+								r.Value = 1
+							} else {
+								r.Value = r.Value.(float64) + 1
+							}
+						})
 
-					if r.Value != nil {
-						// JSON unmarshals numbers as float64 when the target
-						// type is any.
-						value = int(r.Value.(float64))
+						// Schedule a deadline for immediate delivery so that the
+						// deadline pump and event pump race on the same instance.
+						s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
+
+					case *stubs.EventStub[stubs.TypeX]:
+						if got, want := r.Value, float64(totalIncrements); got != want {
+							t.Errorf("process state is not cumulative across events and deadlines: got %v, want %v", got, want)
+						}
+
+					default:
+						panic(dogma.UnexpectedMessage)
 					}
 
-					value++
-
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					_ context.Context,
+					r *stubs.ProcessRootStub,
+					s dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					_ dogma.Deadline,
+				) error {
 					s.Mutate(func(root *stubs.ProcessRootStub) {
-						root.Value = value
+						if r.Value == nil {
+							r.Value = 1
+						} else {
+							r.Value = r.Value.(float64) + 1
+						}
 					})
-
-					if value == totalEvents {
-						done.Set()
-					}
 
 					return nil
 				},
