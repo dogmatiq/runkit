@@ -39,6 +39,13 @@ func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (message
 	// ordering used by the event pump, which acquires the instance lock first
 	// and then deletes deadlines in endInstance(). That inversion deadlocks
 	// when both pumps target the same instance concurrently.
+	//
+	// The "now" value used to gate the deadline's readiness is sourced from
+	// Go's clock - not the database's - so that it agrees with the value
+	// returned by [dogma.ProcessDeadlineScope.Now] when the handler runs. This
+	// guarantees the deadline scope's notion of "now" is never earlier than its
+	// scheduled time, without depending on clock synchronisation between the
+	// engine and the database.
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -51,11 +58,12 @@ func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (message
 			ON i.handler_key = d.handler_key
 			AND i.instance_id = d.instance_id
 		WHERE d.handler_key = $1
-			AND d.deliver_at <= clock_timestamp()
+			AND d.deliver_at <= $2
 		ORDER BY d.deliver_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUID(p.Identity.GetKey()),
+		time.Now(),
 	)
 
 	del := messagepump.Delivery{
