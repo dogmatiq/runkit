@@ -7,9 +7,13 @@ This mirrors the broader question of what happens when message types are removed
 a handler's routes while instances are in-flight. Deadlines may be the sharpest case
 because they can be scheduled far in the future.
 
-Possible mitigations:
-- Validate the timeout type against the current route list when the deadline pump
-  dequeues a deadline, and discard (or dead-letter) unroutable ones.
-- Treat removed timeout types as a schema migration concern and document the
-  operator's responsibility to drain or cancel outstanding deadlines before removing a
-  route.
+## Resolution
+
+The deadline pump's acquisition query now filters by `d.message_type_id = ANY($3)`,
+passing the handler's current `DeadlineTypeIDs`. Deadlines whose type is no longer in
+the route list are silently skipped rather than delivered.
+
+Deletion is intentionally not performed: an unroutable deadline might have been
+created by a node running newer code during a rolling restart, or by a version that
+was later rolled back. Skipping preserves those deadlines so they can be delivered if
+the route is reinstated.

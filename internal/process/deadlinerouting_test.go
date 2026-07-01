@@ -340,3 +340,141 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 		)
 	})
 }
+
+// TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered verifies that
+// when a deadline route is removed from a handler, previously-scheduled
+// deadlines of that type are silently skipped rather than delivered. Deadlines
+// of other still-routed types continue to be delivered.
+//
+// This models the scenario where a handler is redeployed with a deadline type
+// removed while deadlines of that type are already pending in the database.
+func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) {
+	t.Parallel()
+
+	const handlerKey = "cbd8b78d-b8b6-40e5-8ad4-b3aa1e26f5ef"
+
+	db := xtesting.NewDatabase(t)
+
+	// Run the handler with both TypeA and TypeB deadline routes and schedule
+	// one of each far enough in the future that they do not fire during this
+	// phase.
+	xtesting.RunEnginesWithDB(
+		t,
+		db,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.PopulateEventStreams(
+				t,
+				engine.DB,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventA1
+				},
+				1,
+			)
+
+			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeB]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					_ dogma.Event,
+				) error {
+					s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(100*time.Millisecond))
+					s.ScheduleDeadline(stubs.DeadlineB1, time.Now().Add(150*time.Millisecond))
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					_ dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					d dogma.Deadline,
+				) error {
+					t.Errorf("unexpected deadline delivered: %T", d)
+					return nil
+				},
+			},
+		),
+	)
+
+	var delivered xsync.Latch
+
+	// Restart with the TypeA deadline route removed. The TypeB deadline is
+	// delivered; the TypeA deadline is silently skipped and remains pending in
+	// the database.
+	xtesting.RunEnginesWithDB(
+		t,
+		db,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			xtesting.ExpectLatchesSetEventually(t, &delivered)
+
+			// The TypeA deadline was skipped rather than delivered, so it
+			// should still be pending in the database.
+			xtesting.WaitForQueryResult(
+				t,
+				"TypeA deadline is still pending",
+				1,
+				engine.DB,
+				`SELECT COUNT(*)
+				FROM process.deadlines`,
+			)
+		},
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeB]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					context.Context,
+					*stubs.ProcessRootStub,
+					dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					dogma.Event,
+				) error {
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					_ dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					d dogma.Deadline,
+				) error {
+					switch d.(type) {
+					case *stubs.DeadlineStub[stubs.TypeB]:
+						delivered.Set()
+					default:
+						t.Errorf("unexpected deadline delivered: %T", d)
+					}
+
+					return nil
+				},
+			},
+		),
+	)
+}

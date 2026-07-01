@@ -26,6 +26,7 @@ type DeadlinePump struct {
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
+	DeadlineTypeIDs      []string
 	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -61,11 +62,13 @@ func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (message
 			AND i.instance_id = d.instance_id
 		WHERE d.handler_key = $1
 			AND d.deliver_at <= $2
+			AND d.message_type_id = ANY($3)
 		ORDER BY d.deliver_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUID(p.Identity.GetKey()),
 		time.Now(),
+		p.DeadlineTypeIDs,
 	)
 
 	del := messagepump.Delivery{

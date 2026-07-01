@@ -235,6 +235,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
+					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 					OutboundMessageTypes: outboundMessageTypes,
 				},
 				DB:          e.DB,
