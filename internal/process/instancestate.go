@@ -16,6 +16,32 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
+// newRoot creates a new process root by calling the handler's New() method.
+func newRoot(
+	ctx context.Context,
+	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
+	logger *slog.Logger,
+) (dogma.ProcessRoot, error) {
+	var root dogma.ProcessRoot
+
+	if err := xerrors.ConvertPanicToError(
+		func() error {
+			root = handler.New()
+			return nil
+		},
+	); err != nil {
+		logger.ErrorContext(
+			ctx,
+			"unable to create process root",
+			xslog.Error(err),
+		)
+
+		return nil, messagepump.ErrFailed
+	}
+
+	return root, nil
+}
+
 // loadInstance loads the process root state for the given instance.
 // It returns false if the instance has ended.
 func loadInstance(

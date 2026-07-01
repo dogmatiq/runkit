@@ -155,7 +155,10 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 		),
 	)
 
-	root := p.Handler.New()
+	root, err := newRoot(ctx, p.Handler, logger)
+	if err != nil {
+		return err
+	}
 
 	ok, err = loadInstance(
 		ctx,

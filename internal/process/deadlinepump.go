@@ -114,7 +114,11 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 	)
 
 	instanceID := deadlineEnvelope.GetHeader().GetSource().GetInstanceId()
-	root := p.Handler.New()
+
+	root, err := newRoot(ctx, p.Handler, logger)
+	if err != nil {
+		return err
+	}
 
 	ok, err := loadInstance(
 		ctx,
