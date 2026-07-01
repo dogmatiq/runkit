@@ -356,8 +356,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	db := xtesting.NewDatabase(t)
 
 	// Run the handler with both TypeA and TypeB deadline routes and schedule
-	// one of each far enough in the future that they do not fire during this
-	// phase.
+	// one of each.
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
@@ -396,8 +395,10 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
 					_ dogma.Event,
 				) error {
-					s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(100*time.Millisecond))
-					s.ScheduleDeadline(stubs.DeadlineB1, time.Now().Add(150*time.Millisecond))
+					// Schedule deadlines far in the future so that they do not
+					// fire during this engine run.
+					s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(1000*time.Millisecond))
+					s.ScheduleDeadline(stubs.DeadlineB1, time.Now().Add(1050*time.Millisecond))
 					return nil
 				},
 				HandleDeadlineFunc: func(
@@ -412,6 +413,16 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 			},
 		),
 	)
+
+	// Artificially reduce the deadline schedule times so that they are now due
+	// for delivery (this is just to speed up the test).
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE process.deadlines SET
+			deliver_at = deliver_at - INTERVAL '1 second'`,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	var delivered xsync.Latch
 

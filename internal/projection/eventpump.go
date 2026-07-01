@@ -37,7 +37,10 @@ type EventPump struct {
 // If there are no relevant events available on the chosen stream, it advances
 // the checkpoint offset to the end of the stream so that the stream is not
 // re-acquired until new events arrive.
-func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+func (p *EventPump) AcquireDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -67,23 +70,23 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 		checkpointOffset *uint64
 	)
 
-	del := messagepump.Delivery{
+	delivery := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
 		MessageTypeID: &uuidpb.UUID{},
-		Stream: &messagepump.Stream{
+		Stream: &messagepump.DeliveryStream{
 			ID: &uuidpb.UUID{},
 		},
 	}
 
 	if err := row.Scan(
-		xsql.UUID(del.Stream.ID),
+		xsql.UUID(delivery.Stream.ID),
 		&nextStreamOffset,
 		&checkpointOffset,
-		&del.Failures,
-		&del.Stream.EventOffset,
-		xsql.UUID(del.MessageID),
-		xsql.UUID(del.MessageTypeID),
-		&del.EnvelopeBytes,
+		&delivery.Failures,
+		&delivery.Stream.EventOffset,
+		xsql.UUID(delivery.MessageID),
+		xsql.UUID(delivery.MessageTypeID),
+		&delivery.EnvelopeBytes,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messagepump.Delivery{}, false, nil
@@ -96,21 +99,21 @@ func (p *EventPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepum
 	// handler for its authoritative offset, persist it, and defer delivery to
 	// the next acquisition cycle.
 	if checkpointOffset == nil {
-		return messagepump.Delivery{}, false, p.initializeCheckpoint(ctx, tx, del.Stream.ID, nextStreamOffset)
+		return messagepump.Delivery{}, false, p.initializeCheckpoint(ctx, tx, delivery.Stream.ID, nextStreamOffset)
 	}
 
-	del.Stream.CheckpointOffset = *checkpointOffset
+	delivery.Stream.CheckpointOffset = *checkpointOffset
 
 	// If we found a pending event, return a delivery for it.
-	if del.Stream.EventOffset < nextStreamOffset {
-		return del, true, nil
+	if delivery.Stream.EventOffset < nextStreamOffset {
+		return delivery, true, nil
 	}
 
 	// No matching events are available on this stream. Advance the checkpoint
 	// to the end of the stream so that the stream is not re-acquired until
 	// new events arrive.
 	if nextStreamOffset > *checkpointOffset {
-		if err := p.advanceCheckpoint(ctx, tx, del.Stream.ID, nextStreamOffset); err != nil {
+		if err := p.advanceCheckpoint(ctx, tx, delivery.Stream.ID, nextStreamOffset); err != nil {
 			return messagepump.Delivery{}, false, err
 		}
 	}
@@ -194,18 +197,20 @@ func (p *EventPump) advanceCheckpoint(
 }
 
 // HandleDelivery dispatches an event to the projection handler.
-func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	var (
-		eventEnvelope = &envelopepb.Envelope{}
-		event         dogma.Event
-	)
+func (p *EventPump) HandleDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	envelope *envelopepb.Envelope,
+	logger *slog.Logger,
+) error {
+	var event dogma.Event
 
-	if err := xmessage.Unpack(
-		dc.EnvelopeBytes,
-		eventEnvelope,
+	if err := xmessage.UnpackMessage(
+		envelope,
 		&event,
 	); err != nil {
-		dc.Logger.ErrorContext(
+		logger.ErrorContext(
 			ctx,
 			"unable to unmarshal event",
 			xslog.Error(err),
@@ -213,16 +218,11 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 		return messagepump.ErrFailed
 	}
 
-	logger := dc.Logger.With(
-		slog.Uint64("checkpoint_offset", dc.Stream.CheckpointOffset),
-		xslog.Envelope("event", eventEnvelope),
-	)
-
 	var nextCheckpointOffset uint64
 
 	if err := concurrency.EnforceConcurrencyPreference(
 		ctx,
-		dc.Tx,
+		tx,
 		p.Identity.GetKey(),
 		p.Concurrency,
 		func() error {
@@ -232,10 +232,10 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 					nextCheckpointOffset, err = p.Handler.HandleEvent(
 						ctx,
 						&eventScope{
-							streamID:         dc.Stream.ID.AsString(),
-							offset:           dc.Stream.EventOffset,
-							recordedAt:       eventEnvelope.GetBody().GetCreatedAt().AsTime(),
-							checkpointOffset: dc.Stream.CheckpointOffset,
+							streamID:         delivery.Stream.ID.AsString(),
+							offset:           delivery.Stream.EventOffset,
+							recordedAt:       envelope.GetBody().GetCreatedAt().AsTime(),
+							checkpointOffset: delivery.Stream.CheckpointOffset,
 							logger:           logger,
 						},
 						event,
@@ -253,16 +253,15 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 		return messagepump.ErrFailed
 	}
 
-	if nextCheckpointOffset != dc.Stream.EventOffset+1 {
+	if nextCheckpointOffset != delivery.Stream.EventOffset+1 {
 		logger.WarnContext(
 			ctx,
 			"optimistic concurrency conflict",
-			slog.Uint64("engine_checkpoint_offset", dc.Stream.CheckpointOffset),
 			slog.Uint64("handler_checkpoint_offset", nextCheckpointOffset),
 		)
 	}
 
-	row := dc.Tx.QueryRowContext(
+	row := tx.QueryRowContext(
 		ctx,
 		`UPDATE eventstream.handler_checkpoints SET
 			checkpoint_offset = $1,
@@ -276,7 +275,7 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 		)`,
 		nextCheckpointOffset,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(dc.Stream.ID),
+		xsql.UUID(delivery.Stream.ID),
 	)
 
 	var nextStreamOffset uint64
@@ -296,25 +295,24 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 	return nil
 }
 
-// PostponeDelivery reschedules consumption of the stream after delay,
-// recording failures as the checkpoint's new failure count.
+// PostponeDelivery reschedules consumption of the stream after delay.
 func (p *EventPump) PostponeDelivery(
 	ctx context.Context,
-	dc *messagepump.DeliveryContext,
-	failures uint64,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
 	delay time.Duration,
 ) error {
 	if err := xsql.ExecOne(
 		ctx,
-		dc.Tx,
+		tx,
 		`UPDATE eventstream.handler_checkpoints SET
 			failures = $3,
 			resume_at = clock_timestamp() + $4
 		WHERE handler_key = $1
 			AND stream_id = $2`,
 		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(dc.Stream.ID),
-		failures,
+		xsql.UUID(delivery.Stream.ID),
+		delivery.Failures,
 		delay,
 	); err != nil {
 		return fmt.Errorf("unable to postpone stream consumption: %w", err)

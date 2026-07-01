@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -32,7 +33,10 @@ type DeadlinePump struct {
 
 // AcquireDelivery attempts to acquire the next pending deadline for the
 // handler.
-func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+func (p *DeadlinePump) AcquireDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+) (messagepump.Delivery, bool, error) {
 	// The JOIN against process.instances is not used to read any data, but is
 	// required to lock the instance row in the same statement that locks the
 	// deadline row.
@@ -71,16 +75,16 @@ func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (message
 		p.DeadlineTypeIDs,
 	)
 
-	del := messagepump.Delivery{
+	delivery := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
 		MessageTypeID: &uuidpb.UUID{},
 	}
 
 	if err := row.Scan(
-		xsql.UUID(del.MessageID),
-		xsql.UUID(del.MessageTypeID),
-		&del.EnvelopeBytes,
-		&del.Failures,
+		xsql.UUID(delivery.MessageID),
+		xsql.UUID(delivery.MessageTypeID),
+		&delivery.EnvelopeBytes,
+		&delivery.Failures,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messagepump.Delivery{}, false, nil
@@ -89,22 +93,24 @@ func (p *DeadlinePump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (message
 		return messagepump.Delivery{}, false, fmt.Errorf("unable to scan pending deadline: %w", err)
 	}
 
-	return del, true, nil
+	return delivery, true, nil
 }
 
 // HandleDelivery dispatches a deadline to the process handler.
-func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	var (
-		deadlineEnvelope = &envelopepb.Envelope{}
-		deadline         dogma.Deadline
-	)
+func (p *DeadlinePump) HandleDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	envelope *envelopepb.Envelope,
+	logger *slog.Logger,
+) error {
+	var deadline dogma.Deadline
 
-	if err := xmessage.Unpack(
-		dc.EnvelopeBytes,
-		deadlineEnvelope,
+	if err := xmessage.UnpackMessage(
+		envelope,
 		&deadline,
 	); err != nil {
-		dc.Logger.ErrorContext(
+		logger.ErrorContext(
 			ctx,
 			"unable to unmarshal deadline",
 			xslog.Error(err),
@@ -112,24 +118,24 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 		return messagepump.ErrFailed
 	}
 
-	logger := dc.Logger.With(
-		xslog.Envelope("deadline", deadlineEnvelope),
+	instanceID := envelope.GetHeader().GetSource().GetInstanceId()
+
+	instanceLogger := logger.With(
+		slog.Group("process_instance", slog.String("id", instanceID)),
 	)
 
-	instanceID := deadlineEnvelope.GetHeader().GetSource().GetInstanceId()
-
-	root, err := newRoot(ctx, p.Handler, logger)
+	root, err := newRoot(ctx, p.Handler, instanceLogger)
 	if err != nil {
 		return err
 	}
 
 	ok, err := loadInstance(
 		ctx,
-		dc.Tx,
+		tx,
 		p.Identity.GetKey(),
 		instanceID,
 		root,
-		logger,
+		instanceLogger,
 	)
 	if err != nil {
 		return err
@@ -137,28 +143,36 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 	if !ok {
 		// This _should_ be unreachable code because deadlines are deleted when
 		// process instances are ended.
-		logger.ErrorContext(ctx, "process instance has ended")
+		instanceLogger.ErrorContext(ctx, "process instance has ended")
 		return messagepump.ErrFailed
 	}
+
+	instanceLogger = logger.With(
+		slog.Group(
+			"process_instance",
+			slog.String("id", instanceID),
+			slog.String("description", root.ProcessInstanceDescription(false)),
+		),
+	)
 
 	scope := &deadlineScope{
 		messageScope{
 			instanceID: instanceID,
 			root:       root,
 			commandPacker: p.Packer.PackEffects(
-				deadlineEnvelope,
+				envelope,
 				p.Identity,
 				envelopepb.WithInstanceID(instanceID),
 			),
 			deadlinePacker: p.Packer.PackEffects(
-				deadlineEnvelope,
+				envelope,
 				p.Identity,
 				envelopepb.WithInstanceID(instanceID),
 			),
-			logger:               logger,
+			logger:               instanceLogger,
 			outboundMessageTypes: p.OutboundMessageTypes,
 		},
-		deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
+		envelope.GetBody().GetScheduledFor().AsTime(),
 	}
 
 	if err := xerrors.ConvertPanicToError(
@@ -171,7 +185,7 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 			)
 		},
 	); err != nil {
-		logger.ErrorContext(
+		instanceLogger.ErrorContext(
 			ctx,
 			"unable to handle deadline",
 			xslog.Error(err),
@@ -180,14 +194,14 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 		return messagepump.ErrFailed
 	}
 
-	if err := addCommandsToQueue(ctx, dc.Tx, scope.commandPacker); err != nil {
+	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
 		return err
 	}
 
 	if scope.ended {
 		if err := endInstance(
 			ctx,
-			dc.Tx,
+			tx,
 			p.Identity.GetKey(),
 			instanceID,
 		); err != nil {
@@ -200,30 +214,34 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 	if scope.mutated {
 		if err := saveInstance(
 			ctx,
-			dc.Tx,
+			tx,
 			p.Identity.GetKey(),
 			instanceID,
 			root,
-			logger,
+			instanceLogger,
 		); err != nil {
 			return err
 		}
 	}
 
-	if err := persistDeadlines(ctx, dc.Tx, scope.deadlinePacker); err != nil {
+	if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
 		return err
 	}
 
-	return p.deleteDeadline(ctx, dc)
+	return p.deleteDeadline(ctx, tx, delivery.MessageID)
 }
 
-func (*DeadlinePump) deleteDeadline(ctx context.Context, dc *messagepump.DeliveryContext) error {
+func (*DeadlinePump) deleteDeadline(
+	ctx context.Context,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
+) error {
 	if err := xsql.ExecOne(
 		ctx,
-		dc.Tx,
+		tx,
 		`DELETE FROM process.deadlines
 		WHERE message_id = $1`,
-		xsql.UUID(dc.MessageID),
+		xsql.UUID(messageID),
 	); err != nil {
 		return fmt.Errorf("unable to delete deadline: %w", err)
 	}
@@ -231,23 +249,22 @@ func (*DeadlinePump) deleteDeadline(ctx context.Context, dc *messagepump.Deliver
 	return nil
 }
 
-// PostponeDelivery reschedules the deadline for redelivery after delay,
-// recording failures as its new failure count.
+// PostponeDelivery reschedules the deadline for redelivery after delay.
 func (*DeadlinePump) PostponeDelivery(
 	ctx context.Context,
-	dc *messagepump.DeliveryContext,
-	failures uint64,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
 	delay time.Duration,
 ) error {
 	if err := xsql.ExecOne(
 		ctx,
-		dc.Tx,
+		tx,
 		`UPDATE process.deadlines SET
 			failures = $2,
 			deliver_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
-		xsql.UUID(dc.MessageID),
-		failures,
+		xsql.UUID(delivery.MessageID),
+		delivery.Failures,
 		delay,
 	); err != nil {
 		return fmt.Errorf("unable to postpone deadline: %w", err)

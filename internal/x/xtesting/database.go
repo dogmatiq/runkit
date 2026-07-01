@@ -270,7 +270,7 @@ func WaitForQueryResult[T comparable](
 		select {
 		case <-ctx.Done():
 			t.Fatalf("expectation failed: %s: timed out waiting for value to become %v", description, want)
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(5 * time.Millisecond):
 			continue
 		}
 	}

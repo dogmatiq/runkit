@@ -32,6 +32,23 @@ func Unpack[
 		return err
 	}
 
+	return UnpackMessage(envelope, messages...)
+}
+
+// UnpackMessage unpacks the message(s) from an already-parsed envelope.
+//
+// Unlike [Unpack], it does not unmarshal the envelope from binary; the caller
+// is responsible for ensuring the envelope is already populated and valid.
+func UnpackMessage[
+	T interface {
+		dogma.Message
+		Validate(S) error
+	},
+	S dogma.MessageValidationScope,
+](
+	envelope *envelopepb.Envelope,
+	messages ...*T,
+) error {
 	for idx := range messages {
 		m, err := envelopepb.Unpack[T](envelope)
 		if err != nil {
@@ -39,7 +56,7 @@ func Unpack[
 		}
 
 		if idx == 0 {
-			// Validate the command once; assume that subsequent unpacking
+			// Validate the message once; assume that subsequent unpacking
 			// of the same data _must_ be valid too.
 			s := ValidationScope{
 				IsNewMessage: false,

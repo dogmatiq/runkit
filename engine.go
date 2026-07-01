@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -163,17 +164,13 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 // newComponentsForHandler creates engine components for the given handler.
 func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []component {
 	const (
-		backoffBase = 10 * time.Millisecond
-		backoffCap  = 300 * time.Second
+		backoffBase  = 10 * time.Millisecond
+		backoffCap   = 300 * time.Second
+		pollInterval = 25 * time.Millisecond
 	)
 
-	projectionCompactInterval := e.ProjectionCompactInterval
-	if projectionCompactInterval <= 0 {
-		projectionCompactInterval = DefaultProjectionCompactInterval
-	}
-
 	logger := e.newLoggerForHandler(handlerConfig)
-	outboundMessageTypes := e.outboundMessageTypesForHandler(handlerConfig)
+	workers := e.workerCountForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
@@ -185,12 +182,14 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
 					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-					OutboundMessageTypes: outboundMessageTypes,
+					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:          e.DB,
-				BackoffBase: backoffBase,
-				BackoffCap:  backoffCap,
-				Logger:      logger,
+				DB:           e.DB,
+				Workers:      workers,
+				PollInterval: pollInterval,
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       logger,
 			},
 		}
 
@@ -204,12 +203,14 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Concurrency:          handlerConfig.ConcurrencyPreference(),
 					Packer:               e.packer,
 					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-					OutboundMessageTypes: outboundMessageTypes,
+					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:          e.DB,
-				BackoffBase: backoffBase,
-				BackoffCap:  backoffCap,
-				Logger:      logger,
+				DB:           e.DB,
+				Workers:      workers,
+				PollInterval: pollInterval,
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       logger,
 			},
 		}
 
@@ -222,12 +223,14 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
 					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-					OutboundMessageTypes: outboundMessageTypes,
+					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:          e.DB,
-				BackoffBase: backoffBase,
-				BackoffCap:  backoffCap,
-				Logger:      logger,
+				DB:           e.DB,
+				Workers:      workers,
+				PollInterval: pollInterval,
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       logger,
 			},
 			&messagepump.MessagePump{
 				Driver: &process.DeadlinePump{
@@ -236,16 +239,23 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
 					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-					OutboundMessageTypes: outboundMessageTypes,
+					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:          e.DB,
-				BackoffBase: backoffBase,
-				BackoffCap:  backoffCap,
-				Logger:      logger,
+				DB:           e.DB,
+				Workers:      workers,
+				PollInterval: pollInterval,
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       logger,
 			},
 		}
 
 	case *config.Projection:
+		compactInterval := e.ProjectionCompactInterval
+		if compactInterval <= 0 {
+			compactInterval = DefaultProjectionCompactInterval
+		}
+
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &projection.EventPump{
@@ -256,16 +266,18 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					Logger:       logger,
 				},
-				DB:          e.DB,
-				BackoffBase: backoffBase,
-				BackoffCap:  backoffCap,
-				Logger:      logger,
+				DB:           e.DB,
+				Workers:      workers,
+				PollInterval: pollInterval,
+				BackoffBase:  backoffBase,
+				BackoffCap:   backoffCap,
+				Logger:       logger,
 			},
 			&projection.Compactor{
 				DB:       e.DB,
 				Handler:  handlerConfig.Interface(),
 				Identity: handlerConfig.Identity(),
-				Interval: projectionCompactInterval,
+				Interval: compactInterval,
 				Logger:   logger,
 			},
 		}
@@ -285,6 +297,20 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 			slog.String("type", handlerConfig.HandlerType().String()),
 		),
 	)
+}
+
+// workerCountForHandler returns the number of workers goroutines to run for the
+// given handler's message pump.
+func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
+	switch handlerConfig := handlerConfig.(type) {
+	case *config.Projection:
+	case *config.Integration:
+		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
+			return 1
+		}
+	}
+
+	return 10 * runtime.GOMAXPROCS(0)
 }
 
 // inboundMessageTypeIDsForHandler returns the message type IDs of all inbound

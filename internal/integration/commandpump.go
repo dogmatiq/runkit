@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"time"
@@ -35,7 +36,10 @@ type CommandPump struct {
 
 // AcquireDelivery attempts to acquire the next pending command for an
 // integration handler of one of the configured types.
-func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+func (p *CommandPump) AcquireDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+) (messagepump.Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -52,16 +56,16 @@ func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagep
 		p.CommandTypeIDs,
 	)
 
-	del := messagepump.Delivery{
+	delivery := messagepump.Delivery{
 		MessageID:     &uuidpb.UUID{},
 		MessageTypeID: &uuidpb.UUID{},
 	}
 
 	if err := row.Scan(
-		xsql.UUID(del.MessageID),
-		xsql.UUID(del.MessageTypeID),
-		&del.EnvelopeBytes,
-		&del.Failures,
+		xsql.UUID(delivery.MessageID),
+		xsql.UUID(delivery.MessageTypeID),
+		&delivery.EnvelopeBytes,
+		&delivery.Failures,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return messagepump.Delivery{}, false, nil
@@ -70,22 +74,24 @@ func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagep
 		return messagepump.Delivery{}, false, fmt.Errorf("unable to scan pending command: %w", err)
 	}
 
-	return del, true, nil
+	return delivery, true, nil
 }
 
 // HandleDelivery dispatches a command to the integration handler.
-func (p *CommandPump) HandleDelivery(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	var (
-		commandEnvelope    = &envelopepb.Envelope{}
-		commandForHandling dogma.Command
-	)
+func (p *CommandPump) HandleDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	envelope *envelopepb.Envelope,
+	logger *slog.Logger,
+) error {
+	var commandForHandling dogma.Command
 
-	if err := xmessage.Unpack(
-		dc.EnvelopeBytes,
-		commandEnvelope,
+	if err := xmessage.UnpackMessage(
+		envelope,
 		&commandForHandling,
 	); err != nil {
-		dc.Logger.ErrorContext(
+		logger.ErrorContext(
 			ctx,
 			"unable to unmarshal command",
 			xslog.Error(err),
@@ -93,18 +99,14 @@ func (p *CommandPump) HandleDelivery(ctx context.Context, dc *messagepump.Delive
 		return messagepump.ErrFailed
 	}
 
-	logger := dc.Logger.With(
-		xslog.Envelope("command", commandEnvelope),
-	)
-
 	packer := p.Packer.PackEffects(
-		commandEnvelope,
+		envelope,
 		p.Identity,
 	)
 
 	if err := concurrency.EnforceConcurrencyPreference(
 		ctx,
-		dc.Tx,
+		tx,
 		p.Identity.GetKey(),
 		p.Concurrency,
 		func() error {
@@ -133,17 +135,18 @@ func (p *CommandPump) HandleDelivery(ctx context.Context, dc *messagepump.Delive
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
-		return p.completeWithEvents(ctx, dc, eventEnvelopes)
+		return p.completeWithEvents(ctx, tx, delivery.MessageID, eventEnvelopes)
 	}
 
-	return p.completeWithoutEvents(ctx, dc)
+	return p.completeWithoutEvents(ctx, tx, delivery.MessageID)
 }
 
 // completeWithEvents removes the command from the queue and appends events that
 // were recorded during handling in a single database round-trip.
 func (p *CommandPump) completeWithEvents(
 	ctx context.Context,
-	dc *messagepump.DeliveryContext,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 ) error {
 	var (
@@ -153,7 +156,7 @@ func (p *CommandPump) completeWithEvents(
 
 	args = append(
 		args,
-		xsql.UUID(dc.MessageID),
+		xsql.UUID(messageID),
 		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
 	)
 
@@ -184,7 +187,7 @@ func (p *CommandPump) completeWithEvents(
 
 	query.WriteString(`])`)
 
-	if _, err := dc.Tx.ExecContext(ctx, query.String(), args...); err != nil {
+	if _, err := tx.ExecContext(ctx, query.String(), args...); err != nil {
 		return fmt.Errorf("unable to complete command handling: %w", err)
 	}
 
@@ -193,11 +196,15 @@ func (p *CommandPump) completeWithEvents(
 
 // completeWithoutEvents removes the command from the queue when no events were
 // recorded during handling.
-func (p *CommandPump) completeWithoutEvents(ctx context.Context, dc *messagepump.DeliveryContext) error {
-	if _, err := dc.Tx.ExecContext(
+func (p *CommandPump) completeWithoutEvents(
+	ctx context.Context,
+	tx *sql.Tx,
+	messageID *uuidpb.UUID,
+) error {
+	if _, err := tx.ExecContext(
 		ctx,
 		`SELECT integration.complete_without_events($1)`,
-		xsql.UUID(dc.MessageID),
+		xsql.UUID(messageID),
 	); err != nil {
 		return fmt.Errorf("unable to complete command handling: %w", err)
 	}
@@ -205,23 +212,22 @@ func (p *CommandPump) completeWithoutEvents(ctx context.Context, dc *messagepump
 	return nil
 }
 
-// PostponeDelivery reschedules the command for redelivery after delay,
-// recording failures as its new failure count.
+// PostponeDelivery reschedules the command for redelivery after delay.
 func (p *CommandPump) PostponeDelivery(
 	ctx context.Context,
-	dc *messagepump.DeliveryContext,
-	failures uint64,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
 	delay time.Duration,
 ) error {
 	if err := xsql.ExecOne(
 		ctx,
-		dc.Tx,
+		tx,
 		`UPDATE commandqueue.commands SET
 			failures = $2,
 			deliver_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
-		xsql.UUID(dc.MessageID),
-		failures,
+		xsql.UUID(delivery.MessageID),
+		delivery.Failures,
 		delay,
 	); err != nil {
 		return fmt.Errorf("unable to postpone queued command: %w", err)
