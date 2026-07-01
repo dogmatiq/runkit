@@ -17,6 +17,10 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
+// eventObserverPollInterval is the time between successive polls for events
+// that may satisfy an event observer.
+const eventObserverPollInterval = 25 * time.Millisecond
+
 // ExecuteCommand submits a [Command] for execution.
 //
 // It returns once the engine has taken ownership of the command. By
@@ -38,6 +42,13 @@ func (e *Engine) ExecuteCommand(
 	contexthook.Invoke(ctx, contexthook.ExecuteCommand{
 		CommandEnvelope: commandEnvelope,
 	})
+
+	if len(eventObservers) != 0 {
+		_, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("context must have a deadline when using event observers")
+		}
+	}
 
 	if err := command.Validate(
 		xmessage.ValidationScope{
@@ -102,13 +113,21 @@ func (e *Engine) ExecuteCommand(
 		return nil
 	}
 
-	return waitForEvents(
+	if err := waitForEvents(
 		ctx,
 		e.DB,
 		messageID,
 		eventTypes,
 		eventObservers,
-	)
+	); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return dogma.ErrEventObserverNotSatisfied
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // resolveExecuteCommandOptions resolves the given [dogma.ExecuteCommandOption]
@@ -141,6 +160,9 @@ func (e *Engine) resolveExecuteCommandOptions(
 
 // waitForEvents waits for events that satisfy the given observers, or until the
 // context expires.
+//
+// This reference implementation does not attempt to detect when no further
+// events are possible; only the context deadline bounds the wait time.
 func waitForEvents(
 	ctx context.Context,
 	q xsql.Querier,
@@ -151,27 +173,7 @@ func waitForEvents(
 	var nextOffsets uuidpb.Map[uint64]
 
 	for {
-		// First, check if there are any pending commands or deadlines within this
-		// causal chain, which may produce more events.
-		possibleFutureEventAt, hasPossibleFutureEvent, err := possibleFutureEventAt(
-			ctx,
-			q,
-			correlationID,
-		)
-		if err != nil {
-			return err
-		}
-
-		// Next, observe any events that have occurred since the last observed
-		// offset on each stream to see if any of them satisfy the observers.
-		//
-		// IMPORTANT: We must query the event _after_ checking for pending
-		// commands/deadlines to avoid a race condition. If we queried events
-		// first, a command/deadline could complete after that query but before
-		// the pending command/deadline check. We'd believe there is no way that
-		// more relevant events can appear on the stream, but in fact they're
-		// already there.
-		observerIsSatisfied, err := pollForEvents(
+		satisfied, err := pollForEvents(
 			ctx,
 			q,
 			correlationID,
@@ -179,65 +181,16 @@ func waitForEvents(
 			eventObservers,
 			nextOffsets,
 		)
-		if observerIsSatisfied || err != nil {
+		if satisfied || err != nil {
 			return err
-		}
-
-		if !hasPossibleFutureEvent {
-			return dogma.ErrEventObserverNotSatisfied
-		}
-
-		// Wait until the next potential event-producing action occurs, or the
-		// context deadline expires.
-		//
-		// We add 50ms to provide a minimum sleep, and to allow the future
-		// event-producing action time to record its events before we check
-		// again.
-		sleepUntil := possibleFutureEventAt.Add(50 * time.Millisecond)
-
-		// If the possible future event-producing action won't occur before the
-		// context deadline we don't bother waiting.
-		if contextDeadline, ok := ctx.Deadline(); ok {
-			if sleepUntil.After(contextDeadline) {
-				return dogma.ErrEventObserverNotSatisfied
-			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Until(sleepUntil)):
-			// try again
+		case <-time.After(eventObserverPollInterval):
 		}
 	}
-}
-
-// possibleFutureEventAt returns the time at which the next command or deadline
-// with the given correlation is scheduled to be handled.
-func possibleFutureEventAt(
-	ctx context.Context,
-	q xsql.Querier,
-	correlationID *uuidpb.UUID,
-) (at time.Time, ok bool, err error) {
-	// TODO: union with deadlines table when they're implemented.
-	row := q.QueryRowContext(
-		ctx,
-		`SELECT deliver_at
-		FROM commandqueue.commands
-		WHERE correlation_id = $1
-		ORDER BY deliver_at
-		LIMIT 1`,
-		xsql.UUID(correlationID),
-	)
-
-	if err := row.Scan(&at); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return time.Time{}, false, nil
-		}
-		return time.Time{}, false, fmt.Errorf("unable to query pending commands: %w", err)
-	}
-
-	return at, true, nil
 }
 
 // pollForEvents observes any events that have occurred since the last observed

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -116,9 +117,10 @@ func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_eventObserverIsInvokedWithRecordedEvents verifies that
-// event observers are called with events recorded by the handler.
-func TestCommandExecutor_eventObserverIsInvokedWithRecordedEvents(t *testing.T) {
+// TestCommandExecutor_eventObserverSeesEventsWithDirectCausation verifies that
+// event observers are called with events recorded directly by the command that
+// was executed.
+func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
@@ -166,6 +168,104 @@ func TestCommandExecutor_eventObserverIsInvokedWithRecordedEvents(t *testing.T) 
 	)
 }
 
+// TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation verifies
+// that event observers are called with events recorded indirectly, that is, not
+// directly by the command that was executed, but rather after a chain of
+// causation that starts with the command.
+func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, engine *dogmaengine.Engine) {
+			err := engine.ExecuteCommand(
+				t.Context(),
+				&stubs.CommandStub[stubs.TypeA]{Content: "start"},
+				dogma.WithEventObserver(
+					func(_ context.Context, e *stubs.EventStub[stubs.TypeB]) (bool, error) {
+						return e.Content == "from-deadline", nil
+					},
+				),
+			)
+			if err != nil {
+				t.Fatalf("got %v, want nil", err)
+			}
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<trigger>", "8e6a3127-3a6f-4e58-9c34-7e1fb70e9c4f")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					_ dogma.Command,
+				) error {
+					s.RecordEvent(stubs.EventA1)
+					return nil
+				},
+			},
+		),
+		dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<scheduler>", "27f4f0a8-9d4c-4f9c-9e34-1a52d4f6c3b7")
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeB]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					_ dogma.Event,
+				) error {
+					s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					_ dogma.Deadline,
+				) error {
+					s.ExecuteCommand(&stubs.CommandStub[stubs.TypeB]{Content: "satisfy"})
+					return nil
+				},
+			},
+		),
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<satisfier>", "61e1f0c5-5d4a-4b8b-9c91-2f2a6c8a9b1d")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					_ dogma.Command,
+				) error {
+					s.RecordEvent(&stubs.EventStub[stubs.TypeB]{Content: "from-deadline"})
+					return nil
+				},
+			},
+		),
+	)
+}
+
 // TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
 // that ExecuteCommand returns ErrEventObserverNotSatisfied when no observer
 // returns true.
@@ -173,8 +273,11 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+
 			err := engine.ExecuteCommand(
-				t.Context(),
+				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "unsatisfied"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
@@ -216,8 +319,11 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+
 			err := engine.ExecuteCommand(
-				t.Context(),
+				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "no-events"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
