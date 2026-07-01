@@ -6,7 +6,6 @@ CREATE SCHEMA IF NOT EXISTS commandqueue;
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS commandqueue.commands (
     message_id            uuid        PRIMARY KEY,
-    correlation_id        uuid        NOT NULL,
     message_type_id       uuid        NOT NULL,
     envelope              bytea       NOT NULL,
     failures              int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
@@ -19,14 +18,6 @@ CREATE TABLE IF NOT EXISTS commandqueue.commands (
 CREATE INDEX IF NOT EXISTS pending_commands_by_type
 ON commandqueue.commands (
     message_type_id,
-    deliver_at
-);
-
--- Create an index for finding commands that are part of a particular causal
--- chain; that is they have a specific correlation ID.
-CREATE INDEX IF NOT EXISTS pending_commands_by_correlation_id
-ON commandqueue.commands (
-    correlation_id,
     deliver_at
 );
 

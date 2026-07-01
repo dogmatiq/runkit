@@ -24,9 +24,8 @@ func addCommandsToQueue(
 	for commandEnvelope := range commandEnvelopes.All() {
 		if _, err := tx.ExecContext(
 			ctx,
-			`SELECT commandqueue.add($1, $2, $3, $4, $5)`,
+			`SELECT commandqueue.add($1, $2, $3, $4)`,
 			xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
-			xsql.UUID(commandEnvelope.GetHeader().GetCorrelationId()),
 			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
 			xsql.Envelope(commandEnvelope),
 			commandEnvelope.GetBody().GetIdempotencyKey(),

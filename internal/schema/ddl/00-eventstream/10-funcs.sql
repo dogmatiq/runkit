@@ -113,31 +113,9 @@ AS $$
             e.envelope,
             append.aggregate_handler_key,
             append.aggregate_instance_id
-        FROM event_list AS e, updated_stream AS s
-        RETURNING
-            stream_offset,
-            message_type_id
-    ),
-    deduped_types AS (
-        SELECT DISTINCT ON (message_type_id)
-            message_type_id,
-            stream_offset
-        FROM inserted_events
-        ORDER BY message_type_id, stream_offset DESC
-    ),
-    upsert_types AS (
-        INSERT INTO eventstream.event_types (
-            stream_id,
-            message_type_id,
-            latest_offset
-        )
-        SELECT
-            append.stream_id,
-            dt.message_type_id,
-            dt.stream_offset
-        FROM deduped_types AS dt
-        ON CONFLICT (stream_id, message_type_id)
-        DO UPDATE SET latest_offset = EXCLUDED.latest_offset
+        FROM event_list AS e
+        CROSS JOIN updated_stream AS s
+        RETURNING stream_offset
     )
     SELECT MAX(stream_offset) + 1
     FROM inserted_events;

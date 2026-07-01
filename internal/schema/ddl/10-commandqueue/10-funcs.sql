@@ -13,7 +13,6 @@
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION commandqueue.add(
     message_id       uuid,
-    correlation_id   uuid,
     message_type_id  uuid,
     envelope         bytea,
     idem_key         text
@@ -44,12 +43,10 @@ BEGIN
 
     INSERT INTO commandqueue.commands (
         message_id,
-        correlation_id,
         message_type_id,
         envelope
     ) VALUES (
         add.message_id,
-        add.correlation_id,
         add.message_type_id,
         add.envelope
     );

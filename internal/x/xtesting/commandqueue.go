@@ -179,16 +179,14 @@ func EnqueuePostponedCommand(
 		t.Context(),
 		`INSERT INTO commandqueue.commands (
 			message_id,
-			correlation_id,
 			message_type_id,
 			envelope,
 			deliver_at
 		) VALUES (
-			$1, $2, $3, $4,
+			$1, $2, $3,
 			clock_timestamp() + INTERVAL '24 hours'
 		)`,
 		xsql.UUID(env.GetBody().GetMessageId()),
-		xsql.UUID(env.GetHeader().GetCorrelationId()),
 		xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
 		xsql.Envelope(env),
 	); err != nil {
