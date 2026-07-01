@@ -8,6 +8,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
@@ -60,6 +61,15 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 
 	commandEnvelope := s.commandPacker.PackCommand(c)
 
+	if err := c.Validate(
+		xmessage.ValidationScope{
+			IsNewMessage: true,
+			Envelope:     commandEnvelope,
+		},
+	); err != nil {
+		panic(fmt.Sprintf("command of type %T is invalid: %s", c, err))
+	}
+
 	s.logger.Info(
 		c.MessageDescription(),
 		xslog.Envelope("command", commandEnvelope),
@@ -76,6 +86,15 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 	}
 
 	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))
+
+	if err := d.Validate(
+		xmessage.ValidationScope{
+			IsNewMessage: true,
+			Envelope:     deadlineEnvelope,
+		},
+	); err != nil {
+		panic(fmt.Sprintf("deadline of type %T is invalid: %s", d, err))
+	}
 
 	s.logger.Info(
 		d.MessageDescription(),

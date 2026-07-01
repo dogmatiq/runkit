@@ -8,6 +8,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
 )
 
@@ -32,6 +33,15 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 	}
 
 	eventEnvelope := s.packer.PackEvent(event)
+
+	if err := event.Validate(
+		xmessage.ValidationScope{
+			IsNewMessage: true,
+			Envelope:     eventEnvelope,
+		},
+	); err != nil {
+		panic(fmt.Sprintf("event of type %T is invalid: %s", event, err))
+	}
 
 	s.logger.Info(
 		event.MessageDescription(),
