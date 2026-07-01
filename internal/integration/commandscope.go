@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -12,8 +13,9 @@ import (
 
 // commandScope implements [dogma.IntegrationCommandScope].
 type commandScope struct {
-	packer *envelopepb.EffectPacker
-	logger *slog.Logger
+	packer               *envelopepb.EffectPacker
+	logger               *slog.Logger
+	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *commandScope) Now() time.Time {
@@ -25,6 +27,10 @@ func (s *commandScope) Log(format string, args ...any) {
 }
 
 func (s *commandScope) RecordEvent(event dogma.Event) {
+	if _, ok := s.outboundMessageTypes[reflect.TypeOf(event)]; !ok {
+		panic(fmt.Sprintf("this handler is not configured to record events of type %T", event))
+	}
+
 	eventEnvelope := s.packer.PackEvent(event)
 
 	s.logger.Info(

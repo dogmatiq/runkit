@@ -94,6 +94,7 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 						c.Routes(
 							dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeA]](),
+							dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
 						)
 					},
 					RouteEventToInstanceFunc: func(

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -21,10 +22,11 @@ import (
 // DeadlinePump is a [messagepump.Driver] that delivers pending deadlines to a
 // process message handler.
 type DeadlinePump struct {
-	DB       *sql.DB
-	Handler  dogma.ProcessMessageHandler[dogma.ProcessRoot]
-	Identity *identitypb.Identity
-	Packer   *envelopepb.Packer
+	DB                   *sql.DB
+	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity             *identitypb.Identity
+	Packer               *envelopepb.Packer
+	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
 // AcquireDelivery attempts to acquire the next pending deadline for the
@@ -146,7 +148,8 @@ func (p *DeadlinePump) HandleDelivery(ctx context.Context, dc *messagepump.Deliv
 				p.Identity,
 				envelopepb.WithInstanceID(instanceID),
 			),
-			logger: logger,
+			logger:               logger,
+			outboundMessageTypes: p.OutboundMessageTypes,
 		},
 		deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
 	}

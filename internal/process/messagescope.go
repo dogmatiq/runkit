@@ -3,6 +3,7 @@ package process
 import (
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -13,13 +14,14 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
-	instanceID     string
-	root           dogma.ProcessRoot
-	mutated        bool
-	ended          bool
-	commandPacker  *envelopepb.EffectPacker
-	deadlinePacker *envelopepb.EffectPacker
-	logger         *slog.Logger
+	instanceID           string
+	root                 dogma.ProcessRoot
+	mutated              bool
+	ended                bool
+	commandPacker        *envelopepb.EffectPacker
+	deadlinePacker       *envelopepb.EffectPacker
+	logger               *slog.Logger
+	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *messageScope) Now() time.Time {
@@ -52,6 +54,10 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 		panic("cannot execute command after process instance has ended")
 	}
 
+	if _, ok := s.outboundMessageTypes[reflect.TypeOf(c)]; !ok {
+		panic(fmt.Sprintf("this handler is not configured to execute commands of type %T", c))
+	}
+
 	commandEnvelope := s.commandPacker.PackCommand(c)
 
 	s.logger.Info(
@@ -63,6 +69,10 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 	if s.ended {
 		panic("cannot schedule deadline after process instance has ended")
+	}
+
+	if _, ok := s.outboundMessageTypes[reflect.TypeOf(d)]; !ok {
+		panic(fmt.Sprintf("this handler is not configured to schedule deadlines of type %T", d))
 	}
 
 	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))

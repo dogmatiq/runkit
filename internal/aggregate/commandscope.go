@@ -3,6 +3,7 @@ package aggregate
 import (
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -12,10 +13,11 @@ import (
 
 // commandScope implements [dogma.AggregateCommandScope].
 type commandScope struct {
-	instanceID string
-	root       dogma.AggregateRoot
-	packer     *envelopepb.EffectPacker
-	logger     *slog.Logger
+	instanceID           string
+	root                 dogma.AggregateRoot
+	packer               *envelopepb.EffectPacker
+	logger               *slog.Logger
+	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *commandScope) Now() time.Time {
@@ -31,6 +33,10 @@ func (s *commandScope) InstanceID() string {
 }
 
 func (s *commandScope) RecordEvent(event dogma.Event) {
+	if _, ok := s.outboundMessageTypes[reflect.TypeOf(event)]; !ok {
+		panic(fmt.Sprintf("this handler is not configured to record events of type %T", event))
+	}
+
 	s.root.ApplyEvent(event)
 
 	eventEnvelope := s.packer.PackEvent(event)

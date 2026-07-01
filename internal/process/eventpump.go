@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -22,11 +23,12 @@ import (
 // EventPump is a [messagepump.Driver] that delivers pending events to a
 // process message handler.
 type EventPump struct {
-	DB           *sql.DB
-	Handler      dogma.ProcessMessageHandler[dogma.ProcessRoot]
-	Identity     *identitypb.Identity
-	Packer       *envelopepb.Packer
-	EventTypeIDs []string
+	DB                   *sql.DB
+	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity             *identitypb.Identity
+	Packer               *envelopepb.Packer
+	EventTypeIDs         []string
+	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
 // AcquireDelivery attempts to acquire the next pending event for the handler on
@@ -185,7 +187,8 @@ func (p *EventPump) HandleDelivery(ctx context.Context, dc *messagepump.Delivery
 				p.Identity,
 				envelopepb.WithInstanceID(instanceID),
 			),
-			logger: logger,
+			logger:               logger,
+			outboundMessageTypes: p.OutboundMessageTypes,
 		},
 		eventEnvelope.GetBody().GetCreatedAt().AsTime(),
 	}

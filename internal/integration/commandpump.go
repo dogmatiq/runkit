@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -23,12 +24,13 @@ import (
 // CommandPump is a [messagepump.Driver] that delivers pending commands to an
 // integration message handler of a specific type.
 type CommandPump struct {
-	DB             *sql.DB
-	Handler        dogma.IntegrationMessageHandler
-	Identity       *identitypb.Identity
-	Concurrency    dogma.ConcurrencyPreference
-	Packer         *envelopepb.Packer
-	CommandTypeIDs []string
+	DB                   *sql.DB
+	Handler              dogma.IntegrationMessageHandler
+	Identity             *identitypb.Identity
+	Concurrency          dogma.ConcurrencyPreference
+	Packer               *envelopepb.Packer
+	CommandTypeIDs       []string
+	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
 // AcquireDelivery attempts to acquire the next pending command for an
@@ -111,8 +113,9 @@ func (p *CommandPump) HandleDelivery(ctx context.Context, dc *messagepump.Delive
 					return p.Handler.HandleCommand(
 						ctx,
 						&commandScope{
-							packer: packer,
-							logger: logger,
+							packer:               packer,
+							logger:               logger,
+							outboundMessageTypes: p.OutboundMessageTypes,
 						},
 						commandForHandling,
 					)

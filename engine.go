@@ -173,17 +173,19 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 	}
 
 	logger := e.newLoggerForHandler(handlerConfig)
+	outboundMessageTypes := e.outboundMessageTypesForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &aggregate.CommandPump{
-					DB:             e.DB,
-					Handler:        handlerConfig.Interface(),
-					Identity:       handlerConfig.Identity(),
-					Packer:         e.packer,
-					CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+					DB:                   e.DB,
+					Handler:              handlerConfig.Interface(),
+					Identity:             handlerConfig.Identity(),
+					Packer:               e.packer,
+					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+					OutboundMessageTypes: outboundMessageTypes,
 				},
 				DB:          e.DB,
 				BackoffBase: backoffBase,
@@ -196,12 +198,13 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &integration.CommandPump{
-					DB:             e.DB,
-					Handler:        handlerConfig.Interface(),
-					Identity:       handlerConfig.Identity(),
-					Concurrency:    handlerConfig.ConcurrencyPreference(),
-					Packer:         e.packer,
-					CommandTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.CommandKind),
+					DB:                   e.DB,
+					Handler:              handlerConfig.Interface(),
+					Identity:             handlerConfig.Identity(),
+					Concurrency:          handlerConfig.ConcurrencyPreference(),
+					Packer:               e.packer,
+					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+					OutboundMessageTypes: outboundMessageTypes,
 				},
 				DB:          e.DB,
 				BackoffBase: backoffBase,
@@ -214,11 +217,12 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &process.EventPump{
-					DB:           e.DB,
-					Handler:      handlerConfig.Interface(),
-					Identity:     handlerConfig.Identity(),
-					Packer:       e.packer,
-					EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+					DB:                   e.DB,
+					Handler:              handlerConfig.Interface(),
+					Identity:             handlerConfig.Identity(),
+					Packer:               e.packer,
+					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+					OutboundMessageTypes: outboundMessageTypes,
 				},
 				DB:          e.DB,
 				BackoffBase: backoffBase,
@@ -227,10 +231,11 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 			},
 			&messagepump.MessagePump{
 				Driver: &process.DeadlinePump{
-					DB:       e.DB,
-					Handler:  handlerConfig.Interface(),
-					Identity: handlerConfig.Identity(),
-					Packer:   e.packer,
+					DB:                   e.DB,
+					Handler:              handlerConfig.Interface(),
+					Identity:             handlerConfig.Identity(),
+					Packer:               e.packer,
+					OutboundMessageTypes: outboundMessageTypes,
 				},
 				DB:          e.DB,
 				BackoffBase: backoffBase,
@@ -247,7 +252,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:      handlerConfig.Interface(),
 					Identity:     handlerConfig.Identity(),
 					Concurrency:  handlerConfig.ConcurrencyPreference(),
-					EventTypeIDs: e.collectInboundMessageTypeIDs(handlerConfig, message.EventKind),
+					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					Logger:       logger,
 				},
 				DB:          e.DB,
@@ -281,10 +286,10 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 	)
 }
 
-// collectInboundMessageTypeIDs returns the message type IDs of all inbound
+// inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
-func (*Engine) collectInboundMessageTypeIDs(
+func (*Engine) inboundMessageTypeIDsForHandler(
 	handlerConfig config.Handler,
 	messageKind message.Kind,
 ) []string {
@@ -301,4 +306,21 @@ func (*Engine) collectInboundMessageTypeIDs(
 	}
 
 	return inboundMessageTypeIDs
+}
+
+// outboundMessageTypesForHandler returns the reflect.Types of all outbound
+// messages of the given kind routed from the given handler.
+func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[reflect.Type]struct{} {
+	outboundRoutes := handlerConfig.
+		RouteSet().
+		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
+		Routes()
+
+	types := map[reflect.Type]struct{}{}
+
+	for route := range outboundRoutes {
+		types[route.MessageType.Get().ReflectType()] = struct{}{}
+	}
+
+	return types
 }
