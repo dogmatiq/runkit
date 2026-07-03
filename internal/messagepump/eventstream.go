@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // AcquireEventDelivery attempts to acquire the next pending event for the

@@ -11,10 +11,10 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/contexthook"
-	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/contexthook"
+	"github.com/dogmatiq/runkit/internal/x/xmessage"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // eventObserverPollInterval is the time between successive polls for events

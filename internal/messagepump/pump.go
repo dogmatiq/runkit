@@ -12,8 +12,8 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // MessagePump is a helper for implementing a message pump that acquires and

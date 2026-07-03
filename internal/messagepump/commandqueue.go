@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // AcquireCommandDelivery attempts to acquire the next pending command for the

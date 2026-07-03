@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 //go:embed ddl

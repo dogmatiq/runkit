@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 func TestRecover(t *testing.T) {

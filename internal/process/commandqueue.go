@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // addCommandsToQueue inserts any commands scheduled by the handler into the

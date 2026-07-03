@@ -3,8 +3,8 @@ package schema_test
 import (
 	"testing"
 
-	"github.com/dogmatiq/reference-engine/internal/schema"
-	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
+	"github.com/dogmatiq/runkit/internal/schema"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
 func TestCreateAndDrop(t *testing.T) {

@@ -17,12 +17,12 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	"github.com/dogmatiq/reference-engine/internal/aggregate"
-	"github.com/dogmatiq/reference-engine/internal/integration"
-	"github.com/dogmatiq/reference-engine/internal/messagepump"
-	"github.com/dogmatiq/reference-engine/internal/process"
-	"github.com/dogmatiq/reference-engine/internal/projection"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/aggregate"
+	"github.com/dogmatiq/runkit/internal/integration"
+	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/process"
+	"github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
 const (

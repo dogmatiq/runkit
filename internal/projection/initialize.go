@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/enginekit/config"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // InitializeHandler initializes the state of a projection message handler.

@@ -10,10 +10,10 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/messagepump"
-	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // newRoot creates a new process root by calling the handler's New() method.

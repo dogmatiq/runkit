@@ -9,8 +9,8 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/reference-engine"
-	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
+	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
 // TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance verifies that

@@ -10,9 +10,9 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // Compactor is an engine component that periodically attempts to compact a

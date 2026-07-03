@@ -8,8 +8,8 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
-	"github.com/dogmatiq/reference-engine/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xmessage"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
 // commandScope implements [dogma.AggregateCommandScope].

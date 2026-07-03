@@ -13,8 +13,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/reference-engine/internal/schema"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
+	"github.com/dogmatiq/runkit/internal/schema"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -129,7 +129,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 	// We don't use "dogma" as the username because the default PostgreSQL
 	// "search_path" would automatically find the "dogma" schema, but we want to
 	// make sure that all queries name the schema explicitly.
-	username := "dogmatiq-reference-engine-test"
+	username := "dogmatiq-runkit-test"
 	password := "password"
 
 	container, err := postgres.Run(
@@ -142,7 +142,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		// starts.
 		testcontainers.WithReuseByName(
 			fmt.Sprintf(
-				"dogma-reference-engine-%s",
+				"dogmatiq-runkit-%s",
 				testcontainers.SessionID(),
 			),
 		),

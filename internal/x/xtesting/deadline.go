@@ -1,8 +1,9 @@
 package xtesting
 
 import (
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 	"testing"
+
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // WaitForNoPendingDeadlines waits until there are no pending deadlines. If this
