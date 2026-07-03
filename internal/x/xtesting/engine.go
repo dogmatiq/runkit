@@ -97,7 +97,7 @@ func RunEnginesWithDB(
 
 	testTimeout := 3 * time.Second
 	if os.Getenv("CI") != "" {
-		testTimeout = 20 * time.Second
+		testTimeout = 1 * time.Minute
 	}
 
 	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
