@@ -2,7 +2,6 @@ package projection_test
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"testing"
 
@@ -12,80 +11,6 @@ import (
 	dogmaengine "github.com/dogmatiq/reference-engine"
 	"github.com/dogmatiq/reference-engine/internal/x/xtesting"
 )
-
-// TestOCC_eventsAreDeliveredStartingAtTheCheckpointOffset verifies that the
-// handler only receives events starting at its checkpoint offset, skipping
-// previously consumed events.
-func TestOCC_eventsAreDeliveredStartingAtTheCheckpointOffset(t *testing.T) {
-	const (
-		handlerKey = "cf5fe7ce-4311-455f-be14-03a3b647cc7a"
-		eventCount = 5
-	)
-
-	var (
-		checkpointMutex  sync.Mutex
-		checkpointOffset = uint64(2) // ignore the first two events on the stream
-	)
-
-	xtesting.SetupThenRunEngines(
-		t,
-		func(t testing.TB, db *sql.DB) {
-			// Populate the stream before any engine starts so that the events
-			// the handler claims to have already consumed actually exist on the
-			// stream by the time the engine first queries the checkpoint.
-			xtesting.PopulateEventStreams(
-				t,
-				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
-					return stubs.EventA1
-				},
-				eventCount,
-			)
-		},
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
-
-			checkpointMutex.Lock()
-			defer checkpointMutex.Unlock()
-
-			if checkpointOffset != uint64(eventCount) {
-				t.Errorf("unexpected final checkpoint offset: got %d, want %d", checkpointOffset, eventCount)
-			}
-		},
-		dogma.ViaProjection(
-			&stubs.ProjectionMessageHandlerStub{
-				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", handlerKey)
-					c.Routes(
-						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-					)
-				},
-				HandleEventFunc: func(
-					_ context.Context,
-					s dogma.ProjectionEventScope,
-					m dogma.Event,
-				) (uint64, error) {
-					checkpointMutex.Lock()
-					defer checkpointMutex.Unlock()
-
-					if s.Offset() != checkpointOffset {
-						t.Errorf("unexpected offset: got %d, want %d", s.Offset(), checkpointOffset)
-					} else {
-						checkpointOffset++
-					}
-
-					return checkpointOffset, nil
-				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
-					checkpointMutex.Lock()
-					defer checkpointMutex.Unlock()
-
-					return checkpointOffset, nil
-				},
-			},
-		),
-	)
-}
 
 // TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents verifies that when the
 // handler returns a checkpoint offset higher than expected, intermediate events

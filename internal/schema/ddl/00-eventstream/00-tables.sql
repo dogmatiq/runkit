@@ -72,7 +72,7 @@ ON eventstream.events (
 CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
     handler_key       uuid        NOT NULL,
     stream_id         uuid        NOT NULL REFERENCES eventstream.streams(id),
-    checkpoint_offset bigint      DEFAULT NULL,
+    checkpoint_offset bigint      NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
     failures          int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     resume_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
 

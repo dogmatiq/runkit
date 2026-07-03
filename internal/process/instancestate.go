@@ -22,14 +22,12 @@ func newRoot(
 	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
 	logger *slog.Logger,
 ) (dogma.ProcessRoot, error) {
-	var root dogma.ProcessRoot
-
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			root = handler.New()
-			return nil
+	root, err := xerrors.RecoverT(
+		func() (dogma.ProcessRoot, error) {
+			return handler.New(), nil
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorContext(
 			ctx,
 			"unable to create process root",
@@ -84,7 +82,7 @@ func loadInstance(
 	}
 
 	if state != nil {
-		if err := xerrors.ConvertPanicToError(
+		if err := xerrors.Recover(
 			func() error {
 				return root.UnmarshalBinary(state)
 			},
@@ -94,6 +92,7 @@ func loadInstance(
 				"unable to unmarshal process instance state",
 				xslog.Error(err),
 			)
+
 			return false, messagepump.ErrFailed
 		}
 	}
@@ -110,15 +109,12 @@ func saveInstance(
 	root dogma.ProcessRoot,
 	logger *slog.Logger,
 ) error {
-	var data []byte
-
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			var err error
-			data, err = root.MarshalBinary()
-			return err
+	data, err := xerrors.RecoverT(
+		func() ([]byte, error) {
+			return root.MarshalBinary()
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorContext(
 			ctx,
 			"unable to marshal process instance state",

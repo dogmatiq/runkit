@@ -223,7 +223,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
-					EventTypeIDs:         e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.EventKind),
+					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 					Logger:               logger,
 				},
@@ -240,7 +240,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
-					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.DeadlineKind),
+					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
 				DB:           e.DB,
@@ -265,7 +265,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:      handlerConfig.Interface(),
 					Identity:     handlerConfig.Identity(),
 					Concurrency:  handlerConfig.ConcurrencyPreference(),
-					EventTypeIDs: e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.EventKind),
+					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					Logger:       logger,
 				},
 				DB:           e.DB,
@@ -336,28 +336,6 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 	}
 
 	return messageTypeIDs
-}
-
-// inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
-// messages routed to the given handler. It is represented as a slice of UUID
-// strings for direct use in SQL queries.
-func (*Engine) inboundMessageTypeIDsForHandlerAsStrings(
-	handlerConfig config.Handler,
-	messageKind message.Kind,
-) []string {
-	inboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageKind(messageKind)).
-		Filter(config.FilterByMessageDirection(config.InboundDirection)).
-		Routes()
-
-	var inboundMessageTypeIDs []string
-
-	for route := range inboundRoutes {
-		inboundMessageTypeIDs = append(inboundMessageTypeIDs, route.MessageTypeID.Get())
-	}
-
-	return inboundMessageTypeIDs
 }
 
 // outboundMessageTypesForHandler returns the reflect.Types of all outbound

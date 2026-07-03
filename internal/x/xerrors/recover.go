@@ -25,18 +25,15 @@ func (e PanicError) Unwrap() error {
 	return nil
 }
 
-// ConvertPanicToError calls fn and returns a [PanicError] if fn panics.
+// Recover calls fn and returns a [PanicError] if fn panics.
 //
 // If the panic originates directly within fn itself, it is not caught and
 // propagates normally. This ensures that bugs in the engine's own closure logic
 // are not silently swallowed.
-//
-// TODO: make variants of [ConvertPanicToError] with different fn return values
-// (none, err, T + err).
-func ConvertPanicToError(fn func() error) (err error) {
-	// Capture the stack depth from [ConvertPanicToError] down to the goroutine
-	// root. This is used to trim engine frames from the bottom of the panic
-	// stack so that the stack trace only includes user code.
+func Recover(fn func() error) (err error) {
+	// Capture the stack depth from [Recover] down to the goroutine root. This
+	// is used to trim engine frames from the bottom of the panic stack so that
+	// the stack trace only includes user code.
 	var pcs [128]uintptr
 	depth := runtime.Callers(1, pcs[:])
 
@@ -58,9 +55,22 @@ func ConvertPanicToError(fn func() error) (err error) {
 	return fn()
 }
 
-// captureStack returns a formatted stack trace of the panicking code,
-// excluding recovery machinery at the top and engine frames (including the
-// closure passed to [ConvertPanicToError]) at the bottom.
+// RecoverT calls fn and returns a [PanicError] if fn panics.
+//
+// If the panic originates directly within fn itself, it is not caught and
+// propagates normally. This ensures that bugs in the engine's own closure logic
+// are not silently swallowed.
+func RecoverT[T any](fn func() (T, error)) (v T, err error) {
+	err = Recover(func() error {
+		v, err = fn()
+		return err
+	})
+	return v, err
+}
+
+// captureStack returns a formatted stack trace of the panicking code, excluding
+// recovery machinery at the top and engine frames (including the closure passed
+// to [Recover]) at the bottom.
 func captureStack(depth int) string {
 	var pcs [128]uintptr
 

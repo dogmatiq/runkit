@@ -103,7 +103,7 @@ func (p *CommandPump) HandleDelivery(
 		envelopepb.WithInstanceID(instanceID),
 	)
 
-	if err := xerrors.ConvertPanicToError(
+	if err := xerrors.Recover(
 		func() error {
 			p.Handler.HandleCommand(
 				root,
@@ -141,16 +141,17 @@ func (p *CommandPump) routeCommandToInstance(
 	ctx context.Context,
 	logger *slog.Logger,
 	commandForRouting dogma.Command,
-) (instanceID string, err error) {
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			instanceID = p.Handler.RouteCommandToInstance(commandForRouting)
+) (string, error) {
+	instanceID, err := xerrors.RecoverT(
+		func() (string, error) {
+			instanceID := p.Handler.RouteCommandToInstance(commandForRouting)
 			if instanceID == "" {
-				return errors.New("handler returned an empty instance ID")
+				return "", errors.New("handler returned an empty instance ID")
 			}
-			return nil
+			return instanceID, nil
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorContext(
 			ctx,
 			"unable to route command to instance",
@@ -232,14 +233,12 @@ func (p *CommandPump) newRoot(
 	ctx context.Context,
 	logger *slog.Logger,
 ) (dogma.AggregateRoot, error) {
-	var root dogma.AggregateRoot
-
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			root = p.Handler.New()
-			return nil
+	root, err := xerrors.RecoverT(
+		func() (dogma.AggregateRoot, error) {
+			return p.Handler.New(), nil
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorContext(
 			ctx,
 			"unable to create aggregate root",
@@ -450,7 +449,7 @@ func (p *CommandPump) applyHistoricalEvents(
 			return messagepump.ErrFailed
 		}
 
-		if err := xerrors.ConvertPanicToError(
+		if err := xerrors.Recover(
 			func() error {
 				root.ApplyEvent(eventForApply)
 				return nil
@@ -483,7 +482,7 @@ func (p *CommandPump) applySnapshot(
 	root dogma.AggregateRoot,
 	snapshot []byte,
 ) bool {
-	if err := xerrors.ConvertPanicToError(
+	if err := xerrors.Recover(
 		func() error {
 			return root.UnmarshalBinary(snapshot)
 		},
@@ -600,15 +599,12 @@ func (p *CommandPump) marshalSnapshot(
 	logger *slog.Logger,
 	root dogma.AggregateRoot,
 ) ([]byte, bool) {
-	var snapshot []byte
-
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			var err error
-			snapshot, err = root.MarshalBinary()
-			return err
+	snapshot, err := xerrors.RecoverT(
+		func() ([]byte, error) {
+			return root.MarshalBinary()
 		},
-	); err != nil {
+	)
+	if err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
 			logger.ErrorContext(
 				ctx,

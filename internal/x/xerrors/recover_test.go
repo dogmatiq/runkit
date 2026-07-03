@@ -8,9 +8,9 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 )
 
-func TestConvertPanicToError(t *testing.T) {
+func TestRecover(t *testing.T) {
 	t.Run("it returns nil on success", func(t *testing.T) {
-		err := xerrors.ConvertPanicToError(func() error {
+		err := xerrors.Recover(func() error {
 			return nil
 		})
 		if err != nil {
@@ -20,7 +20,7 @@ func TestConvertPanicToError(t *testing.T) {
 
 	t.Run("it returns the error returned by the closure", func(t *testing.T) {
 		want := errors.New("<error>")
-		err := xerrors.ConvertPanicToError(func() error {
+		err := xerrors.Recover(func() error {
 			return want
 		})
 		if !errors.Is(err, want) {
@@ -29,7 +29,7 @@ func TestConvertPanicToError(t *testing.T) {
 	})
 
 	t.Run("it returns a PanicError when user code panics with a string", func(t *testing.T) {
-		err := xerrors.ConvertPanicToError(func() error {
+		err := xerrors.Recover(func() error {
 			panicWithString()
 			return nil
 		})
@@ -50,7 +50,7 @@ func TestConvertPanicToError(t *testing.T) {
 
 	t.Run("it returns a PanicError that unwraps when user code panics with an error", func(t *testing.T) {
 		cause := errors.New("<error>")
-		err := xerrors.ConvertPanicToError(func() error {
+		err := xerrors.Recover(func() error {
 			panicWithError(cause)
 			return nil
 		})
@@ -65,7 +65,7 @@ func TestConvertPanicToError(t *testing.T) {
 	})
 
 	t.Run("it excludes engine frames from the stack trace", func(t *testing.T) {
-		err := xerrors.ConvertPanicToError(func() error {
+		err := xerrors.Recover(func() error {
 			panicWithString()
 			return nil
 		})
@@ -79,9 +79,9 @@ func TestConvertPanicToError(t *testing.T) {
 			t.Fatalf("expected stack trace to contain panicWithString, got:\n%s", panicErr.StackTrace)
 		}
 
-		// The stack should not contain ConvertPanicToError itself.
-		if strings.Contains(panicErr.StackTrace, "xerrors.ConvertPanicToError") {
-			t.Fatalf("expected stack trace to exclude xerrors.ConvertPanicToError, got:\n%s", panicErr.StackTrace)
+		// The stack should not contain Recover itself.
+		if strings.Contains(panicErr.StackTrace, "xerrors.Recover") {
+			t.Fatalf("expected stack trace to exclude xerrors.Recover, got:\n%s", panicErr.StackTrace)
 		}
 	})
 
@@ -94,7 +94,7 @@ func TestConvertPanicToError(t *testing.T) {
 			}
 		}()
 
-		xerrors.ConvertPanicToError(func() error {
+		xerrors.Recover(func() error {
 			panic("<panic>")
 		})
 	})

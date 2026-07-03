@@ -242,12 +242,7 @@ func WaitForHandlerToConsumeAllEvents(
 		LEFT JOIN eventstream.handler_checkpoints AS h
 			ON h.handler_key = $1
 			AND h.stream_id = s.id
-		WHERE s.next_offset > 0
-		AND (
-			h.stream_id IS NULL
-			OR h.checkpoint_offset IS NULL
-			OR h.checkpoint_offset < s.next_offset
-		)`,
+		WHERE COALESCE(h.checkpoint_offset, 0) < s.next_offset`,
 		handlerKey,
 	)
 }
@@ -296,7 +291,6 @@ func WaitForStreamFailureCounterToReset(
 		FROM eventstream.handler_checkpoints
 		WHERE handler_key = $1
 		AND stream_id = ANY($2)
-		AND checkpoint_offset IS NOT NULL
 		AND failures != 0`,
 		handlerKey,
 		xsql.UUIDs(streamIDs...),

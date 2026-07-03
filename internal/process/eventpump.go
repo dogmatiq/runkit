@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -17,7 +16,6 @@ import (
 	"github.com/dogmatiq/reference-engine/internal/x/xerrors"
 	"github.com/dogmatiq/reference-engine/internal/x/xmessage"
 	"github.com/dogmatiq/reference-engine/internal/x/xslog"
-	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
 // EventPump is a [messagepump.Driver] that delivers pending events to a
@@ -27,7 +25,7 @@ type EventPump struct {
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
-	EventTypeIDs         []string
+	EventTypeIDs         *uuidpb.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	Logger               *slog.Logger
 }
@@ -42,80 +40,13 @@ func (p *EventPump) AcquireDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 ) (messagepump.Delivery, bool, error) {
-	row := tx.QueryRowContext(
+	return messagepump.AcquireEventDelivery(
 		ctx,
-		`SELECT
-			s.id,
-			s.next_offset,
-			COALESCE(a.checkpoint_offset, 0),
-			a.failures,
-			COALESCE(e.stream_offset, s.next_offset),
-			e.message_id,
-			e.message_type_id,
-			e.envelope
-		FROM eventstream.acquire_for_read($1) AS a
-		INNER JOIN eventstream.streams AS s
-			ON s.id = a.stream_id
-		LEFT JOIN eventstream.events AS e
-			ON e.stream_id = a.stream_id
-			AND e.stream_offset >= COALESCE(a.checkpoint_offset, 0)
-			AND e.message_type_id = ANY($2)
-		ORDER BY e.stream_offset
-		LIMIT 1`,
-		xsql.UUID(p.Identity.GetKey()),
+		tx,
+		p.Logger,
+		p.Identity.GetKey(),
 		p.EventTypeIDs,
 	)
-
-	var nextStreamOffset uint64
-
-	delivery := messagepump.Delivery{
-		MessageID:     &uuidpb.UUID{},
-		MessageTypeID: &uuidpb.UUID{},
-		Stream: &messagepump.DeliveryStream{
-			ID: &uuidpb.UUID{},
-		},
-	}
-
-	if err := row.Scan(
-		xsql.UUID(delivery.Stream.ID),
-		&nextStreamOffset,
-		&delivery.Stream.CheckpointOffset,
-		&delivery.Failures,
-		&delivery.Stream.EventOffset,
-		xsql.UUID(delivery.MessageID),
-		xsql.UUID(delivery.MessageTypeID),
-		&delivery.EnvelopeBytes,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return messagepump.Delivery{}, false, nil
-		}
-
-		return messagepump.Delivery{}, false, fmt.Errorf("unable to acquire pending event: %w", err)
-	}
-
-	// If we found a pending event, return a delivery for it.
-	if delivery.Stream.EventOffset < nextStreamOffset {
-		return delivery, true, nil
-	}
-
-	// Otherwise, no matching events are available on this stream. Advance the
-	// checkpoint offset to the end of the stream so that the stream is not
-	// re-acquired until new events are appended.
-	if nextStreamOffset > delivery.Stream.CheckpointOffset {
-		if err := messagepump.AdvanceStreamCheckpoint(
-			ctx,
-			tx,
-			p.Logger,
-			p.Identity.GetKey(),
-			delivery.Stream.ID,
-			delivery.Stream.CheckpointOffset,
-			nextStreamOffset,
-		); err != nil {
-			return messagepump.Delivery{}, false, err
-		}
-	}
-
-	return messagepump.Delivery{}, false, nil
 }
 
 // PostponeDelivery reschedules consumption of the stream after delay.
@@ -237,14 +168,9 @@ func (p *EventPump) HandleDelivery(
 		envelope.GetBody().GetCreatedAt().AsTime(),
 	}
 
-	if err := xerrors.ConvertPanicToError(
+	if err := xerrors.Recover(
 		func() error {
-			return p.Handler.HandleEvent(
-				ctx,
-				root,
-				scope,
-				event,
-			)
+			return p.Handler.HandleEvent(ctx, root, scope, event)
 		},
 	); err != nil {
 		instanceLogger.ErrorContext(
@@ -252,6 +178,7 @@ func (p *EventPump) HandleDelivery(
 			"unable to handle event",
 			xslog.Error(err),
 		)
+
 		return messagepump.ErrFailed
 	}
 
@@ -304,21 +231,22 @@ func (p *EventPump) routeEventToInstance(
 	ctx context.Context,
 	logger *slog.Logger,
 	event dogma.Event,
-) (instanceID string, ok bool, err error) {
-	if err := xerrors.ConvertPanicToError(
-		func() error {
-			instanceID, ok, err = p.Handler.RouteEventToInstance(ctx, event)
-			if err != nil {
-				return err
+) (string, bool, error) {
+	instanceID, err := xerrors.RecoverT(
+		func() (string, error) {
+			instanceID, ok, err := p.Handler.RouteEventToInstance(ctx, event)
+			if !ok || err != nil {
+				return "", err
 			}
 
-			if ok && instanceID == "" {
-				return fmt.Errorf("handler returned empty instance ID")
+			if instanceID == "" {
+				return "", fmt.Errorf("handler returned empty instance ID")
 			}
 
-			return nil
+			return instanceID, nil
 		},
-	); err != nil {
+	)
+	if err != nil {
 		logger.ErrorContext(
 			ctx,
 			"unable to route event to instance",
@@ -328,5 +256,5 @@ func (p *EventPump) routeEventToInstance(
 		return "", false, messagepump.ErrFailed
 	}
 
-	return instanceID, ok, nil
+	return instanceID, instanceID != "", nil
 }

@@ -82,7 +82,7 @@ func (p *CommandPump) HandleDelivery(
 		p.Identity.GetKey(),
 		p.Concurrency,
 		func() error {
-			return xerrors.ConvertPanicToError(
+			return xerrors.Recover(
 				func() error {
 					return p.Handler.HandleCommand(
 						ctx,

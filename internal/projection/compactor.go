@@ -74,7 +74,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 		return fmt.Errorf("unable to acquire compaction lock: %w", err)
 	}
 
-	if err := xerrors.ConvertPanicToError(
+	if err := xerrors.Recover(
 		func() error {
 			return c.Handler.Compact(
 				ctx,

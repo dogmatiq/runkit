@@ -27,7 +27,7 @@ type DeadlinePump struct {
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
-	DeadlineTypeIDs      []string
+	DeadlineTypeIDs      *uuidpb.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -72,7 +72,7 @@ func (p *DeadlinePump) AcquireDelivery(
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUID(p.Identity.GetKey()),
 		time.Now(),
-		p.DeadlineTypeIDs,
+		xsql.UUIDSeq(p.DeadlineTypeIDs.All()),
 	)
 
 	delivery := messagepump.Delivery{
@@ -199,14 +199,9 @@ func (p *DeadlinePump) HandleDelivery(
 		envelope.GetBody().GetScheduledFor().AsTime(),
 	}
 
-	if err := xerrors.ConvertPanicToError(
+	if err := xerrors.Recover(
 		func() error {
-			return p.Handler.HandleDeadline(
-				ctx,
-				root,
-				scope,
-				deadline,
-			)
+			return p.Handler.HandleDeadline(ctx, root, scope, deadline)
 		},
 	); err != nil {
 		instanceLogger.ErrorContext(
