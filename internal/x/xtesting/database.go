@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -56,7 +55,7 @@ func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 		t.Fatalf("unable to open PostgreSQL connection pool: %s", err)
 	}
 
-	db.SetMaxOpenConns(10 * runtime.GOMAXPROCS(0))
+	db.SetMaxOpenConns(100)
 
 	t.Cleanup(func() {
 		db.Close()

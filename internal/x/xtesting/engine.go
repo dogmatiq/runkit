@@ -17,8 +17,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// appKey is the unique key used for Dogma applications within tests.
-const appKey = "f1d3a3b4-5b6c-4d7e-8f9a-0b1c2d3e4f5a"
+const (
+	// appKey is the unique key used for Dogma applications within tests.
+	appKey = "f1d3a3b4-5b6c-4d7e-8f9a-0b1c2d3e4f5a"
+
+	// concurrentEngines is the number of concurrent engines to run in tests.
+	concurrentEngines = 3
+)
 
 // RunEngines runs the given Dogma application in a test engine and executes the
 // given function while the engine is running.
@@ -100,10 +105,9 @@ func RunEnginesWithDB(
 
 	logger := spruce.NewTestLogger(t)
 
-	const numEngines = 3
 	var engine *dogmaengine.Engine
 
-	for idx := range numEngines {
+	for idx := range concurrentEngines {
 		e := &dogmaengine.Engine{
 			DB:                        db,
 			App:                       app,

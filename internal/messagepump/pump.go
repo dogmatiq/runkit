@@ -69,7 +69,7 @@ func (p *MessagePump) runWorker(ctx context.Context, tasks <-chan *deliveryTask)
 
 			task.Logger.ErrorContext(
 				ctx,
-				"unable to handle delivery",
+				"unable to deliver message",
 				xslog.Error(err),
 			)
 		}
@@ -98,7 +98,7 @@ func (p *MessagePump) runDispatcher(ctx context.Context, tasks chan<- *deliveryT
 
 			p.Logger.ErrorContext(
 				ctx,
-				"unable to acquire delivery",
+				"unable to acquire message for delivery",
 				xslog.Error(err),
 				slog.Uint64("attempt", failures),
 				slog.Duration("delay", delay),
@@ -110,7 +110,7 @@ func (p *MessagePump) runDispatcher(ctx context.Context, tasks chan<- *deliveryT
 		if ok {
 			task.Logger.DebugContext(
 				ctx,
-				"acquired delivery",
+				"acquired message for delivery",
 			)
 
 			select {
@@ -168,7 +168,7 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 		if err != nil {
 			logger.ErrorContext(
 				ctx,
-				"unable to unmarshal envelope",
+				"unable to unmarshal message envelope",
 				xslog.Error(err),
 			)
 
@@ -253,7 +253,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		afterCommit = func() {
 			task.Logger.DebugContext(
 				ctx,
-				"handled delivery",
+				"message delivered successfully",
 			)
 		}
 
@@ -273,7 +273,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		afterCommit = func() {
 			task.Logger.DebugContext(
 				ctx,
-				"postponed delivery due to failure",
+				"postponed message delivery due to failure",
 				slog.Duration("delay", delay),
 			)
 		}
@@ -293,7 +293,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		afterCommit = func() {
 			task.Logger.DebugContext(
 				ctx,
-				"postponed delivery due to contention",
+				"postponed message delivery due to contention",
 				slog.Duration("delay", delay),
 			)
 		}

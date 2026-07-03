@@ -99,7 +99,7 @@ func (p *EventPump) AcquireDelivery(
 	// handler for its authoritative offset, persist it, and defer delivery to
 	// the next acquisition cycle.
 	if checkpointOffset == nil {
-		return messagepump.Delivery{}, false, p.initializeCheckpoint(ctx, tx, delivery.Stream.ID, nextStreamOffset)
+		return messagepump.Delivery{}, false, p.initializeCheckpoint(ctx, tx, delivery.Stream.ID)
 	}
 
 	delivery.Stream.CheckpointOffset = *checkpointOffset
@@ -113,7 +113,15 @@ func (p *EventPump) AcquireDelivery(
 	// to the end of the stream so that the stream is not re-acquired until
 	// new events arrive.
 	if nextStreamOffset > *checkpointOffset {
-		if err := p.advanceCheckpoint(ctx, tx, delivery.Stream.ID, nextStreamOffset); err != nil {
+		if err := messagepump.AdvanceStreamCheckpoint(
+			ctx,
+			tx,
+			p.Logger,
+			p.Identity.GetKey(),
+			delivery.Stream.ID,
+			*checkpointOffset,
+			nextStreamOffset,
+		); err != nil {
 			return messagepump.Delivery{}, false, err
 		}
 	}
@@ -128,7 +136,6 @@ func (p *EventPump) initializeCheckpoint(
 	ctx context.Context,
 	tx *sql.Tx,
 	streamID *uuidpb.UUID,
-	nextStreamOffset uint64,
 ) error {
 	var handlerCheckpoint uint64
 
@@ -142,23 +149,19 @@ func (p *EventPump) initializeCheckpoint(
 		return fmt.Errorf("unable to get checkpoint offset from handler: %w", err)
 	}
 
-	if handlerCheckpoint > nextStreamOffset {
-		p.Logger.WarnContext(
-			ctx,
-			"handler reported checkpoint offset beyond the end of the stream",
-			xslog.UUID("stream_id", streamID),
-			slog.Uint64("handler_checkpoint_offset", handlerCheckpoint),
-			slog.Uint64("stream_next_offset", nextStreamOffset),
-		)
-	}
-
+	// The checkpoint_offset clause is purely defensive, the row should already
+	// be locked FOR UPDATE by eventstream.acquire_for_read(), so the observed
+	// value must still be current. If this UPDATE affects 0 rows, another
+	// transaction has modified the row concurrently, which would indicate a
+	// locking bug.
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
 		`UPDATE eventstream.handler_checkpoints SET
 			checkpoint_offset = $1
 		WHERE handler_key = $2
-			AND stream_id = $3`,
+			AND stream_id = $3
+			AND checkpoint_offset IS NULL`,
 		handlerCheckpoint,
 		xsql.UUID(p.Identity.GetKey()),
 		xsql.UUID(streamID),
@@ -166,32 +169,12 @@ func (p *EventPump) initializeCheckpoint(
 		return fmt.Errorf("unable to persist handler checkpoint: %w", err)
 	}
 
-	return nil
-}
-
-// advanceCheckpoint advances the handler's checkpoint offset for the stream to
-// the given offset, which is the offset after the last event on the stream
-// known at the time of acquisition.
-func (p *EventPump) advanceCheckpoint(
-	ctx context.Context,
-	tx *sql.Tx,
-	streamID *uuidpb.UUID,
-	offset uint64,
-) error {
-	if err := xsql.ExecOne(
+	p.Logger.DebugContext(
 		ctx,
-		tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			checkpoint_offset = $1,
-			failures = 0
-		WHERE handler_key = $2
-			AND stream_id = $3`,
-		offset,
-		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(streamID),
-	); err != nil {
-		return fmt.Errorf("unable to update handler checkpoint: %w", err)
-	}
+		"synced initial checkpoint offset with handler",
+		xslog.UUID("stream_id", streamID),
+		slog.Uint64("checkpoint_offset", handlerCheckpoint),
+	)
 
 	return nil
 }
@@ -261,36 +244,34 @@ func (p *EventPump) HandleDelivery(
 		)
 	}
 
-	row := tx.QueryRowContext(
+	// The checkpoint_offset clause is purely defensive, the row should already
+	// be locked FOR UPDATE by eventstream.acquire_for_read(), so the observed
+	// value must still be current. If this UPDATE affects 0 rows, another
+	// transaction has modified the row concurrently, which would indicate a
+	// locking bug.
+	if err := xsql.ExecOne(
 		ctx,
+		tx,
 		`UPDATE eventstream.handler_checkpoints SET
 			checkpoint_offset = $1,
 			failures = 0
 		WHERE handler_key = $2
 			AND stream_id = $3
-		RETURNING (
-			SELECT next_offset
-			FROM eventstream.streams
-			WHERE id = $3
-		)`,
+			AND checkpoint_offset = $4`,
 		nextCheckpointOffset,
 		xsql.UUID(p.Identity.GetKey()),
 		xsql.UUID(delivery.Stream.ID),
-	)
-
-	var nextStreamOffset uint64
-	if err := row.Scan(&nextStreamOffset); err != nil {
+		delivery.Stream.CheckpointOffset,
+	); err != nil {
 		return fmt.Errorf("unable to update handler checkpoint: %w", err)
 	}
 
-	if nextCheckpointOffset > nextStreamOffset {
-		logger.WarnContext(
-			ctx,
-			"handler reported checkpoint offset beyond the end of the stream",
-			slog.Uint64("handler_checkpoint_offset", nextCheckpointOffset),
-			slog.Uint64("stream_next_offset", nextStreamOffset),
-		)
-	}
+	p.Logger.DebugContext(
+		ctx,
+		"synced checkpoint offset with handler",
+		xslog.UUID("stream_id", delivery.Stream.ID),
+		slog.Uint64("checkpoint_offset", nextCheckpointOffset),
+	)
 
 	return nil
 }
@@ -302,21 +283,13 @@ func (p *EventPump) PostponeDelivery(
 	delivery messagepump.Delivery,
 	delay time.Duration,
 ) error {
-	if err := xsql.ExecOne(
+	return messagepump.PostponeStreamDelivery(
 		ctx,
 		tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			failures = $3,
-			resume_at = clock_timestamp() + $4
-		WHERE handler_key = $1
-			AND stream_id = $2`,
-		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(delivery.Stream.ID),
+		p.Identity.GetKey(),
+		delivery.Stream.ID,
+		delivery.Stream.CheckpointOffset,
 		delivery.Failures,
 		delay,
-	); err != nil {
-		return fmt.Errorf("unable to postpone stream consumption: %w", err)
-	}
-
-	return nil
+	)
 }

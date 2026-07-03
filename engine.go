@@ -165,7 +165,7 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []component {
 	const (
 		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 300 * time.Second
+		backoffCap   = 5 * time.Minute
 		pollInterval = 25 * time.Millisecond
 	)
 
@@ -224,6 +224,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Packer:               e.packer,
 					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+					Logger:               logger,
 				},
 				DB:           e.DB,
 				Workers:      workers,

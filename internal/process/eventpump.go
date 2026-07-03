@@ -29,6 +29,7 @@ type EventPump struct {
 	Packer               *envelopepb.Packer
 	EventTypeIDs         []string
 	OutboundMessageTypes map[reflect.Type]struct{}
+	Logger               *slog.Logger
 }
 
 // AcquireDelivery attempts to acquire the next pending event for the handler on
@@ -99,20 +100,19 @@ func (p *EventPump) AcquireDelivery(
 
 	// Otherwise, no matching events are available on this stream. Advance the
 	// checkpoint offset to the end of the stream so that the stream is not
-	// re-acquired until new events arrive.
-	if err := xsql.ExecOne(
-		ctx,
-		tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			checkpoint_offset = $1,
-			failures = 0
-		WHERE handler_key = $2
-			AND stream_id = $3`,
-		nextStreamOffset,
-		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(delivery.Stream.ID),
-	); err != nil {
-		return messagepump.Delivery{}, false, fmt.Errorf("unable to update handler checkpoint: %w", err)
+	// re-acquired until new events are appended.
+	if nextStreamOffset > delivery.Stream.CheckpointOffset {
+		if err := messagepump.AdvanceStreamCheckpoint(
+			ctx,
+			tx,
+			p.Logger,
+			p.Identity.GetKey(),
+			delivery.Stream.ID,
+			delivery.Stream.CheckpointOffset,
+			nextStreamOffset,
+		); err != nil {
+			return messagepump.Delivery{}, false, err
+		}
 	}
 
 	return messagepump.Delivery{}, false, nil
@@ -146,7 +146,15 @@ func (p *EventPump) HandleDelivery(
 	}
 
 	if !ok {
-		return p.advanceCheckpoint(ctx, tx, delivery)
+		return messagepump.AdvanceStreamCheckpoint(
+			ctx,
+			tx,
+			logger,
+			p.Identity.GetKey(),
+			delivery.Stream.ID,
+			delivery.Stream.CheckpointOffset,
+			delivery.Stream.EventOffset+1,
+		)
 	}
 
 	instanceLogger := logger.With(
@@ -174,7 +182,15 @@ func (p *EventPump) HandleDelivery(
 	}
 
 	if !ok {
-		return p.advanceCheckpoint(ctx, tx, delivery)
+		return messagepump.AdvanceStreamCheckpoint(
+			ctx,
+			tx,
+			logger,
+			p.Identity.GetKey(),
+			delivery.Stream.ID,
+			delivery.Stream.CheckpointOffset,
+			delivery.Stream.EventOffset+1,
+		)
 	}
 
 	instanceLogger = logger.With(
@@ -255,7 +271,15 @@ func (p *EventPump) HandleDelivery(
 		}
 	}
 
-	return p.advanceCheckpoint(ctx, tx, delivery)
+	return messagepump.AdvanceStreamCheckpoint(
+		ctx,
+		tx,
+		logger,
+		p.Identity.GetKey(),
+		delivery.Stream.ID,
+		delivery.Stream.CheckpointOffset,
+		delivery.Stream.EventOffset+1,
+	)
 }
 
 // routeEventToInstance routes the event to a process instance by calling the
@@ -291,30 +315,6 @@ func (p *EventPump) routeEventToInstance(
 	return instanceID, ok, nil
 }
 
-// advanceCheckpoint updates the handler's checkpoint offset for this stream.
-func (p *EventPump) advanceCheckpoint(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
-) error {
-	if err := xsql.ExecOne(
-		ctx,
-		tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			checkpoint_offset = $1,
-			failures = 0
-		WHERE handler_key = $2
-		AND stream_id = $3`,
-		delivery.Stream.EventOffset+1,
-		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(delivery.Stream.ID),
-	); err != nil {
-		return fmt.Errorf("unable to update handler checkpoint: %w", err)
-	}
-
-	return nil
-}
-
 // PostponeDelivery reschedules consumption of the stream after delay.
 func (p *EventPump) PostponeDelivery(
 	ctx context.Context,
@@ -322,21 +322,13 @@ func (p *EventPump) PostponeDelivery(
 	delivery messagepump.Delivery,
 	delay time.Duration,
 ) error {
-	if err := xsql.ExecOne(
+	return messagepump.PostponeStreamDelivery(
 		ctx,
 		tx,
-		`UPDATE eventstream.handler_checkpoints SET
-			failures = $3,
-			resume_at = clock_timestamp() + $4
-		WHERE handler_key = $1
-			AND stream_id = $2`,
-		xsql.UUID(p.Identity.GetKey()),
-		xsql.UUID(delivery.Stream.ID),
+		p.Identity.GetKey(),
+		delivery.Stream.ID,
+		delivery.Stream.CheckpointOffset,
 		delivery.Failures,
 		delay,
-	); err != nil {
-		return fmt.Errorf("unable to postpone stream consumption: %w", err)
-	}
-
-	return nil
+	)
 }
