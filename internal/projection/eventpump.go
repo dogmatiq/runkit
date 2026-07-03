@@ -129,6 +129,22 @@ func (p *EventPump) AcquireDelivery(
 	return messagepump.Delivery{}, false, nil
 }
 
+// PostponeDelivery reschedules consumption of the stream after delay.
+func (p *EventPump) PostponeDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	delay time.Duration,
+) error {
+	return messagepump.PostponeEventDelivery(
+		ctx,
+		tx,
+		p.Identity.GetKey(),
+		delivery,
+		delay,
+	)
+}
+
 // initializeCheckpoint asks the handler for its committed checkpoint offset on
 // a stream the engine has not seen before and persists that offset so that
 // future acquisitions can read it directly.
@@ -274,22 +290,4 @@ func (p *EventPump) HandleDelivery(
 	)
 
 	return nil
-}
-
-// PostponeDelivery reschedules consumption of the stream after delay.
-func (p *EventPump) PostponeDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
-	delay time.Duration,
-) error {
-	return messagepump.PostponeStreamDelivery(
-		ctx,
-		tx,
-		p.Identity.GetKey(),
-		delivery.Stream.ID,
-		delivery.Stream.CheckpointOffset,
-		delivery.Failures,
-		delay,
-	)
 }

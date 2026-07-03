@@ -5,14 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/reference-engine/internal/x/xsql"
 )
 
-// AcquireDeliveryFromCommandQueue attempts to acquire the next pending command
-// for the handler from the command queue.
-func AcquireDeliveryFromCommandQueue(
+// AcquireCommandDelivery attempts to acquire the next pending command for the
+// handler from the command queue.
+func AcquireCommandDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 	messageTypeIDs *uuidpb.Set,
@@ -52,4 +53,28 @@ func AcquireDeliveryFromCommandQueue(
 	}
 
 	return delivery, true, nil
+}
+
+// PostponeCommandDelivery postpones a queued command for redelivery after delay.
+func PostponeCommandDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery Delivery,
+	delay time.Duration,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		tx,
+		`UPDATE commandqueue.commands SET
+			failures = $2,
+			deliver_at = clock_timestamp() + $3
+		WHERE message_id = $1`,
+		xsql.UUID(delivery.MessageID),
+		delivery.Failures,
+		delay,
+	); err != nil {
+		return fmt.Errorf("unable to postpone queued command: %w", err)
+	}
+
+	return nil
 }

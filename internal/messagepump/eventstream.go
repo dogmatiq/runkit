@@ -64,14 +64,13 @@ func AdvanceStreamCheckpoint(
 	return nil
 }
 
-// PostponeStreamDelivery reschedules consumption of a stream after delay,
-// and sets the failure count to the given value.
-func PostponeStreamDelivery(
+// PostponeEventDelivery reschedules consumption of a stream after delay, and
+// sets the failure count to the given value.
+func PostponeEventDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
-	handlerKey, streamID *uuidpb.UUID,
-	expectedCheckpointOffset uint64,
-	failures uint64,
+	handlerKey *uuidpb.UUID,
+	delivery Delivery,
 	delay time.Duration,
 ) error {
 	// The checkpoint_offset clause is purely defensive, the row should already
@@ -88,11 +87,11 @@ func PostponeStreamDelivery(
 		WHERE handler_key = $3
 			AND stream_id = $4
 			AND COALESCE(checkpoint_offset, 0) = $5`,
-		failures,
+		delivery.Failures,
 		delay,
 		xsql.UUID(handlerKey),
-		xsql.UUID(streamID),
-		expectedCheckpointOffset,
+		xsql.UUID(delivery.Stream.ID),
+		delivery.Stream.CheckpointOffset,
 	); err != nil {
 		return fmt.Errorf("unable to postpone stream consumption: %w", err)
 	}

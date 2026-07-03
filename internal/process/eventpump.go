@@ -118,6 +118,22 @@ func (p *EventPump) AcquireDelivery(
 	return messagepump.Delivery{}, false, nil
 }
 
+// PostponeDelivery reschedules consumption of the stream after delay.
+func (p *EventPump) PostponeDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	delay time.Duration,
+) error {
+	return messagepump.PostponeEventDelivery(
+		ctx,
+		tx,
+		p.Identity.GetKey(),
+		delivery,
+		delay,
+	)
+}
+
 // HandleDelivery dispatches an event to the process handler.
 func (p *EventPump) HandleDelivery(
 	ctx context.Context,
@@ -313,22 +329,4 @@ func (p *EventPump) routeEventToInstance(
 	}
 
 	return instanceID, ok, nil
-}
-
-// PostponeDelivery reschedules consumption of the stream after delay.
-func (p *EventPump) PostponeDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
-	delay time.Duration,
-) error {
-	return messagepump.PostponeStreamDelivery(
-		ctx,
-		tx,
-		p.Identity.GetKey(),
-		delivery.Stream.ID,
-		delivery.Stream.CheckpointOffset,
-		delivery.Failures,
-		delay,
-	)
 }

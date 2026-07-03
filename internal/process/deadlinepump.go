@@ -96,6 +96,30 @@ func (p *DeadlinePump) AcquireDelivery(
 	return delivery, true, nil
 }
 
+// PostponeDelivery reschedules the deadline for redelivery after delay.
+func (*DeadlinePump) PostponeDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	delay time.Duration,
+) error {
+	if err := xsql.ExecOne(
+		ctx,
+		tx,
+		`UPDATE process.deadlines SET
+			failures = $2,
+			deliver_at = clock_timestamp() + $3
+		WHERE message_id = $1`,
+		xsql.UUID(delivery.MessageID),
+		delivery.Failures,
+		delay,
+	); err != nil {
+		return fmt.Errorf("unable to postpone deadline: %w", err)
+	}
+
+	return nil
+}
+
 // HandleDelivery dispatches a deadline to the process handler.
 func (p *DeadlinePump) HandleDelivery(
 	ctx context.Context,
@@ -244,30 +268,6 @@ func (*DeadlinePump) deleteDeadline(
 		xsql.UUID(messageID),
 	); err != nil {
 		return fmt.Errorf("unable to delete deadline: %w", err)
-	}
-
-	return nil
-}
-
-// PostponeDelivery reschedules the deadline for redelivery after delay.
-func (*DeadlinePump) PostponeDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
-	delay time.Duration,
-) error {
-	if err := xsql.ExecOne(
-		ctx,
-		tx,
-		`UPDATE process.deadlines SET
-			failures = $2,
-			deliver_at = clock_timestamp() + $3
-		WHERE message_id = $1`,
-		xsql.UUID(delivery.MessageID),
-		delivery.Failures,
-		delay,
-	); err != nil {
-		return fmt.Errorf("unable to postpone deadline: %w", err)
 	}
 
 	return nil

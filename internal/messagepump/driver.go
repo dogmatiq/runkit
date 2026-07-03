@@ -29,6 +29,17 @@ type Driver interface {
 	// If there are no pending deliveries, ok is false.
 	AcquireDelivery(ctx context.Context, tx *sql.Tx) (del Delivery, ok bool, err error)
 
+	// PostponeDelivery schedules redelivery after the specified delay.
+	//
+	// The delivery's failure count may be greater than the value returned by
+	// AcquireDelivery, indicating that the postponement is due to a failure.
+	PostponeDelivery(
+		ctx context.Context,
+		tx *sql.Tx,
+		del Delivery,
+		delay time.Duration,
+	) error
+
 	// HandleDelivery processes a [Delivery] within tx.
 	//
 	// It returns [ErrFailed] to indicate that the delivery should be postponed
@@ -41,16 +52,5 @@ type Driver interface {
 		del Delivery,
 		envelope *envelopepb.Envelope,
 		logger *slog.Logger,
-	) error
-
-	// PostponeDelivery schedules redelivery after the specified delay.
-	//
-	// The delivery's failure count may be greater than the value returned by
-	// AcquireDelivery, indicating that the postponement is due to a failure.
-	PostponeDelivery(
-		ctx context.Context,
-		tx *sql.Tx,
-		del Delivery,
-		delay time.Duration,
 	) error
 }

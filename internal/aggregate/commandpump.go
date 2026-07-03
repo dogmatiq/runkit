@@ -35,7 +35,17 @@ type CommandPump struct {
 // AcquireDelivery attempts to acquire the next pending command for an
 // aggregate handler of one of the configured types.
 func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
-	return messagepump.AcquireDeliveryFromCommandQueue(ctx, tx, p.CommandTypeIDs)
+	return messagepump.AcquireCommandDelivery(ctx, tx, p.CommandTypeIDs)
+}
+
+// PostponeDelivery reschedules the command for redelivery after delay.
+func (p *CommandPump) PostponeDelivery(
+	ctx context.Context,
+	tx *sql.Tx,
+	delivery messagepump.Delivery,
+	delay time.Duration,
+) error {
+	return messagepump.PostponeCommandDelivery(ctx, tx, delivery, delay)
 }
 
 // HandleDelivery dispatches a command to the aggregate handler.
@@ -611,28 +621,4 @@ func (p *CommandPump) marshalSnapshot(
 	}
 
 	return snapshot, true
-}
-
-// PostponeDelivery reschedules the command for redelivery after delay.
-func (p *CommandPump) PostponeDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
-	delay time.Duration,
-) error {
-	if err := xsql.ExecOne(
-		ctx,
-		tx,
-		`UPDATE commandqueue.commands SET
-			failures = $2,
-			deliver_at = clock_timestamp() + $3
-		WHERE message_id = $1`,
-		xsql.UUID(delivery.MessageID),
-		delivery.Failures,
-		delay,
-	); err != nil {
-		return fmt.Errorf("unable to postpone queued command: %w", err)
-	}
-
-	return nil
 }
