@@ -28,51 +28,14 @@ type CommandPump struct {
 	Handler              dogma.AggregateMessageHandler[dogma.AggregateRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelopepb.Packer
-	CommandTypeIDs       []string
+	CommandTypeIDs       *uuidpb.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
 // AcquireDelivery attempts to acquire the next pending command for an
 // aggregate handler of one of the configured types.
-func (p *CommandPump) AcquireDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-) (messagepump.Delivery, bool, error) {
-	row := tx.QueryRowContext(
-		ctx,
-		`SELECT
-			c.message_id,
-			c.message_type_id,
-			c.envelope,
-			c.failures
-		FROM commandqueue.commands AS c
-		WHERE message_type_id = ANY($1)
-		AND deliver_at <= clock_timestamp()
-		ORDER BY deliver_at
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED`,
-		p.CommandTypeIDs,
-	)
-
-	delivery := messagepump.Delivery{
-		MessageID:     &uuidpb.UUID{},
-		MessageTypeID: &uuidpb.UUID{},
-	}
-
-	if err := row.Scan(
-		xsql.UUID(delivery.MessageID),
-		xsql.UUID(delivery.MessageTypeID),
-		&delivery.EnvelopeBytes,
-		&delivery.Failures,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return messagepump.Delivery{}, false, nil
-		}
-
-		return messagepump.Delivery{}, false, fmt.Errorf("unable to scan pending command: %w", err)
-	}
-
-	return delivery, true, nil
+func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
+	return messagepump.AcquireDeliveryFromCommandQueue(ctx, tx, p.CommandTypeIDs)
 }
 
 // HandleDelivery dispatches a command to the aggregate handler.

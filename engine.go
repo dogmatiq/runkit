@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/reference-engine/internal/aggregate"
 	"github.com/dogmatiq/reference-engine/internal/integration"
@@ -222,7 +223,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
-					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+					EventTypeIDs:         e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.EventKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 					Logger:               logger,
 				},
@@ -239,7 +240,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
-					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
+					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.DeadlineKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
 				DB:           e.DB,
@@ -264,7 +265,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					Handler:      handlerConfig.Interface(),
 					Identity:     handlerConfig.Identity(),
 					Concurrency:  handlerConfig.ConcurrencyPreference(),
-					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+					EventTypeIDs: e.inboundMessageTypeIDsForHandlerAsStrings(handlerConfig, message.EventKind),
 					Logger:       logger,
 				},
 				DB:           e.DB,
@@ -318,6 +319,29 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
 func (*Engine) inboundMessageTypeIDsForHandler(
+	handlerConfig config.Handler,
+	messageKind message.Kind,
+) *uuidpb.Set {
+	inboundRoutes := handlerConfig.
+		RouteSet().
+		Filter(config.FilterByMessageKind(messageKind)).
+		Filter(config.FilterByMessageDirection(config.InboundDirection)).
+		Routes()
+
+	messageTypeIDs := &uuidpb.Set{}
+
+	for route := range inboundRoutes {
+		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
+		messageTypeIDs.Add(messageTypeID)
+	}
+
+	return messageTypeIDs
+}
+
+// inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
+// messages routed to the given handler. It is represented as a slice of UUID
+// strings for direct use in SQL queries.
+func (*Engine) inboundMessageTypeIDsForHandlerAsStrings(
 	handlerConfig config.Handler,
 	messageKind message.Kind,
 ) []string {
