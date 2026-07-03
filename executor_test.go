@@ -319,11 +319,8 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *dogmaengine.Engine) {
-			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-			defer cancel()
-
 			err := engine.ExecuteCommand(
-				ctx,
+				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "no-events"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
