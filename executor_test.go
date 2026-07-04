@@ -1,4 +1,4 @@
-package dogmaengine_test
+package runkit_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -21,7 +21,7 @@ func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -74,7 +74,7 @@ func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -123,7 +123,7 @@ func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			var called bool
 
 			if err := engine.ExecuteCommand(
@@ -175,7 +175,7 @@ func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T
 func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			err := engine.ExecuteCommand(
 				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "start"},
@@ -272,7 +272,7 @@ func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing
 func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			defer cancel()
 
@@ -318,7 +318,7 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing
 func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 			defer cancel()
 
@@ -359,7 +359,7 @@ func TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated(t *test
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
