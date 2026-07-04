@@ -2,6 +2,7 @@ package xsql
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgerrcode"
@@ -18,9 +19,9 @@ import (
 // cause more harm than the wasted round-trip.
 func PanicOnDeadlock(err error) {
 	if testing.Testing() {
-		if err, ok := errors.AsType[*pgconn.PgError](err); ok {
-			if err.Code == pgerrcode.DeadlockDetected {
-				panic(err)
+		if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+			if pgErr.Code == pgerrcode.DeadlockDetected {
+				panic(fmt.Sprintf("deadlock: %s", err))
 			}
 		}
 	}
