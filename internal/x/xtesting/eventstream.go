@@ -3,6 +3,8 @@ package xtesting
 import (
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dogmatiq/dapper"
@@ -409,10 +411,32 @@ func ExpectEqualEvents(
 	want ...dogma.Event,
 ) {
 	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Logf("expectation failed: %s", description)
-		t.Logf("+++ got:\n%s", dapper.Format(got))
-		t.Logf("--- want:\n%s", dapper.Format(want))
-		t.FailNow()
+	ExpectEqual(t, description, got, want)
+}
+
+// ExpectEqualUnorderedEvents asserts that got and want contain the same events,
+// regardless of order.
+func ExpectEqualUnorderedEvents(
+	t testing.TB,
+	description string,
+	got []dogma.Event,
+	want ...dogma.Event,
+) {
+	t.Helper()
+
+	sortEvents := func(events []dogma.Event) {
+		slices.SortFunc(events, func(a, b dogma.Event) int {
+			return strings.Compare(
+				dapper.Format(a),
+				dapper.Format(b),
+			)
+		})
 	}
+
+	got = slices.Clone(got)
+	want = slices.Clone(want)
+	sortEvents(got)
+	sortEvents(want)
+
+	ExpectEqual(t, description, got, want)
 }

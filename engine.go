@@ -5,30 +5,37 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net"
 	"reflect"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/grpc/eventstreamgrpc"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/aggregate"
+	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 const (
 	// DefaultProjectionCompactInterval is the default minimum time between
 	// projection compaction attempts.
 	DefaultProjectionCompactInterval = 6 * time.Hour
+
+	// DefaultListenAddr is the default address for the engine's gRPC server.
+	DefaultListenAddr = ":50555"
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -51,10 +58,17 @@ type Engine struct {
 	// is used.
 	ProjectionCompactInterval time.Duration
 
+	// Addr is the address to listen on for gRPC requests from other engines.
+	// If it is empty, [DefaultListenAddr] is used.
+	Addr string
+
 	// ready is a latch that is set when the engine is ready to accept commands
 	// for execution. It is used to block ExecuteCommand() from proceeding until
 	// the engine is ready.
 	ready xsync.Latch
+
+	// listener is the TCP listener for gRPC requests from other engines.
+	listener net.Listener
 
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
@@ -91,7 +105,41 @@ func (e *Engine) Run(ctx context.Context) error {
 		Application: e.appConfig.Identity(),
 	}
 
-	var runGroup sync.WaitGroup
+	group, ctx := errgroup.WithContext(ctx)
+
+	lis, err := net.Listen("tcp", e.Addr)
+	if err != nil {
+		return fmt.Errorf("unable to listen on %s: %w", e.Addr, err)
+	}
+	defer lis.Close()
+
+	e.listener = lis
+
+	group.Go(func() error {
+		server := grpc.NewServer()
+		eventstreamgrpc.RegisterConsumeAPIServer(
+			server,
+			&eventstream.ConsumeAPIServer{
+				DB: e.DB,
+			},
+		)
+
+		context.AfterFunc(ctx, server.Stop)
+
+		e.Logger.InfoContext(
+			ctx,
+			"listening for gRPC requests",
+			slog.String("addr", lis.Addr().String()),
+		)
+
+		err := server.Serve(lis)
+
+		if ctx.Err() == nil {
+			return fmt.Errorf("gRPC server stopped before context was canceled: %w", err)
+		}
+
+		return ctx.Err()
+	})
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if handlerConfig.IsDisabled() {
@@ -99,22 +147,24 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 
 		for _, c := range e.newComponentsForHandler(handlerConfig) {
-			runGroup.Go(func() {
+			group.Go(func() error {
 				c.Run(ctx)
 
 				if ctx.Err() == nil {
-					panic(fmt.Sprintf(
+					return fmt.Errorf(
 						"%T component for handler %s stopped before context was canceled",
 						c,
 						handlerConfig.Identity(),
-					))
+					)
 				}
+
+				return ctx.Err()
 			})
 		}
 	}
 
 	e.ready.Set()
-	runGroup.Wait()
+	group.Wait()
 	return ctx.Err()
 }
 
@@ -126,6 +176,15 @@ func (e *Engine) Run(ctx context.Context) error {
 // engine is ready.
 func (e *Engine) Ready() <-chan struct{} {
 	return e.ready.Chan()
+}
+
+// ListenAddr returns the address that the engine is listening on for gRPC
+// requests from other engines.
+func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
+	if err := e.ready.WaitContext(ctx); err != nil {
+		return nil, err
+	}
+	return e.listener.Addr(), nil
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for
