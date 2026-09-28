@@ -409,10 +409,5 @@ func ExpectEqualEvents(
 	want ...dogma.Event,
 ) {
 	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Logf("expectation failed: %s", description)
-		t.Logf("+++ got:\n%s", dapper.Format(got))
-		t.Logf("--- want:\n%s", dapper.Format(want))
-		t.FailNow()
-	}
+	ExpectEqual(t, description, got, want)
 }
