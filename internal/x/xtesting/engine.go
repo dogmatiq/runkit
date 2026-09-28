@@ -112,6 +112,7 @@ func RunEnginesWithDB(
 			DB:                        db,
 			App:                       app,
 			ProjectionCompactInterval: 10 * time.Millisecond,
+			Addr:                      ":0",
 			Logger:                    logger.With("engine", idx),
 		}
 
