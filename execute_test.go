@@ -13,10 +13,10 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-// TestCommandExecutor_duplicateIdempotencyKeyIsIgnored verifies that executing
+// TestExecuteCommand_duplicateIdempotencyKeyIsIgnored verifies that executing
 // a command with the same idempotency key twice results in the handler being
 // invoked only once.
-func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
+func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
@@ -69,9 +69,9 @@ func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_differentIdempotencyKeysDoNotInterfere verifies that
+// TestExecuteCommand_differentIdempotencyKeysDoNotInterfere verifies that
 // commands with different idempotency keys are handled independently.
-func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
+func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine) {
@@ -117,10 +117,10 @@ func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_eventObserverSeesEventsWithDirectCausation verifies that
+// TestExecuteCommand_eventObserverSeesEventsWithDirectCausation verifies that
 // event observers are called with events recorded directly by the command that
 // was executed.
-func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
+func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine) {
@@ -168,11 +168,11 @@ func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T
 	)
 }
 
-// TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation verifies
+// TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation verifies
 // that event observers are called with events recorded indirectly, that is, not
 // directly by the command that was executed, but rather after a chain of
 // causation that starts with the command.
-func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
+func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine) {
@@ -266,10 +266,10 @@ func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing
 	)
 }
 
-// TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
+// TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
 // that ExecuteCommand returns ErrEventObserverNotSatisfied when no observer
 // returns true.
-func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
+func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine) {
@@ -312,10 +312,10 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing
 	)
 }
 
-// TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded verifies that
+// TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded verifies that
 // ExecuteCommand returns ErrEventObserverNotSatisfied when the handler does not
 // record any events.
-func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine) {
@@ -351,10 +351,10 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated verifies
+// TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated verifies
 // that event observers are invoked with the original events when a command is
 // deduplicated via its idempotency key.
-func TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
+func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
