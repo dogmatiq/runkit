@@ -42,25 +42,25 @@ const (
 //
 // It implements [dogma.CommandExecutor].
 type Engine struct {
-	// DB is the database connection to use.
-	DB *sql.DB
+	// app is the Dogma application to run.
+	app dogma.Application
 
-	// App is the Dogma application to run.
-	App dogma.Application
+	// db is the database connection to use.
+	db *sql.DB
 
-	// Logger is the structured logger used by the engine.
-	//
-	// If it is nil, [slog.Default] is used.
-	Logger *slog.Logger
-
-	// ProjectionCompactInterval is the minimum time between projection
+	// compactInterval is the minimum time between projection
 	// compaction attempts. If non-positive [DefaultProjectionCompactInterval]
 	// is used.
-	ProjectionCompactInterval time.Duration
+	compactInterval time.Duration
 
 	// Addr is the address to listen on for gRPC requests from other engines.
 	// If it is empty, [DefaultListenAddr] is used.
-	Addr string
+	listenAddress string
+
+	// logger is the structured logger used by the engine.
+	//
+	// If it is nil, [slog.Default] is used.
+	logger *slog.Logger
 
 	// ready is a latch that is set when the engine is ready to accept commands
 	// for execution. It is used to block ExecuteCommand() from proceeding until
@@ -81,9 +81,62 @@ type Engine struct {
 	commandTypes map[reflect.Type]struct{}
 }
 
+// New returns a new engine that runs the given application.
+func New(
+	app dogma.Application,
+	db *sql.DB,
+	options ...EngineOption,
+) *Engine {
+	e := &Engine{
+		app:             app,
+		db:              db,
+		compactInterval: DefaultProjectionCompactInterval,
+		listenAddress:   DefaultListenAddr,
+		logger:          slog.Default(),
+	}
+
+	for _, option := range options {
+		option(e)
+	}
+
+	return e
+}
+
+// EngineOption is a function that configures an [Engine].
+type EngineOption func(*Engine)
+
+// WithLogger is an [EngineOption] that sets the logger the engine uses.
+//
+// If it is not provided [slog.Default] is used.
+func WithLogger(logger *slog.Logger) EngineOption {
+	return func(e *Engine) {
+		e.logger = logger
+	}
+}
+
+// WithListenAddress is an [EngineOption] that sets the address the engine
+// listens on for gRPC requests from other engines.
+//
+// If it is not provided [DefaultListenAddr] is used.
+func WithListenAddress(addr string) EngineOption {
+	return func(e *Engine) {
+		e.listenAddress = addr
+	}
+}
+
+// WithProjectionCompactInterval is an [EngineOption] that sets the minimum time
+// between projection compaction attempts.
+//
+// If it is not provided [DefaultProjectionCompactInterval] is used.
+func WithProjectionCompactInterval(interval time.Duration) EngineOption {
+	return func(e *Engine) {
+		e.compactInterval = interval
+	}
+}
+
 // Run starts the engine and blocks until ctx is canceled.
 func (e *Engine) Run(ctx context.Context) error {
-	e.appConfig = runtimeconfig.FromApplication(e.App)
+	e.appConfig = runtimeconfig.FromApplication(e.app)
 
 	if err := config.Validate(e.appConfig, config.ForExecution()); err != nil {
 		return fmt.Errorf("invalid application configuration: %w", err)
@@ -101,9 +154,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	// We also want to do this synchronously so that e.listener is populated
 	// before the e.ready latch is set.
 	var err error
-	e.listener, err = net.Listen("tcp", e.Addr)
+	e.listener, err = net.Listen("tcp", e.listenAddress)
 	if err != nil {
-		return fmt.Errorf("unable to listen on %s: %w", e.Addr, err)
+		return fmt.Errorf("unable to listen on %s: %w", e.listenAddress, err)
 	}
 	defer e.listener.Close()
 
@@ -156,13 +209,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		messaginggrpc.RegisterEventStreamConsumerAPIServer(
 			server,
 			&eventstream.ConsumerAPI{
-				DB: e.DB,
+				DB: e.db,
 			},
 		)
 
 		context.AfterFunc(ctx, server.Stop)
 
-		e.Logger.InfoContext(
+		e.logger.InfoContext(
 			ctx,
 			"listening for gRPC requests",
 			slog.String("addr", e.listener.Addr().String()),
@@ -227,9 +280,9 @@ func (e *Engine) setupCommandTypes() {
 func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Handler) error {
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Projection:
-		return projection.InitializeHandler(ctx, e.DB, handlerConfig)
+		return projection.InitializeHandler(ctx, e.db, handlerConfig)
 	case *config.Process:
-		return process.InitializeHandler(ctx, e.DB, handlerConfig)
+		return process.InitializeHandler(ctx, e.db, handlerConfig)
 	default:
 		return nil
 	}
@@ -251,14 +304,14 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &aggregate.CommandPump{
-					DB:                   e.DB,
+					DB:                   e.db,
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
 					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:           e.DB,
+				DB:           e.db,
 				Workers:      workers,
 				PollInterval: pollInterval,
 				BackoffBase:  backoffBase,
@@ -271,7 +324,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &integration.CommandPump{
-					DB:                   e.DB,
+					DB:                   e.db,
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Concurrency:          handlerConfig.ConcurrencyPreference(),
@@ -279,7 +332,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:           e.DB,
+				DB:           e.db,
 				Workers:      workers,
 				PollInterval: pollInterval,
 				BackoffBase:  backoffBase,
@@ -294,7 +347,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &process.EventPump{
-					DB:                   e.DB,
+					DB:                   e.db,
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
@@ -302,7 +355,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 					Logger:               eventPumpLogger,
 				},
-				DB:           e.DB,
+				DB:           e.db,
 				Workers:      workers,
 				PollInterval: pollInterval,
 				BackoffBase:  backoffBase,
@@ -311,14 +364,14 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 			},
 			&messagepump.MessagePump{
 				Driver: &process.DeadlinePump{
-					DB:                   e.DB,
+					DB:                   e.db,
 					Handler:              handlerConfig.Interface(),
 					Identity:             handlerConfig.Identity(),
 					Packer:               e.packer,
 					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				},
-				DB:           e.DB,
+				DB:           e.db,
 				Workers:      workers,
 				PollInterval: pollInterval,
 				BackoffBase:  backoffBase,
@@ -328,24 +381,19 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		}
 
 	case *config.Projection:
-		compactInterval := e.ProjectionCompactInterval
-		if compactInterval <= 0 {
-			compactInterval = DefaultProjectionCompactInterval
-		}
-
 		eventPumpLogger := logger.With(slog.String("component", "projection.event-pump"))
 
 		return []component{
 			&messagepump.MessagePump{
 				Driver: &projection.EventPump{
-					DB:           e.DB,
+					DB:           e.db,
 					Handler:      handlerConfig.Interface(),
 					Identity:     handlerConfig.Identity(),
 					Concurrency:  handlerConfig.ConcurrencyPreference(),
 					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 					Logger:       eventPumpLogger,
 				},
-				DB:           e.DB,
+				DB:           e.db,
 				Workers:      workers,
 				PollInterval: pollInterval,
 				BackoffBase:  backoffBase,
@@ -353,10 +401,10 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				Logger:       eventPumpLogger,
 			},
 			&projection.Compactor{
-				DB:       e.DB,
+				DB:       e.db,
 				Handler:  handlerConfig.Interface(),
 				Identity: handlerConfig.Identity(),
-				Interval: compactInterval,
+				Interval: e.compactInterval,
 				Logger:   logger.With(slog.String("component", "projection.compactor")),
 			},
 		}
@@ -369,7 +417,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 // newLoggerForHandler creates a logger for the given handler with the
 // appropriate fields.
 func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger {
-	return e.Logger.With(
+	return e.logger.With(
 		xslog.Identity(
 			"handler",
 			handlerConfig.Identity(),

@@ -1,6 +1,7 @@
 package aggregate_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -17,10 +18,10 @@ import (
 func TestEventStream_instanceBoundToStream(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			// Force creation of multiple event streams so that the
 			// implementation has multiple to choose from.
-			xtesting.CreateEventStreams(t, engine.DB, 3)
+			xtesting.CreateEventStreams(t, db, 3)
 
 			// Send multiple commands to two different instances, each command
 			// records a new event.
@@ -29,7 +30,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 				xtesting.ExecuteCommand(t, engine, stubs.CommandA2)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
 			// Verify that all events recorded by "instance-a" appear on a
 			// single stream.
@@ -37,7 +38,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 				t,
 				"distinct event stream count for instance A1",
 				1,
-				engine.DB,
+				db,
 				`SELECT COUNT(DISTINCT stream_id)
 				FROM eventstream.events
 				WHERE aggregate_instance_id = $1`,
@@ -50,7 +51,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 				t,
 				"distinct event stream count for instance A2",
 				1,
-				engine.DB,
+				db,
 				`SELECT COUNT(DISTINCT stream_id)
 				FROM eventstream.events
 				WHERE aggregate_instance_id = $1`,
@@ -92,12 +93,13 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			// Send three commands, waiting between each to ensure the order of
 			// handling is deterministic. Each command produces two events.
 			xtesting.ExecuteCommandsSequentially(
 				t,
 				engine,
+				db,
 				stubs.CommandA1,
 				stubs.CommandA2,
 				stubs.CommandA3,
@@ -105,7 +107,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 
 			// Find the stream that the instance is bound to.
 			streamID := &uuidpb.UUID{}
-			row := engine.DB.QueryRowContext(
+			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT stream_id
 				FROM aggregate.instances`,
@@ -119,7 +121,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 			// produced by the other commands.
 			xtesting.ExpectContiguousEvents(
 				t,
-				engine.DB,
+				db,
 				streamID,
 				0, // offset
 				&stubs.EventStub[stubs.TypeA]{Content: "A1:a"},
@@ -169,16 +171,16 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 func TestEventStream_eventsAreNotRecordedWhenHandlerPanics(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBePostponed(
 				t,
-				engine.DB,
+				db,
 				commandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectEventCount(t, engine.DB, 0)
+			xtesting.ExpectEventCount(t, db, 0)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{

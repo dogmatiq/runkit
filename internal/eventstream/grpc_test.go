@@ -2,6 +2,7 @@ package eventstream_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"slices"
@@ -23,7 +24,7 @@ import (
 func TestConsumeAPIServer_contemporary(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 			xtesting.ExecuteCommand(t, engine, stubs.CommandB1)
 			xtesting.ExecuteCommand(t, engine, stubs.CommandC1)
@@ -80,10 +81,11 @@ func TestConsumeAPIServer_contemporary(t *testing.T) {
 func TestConsumeAPIServer_historical(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
 				engine,
+				db,
 				stubs.CommandA1,
 				stubs.CommandB1,
 				stubs.CommandC1,

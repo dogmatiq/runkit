@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -19,12 +20,12 @@ import (
 func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			xtesting.ExecuteCommandAndWait(t, engine, stubs.CommandA1)
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
 
 			// Find the stream that was used for these events.
 			streamID := &uuidpb.UUID{}
-			row := engine.DB.QueryRowContext(
+			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT id
 				FROM eventstream.streams`,
@@ -35,7 +36,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 
 			xtesting.ExpectContiguousEvents(
 				t,
-				engine.DB,
+				db,
 				streamID,
 				0,
 				&stubs.EventStub[stubs.TypeA]{Content: "event-0"},
@@ -72,20 +73,20 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			// Force creation of multiple event streams so that the message pump
 			// doesn't just create a single stream and use it continuously.
-			xtesting.CreateEventStreams(t, engine.DB, 3)
+			xtesting.CreateEventStreams(t, db, 3)
 
 			// Send commands sequentially, waiting between each so that each
 			// Acquire() call sees the updated next_offset from the prior
 			// command's events.
-			xtesting.ExecuteCommandsSequentially(t, engine, stubs.CommandA1, stubs.CommandA1, stubs.CommandA1)
+			xtesting.ExecuteCommandsSequentially(t, engine, db, stubs.CommandA1, stubs.CommandA1, stubs.CommandA1)
 
 			// Verify that events were distributed across more than one
 			// stream.
 			var distinctStreams int
-			row := engine.DB.QueryRowContext(
+			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT COUNT(*)
 				FROM eventstream.streams
@@ -125,16 +126,16 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBePostponed(
 				t,
-				engine.DB,
+				db,
 				commandEnvelope.GetBody().GetMessageId(),
 			)
 
-			xtesting.ExpectEventCount(t, engine.DB, 0)
+			xtesting.ExpectEventCount(t, db, 0)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{

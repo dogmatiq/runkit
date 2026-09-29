@@ -2,6 +2,7 @@ package process_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -21,10 +22,10 @@ func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
@@ -88,10 +89,10 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
@@ -166,10 +167,10 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
@@ -263,7 +264,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			counts := make([]uint64, streamCount)
 			for i := range counts {
 				counts[i] = eventsPerStream
@@ -271,7 +272,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -281,14 +282,14 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 			// Wait for all events to be consumed before publishing the final
 			// event that will assert that the process state is cumulative
 			// across all events and deadlines.
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
-			xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+			xtesting.WaitForNoPendingDeadlines(t, db)
 
 			// Publish the final event that will assert that the process state
 			// is cumulative across all events and deadlines.
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventX1
 				},

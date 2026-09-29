@@ -2,6 +2,7 @@ package process_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -21,11 +22,11 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -85,10 +86,10 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -146,10 +147,10 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
@@ -162,7 +163,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 			)
 
 			xtesting.ExpectLatchesSetEventually(t, &ended)
-			xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+			xtesting.WaitForNoPendingDeadlines(t, db)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -222,18 +223,18 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
-					engine.DB,
+					db,
 					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
 				)
 
-				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
-				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+				xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+				xtesting.WaitForNoPendingDeadlines(t, db)
 			},
 			dogma.ViaProcess(
 				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -280,10 +281,10 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
-					engine.DB,
+					db,
 					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
@@ -291,7 +292,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 				)
 
 				xtesting.ExpectLatchesSetEventually(t, &ended)
-				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+				xtesting.WaitForNoPendingDeadlines(t, db)
 			},
 			dogma.ViaProcess(
 				&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -360,17 +361,17 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1,
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -432,7 +433,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &delivered)
 
 			// The TypeA deadline was skipped rather than delivered, so it
@@ -441,7 +442,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 				t,
 				"TypeA deadline is still pending",
 				1,
-				engine.DB,
+				db,
 				`SELECT COUNT(*)
 				FROM process.deadlines`,
 			)

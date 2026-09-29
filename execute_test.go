@@ -2,6 +2,7 @@ package runkit_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -38,9 +39,9 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
-			xtesting.ExpectEventCount(t, engine.DB, 1)
+			xtesting.ExpectEventCount(t, db, 1)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -74,7 +75,7 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -91,9 +92,9 @@ func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
-			xtesting.ExpectEventCount(t, engine.DB, 2)
+			xtesting.ExpectEventCount(t, db, 2)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -123,7 +124,7 @@ func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			var called bool
 
 			if err := engine.ExecuteCommand(
@@ -175,7 +176,7 @@ func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T)
 func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			err := engine.ExecuteCommand(
 				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "start"},
@@ -272,7 +273,7 @@ func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.
 func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			defer cancel()
 
@@ -318,7 +319,7 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 			defer cancel()
 
@@ -359,7 +360,7 @@ func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testi
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -368,7 +369,7 @@ func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testi
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
 			// Second call is deduplicated, but observer sees the original events.
 			var called bool
