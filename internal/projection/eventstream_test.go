@@ -32,10 +32,10 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
@@ -103,10 +103,10 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
@@ -199,10 +199,10 @@ func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testi
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine) {
+				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 					streamIDs := xtesting.PopulateEventStreams(
 						t,
-						engine.DB,
+						db,
 						func(*uuidpb.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
@@ -211,7 +211,7 @@ func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testi
 
 					xtesting.WaitForHandlerToPostponeConsumingStream(
 						t,
-						engine.DB,
+						db,
 						handlerKey,
 						streamIDs[0],
 					)
@@ -244,10 +244,10 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			streamIDs := xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -256,7 +256,7 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 
 			xtesting.WaitForStreamFailureCounterToReset(
 				t,
-				engine.DB,
+				db,
 				handlerKey,
 				streamIDs...,
 			)
@@ -299,10 +299,10 @@ func TestEventStream_failureCounterGrowsAcrossFailures(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			streamIDs := xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -311,7 +311,7 @@ func TestEventStream_failureCounterGrowsAcrossFailures(t *testing.T) {
 
 			xtesting.WaitForStreamFailureCounter(
 				t,
-				engine.DB,
+				db,
 				handlerKey,
 				minFailures,
 				streamIDs...,
@@ -344,10 +344,10 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			var streamIDs []*uuidpb.UUID
 
-			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
+			xtesting.Transact(t, db, func(tx *sql.Tx) {
 				streamIDs = xtesting.PopulateEventStreams(
 					t,
 					tx,
@@ -372,7 +372,7 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 				t,
 				fmt.Sprintf("handler %q still has resume_at in the future", handlerKey),
 				1,
-				engine.DB,
+				db,
 				`SELECT COUNT(*)
 				FROM eventstream.handler_checkpoints
 				WHERE handler_key = $1

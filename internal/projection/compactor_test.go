@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -26,7 +27,7 @@ func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -77,19 +78,19 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine) {
+				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 					xtesting.ExpectLatchesSetEventually(t, &compacted)
 
 					xtesting.PopulateEventStreams(
 						t,
-						engine.DB,
+						db,
 						func(*uuidpb.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
 						10,
 					)
 
-					xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+					xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 				},
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
@@ -121,7 +122,7 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -163,7 +164,6 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 	var (
 		m               sync.Mutex
-		compactInterval time.Duration
 		lastCompactedAt time.Time
 		calls           int
 		done            xsync.Latch
@@ -171,15 +171,7 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			m.Lock()
-			compactInterval = engine.ProjectionCompactInterval
-			m.Unlock()
-
-			if compactInterval <= 0 {
-				panic("engine did not set a projection compact interval")
-			}
-
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
@@ -194,14 +186,8 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 					m.Lock()
 					defer m.Unlock()
 
-					if compactInterval == 0 {
-						// Compact happened to run before we captured the
-						// interval from the engine, ignore this call entirely.
-						return nil
-					}
-
-					if time.Since(lastCompactedAt) < compactInterval {
-						t.Errorf("compaction called too soon: gap %v, want >= %v", time.Since(lastCompactedAt), compactInterval)
+					if time.Since(lastCompactedAt) < xtesting.ProjectionCompactInterval {
+						t.Errorf("compaction called too soon: gap %v, want >= %v", time.Since(lastCompactedAt), xtesting.ProjectionCompactInterval)
 					}
 
 					calls++

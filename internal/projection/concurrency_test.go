@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,10 +25,10 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -72,17 +73,17 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				10, 10, // 2 streams, 10 events each
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"database/sql"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,11 +24,11 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -65,12 +66,12 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
 			for range 10 {
 				xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
