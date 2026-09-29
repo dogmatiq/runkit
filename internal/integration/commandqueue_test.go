@@ -10,7 +10,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -20,7 +20,7 @@ import (
 func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
 		},
 		dogma.ViaIntegration(
@@ -41,7 +41,7 @@ func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			handledCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
@@ -91,7 +91,7 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Execute an invalid command.
 			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
@@ -173,7 +173,7 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 					xtesting.WaitForCommandToBePostponed(
@@ -203,7 +203,7 @@ func TestCommandQueue_handlerFailuresCauseCommandToBePostponed(t *testing.T) {
 func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			postponedEnvelope := xtesting.EnqueuePostponedCommand(
 				t,
 				db,

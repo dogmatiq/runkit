@@ -8,7 +8,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -18,7 +18,7 @@ import (
 func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
 		},
 		dogma.ViaAggregate(
@@ -72,7 +72,7 @@ func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 func TestInstanceState_stateIsPersisted(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
 				engine,
@@ -129,7 +129,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 func TestInstanceState_instancesAreIsolated(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
 				engine,
@@ -196,7 +196,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Send many commands at once without waiting between them, the test
 			// is running multiple engines, which may attempt to process
 			// commands simultaneously. All commands are routed to the same
@@ -266,7 +266,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Execute a command to create the instance and record an event.
 			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
 
@@ -347,7 +347,7 @@ func TestInstanceState_snapshotMarshalingFailuresAreNonFatal(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					xtesting.ExecuteCommandsSequentially(
 						t,
 						engine,
@@ -427,7 +427,7 @@ func TestInstanceState_snapshotUnmarshalingFailuresAreNonFatal(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					xtesting.ExecuteCommandsSequentially(
 						t,
 						engine,

@@ -7,7 +7,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -18,7 +18,7 @@ import (
 func TestEventStream_instanceBoundToStream(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Force creation of multiple event streams so that the
 			// implementation has multiple to choose from.
 			xtesting.CreateEventStreams(t, db, 3)
@@ -93,7 +93,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Send three commands, waiting between each to ensure the order of
 			// handling is deterministic. Each command produces two events.
 			xtesting.ExecuteCommandsSequentially(
@@ -171,7 +171,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 func TestEventStream_eventsAreNotRecordedWhenHandlerPanics(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBePostponed(
