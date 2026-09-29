@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -24,7 +24,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -107,7 +107,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -205,7 +205,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 				1, // one stream with one historical event
 			)
 		},
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
@@ -255,7 +255,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Create one stream that contains an event that the handler is
 			// configured to handle, and an event that it is not.
 			xtesting.PopulateEventStreams(
@@ -310,7 +310,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Append an additional TypeB event to the same stream after the
 			// handler has checkpointed.
 			xtesting.AppendToEventStream(t, db, streamID, stubs.EventB2)

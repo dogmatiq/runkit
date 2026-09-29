@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/spruce"
 	"golang.org/x/sync/errgroup"
@@ -41,7 +41,7 @@ func RunEngines(
 	t *testing.T,
 	fn func(
 		testing.TB,
-		*dogmaengine.Engine,
+		*runkit.Engine,
 		*sql.DB,
 	),
 	routes ...dogma.HandlerRoute,
@@ -61,7 +61,7 @@ func RunEngines(
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
-	fn func(testing.TB, *dogmaengine.Engine, *sql.DB),
+	fn func(testing.TB, *runkit.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -80,7 +80,7 @@ func SetupThenRunEngines(
 func RunEnginesWithDB(
 	t *testing.T,
 	db *sql.DB,
-	fn func(testing.TB, *dogmaengine.Engine, *sql.DB),
+	fn func(testing.TB, *runkit.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -110,15 +110,15 @@ func RunEnginesWithDB(
 
 	logger := spruce.NewTestLogger(t)
 
-	var engine *dogmaengine.Engine
+	var engine *runkit.Engine
 
 	for idx := range concurrentEngines {
-		e := dogmaengine.New(
+		e := runkit.New(
 			app,
 			db,
-			dogmaengine.WithProjectionCompactInterval(ProjectionCompactInterval),
-			dogmaengine.WithListenAddress(":0"),
-			dogmaengine.WithLogger(logger.With("engine", idx)),
+			runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
+			runkit.WithListenAddress(":0"),
+			runkit.WithLogger(logger.With("engine", idx)),
 		)
 
 		if engine == nil {
@@ -155,7 +155,7 @@ func RunEnginesWithDB(
 // if it returns an error.
 func ExecuteCommand(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -173,7 +173,7 @@ func ExecuteCommand(
 // ExecuteCommandAndWait executes the given command on the engine and waits for it to be removed from the command queue.
 func ExecuteCommandAndWait(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	db *sql.DB,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
@@ -195,7 +195,7 @@ func ExecuteCommandAndWait(
 // sequentially, and fails the test if any of them returns an error.
 func ExecuteCommandsSequentially(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	db *sql.DB,
 	commands ...dogma.Command,
 ) []*envelopepb.Envelope {
@@ -215,7 +215,7 @@ func ExecuteCommandsSequentially(
 // the test if it returns an error.
 func ExecuteCommandWithHook(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	command dogma.Command,
 	hook func(contexthook.ExecuteCommand),
 	options ...dogma.ExecuteCommandOption,

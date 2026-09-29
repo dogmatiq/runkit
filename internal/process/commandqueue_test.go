@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -19,7 +19,7 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
@@ -70,7 +70,7 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,

@@ -14,7 +14,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -32,7 +32,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -103,7 +103,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -199,7 +199,7 @@ func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testi
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					streamIDs := xtesting.PopulateEventStreams(
 						t,
 						db,
@@ -244,7 +244,7 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			streamIDs := xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -299,7 +299,7 @@ func TestEventStream_failureCounterGrowsAcrossFailures(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			streamIDs := xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -344,7 +344,7 @@ func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			var streamIDs []*uuidpb.UUID
 
 			xtesting.Transact(t, db, func(tx *sql.Tx) {

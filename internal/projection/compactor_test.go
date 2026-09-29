@@ -13,7 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -27,7 +27,7 @@ func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -78,7 +78,7 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					xtesting.ExpectLatchesSetEventually(t, &compacted)
 
 					xtesting.PopulateEventStreams(
@@ -122,7 +122,7 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -171,7 +171,7 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(

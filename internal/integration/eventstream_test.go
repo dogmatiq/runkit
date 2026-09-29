@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -20,7 +20,7 @@ import (
 func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
 
 			// Find the stream that was used for these events.
@@ -73,7 +73,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Force creation of multiple event streams so that the message pump
 			// doesn't just create a single stream and use it continuously.
 			xtesting.CreateEventStreams(t, db, 3)
@@ -126,7 +126,7 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBePostponed(

@@ -10,7 +10,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -22,7 +22,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 
 			xtesting.PopulateEventStreams(
 				t,
@@ -86,7 +86,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -147,7 +147,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -223,7 +223,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
@@ -281,7 +281,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
@@ -361,7 +361,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -433,7 +433,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &delivered)
 
 			// The TypeA deadline was skipped rather than delivered, so it
