@@ -72,8 +72,7 @@ func (s *ConsumerAPI) pollEventStreams(
 			id,
 			next_offset
 		FROM eventstream.streams
-		WHERE id != ALL($1)
-		AND NOT is_foreign`,
+		WHERE id != ALL($1)`,
 		xsql.UUIDSeq(seen.All()),
 	)
 	if err != nil {
