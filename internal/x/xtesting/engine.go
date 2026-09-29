@@ -25,6 +25,10 @@ const (
 	concurrentEngines = 3
 )
 
+// ProjectionCompactInterval is the projection compaction interval configured
+// on engines started by [RunEngines] and related functions.
+const ProjectionCompactInterval = 10 * time.Millisecond
+
 // RunEngines runs the given Dogma application in a test engine and executes the
 // given function while the engine is running.
 //
@@ -38,6 +42,7 @@ func RunEngines(
 	fn func(
 		testing.TB,
 		*dogmaengine.Engine,
+		*sql.DB,
 	),
 	routes ...dogma.HandlerRoute,
 ) {
@@ -56,7 +61,7 @@ func RunEngines(
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
-	fn func(testing.TB, *dogmaengine.Engine),
+	fn func(testing.TB, *dogmaengine.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -75,7 +80,7 @@ func SetupThenRunEngines(
 func RunEnginesWithDB(
 	t *testing.T,
 	db *sql.DB,
-	fn func(testing.TB, *dogmaengine.Engine),
+	fn func(testing.TB, *dogmaengine.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -108,13 +113,13 @@ func RunEnginesWithDB(
 	var engine *dogmaengine.Engine
 
 	for idx := range concurrentEngines {
-		e := &dogmaengine.Engine{
-			DB:                        db,
-			App:                       app,
-			ProjectionCompactInterval: 10 * time.Millisecond,
-			Addr:                      ":0",
-			Logger:                    logger.With("engine", idx),
-		}
+		e := dogmaengine.New(
+			app,
+			db,
+			dogmaengine.WithProjectionCompactInterval(ProjectionCompactInterval),
+			dogmaengine.WithListenAddress(":0"),
+			dogmaengine.WithLogger(logger.With("engine", idx)),
+		)
 
 		if engine == nil {
 			engine = e
@@ -142,6 +147,7 @@ func RunEnginesWithDB(
 	fn(
 		testingTBWithContext{t, testContext},
 		engine,
+		db,
 	)
 }
 
@@ -168,6 +174,7 @@ func ExecuteCommand(
 func ExecuteCommandAndWait(
 	t testing.TB,
 	engine *dogmaengine.Engine,
+	db *sql.DB,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -177,7 +184,7 @@ func ExecuteCommandAndWait(
 
 	WaitForCommandToBeRemovedFromQueue(
 		t,
-		engine.DB,
+		db,
 		commandEnvelope.GetBody().GetMessageId(),
 	)
 
@@ -189,6 +196,7 @@ func ExecuteCommandAndWait(
 func ExecuteCommandsSequentially(
 	t testing.TB,
 	engine *dogmaengine.Engine,
+	db *sql.DB,
 	commands ...dogma.Command,
 ) []*envelopepb.Envelope {
 	t.Helper()
@@ -196,7 +204,7 @@ func ExecuteCommandsSequentially(
 	var commandEnvelopes []*envelopepb.Envelope
 
 	for _, command := range commands {
-		commandEnvelope := ExecuteCommandAndWait(t, engine, command)
+		commandEnvelope := ExecuteCommandAndWait(t, engine, db, command)
 		commandEnvelopes = append(commandEnvelopes, commandEnvelope)
 	}
 

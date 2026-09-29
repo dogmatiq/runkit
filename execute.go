@@ -67,7 +67,7 @@ func (e *Engine) ExecuteCommand(
 
 	if err := xsql.Transact(
 		ctx,
-		e.DB,
+		e.db,
 		func(ctx context.Context, tx *sql.Tx) error {
 			row := tx.QueryRowContext(
 				ctx,
@@ -88,13 +88,13 @@ func (e *Engine) ExecuteCommand(
 			}
 
 			if ok {
-				e.Logger.InfoContext(
+				e.logger.InfoContext(
 					ctx,
 					command.MessageDescription(),
 					xslog.Envelope("command", commandEnvelope),
 				)
 			} else {
-				e.Logger.DebugContext(
+				e.logger.DebugContext(
 					ctx,
 					"command deduplicated",
 					xslog.Envelope("command", commandEnvelope),
@@ -114,7 +114,7 @@ func (e *Engine) ExecuteCommand(
 
 	if err := waitForEvents(
 		ctx,
-		e.DB,
+		e.db,
 		messageID,
 		eventTypes,
 		eventObservers,
