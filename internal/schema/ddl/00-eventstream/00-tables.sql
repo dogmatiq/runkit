@@ -7,14 +7,14 @@ CREATE SCHEMA IF NOT EXISTS eventstream;
 -- equivalent to the number of events already on the stream.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.streams (
-    id              uuid    PRIMARY KEY,
-    next_offset     bigint  NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
-    is_external     boolean NOT NULL DEFAULT false
+    id          uuid    PRIMARY KEY,
+    next_offset bigint  NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
+    is_foreign  boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX IF NOT EXISTS streams_by_source
 ON eventstream.streams (
-    is_external
+    is_foreign
 );
 
 --------------------------------------------------------------------------------
