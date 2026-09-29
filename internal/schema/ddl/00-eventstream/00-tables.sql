@@ -8,13 +8,7 @@ CREATE SCHEMA IF NOT EXISTS eventstream;
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.streams (
     id          uuid    PRIMARY KEY,
-    next_offset bigint  NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
-    is_foreign  boolean NOT NULL DEFAULT false
-);
-
-CREATE INDEX IF NOT EXISTS streams_by_source
-ON eventstream.streams (
-    is_foreign
+    next_offset bigint  NOT NULL DEFAULT 0 CHECK (next_offset >= 0)
 );
 
 --------------------------------------------------------------------------------

@@ -28,11 +28,9 @@ AS $$
 DECLARE
     acquired_id uuid;
 BEGIN
-    -- Phase 1: try to grab a free stream without blocking. External streams
-    -- are populated by replication, not local writes, so they're excluded.
+    -- Phase 1: try to grab a free stream without blocking.
     SELECT id INTO acquired_id
     FROM eventstream.streams
-    WHERE NOT is_foreign
     ORDER BY next_offset, random()
     FOR UPDATE SKIP LOCKED
     LIMIT 1;
@@ -44,10 +42,9 @@ BEGIN
     -- Phase 2: all streams are locked. If a zero-length stream already exists,
     -- block until any stream becomes available rather than creating a redundant
     -- empty stream.
-    IF EXISTS (SELECT 1 FROM eventstream.streams WHERE next_offset = 0 AND NOT is_foreign) THEN
+    IF EXISTS (SELECT 1 FROM eventstream.streams WHERE next_offset = 0) THEN
         SELECT id INTO acquired_id
         FROM eventstream.streams
-        WHERE NOT is_foreign
         ORDER BY next_offset, random()
         FOR UPDATE
         LIMIT 1;
