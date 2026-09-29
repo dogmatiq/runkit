@@ -7,7 +7,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -21,7 +21,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Execute two commands of different types, each targetting a
 			// different handler.
 			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
@@ -101,7 +101,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectInstance(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine, db *sql.DB) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
 
 			xtesting.ExpectLatchesSetEventually(
