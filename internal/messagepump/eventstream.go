@@ -50,7 +50,7 @@ func AcquireEventDelivery(
 				$1,
 				s.id
 			FROM eventstream.streams AS s
-			WHERE NOT s.is_external
+			WHERE NOT s.is_foreign
 			AND NOT EXISTS (
 				SELECT 1
 				FROM eventstream.handler_checkpoints AS h
@@ -72,7 +72,7 @@ func AcquireEventDelivery(
 			FROM eventstream.streams AS s
 			INNER JOIN eventstream.handler_checkpoints AS h
 				ON h.stream_id = s.id
-			WHERE NOT s.is_external
+			WHERE NOT s.is_foreign
 				AND h.handler_key = $1
 				AND h.resume_at <= clock_timestamp()
 				AND s.next_offset > h.checkpoint_offset
