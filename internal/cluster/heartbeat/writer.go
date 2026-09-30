@@ -3,7 +3,6 @@ package heartbeat
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -34,93 +33,42 @@ type Writer struct {
 
 // Run writes an initial heartbeat record and refreshes it on every interval
 // tick until ctx is cancelled, at which point the record is deleted.
-func (w *Writer) Run(ctx context.Context) error {
-	inserted := false
-
+func (w *Writer) Run(ctx context.Context) {
 	for {
 		refreshAt := time.Now().Add(Interval)
 		expiresAt := refreshAt.Add(Tolerance * Interval)
 
-		var (
-			ok  bool
-			err error
-		)
+		if _, err := w.DB.ExecContext(
+			ctx,
+			`INSERT INTO cluster.heartbeats (
+				node_id,
+				expires_at
+			)
+			VALUES ($1, $2)
+			ON CONFLICT (node_id) DO UPDATE SET
+				expires_at = EXCLUDED.expires_at`,
+			xsql.UUID(w.NodeID),
+			expiresAt,
+		); err != nil {
+			if err == ctx.Err() {
+				return
+			}
 
-		if inserted {
-			ok, err = w.update(ctx, expiresAt)
-		} else {
-			ok, err = w.insert(ctx, expiresAt)
-		}
-
-		if err != nil {
-			w.Logger.Error(
+			w.Logger.ErrorContext(
+				ctx,
 				"unable to write heartbeat record",
 				slog.String("error", err.Error()),
 			)
-		} else if !ok {
-			return fmt.Errorf(
-				"unable to write heartbeat record: node ID %s conflicts with another node",
-				w.NodeID,
-			)
-		} else {
-			inserted = true
 		}
 
 		select {
 		case <-time.After(time.Until(refreshAt)):
 			continue
 		case <-ctx.Done():
-			if inserted {
-				w.delete()
-			}
-			return ctx.Err()
+			w.delete()
+			return
 		}
 	}
-}
-
-func (w *Writer) insert(ctx context.Context, expiresAt time.Time) (bool, error) {
-	res, err := w.DB.ExecContext(
-		ctx,
-		`INSERT INTO cluster.heartbeats (
-			node_id,
-			expires_at
-		)
-		VALUES ($1, $2)
-		ON CONFLICT (node_id) DO NOTHING`,
-		xsql.UUID(w.NodeID),
-		expiresAt,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return n == 1, nil
-}
-
-func (w *Writer) update(ctx context.Context, expiresAt time.Time) (bool, error) {
-	res, err := w.DB.ExecContext(
-		ctx,
-		`UPDATE cluster.heartbeats
-		SET expires_at = $2
-		WHERE node_id = $1`,
-		xsql.UUID(w.NodeID),
-		expiresAt,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-
-	return n == 1, nil
 }
 
 func (w *Writer) delete() {
