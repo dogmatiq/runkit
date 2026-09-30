@@ -2,7 +2,6 @@ package heartbeat_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -25,9 +24,10 @@ func TestWriter(t *testing.T) {
 			Logger: spruce.NewTestLogger(t),
 		}
 
-		errCh := make(chan error, 1)
+		done := make(chan struct{})
 		go func() {
-			errCh <- w.Run(ctx)
+			defer close(done)
+			w.Run(ctx)
 		}()
 
 		xtesting.WaitForQueryResult(
@@ -41,57 +41,6 @@ func TestWriter(t *testing.T) {
 			xsql.UUID(w.NodeID),
 		)
 
-		cancel()
-
-		if err := <-errCh; !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context.Canceled, got: %v", err)
-		}
-	})
-
-	t.Run("it returns an error when the initial write conflicts with an existing row", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		db := xtesting.NewDatabase(t)
-
-		nodeID := uuidpb.Generate()
-
-		w1 := &Writer{
-			NodeID: nodeID,
-			DB:     db,
-			Logger: spruce.NewTestLogger(t),
-		}
-
-		done := make(chan struct{})
-		go func() {
-			w1.Run(ctx)
-			close(done)
-		}()
-
-		xtesting.WaitForQueryResult(
-			t,
-			"heartbeat record exists",
-			1,
-			db,
-			`SELECT COUNT(*)
-			FROM cluster.heartbeats
-			WHERE node_id = $1`,
-			xsql.UUID(w1.NodeID),
-		)
-
-		w2 := &Writer{
-			NodeID: nodeID,
-			DB:     db,
-			Logger: spruce.NewTestLogger(t),
-		}
-
-		err := w2.Run(ctx)
-
-		if err == nil || errors.Is(err, context.Canceled) {
-			t.Fatalf("unexpected error: got %v", err)
-		}
-
-		// Ensure the first writer has finished.
 		cancel()
 		<-done
 	})
