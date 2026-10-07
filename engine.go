@@ -19,6 +19,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/aggregate"
+	"github.com/dogmatiq/runkit/internal/cluster/heartbeat"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
@@ -73,6 +74,10 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
 
+	// heartbeatObserver monitors the heartbeat table and sends notifications
+	// when the set of live nodes changes.
+	heartbeatObserver *heartbeat.Observer
+
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
 
@@ -100,38 +105,6 @@ func New(
 	}
 
 	return e
-}
-
-// EngineOption is a function that configures an [Engine].
-type EngineOption func(*Engine)
-
-// WithLogger is an [EngineOption] that sets the logger the engine uses.
-//
-// If it is not provided [slog.Default] is used.
-func WithLogger(logger *slog.Logger) EngineOption {
-	return func(e *Engine) {
-		e.logger = logger
-	}
-}
-
-// WithListenAddress is an [EngineOption] that sets the address the engine
-// listens on for gRPC requests from other engines.
-//
-// If it is not provided [DefaultListenAddr] is used.
-func WithListenAddress(addr string) EngineOption {
-	return func(e *Engine) {
-		e.listenAddress = addr
-	}
-}
-
-// WithProjectionCompactInterval is an [EngineOption] that sets the minimum time
-// between projection compaction attempts.
-//
-// If it is not provided [DefaultProjectionCompactInterval] is used.
-func WithProjectionCompactInterval(interval time.Duration) EngineOption {
-	return func(e *Engine) {
-		e.compactInterval = interval
-	}
 }
 
 // Run starts the engine and blocks until ctx is canceled.
@@ -192,6 +165,19 @@ func (e *Engine) Run(ctx context.Context) error {
 			return ctx.Err()
 		})
 	}
+
+	e.heartbeatObserver = &heartbeat.Observer{
+		DB:     e.db,
+		Logger: e.logger.With(slog.String("component", "cluster.heartbeat.observer")),
+	}
+
+	runComponent(e.heartbeatObserver)
+
+	runComponent(&heartbeat.Heart{
+		NodeID: uuidpb.Generate(),
+		DB:     e.db,
+		Logger: e.logger.With(slog.String("component", "cluster.heartbeat.heart")),
+	})
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
