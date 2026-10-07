@@ -34,43 +34,49 @@ type Writer struct {
 // Run writes an initial heartbeat record and refreshes it on every interval
 // tick until ctx is cancelled, at which point the record is deleted.
 func (w *Writer) Run(ctx context.Context) {
+	w.purge(ctx)
+	defer w.delete()
+
 	for {
 		refreshAt := time.Now().Add(Interval)
-		expiresAt := refreshAt.Add(Tolerance * Interval)
+		w.update(ctx, refreshAt)
+		delay := time.Until(refreshAt)
 
-		if _, err := w.DB.ExecContext(
-			ctx,
-			`INSERT INTO cluster.heartbeats (
-				node_id,
-				expires_at
-			)
-			VALUES ($1, $2)
-			ON CONFLICT (node_id) DO UPDATE SET
-				expires_at = EXCLUDED.expires_at`,
-			xsql.UUID(w.NodeID),
-			expiresAt,
-		); err != nil {
-			if err == ctx.Err() {
-				return
-			}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
 
+// update writes the heartbeat record for this node.
+func (w *Writer) update(ctx context.Context, refreshAt time.Time) {
+	expiresAt := refreshAt.Add(Tolerance * Interval)
+
+	if _, err := w.DB.ExecContext(
+		ctx,
+		`INSERT INTO cluster.heartbeats (
+			node_id,
+			expires_at
+		)
+		VALUES ($1, $2)
+		ON CONFLICT (node_id) DO UPDATE SET
+			expires_at = EXCLUDED.expires_at`,
+		xsql.UUID(w.NodeID),
+		expiresAt,
+	); err != nil {
+		if err != ctx.Err() {
 			w.Logger.ErrorContext(
 				ctx,
 				"unable to write heartbeat record",
 				slog.String("error", err.Error()),
 			)
 		}
-
-		select {
-		case <-time.After(time.Until(refreshAt)):
-			continue
-		case <-ctx.Done():
-			w.delete()
-			return
-		}
 	}
 }
 
+// delete removes the heartbeat record for this node from the database.
 func (w *Writer) delete() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -82,5 +88,20 @@ func (w *Writer) delete() {
 		xsql.UUID(w.NodeID),
 	); err != nil {
 		w.Logger.Error("unable to remove heartbeat record", "error", err)
+	}
+}
+
+// purge removes all expired heartbeat records from the database.
+func (w *Writer) purge(ctx context.Context) {
+	if _, err := w.DB.ExecContext(
+		ctx,
+		`DELETE FROM cluster.heartbeats
+		WHERE expires_at <= clock_timestamp()`,
+	); err != nil {
+		w.Logger.ErrorContext(
+			ctx,
+			"unable to delete expired heartbeat records",
+			slog.String("error", err.Error()),
+		)
 	}
 }

@@ -2,153 +2,98 @@ package heartbeat_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/cluster/heartbeat"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
 func TestReader(t *testing.T) {
-	t.Run("it returns the live nodes", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
 
-		db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabase(t)
+	logger := spruce.NewTestLogger(t)
 
-		w1 := &Writer{
-			NodeID: uuidpb.Generate(),
-			DB:     db,
-			Logger: spruce.NewTestLogger(t),
-		}
-		w2 := &Writer{
-			NodeID: uuidpb.Generate(),
-			DB:     db,
-			Logger: spruce.NewTestLogger(t),
-		}
+	var group sync.WaitGroup
 
-		go w1.Run(ctx)
-		go w2.Run(ctx)
+	reader := &Reader{
+		DB:     db,
+		Logger: logger,
+	}
 
-		xtesting.WaitForQueryResult(
-			t,
-			"both heartbeat records exist",
-			2,
-			db,
-			`SELECT COUNT(*) FROM cluster.heartbeats`,
-		)
-
-		r := &Reader{DB: db}
-
-		got, err := r.LiveNodes(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		gotSet := uuidpb.Set{}
-		for _, id := range got {
-			gotSet.Add(id)
-		}
-
-		if gotSet.Len() != 2 || !gotSet.Has(w1.NodeID) || !gotSet.Has(w2.NodeID) {
-			t.Fatalf("unexpected live nodes: got %v, want [%s %s]", got, w1.NodeID, w2.NodeID)
-		}
+	group.Go(func() {
+		reader.Run(ctx)
 	})
 
-	t.Run("it excludes expired nodes", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		db := xtesting.NewDatabase(t)
-
-		live := uuidpb.Generate()
-		expired := uuidpb.Generate()
-
-		if _, err := db.ExecContext(
-			ctx,
-			`INSERT INTO cluster.heartbeats (node_id, expires_at)
-			VALUES ($1, clock_timestamp() + interval '1 hour'),
-			       ($2, clock_timestamp() - interval '1 hour')`,
-			xsql.UUID(live),
-			xsql.UUID(expired),
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		r := &Reader{DB: db}
-
-		got, err := r.LiveNodes(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if len(got) != 1 || !got[0].Equal(live) {
-			t.Fatalf("unexpected live nodes: got %v, want [%s]", got, live)
-		}
-	})
-
-	t.Run("it reflects graceful node departure", func(t *testing.T) {
-		ctx := context.Background()
-
-		db := xtesting.NewDatabase(t)
-
-		staying := &Writer{
-			NodeID: uuidpb.Generate(),
+	startWriter := func() (*uuidpb.UUID, func()) {
+		w := &Writer{
 			DB:     db,
-			Logger: spruce.NewTestLogger(t),
-		}
-		leavingCtx, leave := context.WithCancel(ctx)
-
-		leaving := &Writer{
+			Logger: logger,
 			NodeID: uuidpb.Generate(),
-			DB:     db,
-			Logger: spruce.NewTestLogger(t),
 		}
 
-		stayingCtx, stopStaying := context.WithCancel(ctx)
-		defer stopStaying()
+		ctxW, cancelW := context.WithCancel(ctx)
 
-		go staying.Run(stayingCtx)
+		group.Go(func() {
+			w.Run(ctxW)
+		})
 
-		leavingDone := make(chan struct{})
-		go func() {
-			leaving.Run(leavingCtx)
-			close(leavingDone)
-		}()
+		return w.NodeID, cancelW
+	}
 
-		xtesting.WaitForQueryResult(
-			t,
-			"both heartbeat records exist",
-			2,
-			db,
-			`SELECT COUNT(*) FROM cluster.heartbeats`,
-		)
+	await := func(ch <-chan *uuidpb.Set, want ...*uuidpb.UUID) {
+		t.Helper()
 
-		// The leaving node deletes its record on graceful shutdown.
-		leave()
-		<-leavingDone
+		wantSet := uuidpb.NewSet(want...)
 
-		r := &Reader{DB: db}
-
-		deadline := time.Now().Add(xtesting.WaitTimeout)
-		for {
-			got, err := r.LiveNodes(ctx)
-			if err != nil {
-				t.Fatal(err)
+		select {
+		case got := <-ch:
+			if !got.IsEqual(wantSet) {
+				t.Fatalf("unexpected live nodes: got %s, want %s", got, wantSet)
 			}
-
-			if len(got) == 1 && got[0].Equal(staying.NodeID) {
-				return
-			}
-
-			if time.Now().After(deadline) {
-				t.Fatalf("timed out waiting for leaving node to depart: got %v", got)
-			}
-
-			time.Sleep(5 * time.Millisecond)
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for live nodes")
 		}
-	})
+	}
+
+	// Start an observer *before* there are any nodes.
+	observer1 := make(chan *uuidpb.Set)
+	stopObserver1 := reader.Observe(observer1)
+	defer stopObserver1()
+
+	node1ID, stopWriter1 := startWriter()
+	defer stopWriter1()
+
+	await(observer1, node1ID)
+
+	// Start a second observer *after* a node already exists.
+	observer2 := make(chan *uuidpb.Set)
+	stopObserver2 := reader.Observe(observer2)
+	defer stopObserver2()
+
+	await(observer2, node1ID)
+
+	node2ID, stopWriter2 := startWriter()
+	defer stopWriter2()
+
+	await(observer1, node1ID, node2ID)
+	await(observer2, node1ID, node2ID)
+
+	stopWriter1()
+
+	await(observer1, node2ID)
+	await(observer2, node2ID)
+
+	stopWriter2()
+
+	await(observer1)
+	await(observer2)
+
+	cancel()
+	group.Wait()
 }
