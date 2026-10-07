@@ -12,7 +12,7 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestReader(t *testing.T) {
+func TestObserver(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 
@@ -21,17 +21,17 @@ func TestReader(t *testing.T) {
 
 	var group sync.WaitGroup
 
-	reader := &Reader{
+	observer := &Observer{
 		DB:     db,
 		Logger: logger,
 	}
 
 	group.Go(func() {
-		reader.Run(ctx)
+		observer.Run(ctx)
 	})
 
-	startWriter := func() (*uuidpb.UUID, func()) {
-		w := &Writer{
+	startNode := func() (*uuidpb.UUID, func()) {
+		w := &Heart{
 			DB:     db,
 			Logger: logger,
 			NodeID: uuidpb.Generate(),
@@ -61,38 +61,38 @@ func TestReader(t *testing.T) {
 		}
 	}
 
-	// Start an observer *before* there are any nodes.
-	observer1 := make(chan *uuidpb.Set)
-	stopObserver1 := reader.Observe(observer1)
-	defer stopObserver1()
+	// Start a subscription *before* there are any nodes.
+	subcription1 := make(chan *uuidpb.Set)
+	unsubscribe1 := observer.Subscribe(subcription1)
+	defer unsubscribe1()
 
-	node1ID, stopWriter1 := startWriter()
-	defer stopWriter1()
+	node1ID, stopNode1 := startNode()
+	defer stopNode1()
 
-	await(observer1, node1ID)
+	await(subcription1, node1ID)
 
 	// Start a second observer *after* a node already exists.
-	observer2 := make(chan *uuidpb.Set)
-	stopObserver2 := reader.Observe(observer2)
-	defer stopObserver2()
+	subscription2 := make(chan *uuidpb.Set)
+	unsubscribe2 := observer.Subscribe(subscription2)
+	defer unsubscribe2()
 
-	await(observer2, node1ID)
+	await(subscription2, node1ID)
 
-	node2ID, stopWriter2 := startWriter()
-	defer stopWriter2()
+	node2ID, stopNode2 := startNode()
+	defer stopNode2()
 
-	await(observer1, node1ID, node2ID)
-	await(observer2, node1ID, node2ID)
+	await(subcription1, node1ID, node2ID)
+	await(subscription2, node1ID, node2ID)
 
-	stopWriter1()
+	stopNode1()
 
-	await(observer1, node2ID)
-	await(observer2, node2ID)
+	await(subcription1, node2ID)
+	await(subscription2, node2ID)
 
-	stopWriter2()
+	stopNode2()
 
-	await(observer1)
-	await(observer2)
+	await(subcription1)
+	await(subscription2)
 
 	cancel()
 	group.Wait()

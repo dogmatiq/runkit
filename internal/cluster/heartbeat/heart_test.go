@@ -18,7 +18,7 @@ func TestWriter(t *testing.T) {
 
 		db := xtesting.NewDatabase(t)
 
-		w := &Writer{
+		h := &Heart{
 			NodeID: uuidpb.Generate(),
 			DB:     db,
 			Logger: spruce.NewTestLogger(t),
@@ -27,7 +27,7 @@ func TestWriter(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			w.Run(ctx)
+			h.Run(ctx)
 		}()
 
 		xtesting.WaitForQueryResult(
@@ -38,7 +38,7 @@ func TestWriter(t *testing.T) {
 			`SELECT COUNT(*)
 			FROM cluster.heartbeats
 			WHERE node_id = $1`,
-			xsql.UUID(w.NodeID),
+			xsql.UUID(h.NodeID),
 		)
 
 		cancel()
@@ -51,7 +51,7 @@ func TestWriter(t *testing.T) {
 
 		db := xtesting.NewDatabase(t)
 
-		w := &Writer{
+		w := &Heart{
 			NodeID: uuidpb.Generate(),
 			DB:     db,
 			Logger: spruce.NewTestLogger(t),
