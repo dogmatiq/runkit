@@ -57,6 +57,8 @@ BEGIN
     VALUES (gen_random_uuid())
     RETURNING id INTO acquired_id;
 
+    PERFORM pg_notify('eventstream.create', acquired_id::text);
+
     RETURN acquired_id;
 END;
 $$;
