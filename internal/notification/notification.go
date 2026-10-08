@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/runkit/internal/backoff"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -25,8 +25,9 @@ type Listener struct {
 	// Logger is the target for log messages produced by the listener.
 	Logger *slog.Logger
 
-	conn *pgx.Conn
-	done xsync.Latch
+	conn    *pgx.Conn
+	done    xsync.Latch
+	backoff backoff.Backoff
 
 	once        sync.Once
 	sub, unsub  chan *subscriber
@@ -64,14 +65,10 @@ func (l *Listener) Run(ctx context.Context) {
 				"unable to listen for notifications",
 				xslog.Error(err),
 			)
-		}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(1 * time.Second):
-			// We use a relatively long delay here, as we should only reach this
-			// path when there's been a database connection issue.
+			if !l.backoff.Wait(ctx) {
+				return
+			}
 		}
 	}
 }

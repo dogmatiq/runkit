@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/runkit/internal/backoff"
 	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -28,15 +28,17 @@ type Observer struct {
 	Logger *slog.Logger
 
 	done      xsync.Latch
+	backoff   backoff.Backoff
 	streamIDs uuidpb.Set
 
 	once        sync.Once
-	sub, unsub  chan *subscriber
-	subscribers map[*subscriber]struct{}
+	sub, unsub  chan *streamSubscriber
+	subscribers map[*streamSubscriber]struct{}
 }
 
-// subscriber is a target for notifications about new event streams.
-type subscriber struct {
+// streamSubscriber encapsulates the state of a single subscriber to
+// event stream notifications.
+type streamSubscriber struct {
 	StreamIDs    chan<- *uuidpb.UUID
 	Unsubscribed xsync.Latch
 }
@@ -70,7 +72,7 @@ func (o *Observer) Run(ctx context.Context) {
 func (o *Observer) Subscribe(ch chan<- *uuidpb.UUID) func() {
 	o.init()
 
-	sub := &subscriber{
+	sub := &streamSubscriber{
 		StreamIDs: ch,
 	}
 
@@ -95,9 +97,9 @@ func (o *Observer) Subscribe(ch chan<- *uuidpb.UUID) func() {
 
 func (o *Observer) init() {
 	o.once.Do(func() {
-		o.sub = make(chan *subscriber)
-		o.unsub = make(chan *subscriber)
-		o.subscribers = make(map[*subscriber]struct{})
+		o.sub = make(chan *streamSubscriber)
+		o.unsub = make(chan *streamSubscriber)
+		o.subscribers = make(map[*streamSubscriber]struct{})
 	})
 }
 
@@ -115,10 +117,8 @@ func (o *Observer) load(ctx context.Context) {
 			xslog.Error(err),
 		)
 
-		select {
-		case <-ctx.Done():
+		if !o.backoff.Wait(ctx) {
 			return
-		case <-time.After(5 * time.Second):
 		}
 	}
 }
@@ -155,7 +155,7 @@ func (o *Observer) tryLoad(ctx context.Context) error {
 
 // subscribe registers a new subscriber and sends it the current set of event
 // streams.
-func (o *Observer) subscribe(ctx context.Context, sub *subscriber) {
+func (o *Observer) subscribe(ctx context.Context, sub *streamSubscriber) {
 	o.subscribers[sub] = struct{}{}
 
 	for streamID := range o.streamIDs.All() {

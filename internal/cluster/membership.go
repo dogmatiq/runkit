@@ -25,8 +25,8 @@ type MembershipObserver struct {
 	heartbeats uuidpb.Map[time.Time]
 
 	once        sync.Once
-	sub, unsub  chan *subscriber
-	subscribers map[*subscriber]struct{}
+	sub, unsub  chan *membershipSubscriber
+	subscribers map[*membershipSubscriber]struct{}
 }
 
 // MembershipChange represents a change to the set of live nodes in the
@@ -43,8 +43,9 @@ type MembershipChange struct {
 	Live *uuidpb.Set
 }
 
-// subscriber represents a subscriber's interest in a specific topic.
-type subscriber struct {
+// membershipSubscriber encapsulates the state of a single subscriber to
+// membership changes.
+type membershipSubscriber struct {
 	Changes      chan<- MembershipChange
 	Unsubscribed xsync.Latch
 }
@@ -80,7 +81,7 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 func (o *MembershipObserver) Subscribe(ch chan<- MembershipChange) func() {
 	o.init()
 
-	sub := &subscriber{
+	sub := &membershipSubscriber{
 		Changes: ch,
 	}
 
@@ -105,15 +106,15 @@ func (o *MembershipObserver) Subscribe(ch chan<- MembershipChange) func() {
 
 func (o *MembershipObserver) init() {
 	o.once.Do(func() {
-		o.sub = make(chan *subscriber)
-		o.unsub = make(chan *subscriber)
-		o.subscribers = map[*subscriber]struct{}{}
+		o.sub = make(chan *membershipSubscriber)
+		o.unsub = make(chan *membershipSubscriber)
+		o.subscribers = map[*membershipSubscriber]struct{}{}
 	})
 }
 
 // subscribe registers a new subscriber and sends it the current set of live
 // nodes.
-func (o *MembershipObserver) subscribe(ctx context.Context, sub *subscriber) {
+func (o *MembershipObserver) subscribe(ctx context.Context, sub *membershipSubscriber) {
 	o.subscribers[sub] = struct{}{}
 
 	if o.heartbeats.IsEmpty() {
@@ -194,7 +195,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 }
 
 // unicast sends a change notification to a single subscriber channel.
-func (o *MembershipObserver) unicast(ctx context.Context, sub *subscriber, change MembershipChange) {
+func (o *MembershipObserver) unicast(ctx context.Context, sub *membershipSubscriber, change MembershipChange) {
 	select {
 	case <-ctx.Done():
 	case <-sub.Unsubscribed.Chan():
