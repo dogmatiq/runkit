@@ -14,8 +14,8 @@ gRPC), handler-owned checkpoints, and a per-(handler, stream) **catch-up
 subscription**. Foreign events are never persisted locally.
 
 **Architecture:** Each engine replica joins a database-scoped **cluster** (a
-`cluster.heartbeats` table, maintained by a `heartbeat.Writer` and observed by a
-push-based `heartbeat.Reader`). Every event stream — local or foreign — is a
+`cluster.heartbeats` table, maintained by a `heartbeat.Heart` and observed by a
+push-based `heartbeat.Observer`). Every event stream — local or foreign — is a
 **stream source** that can list its streams and read a stream's events.
 Ownership of each **stream** is assigned by **rendezvous (highest-random-weight)
 hashing** over the live node set, so exactly one replica consumes a given stream
@@ -51,7 +51,7 @@ Settled during design (full log in session memory). Binding constraints.
   the gRPC _server_, the _local_ reader, and kept consistent between them. The
   engine never consumes its own streams over gRPC.
 - **U4 — Rendezvous per-stream ownership.** Workload = **stream ID**, candidates
-  = live node IDs from the `heartbeat.Reader`. Failover is TTL-bounded (~300ms)
+  = live node IDs from the `heartbeat.Observer`. Failover is TTL-bounded (~300ms)
   and assignment is static (not backlog-aware); hot-spot mitigation (weighted
   rendezvous / work-stealing) is **deferred**.
 - **U5 — Delivery is a per-(handler, stream) catch-up subscription.**
@@ -98,11 +98,11 @@ peer's event. It is the first end-to-end milestone of the unified path.
 ## Status summary
 
 - **Phase 1 — Remove `is_foreign`** — **DONE**.
-- **Phase 2 — Cluster membership + rendezvous** — **DONE** (`heartbeat.Writer`,
-  push-based `heartbeat.Reader`, `rendezvous`).
+- **Phase 2 — Cluster membership + rendezvous** — **DONE** (`heartbeat.Heart`,
+  push-based `heartbeat.Observer`, `rendezvous`).
 - A **foreign-only prototype** (per-(handler, stream) pull consumers, pull-based
   membership) was built and briefly passed `TestForeignEvents`, then superseded
-  by the push `heartbeat.Reader` and this unified design. Its reusable parts (the
+  by the push `heartbeat.Observer` and this unified design. Its reusable parts (the
   projection apply logic, gRPC client usage, engine fan-in of peers) are absorbed
   below; its pull reconciliation loop and pull membership access are **replaced**.
 
@@ -140,7 +140,7 @@ eventstream.streams` once per replica per interval, driving local stream
 `internal/foreignstream`):
 
 - `doc.go`, `consumer.go` — engine-level `Consumer`: aggregates sources
-  (`{local} ∪ {peers}`), discovers streams, subscribes to the `heartbeat.Reader`,
+  (`{local} ∪ {peers}`), discovers streams, subscribes to the `heartbeat.Observer`,
   computes per-stream ownership, and reconciles `streamWorker`s.
 - `streamworker.go` — the per-(handler, stream) catch-up state machine
   (historical ↔ contemporary).
@@ -262,7 +262,7 @@ the consumer is written once.
 
 - [ ] **Step 3: Test + run** against a populated local DB (reuse
       `xtesting.PopulateEventStreams`). Commit `"Add StreamSource with local
-    implementation"`.
+implementation"`.
 
 ### Task 3.3: `RemoteSource` (gRPC client)
 
@@ -284,9 +284,9 @@ the consumer is written once.
 - Test: `internal/eventstream/activity_test.go`
 
 - [ ] **Step 1: Implement** a watcher that polls `SELECT id, next_offset FROM
-    eventstream.streams` every `heartbeat.Interval` and pushes per-stream
+eventstream.streams` every `heartbeat.Interval` and pushes per-stream
       "advanced to N" signals to subscribers (same push/observer shape as
-      `heartbeat.Reader`). It drives both local discovery and contemporary
+      `heartbeat.Observer`). It drives both local discovery and contemporary
       wakeups.
 - [ ] **Step 2: Test + run + commit** `"Add eventstream.ActivityWatcher"`.
 
@@ -377,10 +377,10 @@ tests carefully before implementing.
 - Test: `internal/projectionstream/consumer_test.go`
 
 - [ ] **Step 1: Implement** the engine-level component. Inputs: this node's ID,
-      the `heartbeat.Reader`, the `ActivityWatcher`, the set of projection
+      the `heartbeat.Observer`, the `ActivityWatcher`, the set of projection
       `Applier`s, the local `StreamSource`, a channel of remote sources derived
       from peer connections, and a logger. `Run(ctx)`:
-  - Subscribe to `heartbeat.Reader` for the live node set; reconcile on change.
+  - Subscribe to `heartbeat.Observer` for the live node set; reconcile on change.
   - Discover streams from every source (local via `ListStreams` + activity;
     remote via `ListEventStreams`), maintaining `streamID → source`.
   - For each discovered stream, ownership is per-stream:
@@ -407,7 +407,7 @@ tests carefully before implementing.
       `*config.Projection`** (identity, concurrency, `EventTypeIDs`, `e.db`,
       logger) — the same inputs the local `EventPump` used.
 - [ ] **Step 2: Construct the local `StreamSource`, the `ActivityWatcher`, the
-      `heartbeat.Writer`/`Reader`, and the `projectionstream.Consumer`;** fan-in
+      `heartbeat.Heart`/`Reader`, and the `projectionstream.Consumer`;** fan-in
       peer connections to remote sources. Run them as components in the errgroup.
 - [ ] **Step 3: Remove the projection `EventPump` component** from
       `newComponentsForHandler` (keep the `Compactor` and the process
@@ -427,7 +427,7 @@ tests carefully before implementing.
       `projection.handlers`) and `Compactor` (uses `projection.handlers`) are
       untouched.
 - [ ] **Step 3: Build.** Commit `"Serve projections via the unified consumer;
-    handler_checkpoints is process-only"`.
+handler_checkpoints is process-only"`.
 
 ### Task 6.3: Migrate projection tests
 
