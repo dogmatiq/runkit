@@ -157,7 +157,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 		if !exists {
 			added.Add(nodeID)
 
-			o.Logger.InfoContext(
+			o.Logger.DebugContext(
 				ctx,
 				"node added to cluster",
 				xslog.UUID("node_id", nodeID),
@@ -170,7 +170,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 			o.nodes.Delete(nodeID)
 			removed.Add(nodeID)
 
-			o.Logger.InfoContext(
+			o.Logger.DebugContext(
 				ctx,
 				"node removed from cluster",
 				xslog.UUID("node_id", nodeID),

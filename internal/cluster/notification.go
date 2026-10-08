@@ -45,7 +45,7 @@ func (l *NotificationListener) Run(ctx context.Context) {
 
 	for {
 		if err := l.run(ctx); err != nil {
-			if err == ctx.Err() {
+			if ctx.Err() != nil {
 				return
 			}
 
@@ -246,7 +246,7 @@ func (l *NotificationListener) listen(ctx context.Context, topic string) error {
 	sanitized := pgx.Identifier{topic}.Sanitize()
 
 	if _, err := l.conn.Exec(ctx, "LISTEN "+sanitized); err != nil {
-		return fmt.Errorf("unable to listen to topic %s: %w", topic, err)
+		return fmt.Errorf("unable to listen to topic: %s: %w", topic, err)
 	}
 
 	l.Logger.DebugContext(
@@ -262,7 +262,7 @@ func (l *NotificationListener) unlisten(ctx context.Context, topic string) error
 	sanitized := pgx.Identifier{topic}.Sanitize()
 
 	if _, err := l.conn.Exec(ctx, "UNLISTEN "+sanitized); err != nil {
-		return fmt.Errorf("unable to unlisten to topic %s: %w", topic, err)
+		return fmt.Errorf("unable to unlisten to topic: %s: %w", topic, err)
 	}
 
 	l.Logger.DebugContext(
