@@ -8,6 +8,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -75,7 +76,7 @@ func TestMembershipObserver(t *testing.T) {
 		return h.NodeID, cancel
 	}
 
-	notifications := &NotificationListener{
+	notifications := &notification.Listener{
 		DB:     db,
 		Logger: logger,
 	}
