@@ -83,14 +83,14 @@ func TestRendezvous(t *testing.T) {
 			},
 
 			"remove a candidate": func(t *rapid.T) {
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					t.Skip("candidate set is empty")
 				}
 
 				id := xrapid.SampledFromSeq(candidateSet.All()).Draw(t, "candidate to remove")
 				candidateSet.Delete(id)
 
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					workloads.Clear()
 					return
 				}
@@ -115,7 +115,7 @@ func TestRendezvous(t *testing.T) {
 			},
 
 			"select winner for a new workload": func(t *rapid.T) {
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					t.Skip("candidate set is empty")
 				}
 
@@ -142,7 +142,7 @@ func TestRendezvous(t *testing.T) {
 			},
 
 			"self-affinity": func(t *rapid.T) {
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					t.Skip("candidate set is empty")
 				}
 
@@ -167,7 +167,7 @@ func TestRendezvous(t *testing.T) {
 			},
 
 			"non-member candidate does not win": func(t *rapid.T) {
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					t.Skip("candidate set is empty")
 				}
 
@@ -179,7 +179,7 @@ func TestRendezvous(t *testing.T) {
 			},
 
 			"result is independent of candidate slice order": func(t *rapid.T) {
-				if candidateSet.Len() == 0 {
+				if candidateSet.IsEmpty() {
 					t.Skip("candidate set is empty")
 				}
 

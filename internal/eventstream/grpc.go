@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/grpc"
 )
@@ -18,9 +17,9 @@ import (
 // ConsumerAPI is a gRPC server that implements the
 // [messaginggrpc.EventStreamConsumerAPI] service.
 type ConsumerAPI struct {
-	DB            *sql.DB
-	Notifications *cluster.NotificationListener
-	Logger        *slog.Logger
+	DB           *sql.DB
+	EventStreams *Observer
+	Logger       *slog.Logger
 }
 
 // ListEventStreams returns the event streams offered by the server.
@@ -28,59 +27,27 @@ func (s *ConsumerAPI) ListEventStreams(
 	_ *messaginggrpc.ListEventStreamsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
 ) error {
-	streamIDs := make(chan string, 1)
-	stop := s.Notifications.Subscribe("eventstream.create", streamIDs)
+	streamIDs := make(chan *uuidpb.UUID)
+	stop := s.EventStreams.Subscribe(streamIDs)
 	defer stop()
-
-	streams, err := s.loadEventStreams(res.Context())
-	if err != nil {
-		return err
-	}
-
-	sent := &uuidpb.Set{}
-
-	for _, stream := range streams {
-		response := messaginggrpc.NewListEventStreamsResponseBuilder().
-			WithEventStream(stream).
-			Build()
-
-		if err := res.Send(response); err != nil {
-			return fmt.Errorf("unable to send response: %w", err)
-		}
-
-		sent.Add(stream.GetEventStreamId())
-	}
 
 	for {
 		select {
 		case <-res.Context().Done():
 			return res.Context().Err()
 		case id := <-streamIDs:
-			streamID, err := uuidpb.Parse(id)
+			stream, err := s.loadEventStream(res.Context(), id)
 			if err != nil {
-				s.Logger.ErrorContext(
-					res.Context(),
-					"ignored invalid stream ID",
-					slog.String("stream_id", id),
-					slog.Any("error", err),
-				)
-			} else if sent.Has(streamID) {
-				continue
+				return err
 			}
 
 			response := messaginggrpc.NewListEventStreamsResponseBuilder().
-				WithEventStream(
-					messaginggrpc.NewEventStreamBuilder().
-						WithEventStreamId(streamID).
-						Build(),
-				).
+				WithEventStream(stream).
 				Build()
 
 			if err := res.Send(response); err != nil {
 				return fmt.Errorf("unable to send response: %w", err)
 			}
-
-			sent.Add(streamID)
 		}
 	}
 }
@@ -108,46 +75,25 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 }
 
-func (s *ConsumerAPI) loadEventStreams(ctx context.Context) (eventStreams []*messaginggrpc.EventStream, err error) {
-	rows, err := s.DB.QueryContext(
+func (s *ConsumerAPI) loadEventStream(ctx context.Context, id *uuidpb.UUID) (*messaginggrpc.EventStream, error) {
+	row := s.DB.QueryRowContext(
 		ctx,
-		`SELECT
-			id,
-			next_offset
-		FROM eventstream.streams`,
+		`SELECT next_offset
+		FROM eventstream.streams
+		WHERE id = $1`,
+		xsql.UUID(id),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("unable to query event streams: %w", err)
-	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var (
-			streamID   = &uuidpb.UUID{}
-			nextOffset uint64
-		)
+	var nextOffset uint64
 
-		if err := rows.Scan(
-			xsql.UUID(streamID),
-			&nextOffset,
-		); err != nil {
-			return nil, fmt.Errorf("unable to scan event stream: %w", err)
-		}
-
-		eventStreams = append(
-			eventStreams,
-			messaginggrpc.NewEventStreamBuilder().
-				WithEventStreamId(streamID).
-				WithNextOffset(nextOffset).
-				Build(),
-		)
+	if err := row.Scan(&nextOffset); err != nil {
+		return nil, fmt.Errorf("unable to scan event stream: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("unable to iterate event streams: %w", err)
-	}
-
-	return eventStreams, nil
+	return messaginggrpc.NewEventStreamBuilder().
+		WithEventStreamId(id).
+		WithNextOffset(nextOffset).
+		Build(), nil
 }
 
 func (s *ConsumerAPI) pollEvents(
