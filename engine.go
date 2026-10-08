@@ -19,7 +19,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/aggregate"
-	"github.com/dogmatiq/runkit/internal/cluster/heartbeat"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
@@ -74,9 +74,11 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
 
-	// heartbeatObserver monitors the heartbeat table and sends notifications
-	// when the set of live nodes changes.
-	heartbeatObserver *heartbeat.Observer
+	// notifications listens for inter-node notifications.
+	notifications *cluster.NotificationListener
+
+	// membership observes changes to the set of live nodes in the cluster.
+	membership *cluster.MembershipObserver
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
@@ -166,18 +168,25 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	e.heartbeatObserver = &heartbeat.Observer{
+	e.notifications = &cluster.NotificationListener{
 		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "cluster.heartbeat.observer")),
+		Logger: e.logger.With(slog.String("component", "cluster.notification-listener")),
 	}
 
-	runComponent(e.heartbeatObserver)
+	e.membership = &cluster.MembershipObserver{
+		Notifications: e.notifications,
+		Logger:        e.logger.With(slog.String("component", "cluster.membership-observer")),
+	}
 
-	runComponent(&heartbeat.Heart{
+	heartbeater := &cluster.Heartbeater{
 		NodeID: uuidpb.Generate(),
 		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "cluster.heartbeat.heart")),
-	})
+		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
+	}
+
+	runComponent(e.notifications)
+	runComponent(e.membership)
+	runComponent(heartbeater)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.

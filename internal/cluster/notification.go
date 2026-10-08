@@ -51,7 +51,7 @@ func (l *NotificationListener) Run(ctx context.Context) {
 
 			l.Logger.ErrorContext(
 				ctx,
-				"unable to observe notifications",
+				"unable to listen for notifications",
 				xslog.Error(err),
 			)
 		}
@@ -184,13 +184,6 @@ func (l *NotificationListener) dispatch(ctx context.Context, result waitResult) 
 		return nil
 	}
 
-	l.Logger.DebugContext(
-		ctx,
-		`notification received`,
-		slog.String("topic", result.Notification.Channel),
-		slog.String("payload", result.Notification.Payload),
-	)
-
 	var group sync.WaitGroup
 
 	for ch := range l.subscriptions[result.Notification.Channel] {
@@ -210,7 +203,7 @@ func (l *NotificationListener) dispatch(ctx context.Context, result waitResult) 
 func (l *NotificationListener) subscribe(ctx context.Context, sub subscription) error {
 	l.Logger.DebugContext(
 		ctx,
-		`subscription added`,
+		`notification subscription added`,
 		slog.String("topic", sub.Topic),
 		slog.Any("channel", sub.Chan),
 	)
@@ -228,7 +221,7 @@ func (l *NotificationListener) subscribe(ctx context.Context, sub subscription) 
 func (l *NotificationListener) unsubscribe(ctx context.Context, sub subscription) error {
 	l.Logger.DebugContext(
 		ctx,
-		`subscription removed`,
+		`notification subscription removed`,
 		slog.String("topic", sub.Topic),
 		slog.Any("channel", sub.Chan),
 	)
@@ -258,7 +251,7 @@ func (l *NotificationListener) listen(ctx context.Context, topic string) error {
 
 	l.Logger.DebugContext(
 		ctx,
-		`started listening to topic`,
+		`started listening to notification topic`,
 		slog.String("topic", topic),
 	)
 
@@ -274,7 +267,7 @@ func (l *NotificationListener) unlisten(ctx context.Context, topic string) error
 
 	l.Logger.DebugContext(
 		ctx,
-		`stopped listening to topic`,
+		`stopped listening to notification topic`,
 		slog.String("topic", topic),
 	)
 
