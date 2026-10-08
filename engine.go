@@ -23,6 +23,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -48,6 +49,9 @@ type Engine struct {
 
 	// db is the database connection to use.
 	db *sql.DB
+
+	// nodeID is the unique identifier for this engine instance.
+	nodeID *uuidpb.UUID
 
 	// compactInterval is the minimum time between projection
 	// compaction attempts. If non-positive [DefaultProjectionCompactInterval]
@@ -75,10 +79,13 @@ type Engine struct {
 	appConfig *config.Application
 
 	// notifications listens for inter-node notifications.
-	notifications *cluster.NotificationListener
+	notifications *notification.Listener
 
 	// membership observes changes to the set of live nodes in the cluster.
 	membership *cluster.MembershipObserver
+
+	// eventStreams observes changes to the set of available event streams.
+	eventStreams *eventstream.Observer
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
@@ -97,6 +104,7 @@ func New(
 	e := &Engine{
 		app:             app,
 		db:              db,
+		nodeID:          uuidpb.Generate(),
 		compactInterval: DefaultProjectionCompactInterval,
 		listenAddress:   DefaultListenAddr,
 		logger:          slog.Default(),
@@ -111,6 +119,10 @@ func New(
 
 // Run starts the engine and blocks until ctx is canceled.
 func (e *Engine) Run(ctx context.Context) error {
+	e.logger = e.logger.With(
+		xslog.UUID("node_id", e.nodeID),
+	)
+
 	e.appConfig = runtimeconfig.FromApplication(e.app)
 
 	if err := config.Validate(e.appConfig, config.ForExecution()); err != nil {
@@ -168,9 +180,9 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	e.notifications = &cluster.NotificationListener{
+	e.notifications = &notification.Listener{
 		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "cluster.notification-listener")),
+		Logger: e.logger.With(slog.String("component", "notification-listener")),
 	}
 
 	e.membership = &cluster.MembershipObserver{
@@ -179,14 +191,21 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	heartbeater := &cluster.Heartbeater{
-		NodeID: uuidpb.Generate(),
+		NodeID: e.nodeID,
 		DB:     e.db,
 		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
+	}
+
+	e.eventStreams = &eventstream.Observer{
+		DB:            e.db,
+		Notifications: e.notifications,
+		Logger:        e.logger.With(slog.String("component", "eventstream.observer")),
 	}
 
 	runComponent(e.notifications)
 	runComponent(e.membership)
 	runComponent(heartbeater)
+	runComponent(e.eventStreams)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -204,8 +223,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		messaginggrpc.RegisterEventStreamConsumerAPIServer(
 			server,
 			&eventstream.ConsumerAPI{
-				DB:            e.db,
-				Notifications: e.notifications,
+				DB:           e.db,
+				EventStreams: e.eventStreams,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
 				),

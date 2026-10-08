@@ -1,4 +1,4 @@
-package cluster_test
+package notification_test
 
 import (
 	"context"
@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dogmatiq/runkit/internal/cluster"
+	. "github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
-func TestNotificationObserver(t *testing.T) {
+func TestListener(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
@@ -40,47 +40,48 @@ func TestNotificationObserver(t *testing.T) {
 		}
 	}
 
-	observer := &cluster.NotificationListener{
+	listener := &Listener{
 		DB:     db,
 		Logger: logger,
 	}
 
 	group.Go(func() {
-		observer.Run(ctx)
+		listener.Run(ctx)
 	})
 
-	subscription1 := make(chan string)
-	unsubscribe1a := observer.Subscribe("topic-a", subscription1)
+	ch1 := make(chan string)
+	ch2 := make(chan string)
+
+	unsubscribe1a := listener.Subscribe("topic-a", ch1)
 	defer unsubscribe1a()
 
-	unsubscribe1b := observer.Subscribe("topic-b", subscription1)
+	unsubscribe1b := listener.Subscribe("topic-b", ch1)
 	defer unsubscribe1b()
 
-	subscription2 := make(chan string)
-	unsubscribe2a := observer.Subscribe("topic-a", subscription2)
+	unsubscribe2a := listener.Subscribe("topic-a", ch2)
 	defer unsubscribe2a()
 
 	xtesting.ExecOne(t, db, `SELECT pg_notify('topic-a', 'payload-1')`)
 
 	await(
 		"payload-1",
-		subscription1,
-		subscription2,
+		ch1,
+		ch2,
 	)
 
 	xtesting.ExecOne(t, db, `SELECT pg_notify('topic-b', 'payload-2')`)
 
 	await(
 		"payload-2",
-		subscription1,
+		ch1,
 	)
 
 	xtesting.ExecOne(t, db, `SELECT pg_notify('topic-a', 'payload-3')`)
 
 	await(
 		"payload-3",
-		subscription1,
-		subscription2,
+		ch1,
+		ch2,
 	)
 
 	unsubscribe1a()
@@ -90,9 +91,9 @@ func TestNotificationObserver(t *testing.T) {
 
 	select {
 	case <-time.After(100 * time.Millisecond):
-	case <-subscription1:
+	case <-ch1:
 		t.Fatalf("received unexpected notification on subscription1")
-	case <-subscription2:
+	case <-ch2:
 		t.Fatalf("received unexpected notification on subscription2")
 	}
 
@@ -100,7 +101,7 @@ func TestNotificationObserver(t *testing.T) {
 
 	await(
 		"payload-5",
-		subscription1,
+		ch1,
 	)
 
 	cancel()
