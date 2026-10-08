@@ -44,13 +44,15 @@ func (h *Heartbeater) Run(ctx context.Context) {
 			`SELECT pg_notify('heartbeat', $1)`,
 			xsql.UUID(h.NodeID),
 		); err != nil {
-			if err != ctx.Err() {
-				h.Logger.ErrorContext(
-					ctx,
-					"unable to send heartbeat notification",
-					slog.String("error", err.Error()),
-				)
+			if ctx.Err() != nil {
+				return
 			}
+
+			h.Logger.ErrorContext(
+				ctx,
+				"unable to send heartbeat notification",
+				slog.String("error", err.Error()),
+			)
 		}
 
 		select {
