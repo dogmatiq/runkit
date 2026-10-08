@@ -204,13 +204,17 @@ func (e *Engine) Run(ctx context.Context) error {
 		messaginggrpc.RegisterEventStreamConsumerAPIServer(
 			server,
 			&eventstream.ConsumerAPI{
-				DB: e.db,
+				DB:            e.db,
+				Notifications: e.notifications,
+				Logger: e.logger.With(
+					slog.String("component", "eventstream.consumer-api"),
+				),
 			},
 		)
 
 		context.AfterFunc(ctx, server.Stop)
 
-		e.logger.InfoContext(
+		e.logger.DebugContext(
 			ctx,
 			"listening for gRPC requests",
 			slog.String("addr", e.listener.Addr().String()),

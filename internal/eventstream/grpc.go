@@ -1,13 +1,16 @@
 package eventstream
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/grpc"
 )
@@ -15,7 +18,9 @@ import (
 // ConsumerAPI is a gRPC server that implements the
 // [messaginggrpc.EventStreamConsumerAPI] service.
 type ConsumerAPI struct {
-	DB *sql.DB
+	DB            *sql.DB
+	Notifications *cluster.NotificationListener
+	Logger        *slog.Logger
 }
 
 // ListEventStreams returns the event streams offered by the server.
@@ -23,18 +28,59 @@ func (s *ConsumerAPI) ListEventStreams(
 	_ *messaginggrpc.ListEventStreamsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
 ) error {
-	var seen uuidpb.Set
+	streamIDs := make(chan string, 1)
+	stop := s.Notifications.Subscribe("eventstream.create", streamIDs)
+	defer stop()
 
-	for {
-		if err := s.pollEventStreams(res, &seen); err != nil {
-			return err
+	streams, err := s.loadEventStreams(res.Context())
+	if err != nil {
+		return err
+	}
+
+	sent := &uuidpb.Set{}
+
+	for _, stream := range streams {
+		response := messaginggrpc.NewListEventStreamsResponseBuilder().
+			WithEventStream(stream).
+			Build()
+
+		if err := res.Send(response); err != nil {
+			return fmt.Errorf("unable to send response: %w", err)
 		}
 
+		sent.Add(stream.GetEventStreamId())
+	}
+
+	for {
 		select {
 		case <-res.Context().Done():
 			return res.Context().Err()
-		case <-time.After(25 * time.Millisecond):
-			// wait before polling
+		case id := <-streamIDs:
+			streamID, err := uuidpb.Parse(id)
+			if err != nil {
+				s.Logger.ErrorContext(
+					res.Context(),
+					"ignored invalid stream ID",
+					slog.String("stream_id", id),
+					slog.Any("error", err),
+				)
+			} else if sent.Has(streamID) {
+				continue
+			}
+
+			response := messaginggrpc.NewListEventStreamsResponseBuilder().
+				WithEventStream(
+					messaginggrpc.NewEventStreamBuilder().
+						WithEventStreamId(streamID).
+						Build(),
+				).
+				Build()
+
+			if err := res.Send(response); err != nil {
+				return fmt.Errorf("unable to send response: %w", err)
+			}
+
+			sent.Add(streamID)
 		}
 	}
 }
@@ -62,21 +108,16 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 }
 
-func (s *ConsumerAPI) pollEventStreams(
-	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
-	seen *uuidpb.Set,
-) error {
+func (s *ConsumerAPI) loadEventStreams(ctx context.Context) (eventStreams []*messaginggrpc.EventStream, err error) {
 	rows, err := s.DB.QueryContext(
-		res.Context(),
+		ctx,
 		`SELECT
 			id,
 			next_offset
-		FROM eventstream.streams
-		WHERE id != ALL($1)`,
-		xsql.UUIDSeq(seen.All()),
+		FROM eventstream.streams`,
 	)
 	if err != nil {
-		return fmt.Errorf("unable to query event streams: %w", err)
+		return nil, fmt.Errorf("unable to query event streams: %w", err)
 	}
 	defer rows.Close()
 
@@ -90,30 +131,23 @@ func (s *ConsumerAPI) pollEventStreams(
 			xsql.UUID(streamID),
 			&nextOffset,
 		); err != nil {
-			return fmt.Errorf("unable to scan event stream: %w", err)
+			return nil, fmt.Errorf("unable to scan event stream: %w", err)
 		}
 
-		if err := res.Send(
-			messaginggrpc.NewListEventStreamsResponseBuilder().
-				WithEventStream(
-					messaginggrpc.NewEventStreamBuilder().
-						WithEventStreamId(streamID).
-						WithNextOffset(nextOffset).
-						Build(),
-				).
+		eventStreams = append(
+			eventStreams,
+			messaginggrpc.NewEventStreamBuilder().
+				WithEventStreamId(streamID).
+				WithNextOffset(nextOffset).
 				Build(),
-		); err != nil {
-			return fmt.Errorf("unable to send event stream: %w", err)
-		}
-
-		seen.Add(streamID)
+		)
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("unable to iterate event streams: %w", err)
+		return nil, fmt.Errorf("unable to iterate event streams: %w", err)
 	}
 
-	return nil
+	return eventStreams, nil
 }
 
 func (s *ConsumerAPI) pollEvents(
