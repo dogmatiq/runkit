@@ -134,12 +134,17 @@ func (l *NotificationListener) run(ctx context.Context) error {
 }
 
 func (l *NotificationListener) tick(ctx context.Context) error {
-	waitCtx, cancelWait := context.WithCancel(ctx)
-	defer cancelWait()
-
 	waitDone := make(chan waitResult, 1)
+	waitCtx, cancelWait := context.WithCancel(ctx)
+
+	defer func() {
+		cancelWait()
+		<-waitDone
+	}()
 
 	go func() {
+		defer close(waitDone)
+
 		n, err := l.conn.WaitForNotification(waitCtx)
 
 		// Do not propagate context cancellation as an error - it's simply a
@@ -153,22 +158,33 @@ func (l *NotificationListener) tick(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		<-waitDone
 		return ctx.Err()
 
 	case sub := <-l.sub:
 		cancelWait()
-		if err := l.dispatch(ctx, <-waitDone); err != nil {
+		result := <-waitDone
+
+		// We've already unblocked the subscriber, so we action its request
+		// _before_ dispatching the result of the previous WaitForNotification
+		// call.
+		if err := l.subscribe(ctx, sub); err != nil {
 			return err
 		}
-		return l.subscribe(ctx, sub)
+
+		return l.dispatch(ctx, result)
 
 	case sub := <-l.unsub:
 		cancelWait()
-		if err := l.dispatch(ctx, <-waitDone); err != nil {
+		result := <-waitDone
+
+		// We've already unblocked the (un)subscriber, so we action its request
+		// _before_ dispatching the result of the previous WaitForNotification
+		// call.
+		if err := l.unsubscribe(ctx, sub); err != nil {
 			return err
 		}
-		return l.unsubscribe(ctx, sub)
+
+		return l.dispatch(ctx, result)
 
 	case result := <-waitDone:
 		return l.dispatch(ctx, result)

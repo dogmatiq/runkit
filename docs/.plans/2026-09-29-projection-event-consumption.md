@@ -13,10 +13,13 @@ per-stream ownership, a stream-reader abstraction (local direct-SQL + remote
 gRPC), handler-owned checkpoints, and a per-(handler, stream) **catch-up
 subscription**. Foreign events are never persisted locally.
 
-**Architecture:** Each engine replica joins a database-scoped **cluster** (a
-`cluster.heartbeats` table, maintained by a `heartbeat.Heart` and observed by a
-push-based `heartbeat.Observer`). Every event stream — local or foreign — is a
-**stream source** that can list its streams and read a stream's events.
+**Architecture:** Each engine replica joins a database-scoped **cluster** whose
+membership rides PostgreSQL `LISTEN`/`NOTIFY`: a `cluster.Heartbeater` emits a
+`heartbeat` notification every interval, a shared `cluster.NotificationListener`
+owns the listening connection, and a `cluster.MembershipObserver` turns
+heartbeats and heartbeat timeouts into `MembershipChange{Added, Removed, Live}`
+events. Every event stream — local or foreign — is a **stream source** that can
+list its streams and read a stream's events.
 Ownership of each **stream** is assigned by **rendezvous (highest-random-weight)
 hashing** over the live node set, so exactly one replica consumes a given stream
 at a time, rebalancing automatically as nodes join and leave. The owning replica
@@ -51,9 +54,9 @@ Settled during design (full log in session memory). Binding constraints.
   the gRPC _server_, the _local_ reader, and kept consistent between them. The
   engine never consumes its own streams over gRPC.
 - **U4 — Rendezvous per-stream ownership.** Workload = **stream ID**, candidates
-  = live node IDs from the `heartbeat.Observer`. Failover is TTL-bounded (~300ms)
-  and assignment is static (not backlog-aware); hot-spot mitigation (weighted
-  rendezvous / work-stealing) is **deferred**.
+  = the live node IDs from `cluster.MembershipObserver`. Failover is TTL-bounded
+  (~300ms via `HeartbeatTimeout`) and assignment is static (not backlog-aware);
+  hot-spot mitigation (weighted rendezvous / work-stealing) is **deferred**.
 - **U5 — Delivery is a per-(handler, stream) catch-up subscription.**
   - **Historical** (behind the tail): isolated, independent read from the
     handler's checkpoint. A new/reset projection catches up alone and never
@@ -88,6 +91,15 @@ Settled during design (full log in session memory). Binding constraints.
 - **U11 — Catch-up subscription applies to foreign too.** Caught-up foreign
   consumers for a stream share one gRPC live tail; laggards do independent
   per-handler historical gRPC reads. This collapses the H× fan-out at the tail.
+- **U12 — Notification-driven signaling (no polling).** Membership and local
+  stream activity both ride PostgreSQL `LISTEN`/`NOTIFY` through a shared
+  `cluster.NotificationListener`. `Heartbeater` sends `heartbeat`;
+  `acquire_for_write` sends `eventstream.create` on new-stream creation; `append`
+  sends `eventstream.append.<stream_id>` carrying the new `next_offset`. Local
+  stream **discovery** is driven by `eventstream.create` and contemporary **tail
+  wakeups** by `eventstream.append.<stream_id>` — no `next_offset` polling. The
+  SQL notifications and the cluster listener/observer **already exist**. Foreign
+  streams use gRPC discovery/long-poll instead, since `NOTIFY` is per-database.
 
 **Target test:** [`internal/projection/foreignevents_test.go`](../../internal/projection/foreignevents_test.go)
 (`TestForeignEvents`) must pass — a downstream projection consumes an upstream
@@ -98,11 +110,14 @@ peer's event. It is the first end-to-end milestone of the unified path.
 ## Status summary
 
 - **Phase 1 — Remove `is_foreign`** — **DONE**.
-- **Phase 2 — Cluster membership + rendezvous** — **DONE** (`heartbeat.Heart`,
-  push-based `heartbeat.Observer`, `rendezvous`).
+- **Phase 2 — Cluster membership + rendezvous** — **DONE** (notification-based:
+  `cluster.Heartbeater`, `cluster.NotificationListener`,
+  `cluster.MembershipObserver`, `cluster/rendezvous`).
+- **PG notification plumbing** — **DONE** (`eventstream.create` and
+  `eventstream.append.<stream_id>` emitted by the SQL functions).
 - A **foreign-only prototype** (per-(handler, stream) pull consumers, pull-based
   membership) was built and briefly passed `TestForeignEvents`, then superseded
-  by the push `heartbeat.Observer` and this unified design. Its reusable parts (the
+  by the notification-based `cluster.MembershipObserver` and this unified design. Its reusable parts (the
   projection apply logic, gRPC client usage, engine fan-in of peers) are absorbed
   below; its pull reconciliation loop and pull membership access are **replaced**.
 
@@ -110,14 +125,19 @@ peer's event. It is the first end-to-end milestone of the unified path.
 
 ## File Structure
 
-**`internal/cluster/heartbeat`** (node liveness) — **DONE**:
+**`internal/cluster`** (notification-based membership) — **DONE**:
 
-- `writer.go` — `Writer`: upserts this node's row every `Interval`, purges
-  expired rows on startup, deletes its own row on shutdown. Exports `Interval`
-  (100ms) and `Tolerance` (3).
-- `reader.go` — `Reader`: polls and **pushes** the live node set (`*uuidpb.Set`)
-  to observers via `Observe(ch chan<- *uuidpb.Set) func()`; delivers the current
-  set to new observers, otherwise emits only on change.
+- `heartbeat.go` — `Heartbeater`: every `HeartbeatInterval` (100ms) runs `SELECT
+  pg_notify('heartbeat', node_id)`. No table. `HeartbeatTimeout =
+  3 × HeartbeatInterval` = 300ms.
+- `notification.go` — `NotificationListener`: a generic `LISTEN`/`NOTIFY` hub.
+  `Subscribe(topic, ch chan<- string) func()` manages `LISTEN`/`UNLISTEN` on a
+  dedicated pgx connection (held out of the pool), dispatches payloads, and
+  reconnects on error.
+- `membership.go` — `MembershipObserver`: subscribes to `heartbeat`, tracks
+  node→last-seen in memory, expires nodes past `HeartbeatTimeout`, and pushes
+  `MembershipChange{Added, Removed, Live}` via `Subscribe(ch chan<-
+  MembershipChange) func()` (new subscribers get the current live set).
 
 **`internal/cluster/rendezvous`** (pure HRW hashing) — **DONE**:
 
@@ -129,19 +149,28 @@ peer's event. It is the first end-to-end milestone of the unified path.
   `grpc.go` (`pollEventStreams`, `pollEvents`) into a reusable `Reader` type used
   by both the gRPC server and the local source.
 - Create: `source.go` — `StreamSource` + `StreamReader` interfaces, and the
-  `LocalSource` (direct SQL) implementation.
+  `LocalSource` (direct SQL) implementation. `LocalSource` discovers streams via
+  the `eventstream.create` notification (plus an initial listing) and drives
+  contemporary wakeups via `eventstream.append.<stream_id>` notifications —
+  **already emitted** by the PG functions. It uses the shared
+  `NotificationListener`.
 - Create: `remote.go` — `RemoteSource`/`RemoteReader` (gRPC client) wrapping
-  `messaginggrpc.EventStreamConsumerAPIClient`.
-- Create: `activity.go` — `ActivityWatcher`: polls `SELECT id, next_offset FROM
-eventstream.streams` once per replica per interval, driving local stream
-  discovery and contemporary wakeups (upgradeable to `LISTEN/NOTIFY`).
+  `messaginggrpc.EventStreamConsumerAPIClient` (discovery via `ListEventStreams`,
+  tail via `ConsumeEvents` long-poll).
+- **DONE (SQL):** `acquire_for_write` emits `eventstream.create`; `append` emits
+  `eventstream.append.<stream_id>` with the new `next_offset`. No polling
+  `ActivityWatcher` component is needed.
+- Consider relocating `NotificationListener` to a neutral package — it is generic
+  infra used by both `cluster` and `eventstream`; it currently lives in
+  `cluster`.
 
 **`internal/projectionstream`** (the unified consumer — absorbs the old
 `internal/foreignstream`):
 
 - `doc.go`, `consumer.go` — engine-level `Consumer`: aggregates sources
-  (`{local} ∪ {peers}`), discovers streams, subscribes to the `heartbeat.Observer`,
-  computes per-stream ownership, and reconciles `streamWorker`s.
+  (`{local} ∪ {peers}`), discovers streams, subscribes to
+  `cluster.MembershipObserver`, computes per-stream ownership, and reconciles
+  `streamWorker`s.
 - `streamworker.go` — the per-(handler, stream) catch-up state machine
   (historical ↔ contemporary).
 - `tailfeed.go` — the shared per-stream contemporary feed (read once, broadcast
@@ -153,7 +182,9 @@ eventstream.streams` once per replica per interval, driving local stream
 
 **Schema:**
 
-- **DONE:** `internal/schema/ddl/00-cluster/00-tables.sql` — `cluster.heartbeats`.
+- **DONE:** membership needs **no table** — heartbeats are `pg_notify` only.
+- **DONE:** `acquire_for_write` emits `eventstream.create`; `append` emits
+  `eventstream.append.<stream_id>` with the new `next_offset`.
 - Later: no projection schema change required — `handler_checkpoints` is retained
   for processes; projection rows simply stop being created.
 
@@ -179,14 +210,19 @@ Foreign streams are never stored, so nothing branches on that column.
 
 ## Phase 2 — Cluster membership + rendezvous — DONE
 
+Membership is tracked entirely over PostgreSQL `LISTEN`/`NOTIFY`; there is **no
+heartbeats table**.
+
 - `internal/cluster/rendezvous`: HRW hashing over `*uuidpb.UUID` (xxh3), with
   self-affinity and deterministic tie-breaking.
-- `internal/schema/ddl/00-cluster/00-tables.sql`: `cluster.heartbeats(node_id
-uuid PK, expires_at timestamptz)`.
-- `internal/cluster/heartbeat`: `Writer` (upsert/purge/delete, `Interval=100ms`,
-  `Tolerance=3` ⇒ TTL 300ms) and push-based `Reader`
-  (`Observe(ch chan<- *uuidpb.Set)`, current-set delivery to new observers,
-  emit-on-change otherwise).
+- `internal/cluster/heartbeat.go`: `Heartbeater` — `SELECT pg_notify('heartbeat',
+  node_id)` every `HeartbeatInterval` (100ms); `HeartbeatTimeout = 3 ×` = 300ms.
+- `internal/cluster/notification.go`: `NotificationListener` — generic
+  `LISTEN`/`NOTIFY` hub on a dedicated pgx connection, with reconnect.
+- `internal/cluster/membership.go`: `MembershipObserver` — consumes `heartbeat`
+  notifications, expires silent nodes after `HeartbeatTimeout`, and pushes
+  `MembershipChange{Added, Removed, Live}` to subscribers (current live set
+  delivered on subscribe).
 
 ---
 
@@ -276,19 +312,28 @@ implementation"`.
       the `EventStreamPosition` extension.
 - [ ] **Step 2: Test + run + commit** `"Add remote (gRPC) StreamSource"`.
 
-### Task 3.4: `ActivityWatcher`
+### Task 3.4: Notification-driven local discovery & tail wakeups — SQL DONE
+
+The PG functions already emit the needed notifications (`eventstream.create`,
+`eventstream.append.<stream_id>`); no polling watcher is required.
 
 **Files:**
 
-- Create: `internal/eventstream/activity.go`
-- Test: `internal/eventstream/activity_test.go`
+- Use: `internal/cluster/notification.go` (`NotificationListener`).
+- Wire within: `internal/eventstream/source.go` (`LocalSource`).
 
-- [ ] **Step 1: Implement** a watcher that polls `SELECT id, next_offset FROM
-eventstream.streams` every `heartbeat.Interval` and pushes per-stream
-      "advanced to N" signals to subscribers (same push/observer shape as
-      `heartbeat.Observer`). It drives both local discovery and contemporary
-      wakeups.
-- [ ] **Step 2: Test + run + commit** `"Add eventstream.ActivityWatcher"`.
+- [ ] **Step 1: `LocalSource` discovery.** On start, list existing streams
+      (`SELECT id FROM eventstream.streams`), then subscribe to `eventstream.create`
+      via the `NotificationListener` to learn new stream IDs.
+- [ ] **Step 2: Contemporary wakeups.** The local tail feed for stream S
+      subscribes to `eventstream.append.<S>`; each payload is the stream's new
+      `next_offset`, which wakes the feed to read and broadcast the new events.
+- [ ] **Step 3: Test** that creating a stream and appending events drives
+      discovery and tail delivery without polling. Commit.
+
+> Optional follow-up (not required here): make the gRPC `ConsumeEvents` **server**
+> notification-driven too (subscribe to `eventstream.append.<S>` instead of its
+> 25ms poll) so remote tails are low-latency.
 
 ---
 
@@ -334,11 +379,11 @@ tests carefully before implementing.
 - Test: `internal/projectionstream/tailfeed_test.go`
 
 - [ ] **Step 1: Implement** a per-stream feed that, when woken by the
-      `ActivityWatcher` (local) or the gRPC live tail (remote), reads each new
-      event **once** and broadcasts `(env, offset)` into each locked-on
-      subscriber's **bounded** buffer. Subscribers join at a given offset and
-      leave on demand; a subscriber whose buffer would overflow is signalled to
-      **detach** (drop to historical).
+      `eventstream.append.<S>` notification (local) or the gRPC live tail
+      (remote), reads each new event **once** and broadcasts `(env, offset)` into
+      each locked-on subscriber's **bounded** buffer. Subscribers join at a given
+      offset and leave on demand; a subscriber whose buffer would overflow is
+      signalled to **detach** (drop to historical).
 - [ ] **Step 2: Test** fan-out to multiple subscribers, single read per event,
       and overflow → detach signal. Commit.
 
@@ -377,12 +422,14 @@ tests carefully before implementing.
 - Test: `internal/projectionstream/consumer_test.go`
 
 - [ ] **Step 1: Implement** the engine-level component. Inputs: this node's ID,
-      the `heartbeat.Observer`, the `ActivityWatcher`, the set of projection
-      `Applier`s, the local `StreamSource`, a channel of remote sources derived
-      from peer connections, and a logger. `Run(ctx)`:
-  - Subscribe to `heartbeat.Observer` for the live node set; reconcile on change.
-  - Discover streams from every source (local via `ListStreams` + activity;
-    remote via `ListEventStreams`), maintaining `streamID → source`.
+      the `cluster.MembershipObserver`, the `cluster.NotificationListener`, the
+      set of projection `Applier`s, the local `StreamSource`, a channel of remote
+      sources derived from peer connections, and a logger. `Run(ctx)`:
+  - Subscribe to `cluster.MembershipObserver` for `MembershipChange`; reconcile
+    on change using its `Live` set.
+  - Discover streams from every source (local via an initial `ListStreams` +
+    `eventstream.create` notifications; remote via `ListEventStreams`),
+    maintaining `streamID → source`.
   - For each discovered stream, ownership is per-stream:
     `rendezvous.Wins(streamID, nodeID, liveNodes)`. When owned, start one
     `streamWorker` per `Applier` (keyed `handlerKey + "/" + streamID`), sharing
@@ -406,8 +453,9 @@ tests carefully before implementing.
 - [ ] **Step 1: Build a projection `Applier` per non-disabled
       `*config.Projection`** (identity, concurrency, `EventTypeIDs`, `e.db`,
       logger) — the same inputs the local `EventPump` used.
-- [ ] **Step 2: Construct the local `StreamSource`, the `ActivityWatcher`, the
-      `heartbeat.Heart`/`Reader`, and the `projectionstream.Consumer`;** fan-in
+- [ ] **Step 2: Construct the local `StreamSource`, the
+      `cluster.NotificationListener`, the `cluster.Heartbeater`, the
+      `cluster.MembershipObserver`, and the `projectionstream.Consumer`;** fan-in
       peer connections to remote sources. Run them as components in the errgroup.
 - [ ] **Step 3: Remove the projection `EventPump` component** from
       `newComponentsForHandler` (keep the `Compactor` and the process
@@ -500,8 +548,10 @@ handler_checkpoints is process-only"`.
     machinery.
 - **Hot-spot mitigation** — backlog-aware weighting or work-stealing on top of
   rendezvous, if static assignment ever imbalances load.
-- **`LISTEN/NOTIFY`** as the event-driven upgrade to the `ActivityWatcher`'s
-  polling.
+- **Notification-driven gRPC server** — making `ConsumeEvents` subscribe to
+  `eventstream.append.<S>` instead of its 25ms poll, for low-latency remote
+  tails. (Local activity is already notification-driven; this is the remaining
+  polling path.)
 - **Heterogeneous peer connectivity** / per-replica reachability in rendezvous.
 - **Relay topologies** (A consuming from B, then re-serving to C) — impossible
   under B2 by design; consumers peer directly with producers.
