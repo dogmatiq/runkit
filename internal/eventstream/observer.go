@@ -48,10 +48,37 @@ func (o *Observer) Run(ctx context.Context) {
 	defer o.done.Set()
 
 	streamIDs := make(chan string, 1)
-	stop := o.Notifications.Subscribe("eventstream.create", streamIDs)
-	defer stop()
+	unsubscribe := o.Notifications.Subscribe("eventstream.create", streamIDs)
+	defer unsubscribe()
 
-	o.load(ctx)
+	for {
+		err := o.load(ctx)
+
+		if err == nil {
+			break
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		o.Logger.ErrorContext(
+			ctx,
+			"unable to load event streams",
+			xslog.Error(err),
+		)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-o.backoff.Chan():
+		case <-streamIDs:
+			// If we successfully receive a notification, there's a good chance
+			// the load operation will now also succeed. This also ensures the
+			// notification listener is not blocked attempting to write to the
+			// channel.
+		}
+	}
 
 	for {
 		select {
@@ -103,27 +130,7 @@ func (o *Observer) init() {
 	})
 }
 
-func (o *Observer) load(ctx context.Context) {
-	for {
-		err := o.tryLoad(ctx)
-
-		if err == nil || ctx.Err() != nil {
-			return
-		}
-
-		o.Logger.ErrorContext(
-			ctx,
-			"unable to load event streams",
-			xslog.Error(err),
-		)
-
-		if !o.backoff.Wait(ctx) {
-			return
-		}
-	}
-}
-
-func (o *Observer) tryLoad(ctx context.Context) error {
+func (o *Observer) load(ctx context.Context) error {
 	rows, err := o.DB.QueryContext(
 		ctx,
 		`SELECT id
@@ -175,7 +182,7 @@ func (o *Observer) update(ctx context.Context, idString string) {
 	if err != nil {
 		o.Logger.ErrorContext(
 			ctx,
-			"ignored invalid event stream ID",
+			"ignored invalid ID in event stream notification",
 			slog.String("stream_id", idString),
 			slog.Any("error", err),
 		)

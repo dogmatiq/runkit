@@ -33,6 +33,17 @@ type Backoff struct {
 // It returns true if the backoff duration was reached, or false if the context
 // was canceled.
 func (b *Backoff) Wait(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-b.Chan():
+		return true
+	}
+}
+
+// Chan returns a channel that will receive a single time.Time value after the
+// backoff delay has elapsed.
+func (b *Backoff) Chan() <-chan time.Time {
 	now := time.Now()
 
 	if b.delay == 0 || now.Sub(b.lastError) >= reset {
@@ -47,10 +58,5 @@ func (b *Backoff) Wait(ctx context.Context) bool {
 	// prevent thundering herd problems.
 	delay := b.delay/2 + rand.N(b.delay/2)
 
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(delay):
-		return true
-	}
+	return time.After(delay)
 }
