@@ -48,8 +48,8 @@ func (o *Observer) Run(ctx context.Context) {
 	defer o.done.Set()
 
 	streamIDs := make(chan string, 1)
-	stop := o.Notifications.Subscribe("eventstream.create", streamIDs)
-	defer stop()
+	unsubscribe := o.Notifications.Subscribe("eventstream.create", streamIDs)
+	defer unsubscribe()
 
 	o.load(ctx)
 

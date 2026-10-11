@@ -28,8 +28,8 @@ func (s *ConsumerAPI) ListEventStreams(
 	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
 ) error {
 	streamIDs := make(chan *uuidpb.UUID)
-	stop := s.EventStreams.Subscribe(streamIDs)
-	defer stop()
+	unsubscribe := s.EventStreams.Subscribe(streamIDs)
+	defer unsubscribe()
 
 	for {
 		select {
