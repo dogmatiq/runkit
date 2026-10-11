@@ -57,8 +57,8 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 	defer o.done.Set()
 
 	heartbeats := make(chan string)
-	stop := o.Notifications.Subscribe("heartbeat", heartbeats)
-	defer stop()
+	unsubscribe := o.Notifications.Subscribe("heartbeat", heartbeats)
+	defer unsubscribe()
 
 	for {
 		select {
