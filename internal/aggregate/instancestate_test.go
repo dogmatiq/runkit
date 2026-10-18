@@ -43,7 +43,7 @@ func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 
 					// Verify that the first event is applied immediately after
 					// recording it.
-					xtesting.ExpectEqualEvents(
+					xtesting.ExpectN[dogma.Event](
 						t,
 						"events are applied immediately",
 						r.AppliedEvents,
@@ -54,7 +54,7 @@ func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 
 					// Verify that the second event is applied immediately after
 					// recording it.
-					xtesting.ExpectEqualEvents(
+					xtesting.ExpectN[dogma.Event](
 						t,
 						"events are applied immediately",
 						r.AppliedEvents,
@@ -108,7 +108,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 					case *stubs.CommandStub[stubs.TypeB]:
 						s.RecordEvent(stubs.EventB1)
 					case *stubs.CommandStub[stubs.TypeX]:
-						xtesting.ExpectEqualEvents(
+						xtesting.ExpectN[dogma.Event](
 							t,
 							"aggregate state is persisted between commands",
 							r.AppliedEvents,
@@ -171,7 +171,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 							Content: stubs.TypeA(s.InstanceID()),
 						})
 					case *stubs.CommandStub[stubs.TypeX]:
-						xtesting.ExpectEqualEvents(
+						xtesting.ExpectN[dogma.Event](
 							t,
 							"aggregate state is isolated per instance",
 							r.AppliedEvents,
@@ -305,7 +305,7 @@ func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 					case *stubs.CommandStub[stubs.TypeA]:
 						s.RecordEvent(stubs.EventA1)
 					case *stubs.CommandStub[stubs.TypeX]:
-						xtesting.ExpectEqualEvents(
+						xtesting.ExpectN[dogma.Event](
 							t,
 							"aggregate state is restored from snapshot",
 							r.AppliedEvents,
@@ -383,7 +383,7 @@ func TestInstanceState_snapshotMarshalingFailuresAreNonFatal(t *testing.T) {
 							case *stubs.CommandStub[stubs.TypeA]:
 								s.RecordEvent(stubs.EventA1)
 							case *stubs.CommandStub[stubs.TypeX]:
-								xtesting.ExpectEqualEvents(
+								xtesting.ExpectN[dogma.Event](
 									t,
 									"aggregate state is rebuilt from event replay",
 									r.AppliedEvents,
@@ -463,7 +463,7 @@ func TestInstanceState_snapshotUnmarshalingFailuresAreNonFatal(t *testing.T) {
 							case *stubs.CommandStub[stubs.TypeA]:
 								s.RecordEvent(stubs.EventA1)
 							case *stubs.CommandStub[stubs.TypeX]:
-								xtesting.ExpectEqualEvents(
+								xtesting.ExpectN[dogma.Event](
 									t,
 									"aggregate state is rebuilt from event replay",
 									r.AppliedEvents,
