@@ -57,7 +57,7 @@ func RunEngines(
 }
 
 // SetupThenRunEngines is like [RunEngines] but accepts a setup function that
-// receives the test database before any engine starts.
+// receives the test database before any engines start.
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
@@ -170,7 +170,8 @@ func ExecuteCommand(
 	)
 }
 
-// ExecuteCommandAndWait executes the given command on the engine and waits for it to be removed from the command queue.
+// ExecuteCommandAndWait executes the given command on the engine and waits for
+// it to be removed from the command queue.
 func ExecuteCommandAndWait(
 	t testing.TB,
 	engine *runkit.Engine,

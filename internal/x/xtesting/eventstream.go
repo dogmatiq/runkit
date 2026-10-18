@@ -14,6 +14,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// CreateEventStream creates a new event stream and returns its ID.
+func CreateEventStream(
+	t testing.TB,
+	x xsql.Executor,
+) *uuidpb.UUID {
+	t.Helper()
+
+	streamIDs := CreateEventStreams(t, x, 1)
+	return streamIDs[0]
+}
+
 // CreateEventStreams creates the given number of event streams.
 func CreateEventStreams(
 	t testing.TB,
@@ -98,17 +109,34 @@ func PopulateEventStreams(
 	}
 }
 
+// AppendToNewEventStream creates a new event stream and appends the given
+// events to it.
+func AppendToNewEventStream(
+	t testing.TB,
+	x xsql.Executor,
+	events ...dogma.Event,
+) (*uuidpb.UUID, []*envelopepb.Envelope) {
+	t.Helper()
+
+	streamID := CreateEventStream(t, x)
+	envelopes := AppendToEventStream(t, x, streamID, events...)
+	return streamID, envelopes
+}
+
 // AppendToEventStream appends events to an existing event stream.
 func AppendToEventStream(
 	t testing.TB,
 	x xsql.Executor,
 	streamID *uuidpb.UUID,
 	events ...dogma.Event,
-) {
+) []*envelopepb.Envelope {
 	t.Helper()
+
+	var envelopes []*envelopepb.Envelope
 
 	for _, event := range events {
 		env := packTestEvent(t, event)
+		envelopes = append(envelopes, env)
 
 		if _, err := x.ExecContext(
 			t.Context(),
@@ -128,6 +156,8 @@ func AppendToEventStream(
 			t.Fatal(err)
 		}
 	}
+
+	return envelopes
 }
 
 // ExpectEventCount asserts that the total number of events in the database
@@ -399,15 +429,4 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 	}
 
 	return env
-}
-
-// ExpectEqualEvents asserts that got and want contain the same events.
-func ExpectEqualEvents(
-	t testing.TB,
-	description string,
-	got []dogma.Event,
-	want ...dogma.Event,
-) {
-	t.Helper()
-	ExpectEqual(t, description, got, want)
 }

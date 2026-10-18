@@ -46,3 +46,31 @@ func ExpectLatchesSetEventually(
 		t.Fatalf("timeout waiting for latches: got %d of %d latches set", got, want)
 	}
 }
+
+// Go runs the given function in a goroutine until the test ends.
+//
+// It returns a function that can be called to stop the goroutine early. It
+// blocks until fn returns.
+func Go(
+	t testing.TB,
+	fn func(ctx context.Context),
+) func() {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan struct{})
+
+	stop := func() {
+		cancel()
+		<-stopped
+	}
+
+	t.Cleanup(stop)
+
+	go func() {
+		defer close(stopped)
+		fn(ctx)
+	}()
+
+	return stop
+}
