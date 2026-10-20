@@ -18,14 +18,17 @@ const (
 	resetThreshold = 3 * time.Minute
 )
 
-// Backoff provides a simple exponential backoff mechanism for use within
-// components that must retry operations after failures.
+// Backoff provides an exponential backoff mechanism for use within components
+// that must retry operations after failures.
 type Backoff struct {
 	delay   time.Duration
 	errorAt time.Time
 }
 
 // Wait blocks for the backoff delay or until the context is canceled.
+//
+// It returns true if the entire backoff delay elapses, or false if ctx is
+// canceled.
 //
 // Each call blocks for an increasing amount of time, up to a maximum of
 // [maxDelay]. If no errors occur for [resetThreshold], the backoff delay is
