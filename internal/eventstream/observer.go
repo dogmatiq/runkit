@@ -43,6 +43,8 @@ type streamSubscriber struct {
 	Unsubscribed xsync.Latch
 }
 
+// Run starts the observer, accepting subscription requests and dispatching
+// notifications of new streams to subscribers. It blocks until ctx is canceled.
 func (o *Observer) Run(ctx context.Context) {
 	o.init()
 	defer o.done.Set()
