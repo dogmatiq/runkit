@@ -207,9 +207,9 @@ func (o *MembershipObserver) unicast(ctx context.Context, sub *membershipSubscri
 func (o *MembershipObserver) broadcast(ctx context.Context, change MembershipChange) {
 	var group sync.WaitGroup
 
-	for ch := range o.subscribers {
+	for sub := range o.subscribers {
 		group.Go(func() {
-			o.unicast(ctx, ch, change)
+			o.unicast(ctx, sub, change)
 		})
 	}
 
