@@ -22,12 +22,7 @@ type historicalReader struct {
 	Logger       *slog.Logger
 
 	backoff backoff.Backoff
-	buffer  [historicalBatchSize]historicalEvent
-}
-
-type historicalEvent struct {
-	Offset   uint64
-	Envelope *envelopepb.Envelope
+	buffer  [historicalBatchSize]event
 }
 
 func (r *historicalReader) Run(ctx context.Context) {
@@ -47,7 +42,6 @@ func (r *historicalReader) Run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 			case r.Synced <- r.Subscription:
-			case <-r.Subscription.Unsubscribed.Chan():
 			}
 
 			return
@@ -57,7 +51,7 @@ func (r *historicalReader) Run(ctx context.Context) {
 
 func (r *historicalReader) dispatch(
 	ctx context.Context,
-	events []historicalEvent,
+	events []event,
 ) bool {
 	for _, ev := range events {
 		select {
@@ -73,7 +67,7 @@ func (r *historicalReader) dispatch(
 	return true
 }
 
-func (r *historicalReader) readBatch(ctx context.Context) ([]historicalEvent, bool) {
+func (r *historicalReader) readBatch(ctx context.Context) ([]event, bool) {
 	for {
 		events, err := r.tryReadBatch(ctx)
 		if err == nil {
@@ -92,7 +86,7 @@ func (r *historicalReader) readBatch(ctx context.Context) ([]historicalEvent, bo
 	}
 }
 
-func (r *historicalReader) tryReadBatch(ctx context.Context) ([]historicalEvent, error) {
+func (r *historicalReader) tryReadBatch(ctx context.Context) ([]event, error) {
 	rows, err := r.DB.QueryContext(
 		ctx,
 		`SELECT
@@ -117,7 +111,7 @@ func (r *historicalReader) tryReadBatch(ctx context.Context) ([]historicalEvent,
 	count := 0
 
 	for rows.Next() {
-		ev := historicalEvent{
+		ev := event{
 			Envelope: &envelopepb.Envelope{},
 		}
 

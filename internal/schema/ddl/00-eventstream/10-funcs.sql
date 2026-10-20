@@ -74,8 +74,11 @@ CREATE OR REPLACE FUNCTION eventstream.append(
     events                eventstream.event[]
 )
 RETURNS bigint
-LANGUAGE sql
+LANGUAGE plpgsql
 AS $$
+DECLARE
+    new_next_offset bigint;
+BEGIN
     WITH updated_stream AS (
         UPDATE eventstream.streams SET
             next_offset = next_offset + array_length(append.events, 1)
@@ -120,7 +123,13 @@ AS $$
         RETURNING stream_offset
     )
     SELECT MAX(stream_offset) + 1
+    INTO new_next_offset
     FROM inserted_events;
+
+    PERFORM pg_notify('eventstream.append.' || append.stream_id, new_next_offset::text);
+
+    RETURN new_next_offset;
+END;
 $$;
 
 --------------------------------------------------------------------------------
