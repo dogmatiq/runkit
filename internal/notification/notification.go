@@ -38,6 +38,7 @@ type Listener struct {
 type subscriber struct {
 	Topic        string
 	Payloads     chan<- string
+	Lossy        bool
 	Unsubscribed xsync.Latch
 }
 
@@ -76,12 +77,27 @@ func (l *Listener) Run(ctx context.Context) {
 // Subscribe registers a channel to receive notifications for the specified
 // topic.
 //
+// The consumer must drain the channel to avoid blocking other subscribers.
+//
 // It returns a function that unsubscribes.
 func (l *Listener) Subscribe(topic string, ch chan<- string) func() {
+	return l.subscribe(topic, false, ch)
+}
+
+// SubscribeLossy registers a channel to receive notifications for the specified
+// topic, but it may miss notifications if the channel is full.
+//
+// It returns a function that unsubscribes.
+func (l *Listener) SubscribeLossy(topic string, ch chan<- string) func() {
+	return l.subscribe(topic, true, ch)
+}
+
+func (l *Listener) subscribe(topic string, lossy bool, ch chan<- string) func() {
 	l.init()
 
 	sub := &subscriber{
 		Topic:    topic,
+		Lossy:    lossy,
 		Payloads: ch,
 	}
 
@@ -180,7 +196,7 @@ func (l *Listener) tick(ctx context.Context) error {
 		// perspective the subscription has been acknowledged, so we action its
 		// request _before_ dispatching the result of the previous
 		// [pgx.Conn.WaitForNotification] call.
-		if err := l.subscribe(ctx, sub); err != nil {
+		if err := l.handleSubscribe(ctx, sub); err != nil {
 			return err
 		}
 
@@ -193,7 +209,7 @@ func (l *Listener) tick(ctx context.Context) error {
 		// We've already unblocked the (un)subscriber, so we action its request
 		// _before_ dispatching the result of the previous WaitForNotification
 		// call.
-		if err := l.unsubscribe(ctx, sub); err != nil {
+		if err := l.handleUnsubscribe(ctx, sub); err != nil {
 			return err
 		}
 
@@ -220,10 +236,17 @@ func (l *Listener) dispatch(ctx context.Context, result waitForNotificationResul
 
 	for sub := range l.subscribers[result.Notification.Channel] {
 		group.Go(func() {
-			select {
-			case <-ctx.Done():
-			case <-sub.Unsubscribed.Chan():
-			case sub.Payloads <- result.Notification.Payload:
+			if sub.Lossy {
+				select {
+				case sub.Payloads <- result.Notification.Payload:
+				default:
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+				case <-sub.Unsubscribed.Chan():
+				case sub.Payloads <- result.Notification.Payload:
+				}
 			}
 		})
 	}
@@ -233,10 +256,10 @@ func (l *Listener) dispatch(ctx context.Context, result waitForNotificationResul
 	return nil
 }
 
-// subscribe registers a new subscriber. It issues a LISTEN command to the
+// handleSubscribe registers a new subscriber. It issues a LISTEN command to the
 // database for the relevant topic if this is the first subscriber for that
 // topic.
-func (l *Listener) subscribe(ctx context.Context, sub *subscriber) error {
+func (l *Listener) handleSubscribe(ctx context.Context, sub *subscriber) error {
 	if subs, ok := l.subscribers[sub.Topic]; ok {
 		subs[sub] = struct{}{}
 		return nil
@@ -247,10 +270,10 @@ func (l *Listener) subscribe(ctx context.Context, sub *subscriber) error {
 	return l.listen(ctx, sub.Topic)
 }
 
-// unsubscribe removes a subscriber. It issues an UNLISTEN command to the
+// handleUnsubscribe removes a subscriber. It issues an UNLISTEN command to the
 // database for the relevant topic if this was the last subscriber for that
 // topic.
-func (l *Listener) unsubscribe(ctx context.Context, sub *subscriber) error {
+func (l *Listener) handleUnsubscribe(ctx context.Context, sub *subscriber) error {
 	subs := l.subscribers[sub.Topic]
 	delete(subs, sub)
 
