@@ -1,4 +1,4 @@
-package eventstream
+package scanner
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// ContemporaryScanner reads contemporary (near real-time) events from a specific
+// Contemporary reads contemporary (near real-time) events from a specific
 // event stream and delivers them to consumers.
-type ContemporaryScanner struct {
+type Contemporary struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
 
@@ -54,7 +54,7 @@ type ContemporaryScanner struct {
 //
 // Consumers are retained across subsequent calls. Run must not be called
 // concurrently.
-func (s *ContemporaryScanner) Run(ctx context.Context) error {
+func (s *Contemporary) Run(ctx context.Context) error {
 	// Subscribe to notifications about new events _before_ reading the current
 	// state of the stream. This ensures that no events are missed between the
 	// time we read the checkpoint and the time we start catching up.
@@ -101,7 +101,7 @@ func (s *ContemporaryScanner) Run(ctx context.Context) error {
 
 // loadCheckpoint returns the checkpoint at which the scanner should start
 // reading events, taking into account the cache size.
-func (s *ContemporaryScanner) loadCheckpoint(ctx context.Context) (uint64, error) {
+func (s *Contemporary) loadCheckpoint(ctx context.Context) (uint64, error) {
 	row := s.DB.QueryRowContext(
 		ctx,
 		`SELECT next_offset
@@ -130,7 +130,7 @@ func (s *ContemporaryScanner) loadCheckpoint(ctx context.Context) (uint64, error
 
 // catchUp reads events from the end of the cache until the end of the stream,
 // caching each batch and synchronizing consumers as it goes.
-func (s *ContemporaryScanner) catchUp(ctx context.Context) error {
+func (s *Contemporary) catchUp(ctx context.Context) error {
 	for {
 		envelopes, err := s.readBatch(ctx)
 		if err != nil {
@@ -166,7 +166,7 @@ func (s *ContemporaryScanner) catchUp(ctx context.Context) error {
 
 // readBatch returns up to s.CacheSize events starting at the next event after
 // the end of the cache.
-func (s *ContemporaryScanner) readBatch(ctx context.Context) ([]*envelopepb.Envelope, error) {
+func (s *Contemporary) readBatch(ctx context.Context) ([]*envelopepb.Envelope, error) {
 	rows, err := s.DB.QueryContext(
 		ctx,
 		`SELECT
@@ -221,7 +221,7 @@ func (s *ContemporaryScanner) readBatch(ctx context.Context) ([]*envelopepb.Enve
 
 // subscribe synchronizes a new consumer with the current state of the cache,
 // and registers it to receive future events.
-func (s *ContemporaryScanner) subscribe(ctx context.Context, c *Consumer) error {
+func (s *Contemporary) subscribe(ctx context.Context, c *Consumer) error {
 	if c.Gone.IsSet() {
 		// The consumer unsubscribed while it was being handed to this scanner.
 		return nil
@@ -237,7 +237,7 @@ func (s *ContemporaryScanner) subscribe(ctx context.Context, c *Consumer) error 
 }
 
 // syncOne synchronizes the given consumer with the current state of the cache.
-func (s *ContemporaryScanner) syncOne(ctx context.Context, c *Consumer) error {
+func (s *Contemporary) syncOne(ctx context.Context, c *Consumer) error {
 	checkpoint := c.Checkpoint.Load()
 
 	if checkpoint < s.begin {
@@ -279,7 +279,7 @@ func (s *ContemporaryScanner) syncOne(ctx context.Context, c *Consumer) error {
 }
 
 // syncAll synchronizes all consumers with the current state of the cache.
-func (s *ContemporaryScanner) syncAll(ctx context.Context) error {
+func (s *Contemporary) syncAll(ctx context.Context) error {
 	for c := range s.consumers {
 		if err := s.syncOne(ctx, c); err != nil {
 			return err
@@ -291,7 +291,7 @@ func (s *ContemporaryScanner) syncAll(ctx context.Context) error {
 
 // desync removes the given consumer from the scanner and sends it to the
 // s.Desynced channel.
-func (s *ContemporaryScanner) desync(ctx context.Context, c *Consumer) error {
+func (s *Contemporary) desync(ctx context.Context, c *Consumer) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

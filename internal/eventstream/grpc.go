@@ -18,7 +18,7 @@ import (
 // [messaginggrpc.EventStreamConsumerAPI] service.
 type ConsumerAPI struct {
 	DB           *sql.DB
-	EventStreams *Observer
+	EventStreams *Catalog
 	Logger       *slog.Logger
 }
 

@@ -1,4 +1,4 @@
-package eventstream
+package scanner
 
 import (
 	"sync/atomic"

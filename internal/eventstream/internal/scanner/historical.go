@@ -1,4 +1,4 @@
-package eventstream
+package scanner
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// HistoricalScanner reads historical events from a specific event stream and
+// Historical reads historical events from a specific event stream and
 // delivers them to a single consumer until it catches up to the tail of the
 // stream.
-type HistoricalScanner struct {
+type Historical struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
 
@@ -47,7 +47,7 @@ type historicalEvent struct {
 //
 // If Run returns an error it may be called again and will resume from the
 // consumer's checkpoint. Run must not be called concurrently.
-func (s *HistoricalScanner) Run(ctx context.Context) error {
+func (s *Historical) Run(ctx context.Context) error {
 	if s.Consumer.MessageTypes.IsEmpty() {
 		panic("consumer message types must not be empty")
 	}
@@ -86,7 +86,7 @@ func (s *HistoricalScanner) Run(ctx context.Context) error {
 			// already be ahead of the stream's next offset as we observed it.
 			//
 			// Events may be appended between this read and the consumer being
-			// registered with a ContemporaryScanner. That scanner serves the
+			// registered with a [Contemporary] scanner. That scanner serves the
 			// consumer from its cache if it can, or sends it back to historical
 			// consumption if the cache has already moved past it.
 			s.Consumer.Checkpoint.Store(max(s.Consumer.Checkpoint.Load(), next))
@@ -117,7 +117,7 @@ func (s *HistoricalScanner) Run(ctx context.Context) error {
 // choose between scanning events in offset order and searching directly for
 // specific message types. Only the checkpoint is a parameter, as it changes
 // between reads.
-func (s *HistoricalScanner) buildQuery() string {
+func (s *Historical) buildQuery() string {
 	var messageTypeIDs []string
 	for id := range s.Consumer.MessageTypes.All() {
 		messageTypeIDs = append(messageTypeIDs, id.AsString())
@@ -158,7 +158,7 @@ func (s *HistoricalScanner) buildQuery() string {
 
 // readBatch reads up to s.BatchSize relevant events starting at the consumer's
 // checkpoint. It also returns the stream's next offset as of the read.
-func (s *HistoricalScanner) readBatch(
+func (s *Historical) readBatch(
 	ctx context.Context,
 	query string,
 ) ([]historicalEvent, uint64, error) {

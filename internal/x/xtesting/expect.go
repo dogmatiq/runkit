@@ -71,3 +71,19 @@ func ExpectToReceiveN[T any](
 
 	Expect(t, description, collected, want)
 }
+
+// ExpectNoReceive asserts that nothing is received on the channel within a
+// short period.
+func ExpectNoReceive[T any](
+	t testing.TB,
+	description string,
+	ch <-chan T,
+) {
+	t.Helper()
+
+	select {
+	case v := <-ch:
+		t.Fatalf("unexpected %s: %v", description, v)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
