@@ -237,6 +237,10 @@ func (s *Contemporary) subscribe(ctx context.Context, c *Consumer) error {
 }
 
 // syncOne synchronizes the given consumer with the current state of the cache.
+//
+// All cached events at or after the consumer's checkpoint that are of a type it
+// is interested in are delivered in a single batch, after which the consumer's
+// checkpoint is the end of the cache.
 func (s *Contemporary) syncOne(ctx context.Context, c *Consumer) error {
 	checkpoint := c.Checkpoint.Load()
 
@@ -253,29 +257,35 @@ func (s *Contemporary) syncOne(ctx context.Context, c *Consumer) error {
 		return nil
 	}
 
+	batch := Batch{
+		Checkpoint: s.end,
+	}
+
 	idx := int(checkpoint - s.begin)
 
-	// Deliver all cached events to the consumer starting from its checkpoint.
 	for _, env := range s.cache.Slice(idx, s.cache.Len()) {
 		typeID := env.GetBody().GetMessage().GetTypeId()
 
 		if c.MessageTypes.Has(typeID) {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-c.Gone.Chan():
-				delete(s.consumers, c)
-				return nil
-			default:
-				return s.desync(ctx, c)
-			case c.Envelopes <- env:
-			}
+			batch.Envelopes = append(batch.Envelopes, env)
 		}
-
-		c.Checkpoint.Add(1)
 	}
 
-	return nil
+	// The batch is delivered even if it contains no events, so that the
+	// consumer's checkpoint advances past events of irrelevant types.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.Gone.Chan():
+		delete(s.consumers, c)
+		return nil
+	case c.Batches <- batch:
+		c.Checkpoint.Store(batch.Checkpoint)
+		return nil
+	default:
+		// The consumer is not keeping up with the stream.
+		return s.desync(ctx, c)
+	}
 }
 
 // syncAll synchronizes all consumers with the current state of the cache.

@@ -36,13 +36,13 @@ func TestContemporary(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
@@ -55,15 +55,14 @@ func TestContemporary(t *testing.T) {
 			EventE2,
 		)
 
-		xtesting.ExpectToReceiveN(
-			t,
-			"events",
-			envelopes,
-			want...,
-		)
+		checkpoint := expectToReceiveEnvelopes(t, batches, want...)
+
+		if checkpoint != 2 {
+			t.Fatalf("unexpected checkpoint: got %d, want 2", checkpoint)
+		}
 	})
 
-	t.Run("it serves a consumer from the cache", func(t *testing.T) {
+	t.Run("it serves a consumer from the cache in a single batch", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
@@ -96,22 +95,25 @@ func TestContemporary(t *testing.T) {
 		// The consumer may be registered before or after the scanner has
 		// loaded its cache. Either way it must be served from the cache
 		// without any further events being appended.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(1)
 		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want[1:]...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want[1:],
+				Checkpoint: 3,
+			},
 		)
 	})
 
@@ -148,22 +150,25 @@ func TestContemporary(t *testing.T) {
 
 		// The cache holds the last two events, so a consumer at the start of
 		// that window is served from the cache.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(2)
 		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want[2:]...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want[2:],
+				Checkpoint: 4,
+			},
 		)
 	})
 
@@ -202,19 +207,19 @@ func TestContemporary(t *testing.T) {
 		// be served and must be sent back to historical reading. This must
 		// hold whether the consumer is registered before or after the
 		// scanner's first batch arrives.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
 
 		expectDesynced(t, desynced, consumer)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		expectNoBatches(t, batches)
 	})
 
 	t.Run("it ignores events of irrelevant message types", func(t *testing.T) {
@@ -238,13 +243,13 @@ func TestContemporary(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
@@ -258,12 +263,7 @@ func TestContemporary(t *testing.T) {
 			EventX2,
 		)
 
-		xtesting.ExpectToReceiveN(
-			t,
-			"events",
-			envelopes,
-			all[1],
-		)
+		expectToReceiveEnvelopes(t, batches, all[1])
 
 		// Appending another relevant event confirms the consumer's checkpoint
 		// was advanced past the irrelevant events, otherwise it would be
@@ -275,14 +275,59 @@ func TestContemporary(t *testing.T) {
 			EventE2,
 		)
 
-		xtesting.ExpectToReceiveN(
+		checkpoint := expectToReceiveEnvelopes(t, batches, more...)
+
+		if checkpoint != 4 {
+			t.Fatalf("unexpected checkpoint: got %d, want 4", checkpoint)
+		}
+
+		expectNoDesynced(t, desynced)
+	})
+
+	t.Run("it advances the checkpoint of a consumer with no matching events", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+		logger := spruce.NewTestLogger(t)
+		streamID := xtesting.CreateEventStream(t, db)
+		notifications := &notification.Listener{DB: db, Logger: logger}
+		desynced := make(chan *Consumer, 1)
+
+		xtesting.Go(t, notifications.Run)
+
+		scanner := &Contemporary{
+			DB:            db,
+			Notifications: notifications,
+			StreamID:      streamID,
+			Subscribe:     make(chan *Consumer),
+			Unsubscribe:   make(chan *Consumer),
+			Desynced:      desynced,
+			CacheSize:     10,
+		}
+
+		xtesting.GoE(t, scanner.Run)
+
+		batches := make(chan Batch, 10)
+		consumer := &Consumer{
+			StreamID: streamID,
+			MessageTypes: uuidpb.NewSet(
+				MessageTypeUUID[*EventStub[TypeE]](),
+			),
+			Batches: batches,
+		}
+		consumer.Checkpoint.Store(0)
+		scanner.Subscribe <- consumer
+
+		xtesting.AppendToEventStream(
 			t,
-			"subsequent events",
-			envelopes,
-			more...,
+			db,
+			streamID,
+			EventX1,
+			EventX2,
 		)
 
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		// Only empty batches are delivered, but they must still advance the
+		// checkpoint to the end of the stream.
+		expectCheckpoint(t, batches, 2)
+		expectNoDesynced(t, desynced)
 	})
 
 	t.Run("it desyncs a consumer exactly once when its channel is full", func(t *testing.T) {
@@ -306,32 +351,21 @@ func TestContemporary(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		// The consumer's channel can hold a single event, so the second
-		// event can not be delivered and the consumer must be desynced.
-		envelopes := make(chan *envelopepb.Envelope, 1)
+		// The consumer's channel is already full, so the first batch can not
+		// be delivered and the consumer must be desynced.
+		batches := make(chan Batch, 1)
+		batches <- Batch{}
+
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
 
-		want := xtesting.AppendToEventStream(
-			t,
-			db,
-			streamID,
-			EventE1,
-			EventE2,
-			EventE3,
-		)
-
-		expectDesynced(t, desynced, consumer)
-
-		// Appending further events must not cause the desynced consumer to be
-		// desynced again, nor to receive anything more.
 		xtesting.AppendToEventStream(
 			t,
 			db,
@@ -339,16 +373,18 @@ func TestContemporary(t *testing.T) {
 			EventE1,
 		)
 
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		expectDesynced(t, desynced, consumer)
 
-		xtesting.ExpectToReceiveN(
+		// Appending further events must not cause the desynced consumer to be
+		// desynced again.
+		xtesting.AppendToEventStream(
 			t,
-			"the single delivered event",
-			envelopes,
-			want[0],
+			db,
+			streamID,
+			EventE2,
 		)
 
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		expectNoDesynced(t, desynced)
 	})
 
 	t.Run("it delivers the correct events after the cache wraps", func(t *testing.T) {
@@ -383,13 +419,13 @@ func TestContemporary(t *testing.T) {
 
 		// A probe consumer at the head lets the test know when the scanner
 		// has processed the event that causes the cache to wrap.
-		probeEnvelopes := make(chan *envelopepb.Envelope, 10)
+		probeBatches := make(chan Batch, 10)
 		probe := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: probeEnvelopes,
+			Batches: probeBatches,
 		}
 		probe.Checkpoint.Store(3)
 		scanner.Subscribe <- probe
@@ -401,35 +437,32 @@ func TestContemporary(t *testing.T) {
 			EventE1,
 		)
 
-		xtesting.ExpectToReceiveN(
-			t,
-			"probe events",
-			probeEnvelopes,
-			second...,
-		)
+		expectToReceiveEnvelopes(t, probeBatches, second...)
 
 		// The cache now holds offsets 1, 2 and 3, having discarded offset 0.
 		// A consumer at offset 2 must receive exactly offsets 2 and 3.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(2)
 		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			first[2],
-			second[0],
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  []*envelopepb.Envelope{first[2], second[0]},
+				Checkpoint: 4,
+			},
 		)
 
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		expectNoDesynced(t, desynced)
 	})
 
 	t.Run("it stops delivering to a consumer that is gone", func(t *testing.T) {
@@ -453,13 +486,13 @@ func TestContemporary(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
@@ -471,12 +504,7 @@ func TestContemporary(t *testing.T) {
 			EventE1,
 		)
 
-		xtesting.ExpectToReceiveN(
-			t,
-			"events",
-			envelopes,
-			want...,
-		)
+		expectToReceiveEnvelopes(t, batches, want...)
 
 		consumer.Gone.Set()
 		scanner.Unsubscribe <- consumer
@@ -488,8 +516,8 @@ func TestContemporary(t *testing.T) {
 			EventE2,
 		)
 
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		expectNoBatches(t, batches)
+		expectNoDesynced(t, desynced)
 	})
 
 	t.Run("it resumes serving existing consumers after a restart", func(t *testing.T) {
@@ -513,21 +541,21 @@ func TestContemporary(t *testing.T) {
 
 		stop := xtesting.GoE(t, scanner.Run)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
 
 		stop()
 
-		// Events appended while the scanner is stopped must be delivered to the
-		// consumer once the same scanner is run again.
+		// Events appended while the scanner is stopped must be delivered to
+		// the consumer once the same scanner is run again.
 		want := xtesting.AppendToEventStream(
 			t,
 			db,
@@ -538,14 +566,8 @@ func TestContemporary(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		xtesting.ExpectToReceiveN(
-			t,
-			"events",
-			envelopes,
-			want...,
-		)
-
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		expectToReceiveEnvelopes(t, batches, want...)
+		expectNoDesynced(t, desynced)
 	})
 
 	t.Run("it desyncs existing consumers that fall behind the cache during a restart", func(t *testing.T) {
@@ -569,13 +591,13 @@ func TestContemporary(t *testing.T) {
 
 		stop := xtesting.GoE(t, scanner.Run)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		scanner.Subscribe <- consumer
@@ -596,7 +618,7 @@ func TestContemporary(t *testing.T) {
 		xtesting.GoE(t, scanner.Run)
 
 		expectDesynced(t, desynced, consumer)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		expectNoBatches(t, batches)
 	})
 
 	t.Run("it waits for a consumer that is ahead of the cache", func(t *testing.T) {
@@ -631,13 +653,13 @@ func TestContemporary(t *testing.T) {
 		// The consumer has already seen events beyond the end of the cache,
 		// which holds offsets 0 and 1. It must not be desynced, and must not
 		// receive anything until the stream reaches its checkpoint.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(4)
 		scanner.Subscribe <- consumer
@@ -652,15 +674,14 @@ func TestContemporary(t *testing.T) {
 		)
 
 		// Only the event at offset 4 is at or after the consumer's checkpoint.
-		xtesting.ExpectToReceiveN(
-			t,
-			"events",
-			envelopes,
-			want[2],
-		)
+		checkpoint := expectToReceiveEnvelopes(t, batches, want[2])
 
-		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		if checkpoint != 5 {
+			t.Fatalf("unexpected checkpoint: got %d, want 5", checkpoint)
+		}
+
+		expectNoDesynced(t, desynced)
+		expectNoBatches(t, batches)
 	})
 
 	t.Run("it returns an error when the stream does not exist", func(t *testing.T) {
@@ -711,5 +732,20 @@ func expectDesynced(
 		if got != consumer {
 			t.Fatal("unexpected consumer was desynced")
 		}
+	}
+}
+
+// expectNoDesynced asserts that no consumer is reported as desynced within a
+// short period.
+func expectNoDesynced(
+	t testing.TB,
+	desynced <-chan *Consumer,
+) {
+	t.Helper()
+
+	select {
+	case <-desynced:
+		t.Fatal("unexpected consumer desync")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

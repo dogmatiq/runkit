@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
@@ -50,8 +49,8 @@ type Reader struct {
 	contemporary uuidpb.Map[*scanner.Contemporary]
 }
 
-// Subscribe registers ch to receive events of the given types from the given
-// stream, starting at the given checkpoint offset.
+// Subscribe registers ch to receive batches of events of the given types from
+// the given stream, starting at the given checkpoint offset.
 //
 // ch should be buffered. While the consumer is catching up on historical
 // events, delivery blocks until ch is read. Once it has caught up, a consumer
@@ -62,7 +61,7 @@ func (r *Reader) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
 	types *uuidpb.Set,
-	ch chan<- *envelopepb.Envelope,
+	ch chan<- Batch,
 ) func() {
 	if types.IsEmpty() {
 		panic("message types must not be empty")
@@ -74,7 +73,7 @@ func (r *Reader) Subscribe(
 		ID:           uuidpb.Generate(),
 		StreamID:     streamID,
 		MessageTypes: types,
-		Envelopes:    ch,
+		Batches:      ch,
 	}
 	c.Checkpoint.Store(checkpoint)
 

@@ -32,12 +32,6 @@ type Historical struct {
 	BatchSize int
 }
 
-// historicalEvent is an event read from the stream along with its offset.
-type historicalEvent struct {
-	Offset   uint64
-	Envelope *envelopepb.Envelope
-}
-
 // Run delivers historical events to the consumer until it has caught up to the
 // tail of the stream, at which point the consumer is sent to s.Synced and Run
 // returns nil.
@@ -59,38 +53,30 @@ func (s *Historical) Run(ctx context.Context) error {
 	query := s.buildQuery()
 
 	for {
-		events, next, err := s.readBatch(ctx, query)
+		batch, exhausted, err := s.readBatch(ctx, query)
 		if err != nil {
 			return err
 		}
 
-		for _, ev := range events {
+		// An empty batch that does not advance the checkpoint tells the
+		// consumer nothing, so it is not delivered.
+		if len(batch.Envelopes) != 0 || batch.Checkpoint != s.Consumer.Checkpoint.Load() {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-s.Consumer.Gone.Chan():
 				return nil
-			case s.Consumer.Envelopes <- ev.Envelope:
+			case s.Consumer.Batches <- batch:
 			}
 
-			s.Consumer.Checkpoint.Store(ev.Offset + 1)
+			s.Consumer.Checkpoint.Store(batch.Checkpoint)
 		}
 
-		// A partial batch means there are no more relevant events on the
-		// stream at this time.
-		if len(events) < s.BatchSize {
-			// Skip past any trailing events of irrelevant types so that the
-			// consumer resumes at the tail of the stream.
-			//
-			// The checkpoint is never moved backwards, as the consumer may
-			// already be ahead of the stream's next offset as we observed it.
-			//
+		if exhausted {
 			// Events may be appended between this read and the consumer being
 			// registered with a [Contemporary] scanner. That scanner serves the
 			// consumer from its cache if it can, or sends it back to historical
 			// consumption if the cache has already moved past it.
-			s.Consumer.Checkpoint.Store(max(s.Consumer.Checkpoint.Load(), next))
-
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -157,18 +143,30 @@ func (s *Historical) buildQuery() string {
 }
 
 // readBatch reads up to s.BatchSize relevant events starting at the consumer's
-// checkpoint. It also returns the stream's next offset as of the read.
+// checkpoint.
+//
+// It returns a batch containing the events and the checkpoint from which the
+// consumer should resume. It also returns a boolean indicating whether the
+// stream has been exhausted, that is, there are no more relevant events on the
+// stream at this time.
+//
+// When the stream is exhausted, the batch's checkpoint is the stream's next
+// offset, skipping past any trailing events of irrelevant types. The
+// checkpoint is never moved backwards, as the consumer may already be ahead of
+// the stream's next offset as we observed it.
 func (s *Historical) readBatch(
 	ctx context.Context,
 	query string,
-) ([]historicalEvent, uint64, error) {
+) (Batch, bool, error) {
+	checkpoint := s.Consumer.Checkpoint.Load()
+
 	rows, err := s.DB.QueryContext(
 		ctx,
 		query,
-		s.Consumer.Checkpoint.Load(),
+		checkpoint,
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("unable to query events: %w", err)
+		return Batch{}, false, fmt.Errorf("unable to query events: %w", err)
 	}
 	defer rows.Close()
 
@@ -176,9 +174,9 @@ func (s *Historical) readBatch(
 	// all, the stream does not exist.
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return nil, 0, fmt.Errorf("unable to advance to first row: %w", err)
+			return Batch{}, false, fmt.Errorf("unable to advance to first row: %w", err)
 		}
-		return nil, 0, fmt.Errorf("event stream not found")
+		return Batch{}, false, fmt.Errorf("event stream not found")
 	}
 
 	var next uint64
@@ -186,37 +184,47 @@ func (s *Historical) readBatch(
 		&next,
 		new(any),
 	); err != nil {
-		return nil, 0, fmt.Errorf("unable to scan next offset: %w", err)
+		return Batch{}, false, fmt.Errorf("unable to scan next offset: %w", err)
 	}
 
-	var events []historicalEvent
+	batch := Batch{
+		Checkpoint: checkpoint,
+	}
 
 	for rows.Next() {
-		ev := historicalEvent{
-			Envelope: &envelopepb.Envelope{},
-		}
+		var (
+			offset uint64
+			env    = &envelopepb.Envelope{}
+		)
 
 		if err := rows.Scan(
-			&ev.Offset,
-			xsql.Envelope(ev.Envelope),
+			&offset,
+			xsql.Envelope(env),
 		); err != nil {
-			return nil, 0, fmt.Errorf("unable to scan event: %w", err)
+			return Batch{}, false, fmt.Errorf("unable to scan event: %w", err)
 		}
 
 		envelopepb.SetExtension(
-			ev.Envelope.GetBody(),
+			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
 				WithStreamId(s.Consumer.StreamID).
-				WithOffset(ev.Offset).
+				WithOffset(offset).
 				Build(),
 		)
 
-		events = append(events, ev)
+		batch.Envelopes = append(batch.Envelopes, env)
+		batch.Checkpoint = offset + 1
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("unable to iterate events: %w", err)
+		return Batch{}, false, fmt.Errorf("unable to iterate events: %w", err)
 	}
 
-	return events, next, nil
+	exhausted := len(batch.Envelopes) < s.BatchSize
+
+	if exhausted {
+		batch.Checkpoint = max(batch.Checkpoint, next)
+	}
+
+	return batch, exhausted, nil
 }
