@@ -14,7 +14,7 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestContemporaryReader(t *testing.T) {
+func TestContemporaryScanner(t *testing.T) {
 	t.Run("it delivers events appended after a consumer joins at the head", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
@@ -24,7 +24,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -34,7 +34,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
@@ -45,7 +45,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -81,7 +81,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE3,
 		)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -91,9 +91,9 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
-		// The consumer may be registered before or after the reader has
+		// The consumer may be registered before or after the scanner has
 		// loaded its cache. Either way it must be served from the cache
 		// without any further events being appended.
 		envelopes := make(chan *envelopepb.Envelope, 10)
@@ -105,7 +105,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(1)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -134,7 +134,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE1,
 		)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -144,7 +144,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     2,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		// The cache holds the last two events, so a consumer at the start of
 		// that window is served from the cache.
@@ -157,7 +157,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(2)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -186,7 +186,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE1,
 		)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -196,12 +196,12 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     2,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		// The cache holds offsets 2 and 3, so a consumer at offset 0 can not
 		// be served and must be sent back to historical reading. This must
 		// hold whether the consumer is registered before or after the
-		// reader's first batch arrives.
+		// scanner's first batch arrives.
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
@@ -211,7 +211,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		expectDesynced(t, desynced, consumer)
 		expectNoEnvelopes(t, envelopes)
@@ -226,7 +226,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -236,7 +236,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
@@ -247,7 +247,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		all := xtesting.AppendToEventStream(
 			t,
@@ -294,7 +294,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -304,7 +304,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		// The consumer's channel can hold a single event, so the second
 		// event can not be delivered and the consumer must be desynced.
@@ -317,7 +317,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -369,7 +369,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE3,
 		)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -379,9 +379,9 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     3,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
-		// A probe consumer at the head lets the test know when the reader
+		// A probe consumer at the head lets the test know when the scanner
 		// has processed the event that causes the cache to wrap.
 		probeEnvelopes := make(chan *envelopepb.Envelope, 10)
 		probe := &Consumer{
@@ -392,7 +392,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: probeEnvelopes,
 		}
 		probe.Checkpoint.Store(3)
-		reader.Subscribe <- probe
+		scanner.Subscribe <- probe
 
 		second := xtesting.AppendToEventStream(
 			t,
@@ -419,7 +419,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(2)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -441,7 +441,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -451,7 +451,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
@@ -462,7 +462,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -479,7 +479,7 @@ func TestContemporaryReader(t *testing.T) {
 		)
 
 		consumer.Gone.Set()
-		reader.Unsubscribe <- consumer
+		scanner.Unsubscribe <- consumer
 
 		xtesting.AppendToEventStream(
 			t,
@@ -501,7 +501,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -511,7 +511,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		stop := xtesting.GoE(t, reader.Run)
+		stop := xtesting.GoE(t, scanner.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
@@ -522,12 +522,12 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		stop()
 
-		// Events appended while the reader is stopped must be delivered to the
-		// consumer once the same reader is run again.
+		// Events appended while the scanner is stopped must be delivered to the
+		// consumer once the same scanner is run again.
 		want := xtesting.AppendToEventStream(
 			t,
 			db,
@@ -536,7 +536,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE2,
 		)
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -557,7 +557,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -567,7 +567,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     2,
 		}
 
-		stop := xtesting.GoE(t, reader.Run)
+		stop := xtesting.GoE(t, scanner.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
@@ -578,12 +578,12 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(0)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		stop()
 
 		// More events are appended than the cache can hold, so the consumer
-		// can not be caught up from the cache when the reader is run again.
+		// can not be caught up from the cache when the scanner is run again.
 		xtesting.AppendToEventStream(
 			t,
 			db,
@@ -593,7 +593,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE3,
 		)
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		expectDesynced(t, desynced, consumer)
 		expectNoEnvelopes(t, envelopes)
@@ -616,7 +616,7 @@ func TestContemporaryReader(t *testing.T) {
 			EventE2,
 		)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -626,7 +626,7 @@ func TestContemporaryReader(t *testing.T) {
 			CacheSize:     10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		// The consumer has already seen events beyond the end of the cache,
 		// which holds offsets 0 and 1. It must not be desynced, and must not
@@ -640,7 +640,7 @@ func TestContemporaryReader(t *testing.T) {
 			Envelopes: envelopes,
 		}
 		consumer.Checkpoint.Store(4)
-		reader.Subscribe <- consumer
+		scanner.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -670,7 +670,7 @@ func TestContemporaryReader(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		reader := &ContemporaryReader{
+		scanner := &ContemporaryScanner{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      uuidpb.Generate(),
@@ -683,10 +683,10 @@ func TestContemporaryReader(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 		defer cancel()
 
-		err := reader.Run(ctx)
+		err := scanner.Run(ctx)
 
 		if ctx.Err() != nil {
-			t.Fatal("timeout waiting for reader to return")
+			t.Fatal("timeout waiting for scanner to return")
 		}
 
 		if err == nil {

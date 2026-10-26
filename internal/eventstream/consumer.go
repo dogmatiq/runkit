@@ -22,7 +22,7 @@ type Consumer struct {
 	// Checkpoint is the offset of the next event that the consumer expects to
 	// receive.
 	//
-	// It is advanced by whichever reader is currently delivering events to the
+	// It is advanced by whichever scanner is currently delivering events to the
 	// consumer, and may be read concurrently by others, such as for logging.
 	Checkpoint atomic.Uint64
 

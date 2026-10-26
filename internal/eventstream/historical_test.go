@@ -12,7 +12,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-func TestHistoricalReader(t *testing.T) {
+func TestHistoricalScanner(t *testing.T) {
 	t.Run("it delivers all matching events and reports the consumer as synced at the stream head", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
@@ -37,14 +37,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -88,14 +88,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 2,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -137,14 +137,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(1)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -185,14 +185,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -234,14 +234,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -268,14 +268,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -302,7 +302,7 @@ func TestHistoricalReader(t *testing.T) {
 
 		// The consumer is ahead of the stream's next offset, which can happen
 		// if it saw events via another route before being handed to this
-		// reader.
+		// scanner.
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
@@ -313,14 +313,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(5)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -346,7 +346,7 @@ func TestHistoricalReader(t *testing.T) {
 			EventE3,
 		)
 
-		// The channel is unbuffered, so the reader can only make progress as
+		// The channel is unbuffered, so the scanner can only make progress as
 		// fast as the test receives.
 		envelopes := make(chan *envelopepb.Envelope)
 		consumer := &Consumer{
@@ -358,14 +358,14 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		expectNoSynced(t, synced)
 
@@ -392,7 +392,7 @@ func TestHistoricalReader(t *testing.T) {
 			EventE2,
 		)
 
-		// Nothing ever receives from the channel, so the reader would block
+		// Nothing ever receives from the channel, so the scanner would block
 		// forever were it not for the consumer being gone.
 		envelopes := make(chan *envelopepb.Envelope)
 		consumer := &Consumer{
@@ -405,14 +405,14 @@ func TestHistoricalReader(t *testing.T) {
 		consumer.Checkpoint.Store(0)
 		consumer.Gone.Set()
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		if err := reader.Run(t.Context()); err != nil {
+		if err := scanner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -447,16 +447,16 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
 			BatchSize: 10,
 		}
 
-		stop := xtesting.GoE(t, reader.Run)
+		stop := xtesting.GoE(t, scanner.Run)
 
-		// Receive the first event, then stop the reader while it is blocked
+		// Receive the first event, then stop the scanner while it is blocked
 		// delivering the second.
 		xtesting.ExpectToReceiveN(
 			t,
@@ -471,9 +471,9 @@ func TestHistoricalReader(t *testing.T) {
 			t.Fatalf("unexpected checkpoint after stop: got %d, want %d", got, want)
 		}
 
-		// Running the same reader again must deliver only the remaining
+		// Running the same scanner again must deliver only the remaining
 		// events, without duplicating the first.
-		xtesting.GoE(t, reader.Run)
+		xtesting.GoE(t, scanner.Run)
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -503,7 +503,7 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -513,10 +513,10 @@ func TestHistoricalReader(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 		defer cancel()
 
-		err := reader.Run(ctx)
+		err := scanner.Run(ctx)
 
 		if ctx.Err() != nil {
-			t.Fatal("timeout waiting for reader to return")
+			t.Fatal("timeout waiting for scanner to return")
 		}
 
 		if err == nil {
@@ -537,7 +537,7 @@ func TestHistoricalReader(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		reader := &HistoricalReader{
+		scanner := &HistoricalScanner{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    make(chan *Consumer, 1),
@@ -550,7 +550,7 @@ func TestHistoricalReader(t *testing.T) {
 			}
 		}()
 
-		reader.Run(t.Context())
+		scanner.Run(t.Context())
 	})
 }
 
