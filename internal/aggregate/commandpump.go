@@ -298,7 +298,7 @@ func (p *CommandPump) tryLockInstance(
 			(SELECT COUNT(*) FROM locked) > 0 AS locked
 		FROM exists
 		LEFT JOIN locked
-		ON true`,
+			ON true`,
 		xsql.UUID(p.Identity.GetKey()),
 		instanceID,
 	)

@@ -2,6 +2,7 @@ package xtesting
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -49,11 +50,33 @@ func ExpectLatchesSetEventually(
 
 // Go runs the given function in a goroutine until the test ends.
 //
-// It returns a function that can be called to stop the goroutine early. It
+// It returns a function that can be called to stop the goroutine early, which
 // blocks until fn returns.
 func Go(
 	t testing.TB,
 	fn func(ctx context.Context),
+) func() {
+	t.Helper()
+
+	return GoE(
+		t,
+		func(ctx context.Context) error {
+			fn(ctx)
+			return nil
+		},
+	)
+}
+
+// GoE runs the given function in a goroutine until the test ends.
+//
+// If fn returns an error other than a context cancellation error, the test
+// fails.
+//
+// It returns a function that can be called to stop the goroutine early, which
+// blocks until fn returns.
+func GoE(
+	t testing.TB,
+	fn func(ctx context.Context) error,
 ) func() {
 	t.Helper()
 
@@ -69,7 +92,12 @@ func Go(
 
 	go func() {
 		defer close(stopped)
-		fn(ctx)
+
+		if err := fn(ctx); err != nil {
+			if !errors.Is(err, ctx.Err()) {
+				t.Error(err)
+			}
+		}
 	}()
 
 	return stop
