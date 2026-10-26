@@ -13,7 +13,7 @@ import (
 )
 
 func TestHistorical(t *testing.T) {
-	t.Run("it delivers all matching events and reports the consumer as synced at the stream head", func(t *testing.T) {
+	t.Run("it delivers all matching events in one batch and reports the consumer as synced at the stream head", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
 		synced := make(chan *Consumer, 1)
@@ -27,13 +27,13 @@ func TestHistorical(t *testing.T) {
 			EventE3,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -50,9 +50,12 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want,
+				Checkpoint: 3,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
@@ -78,13 +81,13 @@ func TestHistorical(t *testing.T) {
 			EventE2,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -101,9 +104,20 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want[0:2],
+				Checkpoint: 2,
+			},
+			Batch{
+				Envelopes:  want[2:4],
+				Checkpoint: 4,
+			},
+			Batch{
+				Envelopes:  want[4:5],
+				Checkpoint: 5,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
@@ -127,13 +141,13 @@ func TestHistorical(t *testing.T) {
 			EventE3,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(1)
 
@@ -150,15 +164,18 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want[1:]...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want[1:],
+				Checkpoint: 3,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
 	})
 
-	t.Run("it skips events of irrelevant types and still advances the checkpoint to the end of the stream", func(t *testing.T) {
+	t.Run("it skips events of irrelevant types and advances the checkpoint to the end of the stream in the same batch", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
 		synced := make(chan *Consumer, 1)
@@ -175,13 +192,13 @@ func TestHistorical(t *testing.T) {
 			EventX2,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -198,10 +215,12 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			all[0],
-			all[2],
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  []*envelopepb.Envelope{all[0], all[2]},
+				Checkpoint: 4,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
@@ -211,7 +230,7 @@ func TestHistorical(t *testing.T) {
 		}
 	})
 
-	t.Run("it reports the consumer as synced without delivering anything when only irrelevant events exist", func(t *testing.T) {
+	t.Run("it delivers an empty batch that advances the checkpoint when only irrelevant events exist", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
 		synced := make(chan *Consumer, 1)
@@ -224,13 +243,13 @@ func TestHistorical(t *testing.T) {
 			EventX2,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -245,26 +264,34 @@ func TestHistorical(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		xtesting.ExpectToReceiveN(
+			t,
+			"batches",
+			batches,
+			Batch{
+				Checkpoint: 2,
+			},
+		)
+
 		expectSynced(t, synced, consumer)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(2); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
 		}
 	})
 
-	t.Run("it reports the consumer as synced immediately on an empty stream", func(t *testing.T) {
+	t.Run("it reports the consumer as synced without delivering a batch on an empty stream", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
 		synced := make(chan *Consumer, 1)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -280,7 +307,7 @@ func TestHistorical(t *testing.T) {
 		}
 
 		expectSynced(t, synced, consumer)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		expectNoBatches(t, batches)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(0); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -302,14 +329,15 @@ func TestHistorical(t *testing.T) {
 
 		// The consumer is ahead of the stream's next offset, which can happen
 		// if it saw events via another route before being handed to this
-		// scanner.
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		// scanner. Nothing is delivered, not even an empty batch, as the
+		// checkpoint does not change.
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(5)
 
@@ -325,7 +353,7 @@ func TestHistorical(t *testing.T) {
 		}
 
 		expectSynced(t, synced, consumer)
-		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		expectNoBatches(t, batches)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(5); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -348,13 +376,13 @@ func TestHistorical(t *testing.T) {
 
 		// The channel is unbuffered, so the scanner can only make progress as
 		// fast as the test receives.
-		envelopes := make(chan *envelopepb.Envelope)
+		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -367,13 +395,16 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		xtesting.ExpectNoReceive(t, "consumer sync", synced)
+		expectNoSynced(t, synced)
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"events",
-			envelopes,
-			want...,
+			"batches",
+			batches,
+			Batch{
+				Envelopes:  want,
+				Checkpoint: 3,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
@@ -394,13 +425,13 @@ func TestHistorical(t *testing.T) {
 
 		// Nothing ever receives from the channel, so the scanner would block
 		// forever were it not for the consumer being gone.
-		envelopes := make(chan *envelopepb.Envelope)
+		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 		consumer.Gone.Set()
@@ -416,7 +447,7 @@ func TestHistorical(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		xtesting.ExpectNoReceive(t, "consumer sync", synced)
+		expectNoSynced(t, synced)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(0); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -437,32 +468,37 @@ func TestHistorical(t *testing.T) {
 			EventE3,
 		)
 
-		envelopes := make(chan *envelopepb.Envelope)
+		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
+		// A batch size of one means each event is delivered in its own batch,
+		// so the scanner can be stopped part-way through the stream.
 		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
-			BatchSize: 10,
+			BatchSize: 1,
 		}
 
 		stop := xtesting.GoE(t, scanner.Run)
 
-		// Receive the first event, then stop the scanner while it is blocked
+		// Receive the first batch, then stop the scanner while it is blocked
 		// delivering the second.
 		xtesting.ExpectToReceiveN(
 			t,
-			"first event",
-			envelopes,
-			want[0],
+			"first batch",
+			batches,
+			Batch{
+				Envelopes:  want[0:1],
+				Checkpoint: 1,
+			},
 		)
 
 		stop()
@@ -477,9 +513,16 @@ func TestHistorical(t *testing.T) {
 
 		xtesting.ExpectToReceiveN(
 			t,
-			"remaining events",
-			envelopes,
-			want[1:]...,
+			"remaining batches",
+			batches,
+			Batch{
+				Envelopes:  want[1:2],
+				Checkpoint: 2,
+			},
+			Batch{
+				Envelopes:  want[2:3],
+				Checkpoint: 3,
+			},
 		)
 
 		expectSynced(t, synced, consumer)
@@ -493,13 +536,13 @@ func TestHistorical(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		synced := make(chan *Consumer, 1)
 
-		envelopes := make(chan *envelopepb.Envelope, 10)
+		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: uuidpb.Generate(),
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
-			Envelopes: envelopes,
+			Batches: batches,
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -523,7 +566,7 @@ func TestHistorical(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		xtesting.ExpectNoReceive(t, "consumer sync", synced)
+		expectNoSynced(t, synced)
 	})
 
 	t.Run("it panics when the consumer's message types are empty", func(t *testing.T) {
@@ -533,7 +576,7 @@ func TestHistorical(t *testing.T) {
 		consumer := &Consumer{
 			StreamID:     streamID,
 			MessageTypes: uuidpb.NewSet(),
-			Envelopes:    make(chan *envelopepb.Envelope, 10),
+			Batches:      make(chan Batch, 10),
 		}
 		consumer.Checkpoint.Store(0)
 
@@ -570,5 +613,20 @@ func expectSynced(
 		if got != consumer {
 			t.Fatal("unexpected consumer was synced")
 		}
+	}
+}
+
+// expectNoSynced asserts that no consumer is reported as synced within a short
+// period.
+func expectNoSynced(
+	t testing.TB,
+	synced <-chan *Consumer,
+) {
+	t.Helper()
+
+	select {
+	case <-synced:
+		t.Fatal("unexpected consumer sync")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

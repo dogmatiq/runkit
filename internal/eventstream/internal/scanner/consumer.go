@@ -30,13 +30,29 @@ type Consumer struct {
 	// in receiving. It must not be empty.
 	MessageTypes *uuidpb.Set
 
-	// Envelopes is the channel on which the consumer is sent events that are
-	// appended to the specified stream ID, if they are one of the specified
-	// types.
-	Envelopes chan<- *envelopepb.Envelope
+	// Batches is the channel on which the consumer is sent batches of events
+	// that are appended to the specified stream ID, if they are one of the
+	// specified types.
+	Batches chan<- Batch
 
 	// Gone is a latch that is set when the consumer no longer expects to
-	// receive events. It is used as a signal to abort writes to the envelopes
+	// receive events. It is used as a signal to abort writes to the batches
 	// channel that would otherwise never unblock.
 	Gone xsync.Latch
+}
+
+// Batch is a set of events delivered to a consumer, along with the checkpoint
+// from which the consumer should resume afterwards.
+type Batch struct {
+	// Envelopes are the delivered events, in offset order.
+	//
+	// It may be empty, indicating only that the checkpoint has advanced past
+	// events that are not of a type the consumer is interested in.
+	//
+	// Each envelope has the [envelopepb.EventStreamPosition] extension set.
+	Envelopes []*envelopepb.Envelope
+
+	// Checkpoint is the offset immediately after the range of the stream that
+	// this batch covers.
+	Checkpoint uint64
 }
