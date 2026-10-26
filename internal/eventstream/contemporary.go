@@ -222,6 +222,11 @@ func (r *ContemporaryReader) readBatch(ctx context.Context) ([]*envelopepb.Envel
 // subscribe synchronizes a new consumer with the current state of the cache,
 // and registers it to receive future events.
 func (r *ContemporaryReader) subscribe(ctx context.Context, c *Consumer) error {
+	if c.Gone.IsSet() {
+		// The consumer unsubscribed while it was being handed to this reader.
+		return nil
+	}
+
 	if r.consumers == nil {
 		r.consumers = map[*Consumer]struct{}{}
 	}
@@ -233,12 +238,14 @@ func (r *ContemporaryReader) subscribe(ctx context.Context, c *Consumer) error {
 
 // syncOne synchronizes the given consumer with the current state of the cache.
 func (r *ContemporaryReader) syncOne(ctx context.Context, c *Consumer) error {
-	if c.Checkpoint < r.begin {
+	checkpoint := c.Checkpoint.Load()
+
+	if checkpoint < r.begin {
 		// The consumer expects an offset that is no longer in the cache.
 		return r.desync(ctx, c)
 	}
 
-	if c.Checkpoint >= r.end {
+	if checkpoint >= r.end {
 		// The consumer is already caught up with the cache.
 		//
 		// The consumer may be beyond the end of the cache, if it happened to
@@ -246,7 +253,7 @@ func (r *ContemporaryReader) syncOne(ctx context.Context, c *Consumer) error {
 		return nil
 	}
 
-	idx := int(c.Checkpoint - r.begin)
+	idx := int(checkpoint - r.begin)
 
 	// Deliver all cached events to the consumer starting from its checkpoint.
 	for _, env := range r.cache.Slice(idx, r.cache.Len()) {
@@ -265,7 +272,7 @@ func (r *ContemporaryReader) syncOne(ctx context.Context, c *Consumer) error {
 			}
 		}
 
-		c.Checkpoint++
+		c.Checkpoint.Add(1)
 	}
 
 	return nil

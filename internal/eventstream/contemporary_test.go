@@ -37,14 +37,15 @@ func TestContemporaryReader(t *testing.T) {
 		xtesting.GoE(t, reader.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
+		reader.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -96,14 +97,15 @@ func TestContemporaryReader(t *testing.T) {
 		// loaded its cache. Either way it must be served from the cache
 		// without any further events being appended.
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 1,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(1)
+		reader.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -147,14 +149,15 @@ func TestContemporaryReader(t *testing.T) {
 		// The cache holds the last two events, so a consumer at the start of
 		// that window is served from the cache.
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 2,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(2)
+		reader.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -201,13 +204,13 @@ func TestContemporaryReader(t *testing.T) {
 		// reader's first batch arrives.
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
 		reader.Subscribe <- consumer
 
 		expectDesynced(t, desynced, consumer)
@@ -236,14 +239,15 @@ func TestContemporaryReader(t *testing.T) {
 		xtesting.GoE(t, reader.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
+		reader.Subscribe <- consumer
 
 		all := xtesting.AppendToEventStream(
 			t,
@@ -306,13 +310,13 @@ func TestContemporaryReader(t *testing.T) {
 		// event can not be delivered and the consumer must be desynced.
 		envelopes := make(chan *envelopepb.Envelope, 1)
 		consumer := &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
 		reader.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
@@ -380,14 +384,15 @@ func TestContemporaryReader(t *testing.T) {
 		// A probe consumer at the head lets the test know when the reader
 		// has processed the event that causes the cache to wrap.
 		probeEnvelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 3,
+		probe := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: probeEnvelopes,
 		}
+		probe.Checkpoint.Store(3)
+		reader.Subscribe <- probe
 
 		second := xtesting.AppendToEventStream(
 			t,
@@ -406,14 +411,15 @@ func TestContemporaryReader(t *testing.T) {
 		// The cache now holds offsets 1, 2 and 3, having discarded offset 0.
 		// A consumer at offset 2 must receive exactly offsets 2 and 3.
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 2,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(2)
+		reader.Subscribe <- consumer
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -449,13 +455,13 @@ func TestContemporaryReader(t *testing.T) {
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
 		reader.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
@@ -508,14 +514,15 @@ func TestContemporaryReader(t *testing.T) {
 		stop := xtesting.GoE(t, reader.Run)
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
+		reader.Subscribe <- consumer
 
 		stop()
 
@@ -564,13 +571,13 @@ func TestContemporaryReader(t *testing.T) {
 
 		envelopes := make(chan *envelopepb.Envelope, 10)
 		consumer := &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 0,
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(0)
 		reader.Subscribe <- consumer
 
 		stop()
@@ -625,14 +632,15 @@ func TestContemporaryReader(t *testing.T) {
 		// which holds offsets 0 and 1. It must not be desynced, and must not
 		// receive anything until the stream reaches its checkpoint.
 		envelopes := make(chan *envelopepb.Envelope, 10)
-		reader.Subscribe <- &Consumer{
-			StreamID:   streamID,
-			Checkpoint: 4,
+		consumer := &Consumer{
+			StreamID: streamID,
 			MessageTypes: uuidpb.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Envelopes: envelopes,
 		}
+		consumer.Checkpoint.Store(4)
+		reader.Subscribe <- consumer
 
 		want := xtesting.AppendToEventStream(
 			t,
