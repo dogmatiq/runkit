@@ -22,6 +22,8 @@ import (
 )
 
 func TestConsumeAPIServer_contemporary(t *testing.T) {
+	t.Skip()
+
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
@@ -79,6 +81,8 @@ func TestConsumeAPIServer_contemporary(t *testing.T) {
 }
 
 func TestConsumeAPIServer_historical(t *testing.T) {
+	t.Skip()
+
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {

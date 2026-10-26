@@ -4,114 +4,195 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
+	"strings"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/runkit/internal/backoff"
-	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-const historicalBatchSize = 10
+// HistoricalReader reads historical events from a specific event stream and
+// delivers them to a single consumer until it catches up to the tail of the
+// stream.
+type HistoricalReader struct {
+	// DB is the database connection used to read events from the stream.
+	DB *sql.DB
 
-type historicalReader struct {
-	DB           *sql.DB
-	Subscription *readerSubscriber
-	Synced       chan<- *readerSubscriber
-	Stop         context.CancelFunc
-	Logger       *slog.Logger
+	// Consumer is the consumer to which events are delivered. Its Checkpoint is
+	// advanced as events are delivered. Its MessageTypes must not be empty.
+	Consumer *Consumer
 
-	backoff backoff.Backoff
-	buffer  [historicalBatchSize]event
+	// Synced is a channel on which the consumer is sent once it has caught up
+	// to the tail of the stream. At that point its Checkpoint is the stream's
+	// next offset as of the final read, which is where contemporary consumption
+	// should begin.
+	Synced chan<- *Consumer
+
+	// BatchSize is the maximum number of events to read per query. It must be
+	// positive.
+	BatchSize int
 }
 
-func (r *historicalReader) Run(ctx context.Context) {
+// historicalEvent is an event read from the stream along with its offset.
+type historicalEvent struct {
+	Offset   uint64
+	Envelope *envelopepb.Envelope
+}
+
+// Run delivers historical events to the consumer until it has caught up to the
+// tail of the stream, at which point the consumer is sent to r.Synced and Run
+// returns nil.
+//
+// It returns nil without sending to r.Synced if the consumer is gone before it
+// catches up.
+//
+// If Run returns an error it may be called again and will resume from the
+// consumer's checkpoint. Run must not be called concurrently.
+func (r *HistoricalReader) Run(ctx context.Context) error {
+	if r.Consumer.MessageTypes.IsEmpty() {
+		panic("consumer message types must not be empty")
+	}
+
+	if r.BatchSize <= 0 {
+		panic("batch size must be positive")
+	}
+
+	query := r.buildQuery()
+
 	for {
-		envelopes, ok := r.readBatch(ctx)
-		if !ok {
-			return
+		events, next, err := r.readBatch(ctx, query)
+		if err != nil {
+			return err
 		}
 
-		if !r.dispatch(ctx, envelopes) {
-			return
-		}
-
-		// If we received fewer envelopes than our buffer allows, we have
-		// successfully synced with the end of the stream.
-		if len(envelopes) < cap(r.buffer) {
+		for _, ev := range events {
 			select {
 			case <-ctx.Done():
-			case r.Synced <- r.Subscription:
+				return ctx.Err()
+			case <-r.Consumer.Gone.Chan():
+				return nil
+			case r.Consumer.Envelopes <- ev.Envelope:
 			}
 
-			return
+			r.Consumer.Checkpoint.Store(ev.Offset + 1)
+		}
+
+		// A partial batch means there are no more relevant events on the
+		// stream at this time.
+		if len(events) < r.BatchSize {
+			// Skip past any trailing events of irrelevant types so that the
+			// consumer resumes at the tail of the stream.
+			//
+			// The checkpoint is never moved backwards, as the consumer may
+			// already be ahead of the stream's next offset as we observed it.
+			//
+			// Events may be appended between this read and the consumer being
+			// registered with a ContemporaryReader. That reader serves the
+			// consumer from its cache if it can, or sends it back to historical
+			// consumption if the cache has already moved past it.
+			r.Consumer.Checkpoint.Store(max(r.Consumer.Checkpoint.Load(), next))
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case r.Synced <- r.Consumer:
+				return nil
+			}
 		}
 	}
 }
 
-func (r *historicalReader) dispatch(
+// buildQuery returns the SQL used to read a batch of events.
+//
+// The query returns two kinds of rows via UNION ALL: the first row contains the
+// stream's next offset (and a NULL envelope); subsequent rows contain up to
+// r.BatchSize events of the consumer's message types.
+//
+// If a full batch is returned, reading resumes at the offset after the last
+// event in the batch. Otherwise, there are no more relevant events on the
+// stream at this time, so the consumer can skip to the stream's next offset,
+// past any remaining events of irrelevant types.
+//
+// The stream ID, message type IDs and batch size are embedded as constants so
+// that PostgreSQL knows them when planning the query. In particular, it can
+// choose between scanning events in offset order and searching directly for
+// specific message types. Only the checkpoint is a parameter, as it changes
+// between reads.
+func (r *HistoricalReader) buildQuery() string {
+	var messageTypeIDs []string
+	for id := range r.Consumer.MessageTypes.All() {
+		messageTypeIDs = append(messageTypeIDs, id.AsString())
+	}
+
+	return fmt.Sprintf(
+		`SELECT stream_offset, envelope
+		FROM (
+			(
+				SELECT
+					0 AS position,
+					next_offset AS stream_offset,
+					NULL::bytea AS envelope
+				FROM eventstream.streams
+				WHERE id = '%s'
+			)
+			UNION ALL
+			(
+				SELECT
+					1 AS position,
+					stream_offset,
+					envelope
+				FROM eventstream.events
+				WHERE stream_id = '%s'
+					AND stream_offset >= $1
+					AND message_type_id IN ('%s')
+				ORDER BY stream_offset
+				LIMIT %d
+			)
+		) AS results
+		ORDER BY position, stream_offset`,
+		r.Consumer.StreamID.AsString(),
+		r.Consumer.StreamID.AsString(),
+		strings.Join(messageTypeIDs, "','"),
+		r.BatchSize,
+	)
+}
+
+// readBatch reads up to r.BatchSize relevant events starting at the consumer's
+// checkpoint. It also returns the stream's next offset as of the read.
+func (r *HistoricalReader) readBatch(
 	ctx context.Context,
-	events []event,
-) bool {
-	for _, ev := range events {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-r.Subscription.Unsubscribed.Chan():
-			return false
-		case r.Subscription.Envelopes <- ev.Envelope:
-			r.Subscription.Offset = ev.Offset + 1
-		}
-	}
-
-	return true
-}
-
-func (r *historicalReader) readBatch(ctx context.Context) ([]event, bool) {
-	for {
-		events, err := r.tryReadBatch(ctx)
-		if err == nil {
-			return events, true
-		}
-
-		r.Logger.ErrorContext(
-			ctx,
-			"unable to read historical event batch",
-			xslog.Error(err),
-		)
-
-		if !r.backoff.Wait(ctx) {
-			return nil, false
-		}
-	}
-}
-
-func (r *historicalReader) tryReadBatch(ctx context.Context) ([]event, error) {
+	query string,
+) ([]historicalEvent, uint64, error) {
 	rows, err := r.DB.QueryContext(
 		ctx,
-		`SELECT
-			stream_offset,
-			envelope
-		FROM eventstream.events
-		WHERE stream_id = $1
-		AND stream_offset >= $2
-		AND message_type_id = ANY($3)
-		ORDER BY stream_offset ASC
-		LIMIT $4`,
-		xsql.UUID(r.Subscription.StreamID),
-		r.Subscription.Offset,
-		xsql.UUIDSeq(r.Subscription.Types.All()),
-		cap(r.buffer),
+		query,
+		r.Consumer.Checkpoint.Load(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("unable to query events: %w", err)
+		return nil, 0, fmt.Errorf("unable to query events: %w", err)
 	}
 	defer rows.Close()
 
-	count := 0
+	// The first row is always the stream's next offset. If there are no rows at
+	// all, the stream does not exist.
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, 0, fmt.Errorf("unable to advance to first row: %w", err)
+		}
+		return nil, 0, fmt.Errorf("event stream not found")
+	}
+
+	var next uint64
+	if err := rows.Scan(
+		&next,
+		new(any),
+	); err != nil {
+		return nil, 0, fmt.Errorf("unable to scan next offset: %w", err)
+	}
+
+	var events []historicalEvent
 
 	for rows.Next() {
-		ev := event{
+		ev := historicalEvent{
 			Envelope: &envelopepb.Envelope{},
 		}
 
@@ -119,24 +200,23 @@ func (r *historicalReader) tryReadBatch(ctx context.Context) ([]event, error) {
 			&ev.Offset,
 			xsql.Envelope(ev.Envelope),
 		); err != nil {
-			return nil, fmt.Errorf("unable to scan event: %w", err)
+			return nil, 0, fmt.Errorf("unable to scan event: %w", err)
 		}
 
 		envelopepb.SetExtension(
 			ev.Envelope.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(r.Subscription.StreamID).
+				WithStreamId(r.Consumer.StreamID).
 				WithOffset(ev.Offset).
 				Build(),
 		)
 
-		r.buffer[count] = ev
-		count++
+		events = append(events, ev)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("unable to iterate events: %w", err)
+		return nil, 0, fmt.Errorf("unable to iterate events: %w", err)
 	}
 
-	return r.buffer[:count], nil
+	return events, next, nil
 }
