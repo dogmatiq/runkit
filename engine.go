@@ -38,6 +38,14 @@ const (
 
 	// DefaultListenAddr is the default address for the engine's gRPC server.
 	DefaultListenAddr = ":50555"
+
+	// eventStreamCacheSize is the number of recent events cached per event
+	// stream for delivery to consumers that are keeping up with the stream.
+	eventStreamCacheSize = 100
+
+	// eventStreamBatchSize is the maximum number of events read per query when
+	// delivering historical events to consumers.
+	eventStreamBatchSize = 100
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -86,6 +94,9 @@ type Engine struct {
 
 	// eventStreams tracks the set of available event streams.
 	eventStreams *eventstream.Catalog
+
+	// reader delivers events from event streams to consumers.
+	reader *eventstream.Reader
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
@@ -202,10 +213,19 @@ func (e *Engine) Run(ctx context.Context) error {
 		Logger:        e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
+	e.reader = &eventstream.Reader{
+		DB:                    e.db,
+		Notifications:         e.notifications,
+		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),
+		ContemporaryCacheSize: eventStreamCacheSize,
+		HistoricalBatchSize:   eventStreamBatchSize,
+	}
+
 	runComponent(e.notifications)
 	runComponent(e.membership)
 	runComponent(heartbeater)
 	runComponent(e.eventStreams)
+	runComponent(e.reader)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -223,8 +243,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		messaginggrpc.RegisterEventStreamConsumerAPIServer(
 			server,
 			&eventstream.ConsumerAPI{
-				DB:           e.db,
-				EventStreams: e.eventStreams,
+				DB:                   e.db,
+				Catalog:              e.eventStreams,
+				Reader:               e.reader,
+				RecordableEventTypes: e.recordableEventTypes(),
+				HistoricalBatchSize:  eventStreamBatchSize,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
 				),
@@ -476,6 +499,31 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 	for route := range inboundRoutes {
 		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
 		messageTypeIDs.Add(messageTypeID)
+	}
+
+	return messageTypeIDs
+}
+
+// recordableEventTypes returns the message type IDs of all event types that
+// are recorded by any (non-disabled) handler within the application.
+func (e *Engine) recordableEventTypes() *uuidpb.Set {
+	messageTypeIDs := &uuidpb.Set{}
+
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		if handlerConfig.IsDisabled() {
+			continue
+		}
+
+		outboundEventRoutes := handlerConfig.
+			RouteSet().
+			Filter(config.FilterByMessageKind(message.EventKind)).
+			Filter(config.FilterByMessageDirection(config.OutboundDirection)).
+			Routes()
+
+		for route := range outboundEventRoutes {
+			messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
+			messageTypeIDs.Add(messageTypeID)
+		}
 	}
 
 	return messageTypeIDs
