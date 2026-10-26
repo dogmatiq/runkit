@@ -325,7 +325,7 @@ func TestReader(t *testing.T) {
 
 		// A tiny cache and a consumer channel that holds a single event
 		// guarantee that the consumer falls behind and is bounced between the
-		// contemporary and historical readers.
+		// contemporary and historical scanners.
 		reader := &Reader{
 			DB:                    db,
 			Notifications:         notifications,
@@ -390,7 +390,7 @@ func TestReader(t *testing.T) {
 		)
 
 		// Many consumers that each hold a single event cause the contemporary
-		// reader to desynchronize consumers at the same time as the Reader is
+		// scanner to desynchronize consumers at the same time as the Reader is
 		// handing other consumers to it. This would deadlock if the Reader did
 		// not keep accepting desynchronized consumers while doing so.
 		const consumers = 5

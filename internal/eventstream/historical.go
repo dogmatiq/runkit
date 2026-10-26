@@ -10,10 +10,10 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// HistoricalReader reads historical events from a specific event stream and
+// HistoricalScanner reads historical events from a specific event stream and
 // delivers them to a single consumer until it catches up to the tail of the
 // stream.
-type HistoricalReader struct {
+type HistoricalScanner struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
 
@@ -39,27 +39,27 @@ type historicalEvent struct {
 }
 
 // Run delivers historical events to the consumer until it has caught up to the
-// tail of the stream, at which point the consumer is sent to r.Synced and Run
+// tail of the stream, at which point the consumer is sent to s.Synced and Run
 // returns nil.
 //
-// It returns nil without sending to r.Synced if the consumer is gone before it
+// It returns nil without sending to s.Synced if the consumer is gone before it
 // catches up.
 //
 // If Run returns an error it may be called again and will resume from the
 // consumer's checkpoint. Run must not be called concurrently.
-func (r *HistoricalReader) Run(ctx context.Context) error {
-	if r.Consumer.MessageTypes.IsEmpty() {
+func (s *HistoricalScanner) Run(ctx context.Context) error {
+	if s.Consumer.MessageTypes.IsEmpty() {
 		panic("consumer message types must not be empty")
 	}
 
-	if r.BatchSize <= 0 {
+	if s.BatchSize <= 0 {
 		panic("batch size must be positive")
 	}
 
-	query := r.buildQuery()
+	query := s.buildQuery()
 
 	for {
-		events, next, err := r.readBatch(ctx, query)
+		events, next, err := s.readBatch(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -68,17 +68,17 @@ func (r *HistoricalReader) Run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-r.Consumer.Gone.Chan():
+			case <-s.Consumer.Gone.Chan():
 				return nil
-			case r.Consumer.Envelopes <- ev.Envelope:
+			case s.Consumer.Envelopes <- ev.Envelope:
 			}
 
-			r.Consumer.Checkpoint.Store(ev.Offset + 1)
+			s.Consumer.Checkpoint.Store(ev.Offset + 1)
 		}
 
 		// A partial batch means there are no more relevant events on the
 		// stream at this time.
-		if len(events) < r.BatchSize {
+		if len(events) < s.BatchSize {
 			// Skip past any trailing events of irrelevant types so that the
 			// consumer resumes at the tail of the stream.
 			//
@@ -86,15 +86,15 @@ func (r *HistoricalReader) Run(ctx context.Context) error {
 			// already be ahead of the stream's next offset as we observed it.
 			//
 			// Events may be appended between this read and the consumer being
-			// registered with a ContemporaryReader. That reader serves the
+			// registered with a ContemporaryScanner. That scanner serves the
 			// consumer from its cache if it can, or sends it back to historical
 			// consumption if the cache has already moved past it.
-			r.Consumer.Checkpoint.Store(max(r.Consumer.Checkpoint.Load(), next))
+			s.Consumer.Checkpoint.Store(max(s.Consumer.Checkpoint.Load(), next))
 
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case r.Synced <- r.Consumer:
+			case s.Synced <- s.Consumer:
 				return nil
 			}
 		}
@@ -105,7 +105,7 @@ func (r *HistoricalReader) Run(ctx context.Context) error {
 //
 // The query returns two kinds of rows via UNION ALL: the first row contains the
 // stream's next offset (and a NULL envelope); subsequent rows contain up to
-// r.BatchSize events of the consumer's message types.
+// s.BatchSize events of the consumer's message types.
 //
 // If a full batch is returned, reading resumes at the offset after the last
 // event in the batch. Otherwise, there are no more relevant events on the
@@ -117,9 +117,9 @@ func (r *HistoricalReader) Run(ctx context.Context) error {
 // choose between scanning events in offset order and searching directly for
 // specific message types. Only the checkpoint is a parameter, as it changes
 // between reads.
-func (r *HistoricalReader) buildQuery() string {
+func (s *HistoricalScanner) buildQuery() string {
 	var messageTypeIDs []string
-	for id := range r.Consumer.MessageTypes.All() {
+	for id := range s.Consumer.MessageTypes.All() {
 		messageTypeIDs = append(messageTypeIDs, id.AsString())
 	}
 
@@ -149,23 +149,23 @@ func (r *HistoricalReader) buildQuery() string {
 			)
 		) AS results
 		ORDER BY position, stream_offset`,
-		r.Consumer.StreamID.AsString(),
-		r.Consumer.StreamID.AsString(),
+		s.Consumer.StreamID.AsString(),
+		s.Consumer.StreamID.AsString(),
 		strings.Join(messageTypeIDs, "','"),
-		r.BatchSize,
+		s.BatchSize,
 	)
 }
 
-// readBatch reads up to r.BatchSize relevant events starting at the consumer's
+// readBatch reads up to s.BatchSize relevant events starting at the consumer's
 // checkpoint. It also returns the stream's next offset as of the read.
-func (r *HistoricalReader) readBatch(
+func (s *HistoricalScanner) readBatch(
 	ctx context.Context,
 	query string,
 ) ([]historicalEvent, uint64, error) {
-	rows, err := r.DB.QueryContext(
+	rows, err := s.DB.QueryContext(
 		ctx,
 		query,
-		r.Consumer.Checkpoint.Load(),
+		s.Consumer.Checkpoint.Load(),
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("unable to query events: %w", err)
@@ -206,7 +206,7 @@ func (r *HistoricalReader) readBatch(
 		envelopepb.SetExtension(
 			ev.Envelope.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(r.Consumer.StreamID).
+				WithStreamId(s.Consumer.StreamID).
 				WithOffset(ev.Offset).
 				Build(),
 		)
