@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -40,13 +41,13 @@ type Reader struct {
 	HistoricalBatchSize int
 
 	once       sync.Once
-	sub, unsub chan *Consumer
+	sub, unsub chan *scanner.Consumer
 
 	done         xsync.Latch
 	group        supervisor.Group
-	synced       chan *Consumer
-	desynced     chan *Consumer
-	contemporary uuidpb.Map[*ContemporaryScanner]
+	synced       chan *scanner.Consumer
+	desynced     chan *scanner.Consumer
+	contemporary uuidpb.Map[*scanner.Contemporary]
 }
 
 // Subscribe registers ch to receive events of the given types from the given
@@ -69,7 +70,7 @@ func (r *Reader) Subscribe(
 
 	r.init()
 
-	c := &Consumer{
+	c := &scanner.Consumer{
 		ID:           uuidpb.Generate(),
 		StreamID:     streamID,
 		MessageTypes: types,
@@ -98,8 +99,8 @@ func (r *Reader) Subscribe(
 
 func (r *Reader) init() {
 	r.once.Do(func() {
-		r.sub = make(chan *Consumer)
-		r.unsub = make(chan *Consumer)
+		r.sub = make(chan *scanner.Consumer)
+		r.unsub = make(chan *scanner.Consumer)
 	})
 }
 
@@ -119,9 +120,9 @@ func (r *Reader) Run(ctx context.Context) {
 		r.group.Wait()
 	}()
 
-	r.synced = make(chan *Consumer)
-	r.desynced = make(chan *Consumer)
-	r.contemporary = uuidpb.Map[*ContemporaryScanner]{}
+	r.synced = make(chan *scanner.Consumer)
+	r.desynced = make(chan *scanner.Consumer)
+	r.contemporary = uuidpb.Map[*scanner.Contemporary]{}
 
 	for {
 		select {
@@ -144,7 +145,7 @@ func (r *Reader) Run(ctx context.Context) {
 // Every consumer begins by reading historical events, regardless of its
 // checkpoint. If it is already at the tail of the stream it is synchronized
 // immediately and moves to contemporary events.
-func (r *Reader) handleSubscribe(ctx context.Context, c *Consumer) {
+func (r *Reader) handleSubscribe(ctx context.Context, c *scanner.Consumer) {
 	r.Logger.DebugContext(
 		ctx,
 		"consumer subscribed",
@@ -162,8 +163,8 @@ func (r *Reader) handleSubscribe(ctx context.Context, c *Consumer) {
 // latch, which has already been set, so there's no need to do anything.
 //
 // A consumer that is reading contemporary events must be removed from its
-// stream's [ContemporaryScanner].
-func (r *Reader) handleUnsubscribe(ctx context.Context, c *Consumer) {
+// stream's [scanner.Contemporary].
+func (r *Reader) handleUnsubscribe(ctx context.Context, c *scanner.Consumer) {
 	if cs, ok := r.contemporary.Get(c.StreamID); ok {
 		r.send(ctx, cs.Unsubscribe, c)
 	}
@@ -179,9 +180,9 @@ func (r *Reader) handleUnsubscribe(ctx context.Context, c *Consumer) {
 
 // handleSynced handles a consumer that has caught up to the tail of its stream.
 //
-// The consumer is handed to the stream's [ContemporaryScanner], which is started
+// The consumer is handed to the stream's [scanner.Contemporary], which is started
 // if this is the first consumer to synchronize with the stream.
-func (r *Reader) handleSynced(ctx context.Context, c *Consumer) {
+func (r *Reader) handleSynced(ctx context.Context, c *scanner.Consumer) {
 	r.Logger.DebugContext(
 		ctx,
 		"consumer synchronized with stream",
@@ -198,9 +199,9 @@ func (r *Reader) handleSynced(ctx context.Context, c *Consumer) {
 // handleDesynced handles a consumer that has fallen behind the tail of its
 // stream.
 //
-// The [ContemporaryScanner] has already removed the consumer, so it is simply
+// The [scanner.Contemporary] has already removed the consumer, so it is simply
 // returned to reading historical events from its current checkpoint.
-func (r *Reader) handleDesynced(ctx context.Context, c *Consumer) {
+func (r *Reader) handleDesynced(ctx context.Context, c *scanner.Consumer) {
 	r.Logger.DebugContext(
 		ctx,
 		"consumer desynchronized from stream",
@@ -216,8 +217,8 @@ func (r *Reader) handleDesynced(ctx context.Context, c *Consumer) {
 //
 // The scanner stops of its own accord when the consumer catches up to the tail
 // of the stream, or when the consumer is gone.
-func (r *Reader) startHistorical(ctx context.Context, c *Consumer) {
-	scanner := &HistoricalScanner{
+func (r *Reader) startHistorical(ctx context.Context, c *scanner.Consumer) {
+	hs := &scanner.Historical{
 		DB:        r.DB,
 		Consumer:  c,
 		Synced:    r.synced,
@@ -230,22 +231,22 @@ func (r *Reader) startHistorical(ctx context.Context, c *Consumer) {
 		xslog.UUID("stream_id", c.StreamID),
 	)
 
-	r.group.Go(ctx, logger, scanner.Run)
+	r.group.Go(ctx, logger, hs.Run)
 }
 
 // contemporaryScanner returns the contemporary scanner for the given stream,
 // starting it if necessary.
-func (r *Reader) contemporaryScanner(ctx context.Context, streamID *uuidpb.UUID) *ContemporaryScanner {
+func (r *Reader) contemporaryScanner(ctx context.Context, streamID *uuidpb.UUID) *scanner.Contemporary {
 	if cs, ok := r.contemporary.Get(streamID); ok {
 		return cs
 	}
 
-	cs := &ContemporaryScanner{
+	cs := &scanner.Contemporary{
 		DB:            r.DB,
 		Notifications: r.Notifications,
 		StreamID:      streamID,
-		Subscribe:     make(chan *Consumer),
-		Unsubscribe:   make(chan *Consumer),
+		Subscribe:     make(chan *scanner.Consumer),
+		Unsubscribe:   make(chan *scanner.Consumer),
 		Desynced:      r.desynced,
 		CacheSize:     r.ContemporaryCacheSize,
 	}
@@ -262,9 +263,9 @@ func (r *Reader) contemporaryScanner(ctx context.Context, streamID *uuidpb.UUID)
 	return cs
 }
 
-// send sends c on ch, which is a [ContemporaryScanner] Subscribe or Unsubscribe
+// send sends c on ch, which is a [scanner.Contemporary] Subscribe or Unsubscribe
 // channel. It returns once the send completes, or when ctx is canceled.
-func (r *Reader) send(ctx context.Context, ch chan<- *Consumer, c *Consumer) {
+func (r *Reader) send(ctx context.Context, ch chan<- *scanner.Consumer, c *scanner.Consumer) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -273,7 +274,7 @@ func (r *Reader) send(ctx context.Context, ch chan<- *Consumer, c *Consumer) {
 			return
 		case d := <-r.desynced:
 			// We must handle desynchronized consumers, as not doing so may
-			// block the [ContemporaryScanner] from receiving on ch, causing a
+			// block the [scanner.Contemporary] from receiving on ch, causing a
 			// deadlock.
 			r.startHistorical(ctx, d)
 		}

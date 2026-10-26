@@ -1,4 +1,4 @@
-package eventstream_test
+package scanner_test
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	. "github.com/dogmatiq/runkit/internal/eventstream"
+	. "github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
-func TestContemporaryScanner(t *testing.T) {
+func TestContemporary(t *testing.T) {
 	t.Run("it delivers events appended after a consumer joins at the head", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
@@ -24,7 +24,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -81,7 +81,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE3,
 		)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -134,7 +134,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE1,
 		)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -186,7 +186,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE1,
 		)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -214,7 +214,7 @@ func TestContemporaryScanner(t *testing.T) {
 		scanner.Subscribe <- consumer
 
 		expectDesynced(t, desynced, consumer)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it ignores events of irrelevant message types", func(t *testing.T) {
@@ -226,7 +226,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -282,7 +282,7 @@ func TestContemporaryScanner(t *testing.T) {
 			more...,
 		)
 
-		expectNoDesynced(t, desynced)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
 	})
 
 	t.Run("it desyncs a consumer exactly once when its channel is full", func(t *testing.T) {
@@ -294,7 +294,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -339,7 +339,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE1,
 		)
 
-		expectNoDesynced(t, desynced)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -348,7 +348,7 @@ func TestContemporaryScanner(t *testing.T) {
 			want[0],
 		)
 
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it delivers the correct events after the cache wraps", func(t *testing.T) {
@@ -369,7 +369,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE3,
 		)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -429,7 +429,7 @@ func TestContemporaryScanner(t *testing.T) {
 			second[0],
 		)
 
-		expectNoDesynced(t, desynced)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
 	})
 
 	t.Run("it stops delivering to a consumer that is gone", func(t *testing.T) {
@@ -441,7 +441,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -488,8 +488,8 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE2,
 		)
 
-		expectNoEnvelopes(t, envelopes)
-		expectNoDesynced(t, desynced)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
 	})
 
 	t.Run("it resumes serving existing consumers after a restart", func(t *testing.T) {
@@ -501,7 +501,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -545,7 +545,7 @@ func TestContemporaryScanner(t *testing.T) {
 			want...,
 		)
 
-		expectNoDesynced(t, desynced)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
 	})
 
 	t.Run("it desyncs existing consumers that fall behind the cache during a restart", func(t *testing.T) {
@@ -557,7 +557,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -596,7 +596,7 @@ func TestContemporaryScanner(t *testing.T) {
 		xtesting.GoE(t, scanner.Run)
 
 		expectDesynced(t, desynced, consumer)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it waits for a consumer that is ahead of the cache", func(t *testing.T) {
@@ -616,7 +616,7 @@ func TestContemporaryScanner(t *testing.T) {
 			EventE2,
 		)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      streamID,
@@ -659,8 +659,8 @@ func TestContemporaryScanner(t *testing.T) {
 			want[2],
 		)
 
-		expectNoDesynced(t, desynced)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "consumer desync", desynced)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it returns an error when the stream does not exist", func(t *testing.T) {
@@ -670,7 +670,7 @@ func TestContemporaryScanner(t *testing.T) {
 
 		xtesting.Go(t, notifications.Run)
 
-		scanner := &ContemporaryScanner{
+		scanner := &Contemporary{
 			DB:            db,
 			Notifications: notifications,
 			StreamID:      uuidpb.Generate(),
@@ -711,35 +711,5 @@ func expectDesynced(
 		if got != consumer {
 			t.Fatal("unexpected consumer was desynced")
 		}
-	}
-}
-
-// expectNoDesynced asserts that no consumer is reported as desynced within a
-// short period.
-func expectNoDesynced(
-	t testing.TB,
-	desynced <-chan *Consumer,
-) {
-	t.Helper()
-
-	select {
-	case <-desynced:
-		t.Fatal("unexpected consumer desync")
-	case <-time.After(100 * time.Millisecond):
-	}
-}
-
-// expectNoEnvelopes asserts that no envelopes are delivered within a short
-// period.
-func expectNoEnvelopes(
-	t testing.TB,
-	envelopes <-chan *envelopepb.Envelope,
-) {
-	t.Helper()
-
-	select {
-	case env := <-envelopes:
-		t.Fatalf("unexpected envelope: %v", env)
-	case <-time.After(100 * time.Millisecond):
 	}
 }

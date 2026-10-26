@@ -84,8 +84,8 @@ type Engine struct {
 	// membership observes changes to the set of live nodes in the cluster.
 	membership *cluster.MembershipObserver
 
-	// eventStreams observes changes to the set of available event streams.
-	eventStreams *eventstream.Observer
+	// eventStreams tracks the set of available event streams.
+	eventStreams *eventstream.Catalog
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
@@ -196,10 +196,10 @@ func (e *Engine) Run(ctx context.Context) error {
 		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
 	}
 
-	e.eventStreams = &eventstream.Observer{
+	e.eventStreams = &eventstream.Catalog{
 		DB:            e.db,
 		Notifications: e.notifications,
-		Logger:        e.logger.With(slog.String("component", "eventstream.observer")),
+		Logger:        e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
 	runComponent(e.notifications)

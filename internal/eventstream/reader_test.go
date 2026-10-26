@@ -154,8 +154,8 @@ func TestReader(t *testing.T) {
 		xtesting.ExpectToReceiveN(t, "events on first stream", envelopes1, want1...)
 		xtesting.ExpectToReceiveN(t, "events on second stream", envelopes2, want2...)
 
-		expectNoEnvelopes(t, envelopes1)
-		expectNoEnvelopes(t, envelopes2)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes1)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes2)
 	})
 
 	t.Run("it filters by message type across the historical and contemporary phases", func(t *testing.T) {
@@ -217,7 +217,7 @@ func TestReader(t *testing.T) {
 			contemporary[1],
 		)
 
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it stops delivering after unsubscribing while reading historical events", func(t *testing.T) {
@@ -268,7 +268,7 @@ func TestReader(t *testing.T) {
 
 		unsubscribe()
 
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it stops delivering after unsubscribing while reading contemporary events", func(t *testing.T) {
@@ -312,7 +312,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.AppendToEventStream(t, db, streamID, EventE2)
 
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it returns a slow consumer to historical reading and catches it up", func(t *testing.T) {
@@ -364,7 +364,7 @@ func TestReader(t *testing.T) {
 			want...,
 		)
 
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 	})
 
 	t.Run("it serves many slow consumers on one stream concurrently", func(t *testing.T) {
@@ -459,7 +459,7 @@ func TestReader(t *testing.T) {
 		second := xtesting.AppendToEventStream(t, db, streamID, EventE2)
 
 		xtesting.ExpectToReceiveN(t, "second event for second consumer", envelopes2, second...)
-		expectNoEnvelopes(t, envelopes1)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes1)
 	})
 
 	t.Run("it stops cleanly with consumers in both phases", func(t *testing.T) {

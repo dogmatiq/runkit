@@ -1,4 +1,4 @@
-package eventstream_test
+package scanner_test
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	. "github.com/dogmatiq/runkit/internal/eventstream"
+	. "github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-func TestHistoricalScanner(t *testing.T) {
+func TestHistorical(t *testing.T) {
 	t.Run("it delivers all matching events and reports the consumer as synced at the stream head", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		streamID := xtesting.CreateEventStream(t, db)
@@ -37,7 +37,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -88,7 +88,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -137,7 +137,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(1)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -185,7 +185,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -234,7 +234,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -246,7 +246,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 
 		expectSynced(t, synced, consumer)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(2); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -268,7 +268,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -280,7 +280,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 
 		expectSynced(t, synced, consumer)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(0); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -313,7 +313,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(5)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -325,7 +325,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 
 		expectSynced(t, synced, consumer)
-		expectNoEnvelopes(t, envelopes)
+		xtesting.ExpectNoReceive(t, "envelope", envelopes)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(5); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -358,7 +358,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -367,7 +367,7 @@ func TestHistoricalScanner(t *testing.T) {
 
 		xtesting.GoE(t, scanner.Run)
 
-		expectNoSynced(t, synced)
+		xtesting.ExpectNoReceive(t, "consumer sync", synced)
 
 		xtesting.ExpectToReceiveN(
 			t,
@@ -405,7 +405,7 @@ func TestHistoricalScanner(t *testing.T) {
 		consumer.Checkpoint.Store(0)
 		consumer.Gone.Set()
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -416,7 +416,7 @@ func TestHistoricalScanner(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		expectNoSynced(t, synced)
+		xtesting.ExpectNoReceive(t, "consumer sync", synced)
 
 		if got, want := consumer.Checkpoint.Load(), uint64(0); got != want {
 			t.Fatalf("unexpected checkpoint: got %d, want %d", got, want)
@@ -447,7 +447,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -503,7 +503,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    synced,
@@ -523,7 +523,7 @@ func TestHistoricalScanner(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		expectNoSynced(t, synced)
+		xtesting.ExpectNoReceive(t, "consumer sync", synced)
 	})
 
 	t.Run("it panics when the consumer's message types are empty", func(t *testing.T) {
@@ -537,7 +537,7 @@ func TestHistoricalScanner(t *testing.T) {
 		}
 		consumer.Checkpoint.Store(0)
 
-		scanner := &HistoricalScanner{
+		scanner := &Historical{
 			DB:        db,
 			Consumer:  consumer,
 			Synced:    make(chan *Consumer, 1),
@@ -570,20 +570,5 @@ func expectSynced(
 		if got != consumer {
 			t.Fatal("unexpected consumer was synced")
 		}
-	}
-}
-
-// expectNoSynced asserts that no consumer is reported as synced within a short
-// period.
-func expectNoSynced(
-	t testing.TB,
-	synced <-chan *Consumer,
-) {
-	t.Helper()
-
-	select {
-	case <-synced:
-		t.Fatal("unexpected consumer sync")
-	case <-time.After(100 * time.Millisecond):
 	}
 }
