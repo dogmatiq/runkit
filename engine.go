@@ -95,8 +95,8 @@ type Engine struct {
 	// eventStreams tracks the set of available event streams.
 	eventStreams *eventstream.Catalog
 
-	// reader delivers events from event streams to consumers.
-	reader *eventstream.Reader
+	// events delivers events from event streams to consumers.
+	events *eventstream.Reader
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelopepb.Packer
@@ -213,7 +213,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Logger:        e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
-	e.reader = &eventstream.Reader{
+	e.events = &eventstream.Reader{
 		DB:                    e.db,
 		Notifications:         e.notifications,
 		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),
@@ -225,7 +225,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	runComponent(e.membership)
 	runComponent(heartbeater)
 	runComponent(e.eventStreams)
-	runComponent(e.reader)
+	runComponent(e.events)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -245,7 +245,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			&eventstream.ConsumerAPI{
 				DB:                   e.db,
 				Catalog:              e.eventStreams,
-				Reader:               e.reader,
+				Reader:               e.events,
 				RecordableEventTypes: e.recordableEventTypes(),
 				HistoricalBatchSize:  eventStreamBatchSize,
 				Logger: e.logger.With(
@@ -505,22 +505,18 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 }
 
 // recordableEventTypes returns the message type IDs of all event types that
-// are recorded by any (non-disabled) handler within the application.
+// may be recorded by any (non-disabled) handler within the application.
 func (e *Engine) recordableEventTypes() *uuidpb.Set {
+	outboundEventRoutes := e.appConfig.
+		RouteSet().
+		Filter(config.FilterByMessageKind(message.EventKind)).
+		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
+		Routes()
+
 	messageTypeIDs := &uuidpb.Set{}
 
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if handlerConfig.IsDisabled() {
-			continue
-		}
-
-		outboundEventRoutes := handlerConfig.
-			RouteSet().
-			Filter(config.FilterByMessageKind(message.EventKind)).
-			Filter(config.FilterByMessageDirection(config.OutboundDirection)).
-			Routes()
-
-		for route := range outboundEventRoutes {
+	for route, handlerConfig := range outboundEventRoutes {
+		if !handlerConfig.IsDisabled() {
 			messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
 			messageTypeIDs.Add(messageTypeID)
 		}
