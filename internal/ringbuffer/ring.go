@@ -13,6 +13,10 @@ type Ring[T any] struct {
 
 // New returns a new ring buffer with the given capacity.
 func New[T any](capacity int) *Ring[T] {
+	if capacity < 1 {
+		panic("capacity must be greater than 0")
+	}
+
 	return &Ring[T]{
 		values: make([]T, 0, capacity),
 	}

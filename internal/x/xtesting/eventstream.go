@@ -124,6 +124,9 @@ func AppendToNewEventStream(
 }
 
 // AppendToEventStream appends events to an existing event stream.
+//
+// The returned envelopes have the [envelopepb.EventStreamPosition] extension
+// set, as they would when read back from the stream.
 func AppendToEventStream(
 	t testing.TB,
 	x xsql.Executor,
@@ -138,7 +141,7 @@ func AppendToEventStream(
 		env := packTestEvent(t, event)
 		envelopes = append(envelopes, env)
 
-		if _, err := x.ExecContext(
+		row := x.QueryRowContext(
 			t.Context(),
 			`SELECT eventstream.append(
 				$1,
@@ -152,9 +155,20 @@ func AppendToEventStream(
 			xsql.UUID(env.GetBody().GetMessageId()),
 			xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
 			xsql.Envelope(env),
-		); err != nil {
+		)
+
+		var nextOffset uint64
+		if err := row.Scan(&nextOffset); err != nil {
 			t.Fatal(err)
 		}
+
+		envelopepb.SetExtension(
+			env.GetBody(),
+			envelopepb.NewEventStreamPositionBuilder().
+				WithStreamId(streamID).
+				WithOffset(nextOffset-1).
+				Build(),
+		)
 	}
 
 	return envelopes
