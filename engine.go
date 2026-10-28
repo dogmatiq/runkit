@@ -43,6 +43,14 @@ const (
 	// compact its data in a single attempt.
 	projectionCompactTimeout = 10 * time.Minute
 
+	// heartbeatInterval is the time between the heartbeats that each engine
+	// sends to the others in the cluster.
+	heartbeatInterval = 1 * time.Second
+
+	// heartbeatTimeout is the amount of time an engine can go without sending
+	// a heartbeat before the others consider it offline.
+	heartbeatTimeout = 5 * heartbeatInterval
+
 	// eventStreamCacheSize is the number of recent events cached per event
 	// stream for delivery to consumers that are keeping up with the stream.
 	eventStreamCacheSize = 100
@@ -160,8 +168,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.membership = &cluster.MembershipObserver{
-		Signals: e.signals,
-		Logger:  e.logger.With(slog.String("component", "cluster.membership-observer")),
+		Signals:           e.signals,
+		HeartbeatInterval: heartbeatInterval,
+		HeartbeatTimeout:  heartbeatTimeout,
+		Logger:            e.logger.With(slog.String("component", "cluster.membership-observer")),
 	}
 
 	e.eventStreams = &eventstream.Catalog{
@@ -228,9 +238,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	runComponent(e.events)
 
 	runComponent(&cluster.Heartbeater{
-		NodeID: e.nodeID,
-		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
+		NodeID:   e.nodeID,
+		DB:       e.db,
+		Interval: heartbeatInterval,
+		Logger:   e.logger.With(slog.String("component", "cluster.heartbeater")),
 	})
 
 	// Create and run components that manage all (non-disabled) handlers within

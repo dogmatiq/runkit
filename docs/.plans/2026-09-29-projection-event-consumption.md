@@ -26,8 +26,8 @@ branch. The consumer that uses it is not.
 **Built:**
 
 - **Cluster membership** (`internal/cluster`): `Heartbeater` sends a signal on
-  `heartbeat.<node-id>` every `HeartbeatInterval` (100ms); `MembershipObserver`
-  subscribes to `heartbeat`, expires nodes after `HeartbeatTimeout` (300ms), and
+  `heartbeat.<node-id>` every `HeartbeatInterval` (1s); `MembershipObserver`
+  subscribes to `heartbeat`, expires nodes after `HeartbeatTimeout` (5s), and
   pushes `MembershipChange{Added, Removed, Live}` to subscribers (new
   subscribers receive the current live set). `cluster/rendezvous` provides HRW
   hashing over `*uuidpb.UUID` (`Winner`, `Wins`, `Rank`, `RankAbove`).
