@@ -24,7 +24,10 @@ func Transact(
 		// instead of an error from fn that may be a consequence of the
 		// rollback, which in practice can include [sql.ErrTxDone],
 		// [driver.ErrBadConn] as well as internal PostgreSQL errors.
-		if ctx.Err() != nil {
+		//
+		// A successful commit is never overridden; the context may be
+		// canceled after the transaction has already been committed.
+		if err != nil && ctx.Err() != nil {
 			err = ctx.Err()
 		}
 	}()
