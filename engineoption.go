@@ -30,8 +30,13 @@ func WithListenAddress(addr string) EngineOption {
 // WithProjectionCompactInterval is an [EngineOption] that sets the minimum time
 // between successful projection compactions.
 //
-// If it is not provided [DefaultProjectionCompactInterval] is used.
+// If it is not provided [DefaultProjectionCompactInterval] is used. It panics
+// if interval is not positive.
 func WithProjectionCompactInterval(interval time.Duration) EngineOption {
+	if interval <= 0 {
+		panic("projection compaction interval must be positive")
+	}
+
 	return func(e *Engine) {
 		e.compactInterval = interval
 	}
