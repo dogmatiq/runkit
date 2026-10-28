@@ -8,15 +8,24 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
-// MembershipObserver listens for heartbeat notifications from other nodes
-// in the cluster to build a view of the live nodes.
+// heartbeatBufferSize is the number of heartbeat signals that can be buffered
+// before any are dropped.
+const heartbeatBufferSize = 64
+
+// MembershipObserver listens for heartbeat signals from other nodes in the
+// cluster to build a view of the live nodes.
+//
+// Heartbeat delivery is lossy. A node is only removed from the view after
+// [HeartbeatTimeout] without a heartbeat, which spans several heartbeats, so
+// dropped heartbeats are tolerated.
 type MembershipObserver struct {
-	// Notifications is the source of heartbeat notifications from other nodes.
-	Notifications *notification.Listener
+	// Signals is the listener used to receive heartbeat signals from other
+	// nodes.
+	Signals *signal.Listener
 
 	// Logger is the target for log messages produced by the observer.
 	Logger *slog.Logger
@@ -50,14 +59,14 @@ type membershipSubscriber struct {
 	Unsubscribed xsync.Latch
 }
 
-// Run listens for heartbeat notifications and updates the set of live nodes
-// until ctx is canceled.
+// Run listens for heartbeat signals and updates the set of live nodes until
+// ctx is canceled.
 func (o *MembershipObserver) Run(ctx context.Context) {
 	o.init()
 	defer o.done.Set()
 
-	heartbeats := make(chan string)
-	unsubscribe := o.Notifications.Subscribe("heartbeat", heartbeats)
+	heartbeats := make(chan string, heartbeatBufferSize)
+	unsubscribe := o.Signals.Subscribe(heartbeatTopic, heartbeats)
 	defer unsubscribe()
 
 	for {
@@ -69,7 +78,11 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 		case sub := <-o.unsub:
 			delete(o.subscribers, sub)
 		case nodeID := <-heartbeats:
-			o.update(ctx, nodeID)
+			// A signal on the heartbeat topic itself carries no node ID, and so
+			// is not a heartbeat.
+			if nodeID != "" {
+				o.update(ctx, nodeID)
+			}
 		case <-time.After(HeartbeatInterval):
 			o.update(ctx)
 		}
@@ -134,10 +147,9 @@ func (o *MembershipObserver) subscribe(ctx context.Context, sub *membershipSubsc
 }
 
 // update updates the set of live nodes based on the received heartbeat
-// notifications and the heartbeat timeout.
+// signals and the heartbeat timeout.
 //
-// nodeIDs is a variadic list of node IDs that have sent heartbeat
-// notifications.
+// nodeIDs is a variadic list of node IDs that have sent heartbeat signals.
 func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 	now := time.Now()
 	var added, removed, live uuidpb.Set
@@ -147,7 +159,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 		if err != nil {
 			o.Logger.WarnContext(
 				ctx,
-				"ignored invalid node ID in heartbeat notification",
+				"ignored invalid node ID in heartbeat signal",
 				slog.String("node_id", s),
 				slog.String("error", err.Error()),
 			)

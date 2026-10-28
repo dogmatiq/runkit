@@ -7,7 +7,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -22,9 +22,9 @@ type Contemporary struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
 
-	// Notifications is the listener used to receive notifications about new
-	// events being appended to the stream.
-	Notifications *notification.Listener
+	// Signals is the listener used to receive signals that events have been
+	// appended to the stream.
+	Signals *signal.Listener
 
 	// StreamID is the ID of the event stream being read.
 	StreamID *uuidpb.UUID
@@ -53,12 +53,12 @@ func (s *Contemporary) Run(ctx context.Context) error {
 		panic("batch size must be positive")
 	}
 
-	// Subscribe to notifications about new events _before_ reading the current
-	// state of the stream. This ensures that no events are missed between the
-	// time we read the stream's next offset and the time we start reading.
+	// Subscribe to signals about new events _before_ reading the current state
+	// of the stream. This ensures that no events are missed between the time
+	// we read the stream's next offset and the time we start reading.
 	appended := make(chan string, 1)
 	topic := "eventstream.append." + s.StreamID.AsString()
-	unsubscribe := s.Notifications.SubscribeLossy(topic, appended)
+	unsubscribe := s.Signals.Subscribe(topic, appended)
 	defer unsubscribe()
 
 	next, err := s.loadStartOffset(ctx)

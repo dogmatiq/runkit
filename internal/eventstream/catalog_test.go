@@ -7,7 +7,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -16,16 +16,19 @@ func TestCatalog(t *testing.T) {
 	t.Run("it sends existing streams to a new subscriber", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		want := xtesting.CreateEventStreams(t, db, 3)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -41,14 +44,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it sends newly created streams to existing subscribers", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -66,14 +72,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it sends each stream once", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -84,8 +93,8 @@ func TestCatalog(t *testing.T) {
 
 		want := xtesting.CreateEventStream(t, db)
 
-		// Each notification causes the complete set of streams to be read
-		// again, but subscribers must only be told about each stream once.
+		// Each signal causes the complete set of streams to be read again, but
+		// subscribers must only be told about each stream once.
 		notifyStreamCreated(t, db, want)
 		expectToReceiveStreamIDs(t, streamIDs, want)
 
@@ -96,14 +105,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it delivers to multiple subscribers", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -126,14 +138,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it stops delivering after unsubscribe", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -155,14 +170,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it accepts subscriptions before the first query completes", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		xtesting.Go(t, catalog.Run)
@@ -183,14 +201,17 @@ func TestCatalog(t *testing.T) {
 	t.Run("it does not block subscribers after it has stopped", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		catalog := &Catalog{
-			DB:            db,
-			Notifications: notifications,
-			Logger:        logger,
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
 		}
 
 		stop := xtesting.Go(t, catalog.Run)
@@ -201,16 +222,16 @@ func TestCatalog(t *testing.T) {
 	})
 }
 
-// notifyStreamCreated sends the notification that is normally sent when a
-// stream is created by the engine. The test helpers create streams directly,
-// without sending it.
+// notifyStreamCreated sends the signal that is normally sent when a stream is
+// created by the engine. The test helpers create streams directly, without
+// sending it.
 func notifyStreamCreated(t testing.TB, db *sql.DB, streamID *uuidpb.UUID) {
 	t.Helper()
 
-	if _, err := db.ExecContext(
+	if err := signal.Notify(
 		t.Context(),
-		`SELECT pg_notify('eventstream.create', $1)`,
-		streamID.AsString(),
+		db,
+		"eventstream.create."+streamID.AsString(),
 	); err != nil {
 		t.Fatal(err)
 	}
