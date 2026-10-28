@@ -8,7 +8,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -18,9 +18,12 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		historical := xtesting.AppendToEventStream(
 			t,
@@ -36,7 +39,7 @@ func TestReader(t *testing.T) {
 		// before catching up.
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   10,
@@ -76,13 +79,16 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 10,
 			HistoricalBatchSize:   10,
@@ -120,13 +126,16 @@ func TestReader(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 		streamID1 := xtesting.CreateEventStream(t, db)
 		streamID2 := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 10,
 			HistoricalBatchSize:   10,
@@ -160,9 +169,12 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		historical := xtesting.AppendToEventStream(
 			t,
@@ -177,7 +189,7 @@ func TestReader(t *testing.T) {
 		// before catching up.
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   10,
@@ -223,9 +235,12 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -242,7 +257,7 @@ func TestReader(t *testing.T) {
 		// own batch.
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   1,
@@ -273,13 +288,16 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 10,
 			HistoricalBatchSize:   10,
@@ -312,16 +330,19 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		// A tiny cache and a consumer channel that holds a single batch
 		// guarantee that the consumer falls behind and is bounced between the
 		// contemporary and historical scanners.
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 2,
 			HistoricalBatchSize:   2,
@@ -363,13 +384,16 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 2,
 			HistoricalBatchSize:   2,
@@ -411,13 +435,16 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 10,
 			HistoricalBatchSize:   10,
@@ -453,9 +480,12 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -467,7 +497,7 @@ func TestReader(t *testing.T) {
 
 		reader := &Reader{
 			DB:                    db,
-			Notifications:         notifications,
+			Signals:               signals,
 			Logger:                logger,
 			ContemporaryCacheSize: 10,
 			HistoricalBatchSize:   10,

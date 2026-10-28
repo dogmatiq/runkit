@@ -10,8 +10,8 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
-	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/ringbuffer"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
@@ -25,9 +25,9 @@ type Reader struct {
 	// DB is the database connection used to read events.
 	DB *sql.DB
 
-	// Notifications is the listener used to receive notifications about new
-	// events being appended to streams.
-	Notifications *notification.Listener
+	// Signals is the listener used to receive signals that events have been
+	// appended to streams.
+	Signals *signal.Listener
 
 	// Logger is the target for log messages produced by the reader and the
 	// supervisors of the scanners it starts.
@@ -388,11 +388,11 @@ func (r *Reader) streamByID(ctx context.Context, streamID *uuidpb.UUID) *readerS
 	r.streams.Set(streamID, s)
 
 	cs := &scanner.Contemporary{
-		DB:            r.DB,
-		Notifications: r.Notifications,
-		StreamID:      streamID,
-		Batches:       r.batches,
-		BatchSize:     r.ContemporaryCacheSize,
+		DB:        r.DB,
+		Signals:   r.Signals,
+		StreamID:  streamID,
+		Batches:   r.batches,
+		BatchSize: r.ContemporaryCacheSize,
 	}
 
 	logger := r.Logger.With(

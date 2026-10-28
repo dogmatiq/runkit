@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -19,10 +19,13 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -36,11 +39,11 @@ func TestContemporary(t *testing.T) {
 		)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     2,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 2,
 		}
 
 		xtesting.GoE(t, scanner.Run)
@@ -54,10 +57,13 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -69,11 +75,11 @@ func TestContemporary(t *testing.T) {
 		)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     10,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 10,
 		}
 
 		xtesting.GoE(t, scanner.Run)
@@ -86,17 +92,20 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     10,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 10,
 		}
 
 		xtesting.GoE(t, scanner.Run)
@@ -122,17 +131,20 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     2,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 2,
 		}
 
 		xtesting.GoE(t, scanner.Run)
@@ -160,10 +172,13 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		first := xtesting.AppendToEventStream(
 			t,
@@ -175,11 +190,11 @@ func TestContemporary(t *testing.T) {
 		)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     2,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 2,
 		}
 
 		stop := xtesting.GoE(t, scanner.Run)
@@ -207,17 +222,20 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      streamID,
-			Batches:       batches,
-			BatchSize:     10,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  streamID,
+			Batches:   batches,
+			BatchSize: 10,
 		}
 
 		xtesting.GoE(t, scanner.Run)
@@ -229,16 +247,19 @@ func TestContemporary(t *testing.T) {
 	t.Run("it returns an error when the stream does not exist", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		notifications := &notification.Listener{DB: db, Logger: logger}
+		signals := &signal.Listener{
+			DB:     db,
+			Logger: logger,
+		}
 
-		xtesting.Go(t, notifications.Run)
+		xtesting.Go(t, signals.Run)
 
 		scanner := &Contemporary{
-			DB:            db,
-			Notifications: notifications,
-			StreamID:      uuidpb.Generate(),
-			Batches:       make(chan Batch, 10),
-			BatchSize:     10,
+			DB:        db,
+			Signals:   signals,
+			StreamID:  uuidpb.Generate(),
+			Batches:   make(chan Batch, 10),
+			BatchSize: 10,
 		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)

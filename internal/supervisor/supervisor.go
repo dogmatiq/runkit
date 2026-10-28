@@ -34,25 +34,14 @@ type Group struct {
 	wg sync.WaitGroup
 }
 
-// Go calls fn in a new goroutine until it succeeds or ctx is canceled.
-//
-// A nil return from fn is success. Any error is logged and fn is called again
-// after an exponential backoff. Once ctx is canceled, fn is not called again
-// regardless of what it returned.
-//
-// The group is an isolation boundary: nothing that happens within fn is
-// reported to the caller. Failures that can not be recovered by retrying are
-// programming errors and should panic.
-//
-// fn is always called with the same ctx, so state it keeps outside of its own
-// scope persists across calls.
+// Go calls [Run] in a new goroutine.
 func (g *Group) Go(
 	ctx context.Context,
 	logger *slog.Logger,
 	fn func(context.Context) error,
 ) {
 	g.wg.Go(func() {
-		run(ctx, logger, fn)
+		Run(ctx, logger, fn)
 	})
 }
 
@@ -61,9 +50,19 @@ func (g *Group) Wait() {
 	g.wg.Wait()
 }
 
-// run calls fn until it succeeds or ctx is canceled, as described by
-// [Group.Go].
-func run(
+// Run calls fn until it succeeds or ctx is canceled.
+//
+// A nil return from fn is success. Any error is logged and fn is called again
+// after an exponential backoff. Once ctx is canceled, fn is not called again
+// regardless of what it returned.
+//
+// Run is an isolation boundary: nothing that happens within fn is reported to
+// the caller. Failures that can not be recovered by retrying are programming
+// errors and should panic.
+//
+// fn is always called with the same ctx, so state it keeps outside of its own
+// scope persists across calls.
+func Run(
 	ctx context.Context,
 	logger *slog.Logger,
 	fn func(context.Context) error,

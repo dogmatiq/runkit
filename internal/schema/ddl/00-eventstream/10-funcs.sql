@@ -57,7 +57,7 @@ BEGIN
     VALUES (gen_random_uuid())
     RETURNING id INTO acquired_id;
 
-    PERFORM pg_notify('eventstream.create', acquired_id::text);
+    PERFORM pg_notify('signal', 'eventstream.create.' || acquired_id);
 
     RETURN acquired_id;
 END;
@@ -126,7 +126,7 @@ BEGIN
     INTO new_next_offset
     FROM inserted_events;
 
-    PERFORM pg_notify('eventstream.append.' || append.stream_id, new_next_offset::text);
+    PERFORM pg_notify('signal', 'eventstream.append.' || append.stream_id);
 
     RETURN new_next_offset;
 END;

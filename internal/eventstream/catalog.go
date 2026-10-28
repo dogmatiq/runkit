@@ -9,7 +9,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -21,9 +21,9 @@ type Catalog struct {
 	// DB is the database connection used to discover event streams.
 	DB *sql.DB
 
-	// Notifications is the listener used to receive notifications about new
-	// event streams being created.
-	Notifications *notification.Listener
+	// Signals is the listener used to receive signals that event streams have
+	// been created.
+	Signals *signal.Listener
 
 	// Logger is the target for log messages produced by the catalog and the
 	// supervisor of the discovery session it starts.
@@ -189,12 +189,13 @@ func (c *Catalog) unicast(
 // no state, and touches nothing owned by the catalog's loop other than
 // c.discovered.
 func (c *Catalog) discover(ctx context.Context) error {
-	// Subscribe to notifications about new streams _before_ querying, so that
-	// a stream created between the query and the subscription is not missed.
-	// The notification's payload is not used; each query reads the complete
-	// set of streams, so the notification is only a signal to query again.
+	// Subscribe to signals about new streams _before_ querying, so that a
+	// stream created between the query and the subscription is not missed.
+	//
+	// The signal identifies the stream that was created, but that is not
+	// used; each query reads the complete set of streams.
 	created := make(chan string, 1)
-	unsubscribe := c.Notifications.SubscribeLossy("eventstream.create", created)
+	unsubscribe := c.Signals.Subscribe("eventstream.create", created)
 	defer unsubscribe()
 
 	for {

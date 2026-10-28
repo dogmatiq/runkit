@@ -1,23 +1,17 @@
 package cluster_test
 
 import (
-	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/cluster"
-	"github.com/dogmatiq/runkit/internal/notification"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
 func TestMembershipObserver(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
-	var group sync.WaitGroup
 	db := xtesting.NewDatabase(t)
 	logger := spruce.NewTestLogger(t)
 
@@ -67,32 +61,22 @@ func TestMembershipObserver(t *testing.T) {
 			NodeID: uuidpb.Generate(),
 		}
 
-		ctx, cancel := context.WithCancel(ctx)
-
-		group.Go(func() {
-			h.Run(ctx)
-		})
-
-		return h.NodeID, cancel
+		return h.NodeID, xtesting.Go(t, h.Run)
 	}
 
-	notifications := &notification.Listener{
+	signals := &signal.Listener{
 		DB:     db,
 		Logger: logger,
 	}
 
-	group.Go(func() {
-		notifications.Run(ctx)
-	})
+	xtesting.Go(t, signals.Run)
 
 	observer := &MembershipObserver{
-		Notifications: notifications,
-		Logger:        logger,
+		Signals: signals,
+		Logger:  logger,
 	}
 
-	group.Go(func() {
-		observer.Run(ctx)
-	})
+	xtesting.Go(t, observer.Run)
 
 	// Start a subscription *before* there are any nodes.
 	subscription1 := make(chan MembershipChange)
@@ -155,7 +139,4 @@ func TestMembershipObserver(t *testing.T) {
 		subscription1,
 		subscription2,
 	)
-
-	cancel()
-	group.Wait()
 }

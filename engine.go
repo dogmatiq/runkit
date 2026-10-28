@@ -23,9 +23,9 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
-	"github.com/dogmatiq/runkit/internal/notification"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -86,8 +86,8 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
 
-	// notifications listens for inter-node notifications.
-	notifications *notification.Listener
+	// signals listens for signals sent by this and other nodes.
+	signals *signal.Listener
 
 	// membership observes changes to the set of live nodes in the cluster.
 	membership *cluster.MembershipObserver
@@ -191,14 +191,14 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
-	e.notifications = &notification.Listener{
+	e.signals = &signal.Listener{
 		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "notification-listener")),
+		Logger: e.logger.With(slog.String("component", "signal.listener")),
 	}
 
 	e.membership = &cluster.MembershipObserver{
-		Notifications: e.notifications,
-		Logger:        e.logger.With(slog.String("component", "cluster.membership-observer")),
+		Signals: e.signals,
+		Logger:  e.logger.With(slog.String("component", "cluster.membership-observer")),
 	}
 
 	heartbeater := &cluster.Heartbeater{
@@ -208,20 +208,20 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.eventStreams = &eventstream.Catalog{
-		DB:            e.db,
-		Notifications: e.notifications,
-		Logger:        e.logger.With(slog.String("component", "eventstream.catalog")),
+		DB:      e.db,
+		Signals: e.signals,
+		Logger:  e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
 	e.events = &eventstream.Reader{
 		DB:                    e.db,
-		Notifications:         e.notifications,
+		Signals:               e.signals,
 		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),
 		ContemporaryCacheSize: eventStreamCacheSize,
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
 
-	runComponent(e.notifications)
+	runComponent(e.signals)
 	runComponent(e.membership)
 	runComponent(heartbeater)
 	runComponent(e.eventStreams)
