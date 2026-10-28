@@ -1,5 +1,12 @@
 # Unified Projection Event Consumption Implementation Plan
 
+> **Note (2026-10-28):** The notification plumbing this plan describes has since
+> been replaced. `cluster.NotificationListener` is now `signal.Listener` in
+> `internal/signal`: all signals share one PostgreSQL channel with the topic as
+> the payload, topics are hierarchical, delivery is lossy, and heartbeats are
+> sent on `heartbeat.<node-id>`. References below to `NotificationListener`,
+> per-topic `LISTEN`/`UNLISTEN`, and notification payloads are historical.
+
 > **For agentic workers:** Implement this plan task-by-task. Steps use checkbox
 > (`- [ ]`) syntax for tracking. Build and test exclusively through `make`
 > (`make test`, `make precommit`) per the repository conventions — never invoke
