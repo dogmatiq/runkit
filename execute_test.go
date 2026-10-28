@@ -281,8 +281,9 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 				&stubs.CommandStub[stubs.TypeA]{Content: "unsatisfied"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
-						// The event has been observed but the observer is not
-						// satisfied, so the deadline passes.
+						// The event has been observed without satisfying the
+						// observer; stop waiting as though the deadline had
+						// passed.
 						expire()
 						return false, nil
 					},
@@ -357,7 +358,7 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 					dogma.Command,
 				) error {
 					// The command has been handled without recording any
-					// events, so the deadline passes.
+					// events; stop waiting as though the deadline had passed.
 					expire()
 					return nil
 				},
