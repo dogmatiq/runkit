@@ -7,8 +7,8 @@ CREATE SCHEMA IF NOT EXISTS eventstream;
 -- equivalent to the number of events already on the stream.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.streams (
-    id          uuid    PRIMARY KEY,
-    next_offset bigint  NOT NULL DEFAULT 0 CHECK (next_offset >= 0)
+    id          uuid   PRIMARY KEY,
+    next_offset bigint NOT NULL DEFAULT 0 CHECK (next_offset >= 0)
 );
 
 --------------------------------------------------------------------------------
