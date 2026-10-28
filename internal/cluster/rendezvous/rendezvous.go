@@ -111,8 +111,13 @@ func Rank(w *uuidpb.UUID, candidates []*uuidpb.UUID) []*uuidpb.UUID {
 // result is equal to Rank(w, candidates).
 func RankAbove(w, c *uuidpb.UUID, candidates []*uuidpb.UUID) []*uuidpb.UUID {
 	if w.Equal(c) {
-		// Self-affinity: c wins unconditionally, so nothing ranks above it.
-		return nil
+		// Self-affinity: if c is a candidate it wins unconditionally, so
+		// nothing ranks above it.
+		for _, x := range candidates {
+			if x.Equal(c) {
+				return nil
+			}
+		}
 	}
 
 	all := Rank(w, candidates)
