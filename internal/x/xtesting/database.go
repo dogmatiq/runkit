@@ -151,9 +151,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		postgres.WithUsername(username),
 		postgres.WithPassword(password),
 		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Cmd: []string{"-c", "max_connections=1000"},
-			},
+			Cmd: []string{"-c", "max_connections=1000"},
 		}),
 	)
 	if err != nil {
