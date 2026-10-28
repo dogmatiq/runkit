@@ -86,10 +86,7 @@ func (c *Catalog) init() {
 
 // Run executes the catalog until ctx is canceled.
 //
-// The catalog has no failure modes of its own. The discovery session it starts
-// is supervised, so its transient failures are retried without affecting
-// subscribers. Run must be called at most once; after it returns, Subscribe has
-// no effect.
+// Run must be called at most once; after it returns, Subscribe has no effect.
 func (c *Catalog) Run(ctx context.Context) {
 	c.init()
 	defer func() {

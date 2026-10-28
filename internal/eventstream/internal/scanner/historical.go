@@ -188,6 +188,7 @@ func (s *Historical) readBatch(
 	}
 
 	batch := Batch{
+		StreamID:   s.Consumer.StreamID,
 		Checkpoint: checkpoint,
 	}
 

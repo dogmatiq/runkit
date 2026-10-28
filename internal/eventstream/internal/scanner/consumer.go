@@ -44,6 +44,9 @@ type Consumer struct {
 // Batch is a set of events delivered to a consumer, along with the checkpoint
 // from which the consumer should resume afterwards.
 type Batch struct {
+	// StreamID is the ID of the event stream from which the events were read.
+	StreamID *uuidpb.UUID
+
 	// Envelopes are the delivered events, in offset order.
 	//
 	// It may be empty, indicating only that the checkpoint has advanced past
