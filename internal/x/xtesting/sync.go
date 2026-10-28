@@ -3,6 +3,7 @@ package xtesting
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,9 +12,17 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 )
 
-// WaitTimeout is the maximum amount of time that [ExpectLatchesSetEventually]
-// will wait for latches to be set before failing the test.
-const WaitTimeout = 3 * time.Second
+// WaitTimeout is the maximum amount of time that the helpers in this package
+// wait for a condition to be met before failing the test.
+//
+// It is longer under CI, where tests run under heavier load.
+var WaitTimeout = func() time.Duration {
+	if os.Getenv("CI") != "" {
+		return 30 * time.Second
+	}
+
+	return 3 * time.Second
+}()
 
 // ExpectLatchesSetEventually waits for all of the given latches to be set. If
 // fails the test if all latches are not set within [WaitTimeout].

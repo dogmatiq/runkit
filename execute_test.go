@@ -274,14 +274,16 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-			defer cancel()
+			ctx, expire := xtesting.ContextWithManualDeadline(t.Context())
 
 			err := engine.ExecuteCommand(
 				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "unsatisfied"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
+						// The event has been observed but the observer is not
+						// satisfied, so the deadline passes.
+						expire()
 						return false, nil
 					},
 				),
@@ -317,11 +319,13 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 // ExecuteCommand returns ErrEventObserverNotSatisfied when the handler does not
 // record any events.
 func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+	var expire func()
+
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-			defer cancel()
+			var ctx context.Context
+			ctx, expire = xtesting.ContextWithManualDeadline(t.Context())
 
 			err := engine.ExecuteCommand(
 				ctx,
@@ -346,6 +350,16 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
+				},
+				HandleCommandFunc: func(
+					context.Context,
+					dogma.IntegrationCommandScope,
+					dogma.Command,
+				) error {
+					// The command has been handled without recording any
+					// events, so the deadline passes.
+					expire()
+					return nil
 				},
 			},
 		),
