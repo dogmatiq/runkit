@@ -33,11 +33,15 @@ import (
 
 const (
 	// DefaultProjectionCompactInterval is the default minimum time between
-	// projection compaction attempts.
+	// successful projection compactions.
 	DefaultProjectionCompactInterval = 6 * time.Hour
 
 	// DefaultListenAddr is the default address for the engine's gRPC server.
 	DefaultListenAddr = ":50555"
+
+	// projectionCompactTimeout is the maximum time a projection is given to
+	// compact its data in a single attempt.
+	projectionCompactTimeout = 10 * time.Minute
 
 	// eventStreamCacheSize is the number of recent events cached per event
 	// stream for delivery to consumers that are keeping up with the stream.
@@ -61,8 +65,8 @@ type Engine struct {
 	// nodeID is the unique identifier for this engine instance.
 	nodeID *uuidpb.UUID
 
-	// compactInterval is the minimum time between projection compaction
-	// attempts.
+	// compactInterval is the minimum time between successful projection
+	// compactions.
 	compactInterval time.Duration
 
 	// listenAddress is the address to listen on for gRPC requests from other
@@ -441,6 +445,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 				Handler:  handlerConfig.Interface(),
 				Identity: handlerConfig.Identity(),
 				Interval: e.compactInterval,
+				Timeout:  projectionCompactTimeout,
 				Logger:   logger.With(slog.String("component", "projection.compactor")),
 			},
 		}

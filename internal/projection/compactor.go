@@ -27,23 +27,39 @@ type Compactor struct {
 	// Identity is the identity of the handler.
 	Identity *identitypb.Identity
 
-	// Interval is the minimum time between compaction attempts.
+	// Interval is the minimum time between successful compactions.
 	Interval time.Duration
+
+	// Timeout is the maximum time the handler is given to compact the
+	// projection in a single attempt.
+	Timeout time.Duration
 
 	// Logger is the target for log messages produced by the compactor and by
 	// the handler during compaction.
 	Logger *slog.Logger
 }
 
-// Run attempts compaction immediately and on every interval until ctx is
-// canceled.
+// Run compacts the projection immediately and then once per interval until
+// ctx is canceled.
 //
 // It must be called at most once.
 func (c *Compactor) Run(ctx context.Context) error {
+	if c.Interval <= 0 {
+		panic("compaction interval must be positive")
+	}
+
+	if c.Timeout <= 0 {
+		panic("compaction timeout must be positive")
+	}
+
 	return supervisor.Run(ctx, c.Logger, c.run)
 }
 
-// run attempts compaction until ctx is canceled or an attempt fails.
+// run compacts the projection once per interval until ctx is canceled or an
+// attempt fails.
+//
+// The handler is expected to compact incrementally, so a failed attempt is
+// retried without waiting for the next interval.
 func (c *Compactor) run(ctx context.Context) error {
 	for {
 		if err := c.tryCompact(ctx); err != nil {
@@ -84,10 +100,13 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 		return fmt.Errorf("unable to acquire compaction lock: %w", err)
 	}
 
+	compactCtx, cancel := context.WithTimeout(ctx, c.Timeout)
+	defer cancel()
+
 	if err := xerrors.Recover(
 		func() error {
 			return c.Handler.Compact(
-				ctx,
+				compactCtx,
 				&compactScope{c.Logger},
 			)
 		},
