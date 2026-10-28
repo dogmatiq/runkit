@@ -10,39 +10,49 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
-	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Compactor is an engine component that periodically attempts to compact a
-// projection by invoking [dogma.ProjectionMessageHandler].Compact().
+// Compactor periodically compacts a projection by invoking
+// [dogma.ProjectionMessageHandler].Compact().
 type Compactor struct {
-	DB       *sql.DB
-	Handler  dogma.ProjectionMessageHandler
+	// DB is the database connection used to coordinate compaction.
+	DB *sql.DB
+
+	// Handler is the projection to compact.
+	Handler dogma.ProjectionMessageHandler
+
+	// Identity is the identity of the handler.
 	Identity *identitypb.Identity
+
+	// Interval is the minimum time between compaction attempts.
 	Interval time.Duration
-	Logger   *slog.Logger
+
+	// Logger is the target for log messages produced by the compactor and by
+	// the handler during compaction.
+	Logger *slog.Logger
 }
 
-// Run executes the compactor until ctx is canceled.
+// Run attempts compaction immediately and on every interval until ctx is
+// canceled.
+//
+// It must be called at most once.
 func (c *Compactor) Run(ctx context.Context) {
+	supervisor.Run(ctx, c.Logger, c.run)
+}
+
+// run attempts compaction until ctx is canceled or an attempt fails.
+func (c *Compactor) run(ctx context.Context) error {
 	for {
 		if err := c.tryCompact(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			c.Logger.ErrorContext(
-				ctx,
-				"unable to compact projection",
-				xslog.Error(err),
-			)
+			return err
 		}
 
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-time.After(c.Interval):
 		}
 	}
