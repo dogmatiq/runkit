@@ -28,9 +28,10 @@ func TestHeartbeater(t *testing.T) {
 		defer signals.Subscribe("heartbeat", heartbeats)()
 
 		h := &Heartbeater{
-			NodeID: uuidpb.Generate(),
-			DB:     db,
-			Logger: logger,
+			NodeID:   uuidpb.Generate(),
+			DB:       db,
+			Interval: 10 * time.Millisecond,
+			Logger:   logger,
 		}
 
 		xtesting.GoE(t, h.Run)
@@ -63,9 +64,10 @@ func TestHeartbeater(t *testing.T) {
 		db.Close()
 
 		h := &Heartbeater{
-			NodeID: uuidpb.Generate(),
-			DB:     db,
-			Logger: logger,
+			NodeID:   uuidpb.Generate(),
+			DB:       db,
+			Interval: 10 * time.Millisecond,
+			Logger:   logger,
 		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)

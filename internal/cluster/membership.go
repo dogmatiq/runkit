@@ -28,12 +28,10 @@ type MembershipObserver struct {
 	Signals *signal.Listener
 
 	// HeartbeatInterval is the time between the heartbeats sent by each node.
-	// If it is zero, [DefaultHeartbeatInterval] is used.
 	HeartbeatInterval time.Duration
 
 	// HeartbeatTimeout is the amount of time a node can go without sending a
-	// heartbeat before it is considered offline. If it is zero,
-	// [DefaultHeartbeatTimeout] is used.
+	// heartbeat before it is considered offline.
 	HeartbeatTimeout time.Duration
 
 	// Logger is the target for log messages produced by the observer.
@@ -71,17 +69,20 @@ type membershipSubscriber struct {
 // Run listens for heartbeat signals and updates the set of live nodes until
 // ctx is canceled.
 func (o *MembershipObserver) Run(ctx context.Context) error {
+	if o.HeartbeatInterval <= 0 {
+		panic("heartbeat interval must be positive")
+	}
+
+	if o.HeartbeatTimeout <= 0 {
+		panic("heartbeat timeout must be positive")
+	}
+
 	o.init()
 	defer o.done.Set()
 
 	heartbeats := make(chan string, heartbeatBufferSize)
 	unsubscribe := o.Signals.Subscribe(heartbeatTopic, heartbeats)
 	defer unsubscribe()
-
-	interval := o.HeartbeatInterval
-	if interval == 0 {
-		interval = DefaultHeartbeatInterval
-	}
 
 	for {
 		select {
@@ -97,7 +98,7 @@ func (o *MembershipObserver) Run(ctx context.Context) error {
 			if nodeID != "" {
 				o.update(ctx, nodeID)
 			}
-		case <-time.After(interval):
+		case <-time.After(o.HeartbeatInterval):
 			o.update(ctx)
 		}
 	}
@@ -165,11 +166,6 @@ func (o *MembershipObserver) subscribe(ctx context.Context, sub *membershipSubsc
 //
 // nodeIDs is a variadic list of node IDs that have sent heartbeat signals.
 func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
-	timeout := o.HeartbeatTimeout
-	if timeout == 0 {
-		timeout = DefaultHeartbeatTimeout
-	}
-
 	now := time.Now()
 	var added, removed, live uuidpb.Set
 
@@ -200,7 +196,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 	}
 
 	for nodeID, lastBeatAt := range o.heartbeats.All() {
-		if now.Sub(lastBeatAt) > timeout {
+		if now.Sub(lastBeatAt) > o.HeartbeatTimeout {
 			o.heartbeats.Delete(nodeID)
 			removed.Add(nodeID)
 
