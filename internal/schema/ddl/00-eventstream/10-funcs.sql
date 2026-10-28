@@ -57,8 +57,6 @@ BEGIN
     VALUES (gen_random_uuid())
     RETURNING id INTO acquired_id;
 
-    PERFORM pg_notify('signal', 'eventstream.create.' || acquired_id);
-
     RETURN acquired_id;
 END;
 $$;
@@ -74,11 +72,8 @@ CREATE OR REPLACE FUNCTION eventstream.append(
     events                eventstream.event[]
 )
 RETURNS bigint
-LANGUAGE plpgsql
+LANGUAGE sql
 AS $$
-DECLARE
-    new_next_offset bigint;
-BEGIN
     WITH updated_stream AS (
         UPDATE eventstream.streams SET
             next_offset = next_offset + array_length(append.events, 1)
@@ -123,13 +118,7 @@ BEGIN
         RETURNING stream_offset
     )
     SELECT MAX(stream_offset) + 1
-    INTO new_next_offset
     FROM inserted_events;
-
-    PERFORM pg_notify('signal', 'eventstream.append.' || append.stream_id);
-
-    RETURN new_next_offset;
-END;
 $$;
 
 --------------------------------------------------------------------------------

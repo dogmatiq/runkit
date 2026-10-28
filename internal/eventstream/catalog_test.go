@@ -1,7 +1,6 @@
 package eventstream_test
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
@@ -64,7 +63,6 @@ func TestCatalog(t *testing.T) {
 		defer unsubscribe()
 
 		want := xtesting.CreateEventStream(t, db)
-		notifyStreamCreated(t, db, want)
 
 		expectToReceiveStreamIDs(t, streamIDs, want)
 	})
@@ -92,13 +90,18 @@ func TestCatalog(t *testing.T) {
 		defer unsubscribe()
 
 		want := xtesting.CreateEventStream(t, db)
+		expectToReceiveStreamIDs(t, streamIDs, want)
 
 		// Each signal causes the complete set of streams to be read again, but
 		// subscribers must only be told about each stream once.
-		notifyStreamCreated(t, db, want)
-		expectToReceiveStreamIDs(t, streamIDs, want)
+		if err := signal.Notify(
+			t.Context(),
+			db,
+			"eventstream.create."+want.AsString(),
+		); err != nil {
+			t.Fatal(err)
+		}
 
-		notifyStreamCreated(t, db, want)
 		expectNoStreamIDs(t, streamIDs)
 	})
 
@@ -129,7 +132,6 @@ func TestCatalog(t *testing.T) {
 		defer unsubscribe2()
 
 		want := xtesting.CreateEventStream(t, db)
-		notifyStreamCreated(t, db, want)
 
 		expectToReceiveStreamIDs(t, streamIDs1, want)
 		expectToReceiveStreamIDs(t, streamIDs2, want)
@@ -157,13 +159,11 @@ func TestCatalog(t *testing.T) {
 		unsubscribe := catalog.Subscribe(streamIDs)
 
 		first := xtesting.CreateEventStream(t, db)
-		notifyStreamCreated(t, db, first)
 		expectToReceiveStreamIDs(t, streamIDs, first)
 
 		unsubscribe()
 
-		second := xtesting.CreateEventStream(t, db)
-		notifyStreamCreated(t, db, second)
+		xtesting.CreateEventStream(t, db)
 		expectNoStreamIDs(t, streamIDs)
 	})
 
@@ -193,7 +193,6 @@ func TestCatalog(t *testing.T) {
 		defer unsubscribe()
 
 		want := xtesting.CreateEventStream(t, db)
-		notifyStreamCreated(t, db, want)
 
 		expectToReceiveStreamIDs(t, streamIDs, want)
 	})
@@ -220,21 +219,6 @@ func TestCatalog(t *testing.T) {
 		unsubscribe := catalog.Subscribe(make(chan *uuidpb.UUID))
 		unsubscribe()
 	})
-}
-
-// notifyStreamCreated sends the signal that is normally sent when a stream is
-// created by the engine. The test helpers create streams directly, without
-// sending it.
-func notifyStreamCreated(t testing.TB, db *sql.DB, streamID *uuidpb.UUID) {
-	t.Helper()
-
-	if err := signal.Notify(
-		t.Context(),
-		db,
-		"eventstream.create."+streamID.AsString(),
-	); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // expectToReceiveStreamIDs asserts that exactly the given stream IDs are
