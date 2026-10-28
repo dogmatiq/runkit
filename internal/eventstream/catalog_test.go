@@ -1,6 +1,7 @@
 package eventstream_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -12,88 +13,60 @@ import (
 )
 
 func TestCatalog(t *testing.T) {
-	t.Run("it sends existing streams to a new subscriber", func(t *testing.T) {
+	setup := func(t *testing.T) (*sql.DB, *Catalog) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
+
 		signals := &signal.Listener{
 			DB:     db,
 			Logger: logger,
 		}
 
 		xtesting.Go(t, signals.Run)
+
+		catalog := &Catalog{
+			DB:      db,
+			Signals: signals,
+			Logger:  logger,
+		}
+
+		return db, catalog
+	}
+
+	t.Run("it reports existing streams", func(t *testing.T) {
+		db, catalog := setup(t)
 
 		want := xtesting.CreateEventStreams(t, db, 3)
 
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
-
 		xtesting.Go(t, catalog.Run)
 
-		streamIDs := make(chan *uuidpb.UUID, 10)
-		unsubscribe := catalog.Subscribe(streamIDs)
-		defer unsubscribe()
-
-		expectToReceiveStreamIDs(t, streamIDs, want...)
-		expectNoStreamIDs(t, streamIDs)
+		expectStreamIDs(t, catalog, want...)
 	})
 
-	t.Run("it sends newly created streams to existing subscribers", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
-		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
+	t.Run("it reports newly created streams", func(t *testing.T) {
+		db, catalog := setup(t)
 
 		xtesting.Go(t, catalog.Run)
 
-		streamIDs := make(chan *uuidpb.UUID, 10)
-		unsubscribe := catalog.Subscribe(streamIDs)
-		defer unsubscribe()
+		first := xtesting.CreateEventStream(t, db)
+		expectStreamIDs(t, catalog, first)
 
-		want := xtesting.CreateEventStream(t, db)
-
-		expectToReceiveStreamIDs(t, streamIDs, want)
+		second := xtesting.CreateEventStream(t, db)
+		expectStreamIDs(t, catalog, first, second)
 	})
 
-	t.Run("it sends each stream once", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
-		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
+	t.Run("it does not report a change when no streams are created", func(t *testing.T) {
+		db, catalog := setup(t)
 
 		xtesting.Go(t, catalog.Run)
 
-		streamIDs := make(chan *uuidpb.UUID, 10)
-		unsubscribe := catalog.Subscribe(streamIDs)
-		defer unsubscribe()
-
 		want := xtesting.CreateEventStream(t, db)
-		expectToReceiveStreamIDs(t, streamIDs, want)
+		expectStreamIDs(t, catalog, want)
+
+		_, changed := catalog.StreamIDs()
 
 		// Each signal causes the complete set of streams to be read again, but
-		// subscribers must only be told about each stream once.
+		// the set is only replaced when it has grown.
 		if err := signal.Notify(
 			t.Context(),
 			db,
@@ -102,160 +75,38 @@ func TestCatalog(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		expectNoStreamIDs(t, streamIDs)
-	})
-
-	t.Run("it delivers to multiple subscribers", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
+		select {
+		case <-changed:
+			got, _ := catalog.StreamIDs()
+			t.Fatalf("unexpected change to stream IDs: %s", got)
+		case <-time.After(100 * time.Millisecond):
 		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
-
-		xtesting.Go(t, catalog.Run)
-
-		streamIDs1 := make(chan *uuidpb.UUID, 10)
-		unsubscribe1 := catalog.Subscribe(streamIDs1)
-		defer unsubscribe1()
-
-		streamIDs2 := make(chan *uuidpb.UUID, 10)
-		unsubscribe2 := catalog.Subscribe(streamIDs2)
-		defer unsubscribe2()
-
-		want := xtesting.CreateEventStream(t, db)
-
-		expectToReceiveStreamIDs(t, streamIDs1, want)
-		expectToReceiveStreamIDs(t, streamIDs2, want)
-	})
-
-	t.Run("it stops delivering after unsubscribe", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
-		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
-
-		xtesting.Go(t, catalog.Run)
-
-		streamIDs := make(chan *uuidpb.UUID, 10)
-		unsubscribe := catalog.Subscribe(streamIDs)
-
-		first := xtesting.CreateEventStream(t, db)
-		expectToReceiveStreamIDs(t, streamIDs, first)
-
-		unsubscribe()
-
-		xtesting.CreateEventStream(t, db)
-		expectNoStreamIDs(t, streamIDs)
-	})
-
-	t.Run("it accepts subscriptions before the first query completes", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
-		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
-
-		xtesting.Go(t, catalog.Run)
-
-		// Subscribe immediately, without waiting for the catalog to have
-		// discovered anything. The subscription must be accepted, and the
-		// subscriber must be told about streams created afterwards.
-		streamIDs := make(chan *uuidpb.UUID, 10)
-		unsubscribe := catalog.Subscribe(streamIDs)
-		defer unsubscribe()
-
-		want := xtesting.CreateEventStream(t, db)
-
-		expectToReceiveStreamIDs(t, streamIDs, want)
-	})
-
-	t.Run("it does not block subscribers after it has stopped", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
-			DB:     db,
-			Logger: logger,
-		}
-
-		xtesting.Go(t, signals.Run)
-
-		catalog := &Catalog{
-			DB:      db,
-			Signals: signals,
-			Logger:  logger,
-		}
-
-		stop := xtesting.Go(t, catalog.Run)
-		stop()
-
-		unsubscribe := catalog.Subscribe(make(chan *uuidpb.UUID))
-		unsubscribe()
 	})
 }
 
-// expectToReceiveStreamIDs asserts that exactly the given stream IDs are
-// received, in any order.
-func expectToReceiveStreamIDs(
+// expectStreamIDs waits for the catalog to report exactly the given stream
+// IDs.
+func expectStreamIDs(
 	t testing.TB,
-	streamIDs <-chan *uuidpb.UUID,
+	catalog *Catalog,
 	want ...*uuidpb.UUID,
 ) {
 	t.Helper()
 
 	expected := uuidpb.NewSet(want...)
+	timeout := time.After(xtesting.WaitTimeout)
 
-	for range want {
-		select {
-		case <-time.After(xtesting.WaitTimeout):
-			t.Fatal("timeout waiting for stream ID")
-		case got := <-streamIDs:
-			if !expected.Has(got) {
-				t.Fatalf("unexpected or duplicate stream ID: %s", got)
-			}
-			expected.Delete(got)
+	for {
+		got, changed := catalog.StreamIDs()
+
+		if got.IsEqual(expected) {
+			return
 		}
-	}
-}
 
-// expectNoStreamIDs asserts that no stream ID is received within a short
-// period.
-func expectNoStreamIDs(
-	t testing.TB,
-	streamIDs <-chan *uuidpb.UUID,
-) {
-	t.Helper()
-
-	select {
-	case got := <-streamIDs:
-		t.Fatalf("unexpected stream ID: %s", got)
-	case <-time.After(100 * time.Millisecond):
+		select {
+		case <-timeout:
+			t.Fatalf("unexpected stream IDs: got %s, want %s", got, expected)
+		case <-changed:
+		}
 	}
 }
