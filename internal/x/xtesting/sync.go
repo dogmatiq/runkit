@@ -16,13 +16,13 @@ import (
 // wait for a condition to be met before failing the test.
 //
 // It is longer under CI, where tests run under heavier load.
-var WaitTimeout = func() time.Duration {
-	if os.Getenv("CI") != "" {
-		return 30 * time.Second
-	}
+var WaitTimeout = 3 * time.Second
 
-	return 3 * time.Second
-}()
+func init() {
+	if os.Getenv("CI") != "" {
+		WaitTimeout = 30 * time.Second
+	}
+}
 
 // ExpectLatchesSetEventually waits for all of the given latches to be set. If
 // fails the test if all latches are not set within [WaitTimeout].
