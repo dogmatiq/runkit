@@ -219,11 +219,26 @@ func TestRankAbove(t *testing.T) {
 		}
 	})
 
-	t.Run("self-affinity: workload equals candidate", func(t *testing.T) {
+	t.Run("workload is a candidate", func(t *testing.T) {
 		work := uuidpb.Generate()
 		candidates := []*uuidpb.UUID{work, uuidpb.Generate(), uuidpb.Generate()}
 		if got := RankAbove(work, work, candidates); got != nil {
 			t.Fatalf("RankAbove() returned non-nil when w == c: %v", got)
+		}
+	})
+
+	t.Run("workload is not a candidate", func(t *testing.T) {
+		work := uuidpb.Generate()
+		candidates := []*uuidpb.UUID{uuidpb.Generate(), uuidpb.Generate()}
+		want := Rank(work, candidates)
+		got := RankAbove(work, work, candidates)
+		if len(got) != len(want) {
+			t.Fatalf("RankAbove() returned %d candidates for non-member, want %d", len(got), len(want))
+		}
+		for i, c := range got {
+			if !c.Equal(want[i]) {
+				t.Fatalf("RankAbove()[%d] = %q, want %q", i, c, want[i])
+			}
 		}
 	})
 
