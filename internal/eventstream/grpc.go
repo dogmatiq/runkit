@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,7 +30,7 @@ type ConsumerAPI struct {
 	// Catalog tracks the set of available event streams.
 	Catalog *Catalog
 
-	// Reader delivers events to clients that consume them indefinitely.
+	// Reader delivers events to clients.
 	Reader *Reader
 
 	// RecordableEventTypes is the set of message type IDs of every event type
@@ -39,11 +38,6 @@ type ConsumerAPI struct {
 	// outside this set is sent any existing events, after which its stream is
 	// closed, as no further events can ever be produced for it.
 	RecordableEventTypes *uuidpb.Set
-
-	// HistoricalBatchSize is the maximum number of events read per query when
-	// delivering historical events to a client whose stream is to be closed.
-	// It must be positive.
-	HistoricalBatchSize int
 
 	// Logger is the target for log messages produced by the server.
 	Logger *slog.Logger
@@ -125,98 +119,16 @@ func (s *ConsumerAPI) ConsumeEvents(
 		return nil
 	}
 
-	if !s.canRecordAny(types) {
-		return s.consumeHistoricalEvents(ctx, res, streamID, checkpoint, types)
+	// If the application can not record any of the requested types, no events
+	// of those types will be appended beyond the current head of the stream,
+	// so the stream is closed once the client has been delivered everything up
+	// to it.
+	closeAtHead := !s.canRecordAny(types)
+
+	if closeAtHead && checkpoint >= nextOffset {
+		return nil
 	}
 
-	return s.consumeEventsIndefinitely(ctx, res, streamID, checkpoint, types)
-}
-
-// canRecordAny returns true if the application can record events of at least
-// one of the given types.
-func (s *ConsumerAPI) canRecordAny(types *uuidpb.Set) bool {
-	for id := range types.All() {
-		if s.RecordableEventTypes.Has(id) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// consumeHistoricalEvents delivers the existing events of the given types to
-// the client, then returns nil to close the gRPC stream.
-//
-// It is used when the application can not record any of the requested types,
-// so there is no reason to wait for new events.
-func (s *ConsumerAPI) consumeHistoricalEvents(
-	ctx context.Context,
-	res grpc.ServerStreamingServer[messaginggrpc.ConsumeEventsResponse],
-	streamID *uuidpb.UUID,
-	checkpoint uint64,
-	types *uuidpb.Set,
-) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	batches := make(chan Batch)
-	synced := make(chan *scanner.Consumer, 1)
-	stopped := make(chan error, 1)
-
-	consumer := &scanner.Consumer{
-		ID:           uuidpb.Generate(),
-		StreamID:     streamID,
-		MessageTypes: types,
-		Batches:      batches,
-	}
-	consumer.Checkpoint.Store(checkpoint)
-
-	historical := &scanner.Historical{
-		DB:        s.DB,
-		Consumer:  consumer,
-		Synced:    synced,
-		BatchSize: s.HistoricalBatchSize,
-	}
-
-	go func() {
-		stopped <- historical.Run(ctx)
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case batch := <-batches:
-			if err := sendBatch(res, batch); err != nil {
-				return err
-			}
-
-		case <-synced:
-			return nil
-
-		case err := <-stopped:
-			if err != nil {
-				return status.Error(codes.Unavailable, err.Error())
-			}
-
-			// The scanner only returns nil once the consumer has synced, in
-			// which case it has already been sent to the synced channel, or
-			// if the consumer is gone, which can not happen here.
-			return nil
-		}
-	}
-}
-
-// consumeEventsIndefinitely delivers events of the given types to the client as
-// they are appended to the stream, until the client disconnects.
-func (s *ConsumerAPI) consumeEventsIndefinitely(
-	ctx context.Context,
-	res grpc.ServerStreamingServer[messaginggrpc.ConsumeEventsResponse],
-	streamID *uuidpb.UUID,
-	checkpoint uint64,
-	types *uuidpb.Set,
-) error {
 	batches := make(chan Batch, consumeBufferSize)
 	unsubscribe := s.Reader.Subscribe(streamID, checkpoint, types, batches)
 	defer unsubscribe()
@@ -229,8 +141,24 @@ func (s *ConsumerAPI) consumeEventsIndefinitely(
 			if err := sendBatch(res, batch); err != nil {
 				return err
 			}
+
+			if closeAtHead && batch.Checkpoint >= nextOffset {
+				return nil
+			}
 		}
 	}
+}
+
+// canRecordAny returns true if the application can record events of at least
+// one of the given types.
+func (s *ConsumerAPI) canRecordAny(types *uuidpb.Set) bool {
+	for id := range types.All() {
+		if s.RecordableEventTypes.Has(id) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // sendBatch sends a single response containing the events in the batch.

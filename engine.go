@@ -247,7 +247,6 @@ func (e *Engine) Run(ctx context.Context) error {
 				Catalog:              e.eventStreams,
 				Reader:               e.events,
 				RecordableEventTypes: e.recordableEventTypes(),
-				HistoricalBatchSize:  eventStreamBatchSize,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
 				),
