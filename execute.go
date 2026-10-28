@@ -32,7 +32,7 @@ func (e *Engine) ExecuteCommand(
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) error {
-	if err := e.ready.WaitContext(ctx); err != nil {
+	if err := e.waitUntilReady(ctx); err != nil {
 		return err
 	}
 

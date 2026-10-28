@@ -3,6 +3,7 @@ package runkit
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,7 +14,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
-	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -21,6 +21,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/grpc"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/process"
@@ -28,7 +29,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -61,18 +61,15 @@ type Engine struct {
 	// nodeID is the unique identifier for this engine instance.
 	nodeID *uuidpb.UUID
 
-	// compactInterval is the minimum time between projection
-	// compaction attempts. If non-positive [DefaultProjectionCompactInterval]
-	// is used.
+	// compactInterval is the minimum time between projection compaction
+	// attempts.
 	compactInterval time.Duration
 
-	// Addr is the address to listen on for gRPC requests from other engines.
-	// If it is empty, [DefaultListenAddr] is used.
+	// listenAddress is the address to listen on for gRPC requests from other
+	// engines.
 	listenAddress string
 
 	// logger is the structured logger used by the engine.
-	//
-	// If it is nil, [slog.Default] is used.
 	logger *slog.Logger
 
 	// ready is a latch that is set when the engine is ready to accept commands
@@ -80,8 +77,12 @@ type Engine struct {
 	// the engine is ready.
 	ready xsync.Latch
 
-	// listener is the TCP listener for gRPC requests from other engines.
-	listener net.Listener
+	// stopped is a latch that is set when Run() returns.
+	stopped xsync.Latch
+
+	// listenAddr is the address the engine is listening on for gRPC requests
+	// from other engines. It is populated before the ready latch is set.
+	listenAddr net.Addr
 
 	// appConfig is the application configuration derived from e.App.
 	appConfig *config.Application
@@ -128,8 +129,11 @@ func New(
 	return e
 }
 
-// Run starts the engine and blocks until ctx is canceled.
+// Run starts the engine and blocks until ctx is canceled or the engine is
+// unable to continue.
 func (e *Engine) Run(ctx context.Context) error {
+	defer e.stopped.Set()
+
 	e.logger = e.logger.With(
 		xslog.UUID("node_id", e.nodeID),
 	)
@@ -146,51 +150,6 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.setupCommandTypes()
 
-	// Start the gRPC listener before anything else; if we're unable to listen
-	// on the configured address, we want to fail fast.
-	//
-	// We also want to do this synchronously so that e.listener is populated
-	// before the e.ready latch is set.
-	var err error
-	e.listener, err = net.Listen("tcp", e.listenAddress)
-	if err != nil {
-		return fmt.Errorf("unable to listen on %s: %w", e.listenAddress, err)
-	}
-	defer e.listener.Close()
-
-	// Next attempt to initialize handler state in the database.
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if err := e.initializeHandler(ctx, handlerConfig); err != nil {
-			return fmt.Errorf(
-				"unable to initialize handler %s: %w",
-				handlerConfig.Identity(),
-				err,
-			)
-		}
-	}
-
-	// Start an error group that will run all engine components until ctx is
-	// canceled.
-	group, ctx := errgroup.WithContext(ctx)
-
-	// runComponent is a helper that runs c within group, and returns an error
-	// if c.Run() returns before ctx is canceled.
-	//
-	// This is largely to catch programming errors in tests, as no component
-	// should be returning before the engine is shut down; each is responsible
-	// for recovering from its own errors.
-	runComponent := func(c component) {
-		group.Go(func() error {
-			c.Run(ctx)
-
-			if ctx.Err() == nil {
-				return fmt.Errorf("%T component stopped before context was canceled", c)
-			}
-
-			return ctx.Err()
-		})
-	}
-
 	e.signals = &signal.Listener{
 		DB:     e.db,
 		Logger: e.logger.With(slog.String("component", "signal.listener")),
@@ -199,12 +158,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.membership = &cluster.MembershipObserver{
 		Signals: e.signals,
 		Logger:  e.logger.With(slog.String("component", "cluster.membership-observer")),
-	}
-
-	heartbeater := &cluster.Heartbeater{
-		NodeID: e.nodeID,
-		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
 	}
 
 	e.eventStreams = &eventstream.Catalog{
@@ -221,11 +174,60 @@ func (e *Engine) Run(ctx context.Context) error {
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
 
+	server := &grpc.Server{
+		Address: e.listenAddress,
+		EventStreamConsumerAPI: &eventstream.ConsumerAPI{
+			DB:                   e.db,
+			Catalog:              e.eventStreams,
+			Reader:               e.events,
+			RecordableEventTypes: e.recordableEventTypes(),
+			Logger: e.logger.With(
+				slog.String("component", "eventstream.consumer-api"),
+			),
+		},
+		Logger: e.logger.With(slog.String("component", "grpc.server")),
+	}
+
+	// Initialize handler state in the database.
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		if err := e.initializeHandler(ctx, handlerConfig); err != nil {
+			return fmt.Errorf(
+				"unable to initialize handler %s: %w",
+				handlerConfig.Identity(),
+				err,
+			)
+		}
+	}
+
+	// Run all components until ctx is canceled or one of them fails.
+	group, ctx := errgroup.WithContext(ctx)
+
+	runComponent := func(c component) {
+		group.Go(func() error {
+			err := c.Run(ctx)
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			if err == nil {
+				panic(fmt.Sprintf("%T component stopped before context was canceled", c))
+			}
+
+			return fmt.Errorf("%T component failed: %w", c, err)
+		})
+	}
+
 	runComponent(e.signals)
 	runComponent(e.membership)
-	runComponent(heartbeater)
 	runComponent(e.eventStreams)
 	runComponent(e.events)
+
+	runComponent(&cluster.Heartbeater{
+		NodeID: e.nodeID,
+		DB:     e.db,
+		Logger: e.logger.With(slog.String("component", "cluster.heartbeater")),
+	})
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -237,42 +239,17 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	group.Go(func() error {
-		server := grpc.NewServer()
+	runComponent(server)
 
-		messaginggrpc.RegisterEventStreamConsumerAPIServer(
-			server,
-			&eventstream.ConsumerAPI{
-				DB:                   e.db,
-				Catalog:              e.eventStreams,
-				Reader:               e.events,
-				RecordableEventTypes: e.recordableEventTypes(),
-				Logger: e.logger.With(
-					slog.String("component", "eventstream.consumer-api"),
-				),
-			},
-		)
+	// The engine is not ready until it is listening for gRPC requests. If the
+	// server failed to listen, ctx is canceled and the failure is reported by
+	// the group.
+	if addr, err := server.ListenAddr(ctx); err == nil {
+		e.listenAddr = addr
+		e.ready.Set()
+	}
 
-		context.AfterFunc(ctx, server.Stop)
-
-		e.logger.DebugContext(
-			ctx,
-			"listening for gRPC requests",
-			slog.String("addr", e.listener.Addr().String()),
-		)
-
-		err := server.Serve(e.listener)
-
-		if ctx.Err() == nil {
-			return fmt.Errorf("gRPC server stopped before context was canceled: %w", err)
-		}
-
-		return ctx.Err()
-	})
-
-	e.ready.Set()
-	group.Wait()
-	return ctx.Err()
+	return group.Wait()
 }
 
 // Ready returns a channel that is closed when the engine is ready to accept
@@ -288,10 +265,29 @@ func (e *Engine) Ready() <-chan struct{} {
 // ListenAddr returns the address that the engine is listening on for gRPC
 // requests from other engines.
 func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
-	if err := e.ready.WaitContext(ctx); err != nil {
+	if err := e.waitUntilReady(ctx); err != nil {
 		return nil, err
 	}
-	return e.listener.Addr(), nil
+	return e.listenAddr, nil
+}
+
+// waitUntilReady blocks until the engine is ready or ctx is canceled.
+//
+// It returns an error if the engine has stopped, even if it was ready
+// beforehand.
+func (e *Engine) waitUntilReady(ctx context.Context) error {
+	if !e.stopped.IsSet() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-e.ready.Chan():
+			return nil
+		case <-e.stopped.Chan():
+			// fallthrough
+		}
+	}
+
+	return errors.New("engine is not running")
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for
@@ -543,10 +539,12 @@ func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[
 
 // component is an interface for subsystems that run within the engine and
 // manage their own lifecycle.
-//
-// A component never fails; it is responsible for recovering from its own
-// errors, typically by running its fallible parts under supervision.
 type component interface {
 	// Run executes the component until ctx is canceled.
-	Run(context.Context)
+	//
+	// A component is responsible for recovering from its own errors,
+	// typically by running its fallible parts under supervision. It returns
+	// an error only if it can not continue, in which case the engine stops.
+	// Returning nil before ctx is canceled is a programming error.
+	Run(context.Context) error
 }

@@ -41,8 +41,8 @@ func (c *Catalog) StreamIDs() (*uuidpb.Set, <-chan struct{}) {
 // Run discovers event streams until ctx is canceled.
 //
 // It must be called at most once.
-func (c *Catalog) Run(ctx context.Context) {
-	supervisor.Run(ctx, c.Logger, c.discover)
+func (c *Catalog) Run(ctx context.Context) error {
+	return supervisor.Run(ctx, c.Logger, c.discover)
 }
 
 // discover reads the set of event streams, then waits for a stream to be

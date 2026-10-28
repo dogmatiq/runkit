@@ -25,7 +25,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -63,7 +63,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -98,7 +98,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		scanner := &Contemporary{
 			DB:        db,
@@ -137,7 +137,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		scanner := &Contemporary{
 			DB:        db,
@@ -178,7 +178,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		first := xtesting.AppendToEventStream(
 			t,
@@ -228,7 +228,7 @@ func TestContemporary(t *testing.T) {
 		}
 		batches := make(chan Batch, 10)
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		scanner := &Contemporary{
 			DB:        db,
@@ -252,7 +252,7 @@ func TestContemporary(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		scanner := &Contemporary{
 			DB:        db,

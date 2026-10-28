@@ -2,6 +2,7 @@ package cluster_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestHeartbeater(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		heartbeats := make(chan string, 10)
 		defer signals.Subscribe("heartbeat", heartbeats)()
@@ -32,7 +33,7 @@ func TestHeartbeater(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, h.Run)
+		xtesting.GoE(t, h.Run)
 
 		// The first signal may be the listener starting, which carries no
 		// node ID; after that, every signal is a heartbeat from this node.
@@ -72,10 +73,14 @@ func TestHeartbeater(t *testing.T) {
 
 		// Run must not return until ctx is canceled, despite every attempt
 		// to send a heartbeat failing.
-		h.Run(ctx)
+		err := h.Run(ctx)
 
 		if ctx.Err() == nil {
 			t.Fatal("heartbeater stopped before context was canceled")
+		}
+
+		if !errors.Is(err, ctx.Err()) {
+			t.Fatalf("unexpected error: got %v, want %v", err, ctx.Err())
 		}
 	})
 }

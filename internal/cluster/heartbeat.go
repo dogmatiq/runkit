@@ -45,8 +45,8 @@ type Heartbeater struct {
 // ctx is canceled.
 //
 // It must be called at most once.
-func (h *Heartbeater) Run(ctx context.Context) {
-	supervisor.Run(ctx, h.Logger, h.run)
+func (h *Heartbeater) Run(ctx context.Context) error {
+	return supervisor.Run(ctx, h.Logger, h.run)
 }
 
 // run sends heartbeats until ctx is canceled or a signal can not be sent.

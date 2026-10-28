@@ -20,7 +20,7 @@ func TestListener(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 		waitForListener(t, db, listener)
 
 		a := make(chan string, 10)
@@ -46,7 +46,7 @@ func TestListener(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 		waitForListener(t, db, listener)
 
 		a := make(chan string, 10)
@@ -68,7 +68,7 @@ func TestListener(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 		waitForListener(t, db, listener)
 
 		ch := make(chan string, 10)
@@ -95,7 +95,7 @@ func TestListener(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 		waitForListener(t, db, listener)
 
 		ch := make(chan string, 10)
@@ -124,7 +124,7 @@ func TestListener(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 		waitForListener(t, db, listener)
 
 		ch := make(chan string, 1)
@@ -160,7 +160,7 @@ func TestListener(t *testing.T) {
 		defer listener.Subscribe("a", a)()
 		defer listener.Subscribe("a.b", b)()
 
-		xtesting.Go(t, listener.Run)
+		xtesting.GoE(t, listener.Run)
 
 		// Nothing is sent; the signal comes from the listener itself, as
 		// though it were on the subscribed topic, so that a subscriber that

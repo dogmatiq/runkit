@@ -39,8 +39,8 @@ type Compactor struct {
 // canceled.
 //
 // It must be called at most once.
-func (c *Compactor) Run(ctx context.Context) {
-	supervisor.Run(ctx, c.Logger, c.run)
+func (c *Compactor) Run(ctx context.Context) error {
+	return supervisor.Run(ctx, c.Logger, c.run)
 }
 
 // run attempts compaction until ctx is canceled or an attempt fails.
