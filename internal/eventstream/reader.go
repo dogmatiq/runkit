@@ -128,7 +128,7 @@ func (r *Reader) init() {
 // Run executes the reader until ctx is canceled.
 //
 // It must be called at most once; after it returns, Subscribe has no effect.
-func (r *Reader) Run(ctx context.Context) {
+func (r *Reader) Run(ctx context.Context) error {
 	if r.ContemporaryCacheSize <= 0 {
 		panic("cache size must be positive")
 	}
@@ -150,7 +150,7 @@ func (r *Reader) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case c := <-r.sub:
 			r.handleSubscribe(ctx, c)
 		case c := <-r.unsub:

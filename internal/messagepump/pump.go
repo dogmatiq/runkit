@@ -50,7 +50,7 @@ type deliveryTask struct {
 // Run runs the message pump until ctx is canceled.
 //
 // It must be called at most once.
-func (p *MessagePump) Run(ctx context.Context) {
+func (p *MessagePump) Run(ctx context.Context) error {
 	var group supervisor.Group
 	tasks := make(chan *deliveryTask)
 
@@ -65,6 +65,8 @@ func (p *MessagePump) Run(ctx context.Context) {
 	})
 
 	group.Wait()
+
+	return ctx.Err()
 }
 
 // runWorker handles the tasks sent by the dispatcher until ctx is canceled or

@@ -67,7 +67,7 @@ func TestMembershipObserver(t *testing.T) {
 			Logger:   logger,
 		}
 
-		return h.NodeID, xtesting.Go(t, h.Run)
+		return h.NodeID, xtesting.GoE(t, h.Run)
 	}
 
 	signals := &signal.Listener{
@@ -75,7 +75,7 @@ func TestMembershipObserver(t *testing.T) {
 		Logger: logger,
 	}
 
-	xtesting.Go(t, signals.Run)
+	xtesting.GoE(t, signals.Run)
 
 	observer := &MembershipObserver{
 		Signals:           signals,
@@ -84,7 +84,7 @@ func TestMembershipObserver(t *testing.T) {
 		Logger:            logger,
 	}
 
-	xtesting.Go(t, observer.Run)
+	xtesting.GoE(t, observer.Run)
 
 	// Start a subscription *before* there are any nodes.
 	subscription1 := make(chan MembershipChange)

@@ -82,8 +82,8 @@ func (l *Listener) Subscribe(topic string, ch chan<- string) func() {
 // Run executes the listener until ctx is canceled.
 //
 // It must be called at most once. Subscribe may be called before Run.
-func (l *Listener) Run(ctx context.Context) {
-	supervisor.Run(ctx, l.Logger, l.listen)
+func (l *Listener) Run(ctx context.Context) error {
+	return supervisor.Run(ctx, l.Logger, l.listen)
 }
 
 // listen holds a dedicated database connection with LISTEN active on the

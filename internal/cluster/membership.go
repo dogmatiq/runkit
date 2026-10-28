@@ -70,7 +70,7 @@ type membershipSubscriber struct {
 
 // Run listens for heartbeat signals and updates the set of live nodes until
 // ctx is canceled.
-func (o *MembershipObserver) Run(ctx context.Context) {
+func (o *MembershipObserver) Run(ctx context.Context) error {
 	o.init()
 	defer o.done.Set()
 
@@ -86,7 +86,7 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case sub := <-o.sub:
 			o.subscribe(ctx, sub)
 		case sub := <-o.unsub:

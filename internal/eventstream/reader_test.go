@@ -23,7 +23,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		historical := xtesting.AppendToEventStream(
 			t,
@@ -45,7 +45,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		batches := make(chan Batch, 10)
 		unsubscribe := reader.Subscribe(
@@ -84,7 +84,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
@@ -94,7 +94,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		types := uuidpb.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
@@ -131,7 +131,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
@@ -141,7 +141,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		types := uuidpb.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
@@ -174,7 +174,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		historical := xtesting.AppendToEventStream(
 			t,
@@ -195,7 +195,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		batches := make(chan Batch, 10)
 		unsubscribe := reader.Subscribe(
@@ -240,7 +240,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -263,7 +263,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   1,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		// The channel is unbuffered so that the consumer remains in the
 		// historical phase, blocked on delivery, until the test receives.
@@ -300,7 +300,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
@@ -310,7 +310,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		batches := make(chan Batch, 10)
 		unsubscribe := reader.Subscribe(
@@ -342,7 +342,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		// A tiny cache and a consumer channel that holds a single batch
 		// guarantee that the consumer falls behind and is bounced between the
@@ -355,7 +355,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   2,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		batches := make(chan Batch, 1)
 		unsubscribe := reader.Subscribe(
@@ -396,7 +396,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
@@ -406,7 +406,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   2,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		types := uuidpb.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
@@ -447,7 +447,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		reader := &Reader{
 			DB:                    db,
@@ -457,7 +457,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		xtesting.Go(t, reader.Run)
+		xtesting.GoE(t, reader.Run)
 
 		types := uuidpb.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
@@ -492,7 +492,7 @@ func TestReader(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		want := xtesting.AppendToEventStream(
 			t,
@@ -510,7 +510,7 @@ func TestReader(t *testing.T) {
 			HistoricalBatchSize:   10,
 		}
 
-		stop := xtesting.Go(t, reader.Run)
+		stop := xtesting.GoE(t, reader.Run)
 
 		types := uuidpb.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),

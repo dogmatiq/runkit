@@ -12,6 +12,32 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
+func TestRun(t *testing.T) {
+	t.Run("it returns a fatal error without retrying", func(t *testing.T) {
+		logger := spruce.NewTestLogger(t)
+
+		want := errors.New("<error>")
+		var calls atomic.Int32
+
+		err := Run(
+			t.Context(),
+			logger,
+			func(context.Context) error {
+				calls.Add(1)
+				return Fatal(want)
+			},
+		)
+
+		if err != want {
+			t.Fatalf("unexpected error: got %v, want %v", err, want)
+		}
+
+		if got := calls.Load(); got != 1 {
+			t.Fatalf("unexpected number of calls: got %d, want 1", got)
+		}
+	})
+}
+
 func TestGroup(t *testing.T) {
 	t.Run("it finishes when fn succeeds", func(t *testing.T) {
 		logger := spruce.NewTestLogger(t)

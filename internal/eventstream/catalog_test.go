@@ -22,7 +22,7 @@ func TestCatalog(t *testing.T) {
 			Logger: logger,
 		}
 
-		xtesting.Go(t, signals.Run)
+		xtesting.GoE(t, signals.Run)
 
 		catalog := &Catalog{
 			DB:      db,
@@ -38,7 +38,7 @@ func TestCatalog(t *testing.T) {
 
 		want := xtesting.CreateEventStreams(t, db, 3)
 
-		xtesting.Go(t, catalog.Run)
+		xtesting.GoE(t, catalog.Run)
 
 		expectStreamIDs(t, catalog, want...)
 	})
@@ -46,7 +46,7 @@ func TestCatalog(t *testing.T) {
 	t.Run("it reports newly created streams", func(t *testing.T) {
 		db, catalog := setup(t)
 
-		xtesting.Go(t, catalog.Run)
+		xtesting.GoE(t, catalog.Run)
 
 		first := xtesting.CreateEventStream(t, db)
 		expectStreamIDs(t, catalog, first)
@@ -58,7 +58,7 @@ func TestCatalog(t *testing.T) {
 	t.Run("it does not report a change when no streams are created", func(t *testing.T) {
 		db, catalog := setup(t)
 
-		xtesting.Go(t, catalog.Run)
+		xtesting.GoE(t, catalog.Run)
 
 		want := xtesting.CreateEventStream(t, db)
 		expectStreamIDs(t, catalog, want)
