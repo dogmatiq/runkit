@@ -53,6 +53,7 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want,
 				Checkpoint: 3,
 			},
@@ -107,14 +108,17 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[0:2],
 				Checkpoint: 2,
 			},
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[2:4],
 				Checkpoint: 4,
 			},
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[4:5],
 				Checkpoint: 5,
 			},
@@ -167,6 +171,7 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[1:],
 				Checkpoint: 3,
 			},
@@ -218,6 +223,7 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  []*envelopepb.Envelope{all[0], all[2]},
 				Checkpoint: 4,
 			},
@@ -269,6 +275,7 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Checkpoint: 2,
 			},
 		)
@@ -402,6 +409,7 @@ func TestHistorical(t *testing.T) {
 			"batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want,
 				Checkpoint: 3,
 			},
@@ -496,6 +504,7 @@ func TestHistorical(t *testing.T) {
 			"first batch",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[0:1],
 				Checkpoint: 1,
 			},
@@ -516,10 +525,12 @@ func TestHistorical(t *testing.T) {
 			"remaining batches",
 			batches,
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[1:2],
 				Checkpoint: 2,
 			},
 			Batch{
+				StreamID:   streamID,
 				Envelopes:  want[2:3],
 				Checkpoint: 3,
 			},

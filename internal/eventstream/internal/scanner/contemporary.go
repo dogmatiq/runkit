@@ -8,12 +8,16 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/notification"
-	"github.com/dogmatiq/runkit/internal/ringbuffer"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Contemporary reads contemporary (near real-time) events from a specific
-// event stream and delivers them to consumers.
+// Contemporary reads contemporary (near real-time) events from a specific event
+// stream as they are appended, and sends them to a channel in batches.
+//
+// The events within and across batches are contiguous: each batch begins at the
+// offset immediately after the previous batch's checkpoint, except when the
+// scanner has restarted. The offset of a batch's first event is therefore its
+// checkpoint less the number of events it contains.
 type Contemporary struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
@@ -25,56 +29,47 @@ type Contemporary struct {
 	// StreamID is the ID of the event stream being read.
 	StreamID *uuidpb.UUID
 
-	// Subscribe and Unsubscribe are channels on which consumers are sent to
-	// register and unregister their interest in contemporary events.
-	Subscribe, Unsubscribe chan *Consumer
+	// Batches is the channel on which batches of events are sent as they are
+	// read.
+	Batches chan<- Batch
 
-	// Desynced is a channel on which consumers are sent when they have
-	// desynchronized from the tail of the stream. Such consumers must read
-	// historical events until they resynchronize.
-	Desynced chan<- *Consumer
-
-	// CacheSize is the maximum number of recent events to keep in the in-memory
-	// cache. Any events that don't fit in the cache are considered historical.
-	// It must be positive.
-	CacheSize int
-
-	// cache holds the most recent events up to the configured CacheSize.
-	cache *ringbuffer.Ring[*envelopepb.Envelope]
-
-	// [begin, end) is a half-open interval representing the range of stream
-	// offsets currently held in the cache.
-	begin, end uint64
-
-	// consumers is the set of currently registered consumers.
-	consumers map[*Consumer]struct{}
+	// BatchSize is the maximum number of events read per query. It must be
+	// positive.
+	//
+	// Each time Run is called, reading begins BatchSize events before the end
+	// of the stream, so that the most recent BatchSize events are sent first.
+	BatchSize int
 }
 
-// Run executes the scanner until ctx is canceled or an error occurs.
+// Run reads events from the stream and sends them to s.Batches until ctx is
+// canceled or an error occurs.
 //
-// Consumers are retained across subsequent calls. Run must not be called
-// concurrently.
+// If Run returns an error it may be called again. It holds no state between
+// calls; each call begins reading relative to the end of the stream at that
+// time, so the first batch it sends is not necessarily contiguous with the last
+// batch sent by the previous call. Run must not be called concurrently.
 func (s *Contemporary) Run(ctx context.Context) error {
+	if s.BatchSize <= 0 {
+		panic("batch size must be positive")
+	}
+
 	// Subscribe to notifications about new events _before_ reading the current
 	// state of the stream. This ensures that no events are missed between the
-	// time we read the checkpoint and the time we start catching up.
+	// time we read the stream's next offset and the time we start reading.
 	appended := make(chan string, 1)
 	topic := "eventstream.append." + s.StreamID.AsString()
 	unsubscribe := s.Notifications.SubscribeLossy(topic, appended)
 	defer unsubscribe()
 
-	// Load the checkpoint from which to start reading events.
-	checkpoint, err := s.loadCheckpoint(ctx)
+	next, err := s.loadStartOffset(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Initialize the cache.
-	s.cache = ringbuffer.New[*envelopepb.Envelope](s.CacheSize)
-	s.begin = checkpoint
-	s.end = checkpoint
-
-	if err := s.catchUp(ctx); err != nil {
+	// The first read always produces a batch, even if the stream is empty, so
+	// that the stream's position is reported even when there are no events.
+	next, err = s.catchUp(ctx, next, true)
+	if err != nil {
 		return err
 	}
 
@@ -82,26 +77,20 @@ func (s *Contemporary) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-
 		case <-appended:
-			if err := s.catchUp(ctx); err != nil {
-				return err
-			}
+		}
 
-		case c := <-s.Subscribe:
-			if err := s.subscribe(ctx, c); err != nil {
-				return err
-			}
-
-		case c := <-s.Unsubscribe:
-			delete(s.consumers, c)
+		next, err = s.catchUp(ctx, next, false)
+		if err != nil {
+			return err
 		}
 	}
 }
 
-// loadCheckpoint returns the checkpoint at which the scanner should start
-// reading events, taking into account the cache size.
-func (s *Contemporary) loadCheckpoint(ctx context.Context) (uint64, error) {
+// loadStartOffset returns the offset from which reading begins, which is
+// s.BatchSize events before the end of the stream, or the beginning of the
+// stream if it is shorter than that.
+func (s *Contemporary) loadStartOffset(ctx context.Context) (uint64, error) {
 	row := s.DB.QueryRowContext(
 		ctx,
 		`SELECT next_offset
@@ -110,63 +99,56 @@ func (s *Contemporary) loadCheckpoint(ctx context.Context) (uint64, error) {
 		xsql.UUID(s.StreamID),
 	)
 
-	var checkpoint uint64
-	if err := row.Scan(&checkpoint); err != nil {
-		return 0, fmt.Errorf("failed to scan next stream offset: %w", err)
+	var next uint64
+	if err := row.Scan(&next); err != nil {
+		return 0, fmt.Errorf("unable to scan next stream offset: %w", err)
 	}
 
-	if checkpoint > uint64(s.CacheSize) {
-		// We have more events than the cache can hold, so start reading from
-		// the point where the cache would be full.
-		checkpoint -= uint64(s.CacheSize)
-	} else {
-		// We have fewer events than the cache can hold, so start reading from
-		// the beginning of the stream.
-		checkpoint = 0
+	if next > uint64(s.BatchSize) {
+		return next - uint64(s.BatchSize), nil
 	}
 
-	return checkpoint, nil
+	return 0, nil
 }
 
-// catchUp reads events from the end of the cache until the end of the stream,
-// caching each batch and synchronizing consumers as it goes.
-func (s *Contemporary) catchUp(ctx context.Context) error {
+// catchUp reads events from the given offset until the end of the stream,
+// sending each batch to s.Batches. It returns the offset from which to resume.
+//
+// If first is true, a batch is sent even if there are no events to read.
+func (s *Contemporary) catchUp(ctx context.Context, next uint64, first bool) (uint64, error) {
 	for {
-		envelopes, err := s.readBatch(ctx)
+		envelopes, err := s.readBatch(ctx, next)
 		if err != nil {
-			return err
+			return 0, err
 		}
 
-		if len(envelopes) == 0 {
-			return nil
+		if len(envelopes) == 0 && !first {
+			return next, nil
 		}
 
-		for _, env := range envelopes {
-			s.cache.Push(env)
+		first = false
+		next += uint64(len(envelopes))
+
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case s.Batches <- Batch{
+			StreamID:   s.StreamID,
+			Envelopes:  envelopes,
+			Checkpoint: next,
+		}:
 		}
 
-		// The scanner caches every event type, so the batch is contiguous and
-		// the end of the cache advances by exactly the number of events read.
-		// The beginning is derived from the cache length so that it is correct
-		// both before and after the ring buffer wraps.
-		s.end += uint64(len(envelopes))
-		s.begin = s.end - uint64(s.cache.Len())
-
-		if err := s.syncAll(ctx); err != nil {
-			return err
-		}
-
-		// The batch does not completely fill the cache, meaning there are no
-		// more events on the stream at this time.
-		if len(envelopes) < s.CacheSize {
-			return nil
+		// A partial batch means there are no more events on the stream at this
+		// time.
+		if len(envelopes) < s.BatchSize {
+			return next, nil
 		}
 	}
 }
 
-// readBatch returns up to s.CacheSize events starting at the next event after
-// the end of the cache.
-func (s *Contemporary) readBatch(ctx context.Context) ([]*envelopepb.Envelope, error) {
+// readBatch returns up to s.BatchSize events starting at the given offset.
+func (s *Contemporary) readBatch(ctx context.Context, offset uint64) ([]*envelopepb.Envelope, error) {
 	rows, err := s.DB.QueryContext(
 		ctx,
 		`SELECT
@@ -178,8 +160,8 @@ func (s *Contemporary) readBatch(ctx context.Context) ([]*envelopepb.Envelope, e
 		ORDER BY stream_offset
 		LIMIT $3`,
 		xsql.UUID(s.StreamID),
-		s.end,
-		s.CacheSize,
+		offset,
+		s.BatchSize,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to query events: %w", err)
@@ -217,96 +199,4 @@ func (s *Contemporary) readBatch(ctx context.Context) ([]*envelopepb.Envelope, e
 	}
 
 	return envelopes, nil
-}
-
-// subscribe synchronizes a new consumer with the current state of the cache,
-// and registers it to receive future events.
-func (s *Contemporary) subscribe(ctx context.Context, c *Consumer) error {
-	if c.Gone.IsSet() {
-		// The consumer unsubscribed while it was being handed to this scanner.
-		return nil
-	}
-
-	if s.consumers == nil {
-		s.consumers = map[*Consumer]struct{}{}
-	}
-
-	s.consumers[c] = struct{}{}
-
-	return s.syncOne(ctx, c)
-}
-
-// syncOne synchronizes the given consumer with the current state of the cache.
-//
-// All cached events at or after the consumer's checkpoint that are of a type it
-// is interested in are delivered in a single batch, after which the consumer's
-// checkpoint is the end of the cache.
-func (s *Contemporary) syncOne(ctx context.Context, c *Consumer) error {
-	checkpoint := c.Checkpoint.Load()
-
-	if checkpoint < s.begin {
-		// The consumer expects an offset that is no longer in the cache.
-		return s.desync(ctx, c)
-	}
-
-	if checkpoint >= s.end {
-		// The consumer is already caught up with the cache.
-		//
-		// The consumer may be beyond the end of the cache, if it happened to
-		// see a new event on the stream before this scanner sees that event.
-		return nil
-	}
-
-	batch := Batch{
-		Checkpoint: s.end,
-	}
-
-	idx := int(checkpoint - s.begin)
-
-	for _, env := range s.cache.Slice(idx, s.cache.Len()) {
-		typeID := env.GetBody().GetMessage().GetTypeId()
-
-		if c.MessageTypes.Has(typeID) {
-			batch.Envelopes = append(batch.Envelopes, env)
-		}
-	}
-
-	// The batch is delivered even if it contains no events, so that the
-	// consumer's checkpoint advances past events of irrelevant types.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.Gone.Chan():
-		delete(s.consumers, c)
-		return nil
-	case c.Batches <- batch:
-		c.Checkpoint.Store(batch.Checkpoint)
-		return nil
-	default:
-		// The consumer is not keeping up with the stream.
-		return s.desync(ctx, c)
-	}
-}
-
-// syncAll synchronizes all consumers with the current state of the cache.
-func (s *Contemporary) syncAll(ctx context.Context) error {
-	for c := range s.consumers {
-		if err := s.syncOne(ctx, c); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// desync removes the given consumer from the scanner and sends it to the
-// s.Desynced channel.
-func (s *Contemporary) desync(ctx context.Context, c *Consumer) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case s.Desynced <- c:
-		delete(s.consumers, c)
-		return nil
-	}
 }

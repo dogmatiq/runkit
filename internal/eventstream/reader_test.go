@@ -31,11 +31,14 @@ func TestReader(t *testing.T) {
 			EventE3,
 		)
 
+		// A cache size of one means the consumer, which starts at the beginning
+		// of the stream, is behind the cache and so reads historical events
+		// before catching up.
 		reader := &Reader{
 			DB:                    db,
 			Notifications:         notifications,
 			Logger:                logger,
-			ContemporaryCacheSize: 10,
+			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   10,
 		}
 
@@ -169,11 +172,14 @@ func TestReader(t *testing.T) {
 			EventX1,
 		)
 
+		// A cache size of one means the consumer, which starts at the beginning
+		// of the stream, is behind the cache and so reads historical events
+		// before catching up.
 		reader := &Reader{
 			DB:                    db,
 			Notifications:         notifications,
 			Logger:                logger,
-			ContemporaryCacheSize: 10,
+			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   10,
 		}
 
@@ -230,13 +236,15 @@ func TestReader(t *testing.T) {
 			EventE3,
 		)
 
-		// A historical batch size of one means each event is delivered in its
+		// A cache size of one means the consumer, which starts at the beginning
+		// of the stream, is behind the cache and so reads historical events. A
+		// historical batch size of one means each event is delivered in its
 		// own batch.
 		reader := &Reader{
 			DB:                    db,
 			Notifications:         notifications,
 			Logger:                logger,
-			ContemporaryCacheSize: 10,
+			ContemporaryCacheSize: 1,
 			HistoricalBatchSize:   1,
 		}
 
@@ -471,15 +479,14 @@ func TestReader(t *testing.T) {
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 
-		// This consumer catches up immediately and moves to the contemporary
-		// phase.
+		// This consumer is served from the cache.
 		contemporary := make(chan Batch, 10)
 		reader.Subscribe(streamID, 0, types, contemporary)
 
 		expectToReceiveEnvelopes(t, contemporary, want...)
 
-		// This consumer never receives, so it remains blocked in the
-		// historical phase.
+		// This consumer never receives, so it is returned to reading
+		// historical events, where it remains blocked on delivery.
 		historical := make(chan Batch)
 		reader.Subscribe(streamID, 0, types, historical)
 
