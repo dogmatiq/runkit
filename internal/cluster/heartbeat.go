@@ -8,6 +8,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 )
 
 const (
@@ -38,7 +39,14 @@ type Heartbeater struct {
 
 // Run sends a heartbeat signal immediately and on every interval tick until
 // ctx is canceled.
+//
+// It must be called at most once.
 func (h *Heartbeater) Run(ctx context.Context) {
+	supervisor.Run(ctx, h.Logger, h.run)
+}
+
+// run sends heartbeats until ctx is canceled or a signal can not be sent.
+func (h *Heartbeater) run(ctx context.Context) error {
 	ticker := time.NewTicker(HeartbeatInterval)
 	defer ticker.Stop()
 
@@ -46,20 +54,12 @@ func (h *Heartbeater) Run(ctx context.Context) {
 
 	for {
 		if err := signal.Notify(ctx, h.DB, topic); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			h.Logger.ErrorContext(
-				ctx,
-				"unable to send heartbeat signal",
-				slog.String("error", err.Error()),
-			)
+			return err
 		}
 
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}

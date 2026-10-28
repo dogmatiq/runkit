@@ -57,8 +57,8 @@ func TestMembershipObserver(t *testing.T) {
 	startNode := func() (*uuidpb.UUID, func()) {
 		h := &Heartbeater{
 			DB:     db,
-			Logger: logger,
 			NodeID: uuidpb.Generate(),
+			Logger: logger,
 		}
 
 		return h.NodeID, xtesting.Go(t, h.Run)
