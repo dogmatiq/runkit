@@ -26,7 +26,7 @@ type Catalog struct {
 	Signals *signal.Listener
 
 	// Logger is the target for log messages produced by the catalog and the
-	// supervisor of the discovery session it starts.
+	// supervisor of its discovery.
 	Logger *slog.Logger
 
 	once       sync.Once
@@ -182,12 +182,8 @@ func (c *Catalog) unicast(
 	}
 }
 
-// discover is the catalog's supervised session.
-//
-// It reads the set of event streams and sends it on c.discovered, then waits
-// for a stream to be created and reads it again. It is restartable: it holds
-// no state, and touches nothing owned by the catalog's loop other than
-// c.discovered.
+// discover reads the set of event streams and sends it on c.discovered, then
+// waits for a stream to be created and reads it again.
 func (c *Catalog) discover(ctx context.Context) error {
 	// Subscribe to signals about new streams _before_ querying, so that a
 	// stream created between the query and the subscription is not missed.

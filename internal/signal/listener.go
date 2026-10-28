@@ -86,12 +86,8 @@ func (l *Listener) Run(ctx context.Context) {
 	supervisor.Run(ctx, l.Logger, l.listen)
 }
 
-// listen is the listener's supervised session.
-//
-// It holds a dedicated database connection with LISTEN active on the signal
-// channel, and dispatches each notification it receives. It is restartable: it
-// holds no state, and the set of subscribers is unaffected by the connection
-// being lost.
+// listen holds a dedicated database connection with LISTEN active on the
+// signal channel, and dispatches each notification it receives.
 //
 // Signals sent before LISTEN is active are never received, so once it is, every
 // subscriber is signaled as though a signal had arrived on its own topic. This
