@@ -7,24 +7,37 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // MessagePump is a helper for implementing a message pump that acquires and
 // handles deliveries concurrently.
 type MessagePump struct {
-	Driver                  Driver
-	DB                      *sql.DB
-	Workers                 int
-	PollInterval            time.Duration
+	// Driver acquires and handles deliveries.
+	Driver Driver
+
+	// DB is the database connection used to acquire and handle deliveries.
+	DB *sql.DB
+
+	// Workers is the number of deliveries that are handled concurrently.
+	Workers int
+
+	// PollInterval is the time to wait before checking for pending deliveries
+	// again when there are none.
+	PollInterval time.Duration
+
+	// BackoffBase and BackoffCap bound the delay before a delivery that could
+	// not be handled is attempted again.
 	BackoffBase, BackoffCap time.Duration
-	Logger                  *slog.Logger
+
+	// Logger is the target for log messages produced by the pump and the
+	// supervisors of the dispatcher and workers it starts.
+	Logger *slog.Logger
 }
 
 type deliveryTask struct {
@@ -35,99 +48,72 @@ type deliveryTask struct {
 }
 
 // Run runs the message pump until ctx is canceled.
+//
+// It must be called at most once.
 func (p *MessagePump) Run(ctx context.Context) {
-	var (
-		group sync.WaitGroup
-		tasks = make(chan *deliveryTask)
-	)
+	var group supervisor.Group
+	tasks := make(chan *deliveryTask)
 
 	for range max(1, p.Workers) {
-		group.Go(func() {
-			p.runWorker(ctx, tasks)
+		group.Go(ctx, p.Logger, func(ctx context.Context) error {
+			return p.runWorker(ctx, tasks)
 		})
 	}
 
-	group.Go(func() {
-		p.runDispatcher(ctx, tasks)
+	group.Go(ctx, p.Logger, func(ctx context.Context) error {
+		return p.runDispatcher(ctx, tasks)
 	})
 
 	group.Wait()
 }
 
-// runWorker consumes tasks from the dispatcher and hands each to [doHandle].
+// runWorker handles the tasks sent by the dispatcher until ctx is canceled or
+// a delivery can not be handled.
 //
-// It exits when tasks is closed by the dispatcher, or when ctx is canceled
-// mid-handling.
-func (p *MessagePump) runWorker(ctx context.Context, tasks <-chan *deliveryTask) {
-	for task := range tasks {
-		if err := p.doHandle(ctx, task); err != nil {
-			if ctx.Err() != nil {
-				return
+// A delivery that fails or is contended is postponed, which is not a failure
+// of the worker; see [doHandle].
+func (p *MessagePump) runWorker(ctx context.Context, tasks <-chan *deliveryTask) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case task := <-tasks:
+			if err := p.doHandle(ctx, task); err != nil {
+				return fmt.Errorf("unable to deliver message: %w", err)
 			}
-
-			xsql.PanicOnDeadlock(err)
-
-			task.Logger.ErrorContext(
-				ctx,
-				"unable to deliver message",
-				xslog.Error(err),
-			)
 		}
 	}
 }
 
-// runDispatcher acquires deliveries and sends them to workers via tasks. It
-// closes tasks on exit.
-func (p *MessagePump) runDispatcher(ctx context.Context, tasks chan<- *deliveryTask) {
-	defer close(tasks)
-
-	var failures uint64
-
+// runDispatcher acquires deliveries and sends them to workers via tasks until
+// ctx is canceled or a delivery can not be acquired.
+func (p *MessagePump) runDispatcher(ctx context.Context, tasks chan<- *deliveryTask) error {
 	for {
-		delay := p.PollInterval
-
 		task, ok, err := p.doAcquireTask(ctx)
-
 		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			failures++
-			delay = p.computeBackoff(failures)
-
-			p.Logger.ErrorContext(
-				ctx,
-				"unable to acquire message for delivery",
-				xslog.Error(err),
-				slog.Uint64("attempt", failures),
-				slog.Duration("delay", delay),
-			)
-		} else {
-			failures = 0
+			return err
 		}
 
-		if ok {
-			task.Logger.DebugContext(
-				ctx,
-				"acquired message for delivery",
-			)
-
+		if !ok {
 			select {
 			case <-ctx.Done():
-				task.Tx.Rollback()
-				return
-			case tasks <- task:
-				// Set delay to zero so that we poll again immediately after
-				// successful task dispatch.
-				delay = 0
+				return ctx.Err()
+			case <-time.After(p.PollInterval):
 			}
+
+			continue
 		}
+
+		task.Logger.DebugContext(
+			ctx,
+			"acquired message for delivery",
+		)
 
 		select {
 		case <-ctx.Done():
-			return
-		case <-time.After(delay):
+			task.Tx.Rollback()
+			return ctx.Err()
+		case tasks <- task:
 		}
 	}
 }
