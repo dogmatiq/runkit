@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
@@ -15,8 +14,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Catalog tracks the set of event streams and notifies subscribers as new
-// streams become available.
+// Catalog tracks the set of available event streams.
 type Catalog struct {
 	// DB is the database connection used to discover event streams.
 	DB *sql.DB
@@ -25,165 +23,30 @@ type Catalog struct {
 	// been created.
 	Signals *signal.Listener
 
-	// Logger is the target for log messages produced by the catalog and the
-	// supervisor of its discovery.
+	// Logger is the target for log messages produced by the catalog.
 	Logger *slog.Logger
 
-	once       sync.Once
-	sub, unsub chan *catalogSubscriber
-	done       xsync.Latch
-
-	group       supervisor.Group
-	discovered  chan *uuidpb.Set
-	streamIDs   uuidpb.Set
-	subscribers map[*catalogSubscriber]struct{}
+	streamIDs xsync.Observable[*uuidpb.Set]
 }
 
-// catalogSubscriber encapsulates the state of a single subscriber to
-// notifications about new event streams.
-type catalogSubscriber struct {
-	StreamIDs    chan<- *uuidpb.UUID
-	Unsubscribed xsync.Latch
-}
-
-// Subscribe registers ch to receive the ID of each event stream as it becomes
-// available, beginning with those that already exist.
+// StreamIDs returns the IDs of the known event streams, and a channel that is
+// closed when more streams become known.
 //
-// It returns a function that unsubscribes.
-func (c *Catalog) Subscribe(ch chan<- *uuidpb.UUID) func() {
-	c.init()
-
-	sub := &catalogSubscriber{
-		StreamIDs: ch,
-	}
-
-	select {
-	case <-c.done.Chan():
-	case c.sub <- sub:
-	}
-
-	var once sync.Once
-
-	return func() {
-		once.Do(func() {
-			sub.Unsubscribed.Set()
-
-			select {
-			case <-c.done.Chan():
-			case c.unsub <- sub:
-			}
-		})
-	}
+// Streams are never removed, so each set is a superset of the sets returned
+// before it. The returned set must not be modified.
+func (c *Catalog) StreamIDs() (*uuidpb.Set, <-chan struct{}) {
+	return c.streamIDs.Load()
 }
 
-func (c *Catalog) init() {
-	c.once.Do(func() {
-		c.sub = make(chan *catalogSubscriber)
-		c.unsub = make(chan *catalogSubscriber)
-		c.subscribers = map[*catalogSubscriber]struct{}{}
-	})
-}
-
-// Run executes the catalog until ctx is canceled.
+// Run discovers event streams until ctx is canceled.
 //
-// Run must be called at most once; after it returns, Subscribe has no effect.
+// It must be called at most once.
 func (c *Catalog) Run(ctx context.Context) {
-	c.init()
-	defer func() {
-		c.done.Set()
-		c.group.Wait()
-	}()
-
-	c.discovered = make(chan *uuidpb.Set)
-	c.group.Go(ctx, c.Logger, c.discover)
-
-	for ctx.Err() == nil {
-		c.tick(ctx)
-	}
+	supervisor.Run(ctx, c.Logger, c.discover)
 }
 
-// tick waits for the next request or discovery result and handles it, or
-// returns when ctx is canceled.
-func (c *Catalog) tick(ctx context.Context) {
-	select {
-	case <-ctx.Done():
-	case streamIDs := <-c.discovered:
-		c.handleDiscovered(ctx, streamIDs)
-	case sub := <-c.sub:
-		c.handleSubscribe(ctx, sub)
-	case sub := <-c.unsub:
-		delete(c.subscribers, sub)
-	}
-}
-
-// handleDiscovered handles the result of a discovery query by notifying
-// subscribers of any streams that were not previously known.
-//
-// Streams are never removed, so the known set only ever grows.
-func (c *Catalog) handleDiscovered(ctx context.Context, streamIDs *uuidpb.Set) {
-	for streamID := range streamIDs.All() {
-		if c.streamIDs.Has(streamID) {
-			continue
-		}
-
-		c.streamIDs.Add(streamID)
-
-		c.Logger.DebugContext(
-			ctx,
-			"event stream discovered",
-			xslog.UUID("stream_id", streamID),
-		)
-
-		c.broadcast(ctx, streamID)
-	}
-}
-
-// handleSubscribe registers a new subscriber and sends it the ID of every
-// known event stream.
-func (c *Catalog) handleSubscribe(ctx context.Context, sub *catalogSubscriber) {
-	c.subscribers[sub] = struct{}{}
-
-	for streamID := range c.streamIDs.All() {
-		if !c.unicast(ctx, sub, streamID) {
-			return
-		}
-	}
-}
-
-// broadcast sends a stream ID to every subscriber.
-func (c *Catalog) broadcast(ctx context.Context, streamID *uuidpb.UUID) {
-	var group sync.WaitGroup
-
-	for sub := range c.subscribers {
-		group.Go(func() {
-			c.unicast(ctx, sub, streamID)
-		})
-	}
-
-	group.Wait()
-}
-
-// unicast sends a stream ID to a single subscriber.
-//
-// It returns false if the subscriber can no longer receive, either because it
-// has unsubscribed or because ctx is canceled.
-func (c *Catalog) unicast(
-	ctx context.Context,
-	sub *catalogSubscriber,
-	streamID *uuidpb.UUID,
-) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-sub.Unsubscribed.Chan():
-		return false
-	case sub.StreamIDs <- streamID:
-		return true
-	}
-}
-
-// discover reads the set of event streams and sends it on c.discovered, then
-// waits for a stream to be created and reads it again.
+// discover reads the set of event streams, then waits for a stream to be
+// created and reads it again.
 func (c *Catalog) discover(ctx context.Context) error {
 	// Subscribe to signals about new streams _before_ querying, so that a
 	// stream created between the query and the subscription is not missed.
@@ -200,10 +63,20 @@ func (c *Catalog) discover(ctx context.Context) error {
 			return err
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case c.discovered <- streamIDs:
+		// Streams are never removed, so the set has changed if and only if
+		// its size has.
+		known, _ := c.streamIDs.Load()
+
+		if streamIDs.Len() != known.Len() {
+			for streamID := range streamIDs.Diff(known).All() {
+				c.Logger.DebugContext(
+					ctx,
+					"event stream discovered",
+					xslog.UUID("stream_id", streamID),
+				)
+			}
+
+			c.streamIDs.Store(streamIDs)
 		}
 
 		select {

@@ -122,7 +122,7 @@ implementation is an adapter over what exists; no new reading code.
   }
   ```
 
-- [ ] **Step 2: Local implementation** delegating to `Catalog.Subscribe` and
+- [ ] **Step 2: Local implementation** delegating to `Catalog.StreamIDs` and
       `Reader.Subscribe`.
 - [ ] **Step 3: Test + commit.**
 

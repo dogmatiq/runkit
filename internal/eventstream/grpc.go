@@ -48,16 +48,14 @@ func (s *ConsumerAPI) ListEventStreams(
 	_ *messaginggrpc.ListEventStreamsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
 ) error {
-	streamIDs := make(chan *uuidpb.UUID)
-	unsubscribe := s.Catalog.Subscribe(streamIDs)
-	defer unsubscribe()
+	ctx := res.Context()
+	var sent uuidpb.Set
 
 	for {
-		select {
-		case <-res.Context().Done():
-			return res.Context().Err()
-		case id := <-streamIDs:
-			stream, err := s.loadEventStream(res.Context(), id)
+		streamIDs, changed := s.Catalog.StreamIDs()
+
+		for id := range streamIDs.Diff(&sent).All() {
+			stream, err := s.loadEventStream(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -69,6 +67,14 @@ func (s *ConsumerAPI) ListEventStreams(
 			if err := res.Send(response); err != nil {
 				return fmt.Errorf("unable to send response: %w", err)
 			}
+
+			sent.Add(id)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
 		}
 	}
 }
