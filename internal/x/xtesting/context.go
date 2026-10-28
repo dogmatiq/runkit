@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// ContextWithManualDeadline returns a context that has a deadline, but which is
-// only reached when the returned function is called.
+// ContextWithManualDeadline returns a context that has a deadline, and a
+// function that makes the context behave as though that deadline had just
+// passed. The deadline is never reached otherwise.
 //
 // It allows a test to verify the behavior of an operation when its deadline
 // passes, without depending on the wall clock.
