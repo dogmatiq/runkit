@@ -201,6 +201,15 @@ func (r *Reader) handleUnsubscribe(ctx context.Context, c *scanner.Consumer) {
 // handleSynced handles a consumer that has caught up to the tail of its stream
 // by reading historical events, and returns it to being served from the cache.
 func (r *Reader) handleSynced(ctx context.Context, c *scanner.Consumer) {
+	// Gone is set before an unsubscription is sent to the reader. If it is set
+	// here, the unsubscription has either already been handled, in which case
+	// the consumer must not be re-added, or is still pending, in which case
+	// adding it would be immediately undone. If it is not set, the
+	// unsubscription is yet to come and will remove the consumer.
+	if c.Gone.IsSet() {
+		return
+	}
+
 	r.Logger.DebugContext(
 		ctx,
 		"consumer synchronized with stream",

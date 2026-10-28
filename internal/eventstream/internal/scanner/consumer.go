@@ -36,8 +36,7 @@ type Consumer struct {
 	Batches chan<- Batch
 
 	// Gone is a latch that is set when the consumer no longer expects to
-	// receive events. It is used as a signal to abort writes to the batches
-	// channel that would otherwise never unblock.
+	// receive events. A scanner serving the consumer stops when it is set.
 	Gone xsync.Latch
 }
 

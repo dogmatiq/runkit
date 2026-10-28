@@ -281,6 +281,13 @@ func TestReader(t *testing.T) {
 
 		unsubscribe()
 
+		// Delivery is asynchronous, so the batch that was being read when the
+		// consumer unsubscribed may still arrive. Nothing after it may.
+		select {
+		case <-batches:
+		case <-time.After(100 * time.Millisecond):
+		}
+
 		expectNoBatches(t, batches)
 	})
 

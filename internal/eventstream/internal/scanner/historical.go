@@ -50,6 +50,31 @@ func (s *Historical) Run(ctx context.Context) error {
 		panic("batch size must be positive")
 	}
 
+	// Stop as soon as the consumer is gone, even if a query is in progress.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-s.Consumer.Gone.Chan():
+			cancel()
+		}
+	}()
+
+	err := s.run(ctx)
+
+	// The consumer being gone is not a failure; there is simply nothing left
+	// to do. Reporting an error would cause the scanner to be restarted.
+	if s.Consumer.Gone.IsSet() {
+		return nil
+	}
+
+	return err
+}
+
+// run delivers batches until the consumer catches up, as described by [Run].
+func (s *Historical) run(ctx context.Context) error {
 	query := s.buildQuery()
 
 	for {
@@ -64,8 +89,6 @@ func (s *Historical) Run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-s.Consumer.Gone.Chan():
-				return nil
 			case s.Consumer.Batches <- batch:
 			}
 
