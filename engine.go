@@ -544,6 +544,9 @@ func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[
 
 // component is an interface for subsystems that run within the engine and
 // manage their own lifecycle.
+//
+// A component never fails; it is responsible for recovering from its own
+// errors, typically by running its fallible parts under supervision.
 type component interface {
 	// Run executes the component until ctx is canceled.
 	Run(context.Context)
