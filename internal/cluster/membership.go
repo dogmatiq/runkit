@@ -19,13 +19,22 @@ const heartbeatBufferSize = 64
 // MembershipObserver listens for heartbeat signals from other nodes in the
 // cluster to build a view of the live nodes.
 //
-// Heartbeat delivery is lossy. A node is only removed from the view after
-// [HeartbeatTimeout] without a heartbeat, which spans several heartbeats, so
-// dropped heartbeats are tolerated.
+// Heartbeat delivery is lossy. A node is only removed from the view after the
+// heartbeat timeout, which spans several heartbeats, so dropped heartbeats are
+// tolerated.
 type MembershipObserver struct {
 	// Signals is the listener used to receive heartbeat signals from other
 	// nodes.
 	Signals *signal.Listener
+
+	// HeartbeatInterval is the time between the heartbeats sent by each node.
+	// If it is zero, [DefaultHeartbeatInterval] is used.
+	HeartbeatInterval time.Duration
+
+	// HeartbeatTimeout is the amount of time a node can go without sending a
+	// heartbeat before it is considered offline. If it is zero,
+	// [DefaultHeartbeatTimeout] is used.
+	HeartbeatTimeout time.Duration
 
 	// Logger is the target for log messages produced by the observer.
 	Logger *slog.Logger
@@ -69,6 +78,11 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 	unsubscribe := o.Signals.Subscribe(heartbeatTopic, heartbeats)
 	defer unsubscribe()
 
+	interval := o.HeartbeatInterval
+	if interval == 0 {
+		interval = DefaultHeartbeatInterval
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,7 +97,7 @@ func (o *MembershipObserver) Run(ctx context.Context) {
 			if nodeID != "" {
 				o.update(ctx, nodeID)
 			}
-		case <-time.After(HeartbeatInterval):
+		case <-time.After(interval):
 			o.update(ctx)
 		}
 	}
@@ -151,6 +165,11 @@ func (o *MembershipObserver) subscribe(ctx context.Context, sub *membershipSubsc
 //
 // nodeIDs is a variadic list of node IDs that have sent heartbeat signals.
 func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
+	timeout := o.HeartbeatTimeout
+	if timeout == 0 {
+		timeout = DefaultHeartbeatTimeout
+	}
+
 	now := time.Now()
 	var added, removed, live uuidpb.Set
 
@@ -181,7 +200,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 	}
 
 	for nodeID, lastBeatAt := range o.heartbeats.All() {
-		if now.Sub(lastBeatAt) > HeartbeatTimeout {
+		if now.Sub(lastBeatAt) > timeout {
 			o.heartbeats.Delete(nodeID)
 			removed.Add(nodeID)
 

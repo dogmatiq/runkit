@@ -12,6 +12,11 @@ import (
 )
 
 func TestMembershipObserver(t *testing.T) {
+	const (
+		heartbeatInterval = 20 * time.Millisecond
+		heartbeatTimeout  = 5 * heartbeatInterval
+	)
+
 	db := xtesting.NewDatabase(t)
 	logger := spruce.NewTestLogger(t)
 
@@ -20,7 +25,7 @@ func TestMembershipObserver(t *testing.T) {
 
 		for i, ch := range channels {
 			select {
-			case <-time.After(3 * time.Second):
+			case <-time.After(xtesting.WaitTimeout):
 				t.Fatalf("timed out waiting for change notification on channel %d", i)
 
 			case got := <-ch:
@@ -56,9 +61,10 @@ func TestMembershipObserver(t *testing.T) {
 
 	startNode := func() (*uuidpb.UUID, func()) {
 		h := &Heartbeater{
-			DB:     db,
-			NodeID: uuidpb.Generate(),
-			Logger: logger,
+			DB:       db,
+			NodeID:   uuidpb.Generate(),
+			Interval: heartbeatInterval,
+			Logger:   logger,
 		}
 
 		return h.NodeID, xtesting.Go(t, h.Run)
@@ -72,8 +78,10 @@ func TestMembershipObserver(t *testing.T) {
 	xtesting.Go(t, signals.Run)
 
 	observer := &MembershipObserver{
-		Signals: signals,
-		Logger:  logger,
+		Signals:           signals,
+		HeartbeatInterval: heartbeatInterval,
+		HeartbeatTimeout:  heartbeatTimeout,
+		Logger:            logger,
 	}
 
 	xtesting.Go(t, observer.Run)
