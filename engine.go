@@ -63,6 +63,8 @@ const (
 // Engine is a Dogma engine backed by a single PostgreSQL database.
 //
 // It implements [dogma.CommandExecutor].
+//
+// It must be created with [New]; the zero value is not usable.
 type Engine struct {
 	// app is the Dogma application to run.
 	app dogma.Application
@@ -143,6 +145,8 @@ func New(
 
 // Run starts the engine and blocks until ctx is canceled or the engine is
 // unable to continue.
+//
+// It must be called at most once.
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.stopped.Set()
 
@@ -291,18 +295,22 @@ func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
 // It returns an error if the engine has stopped, even if it was ready
 // beforehand.
 func (e *Engine) waitUntilReady(ctx context.Context) error {
-	if !e.stopped.IsSet() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-e.ready.Chan():
-			return nil
-		case <-e.stopped.Chan():
-			// fallthrough
-		}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.ready.Chan():
+	case <-e.stopped.Chan():
 	}
 
-	return errors.New("engine is not running")
+	// Once the engine has stopped, both latches are set, and select chooses
+	// between ready cases at random. Checking stopped afterwards, rather than
+	// before the select, ensures a stopped engine is always reported, even if
+	// it stops while waiting.
+	if e.stopped.IsSet() {
+		return errors.New("engine is not running")
+	}
+
+	return nil
 }
 
 // setupCommandTypes builds a set of command types that the engine accepts for
