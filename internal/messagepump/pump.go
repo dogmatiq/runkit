@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // MessagePump is a helper for implementing a message pump that acquires and
@@ -69,8 +70,7 @@ func (p *MessagePump) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// runWorker handles the tasks sent by the dispatcher until ctx is canceled or
-// a delivery can not be handled.
+// runWorker handles the tasks sent by the dispatcher until ctx is canceled.
 //
 // A delivery that fails or is contended is postponed, which is not a failure
 // of the worker; see [doHandle].
@@ -81,7 +81,26 @@ func (p *MessagePump) runWorker(ctx context.Context, tasks <-chan *deliveryTask)
 			return ctx.Err()
 		case task := <-tasks:
 			if err := p.doHandle(ctx, task); err != nil {
-				return fmt.Errorf("unable to deliver message: %w", err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+
+				// Log the error and move on to the next task, so that one
+				// failed delivery does not stall the pump. Returning the error
+				// would restart the worker after the supervisor's backoff,
+				// during which the dispatcher would block, holding a delivery
+				// it has already acquired, and with a single worker the
+				// handler would make no progress at all.
+				//
+				// The supervisor never sees the error, so check for a deadlock
+				// here instead.
+				xsql.PanicOnDeadlock(err)
+
+				task.Logger.ErrorContext(
+					ctx,
+					"unable to deliver message",
+					xslog.Error(err),
+				)
 			}
 		}
 	}
