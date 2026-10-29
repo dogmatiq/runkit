@@ -28,8 +28,8 @@ branch. The consumer that uses it is not.
 - **Cluster membership** (`internal/cluster`): `Heartbeater` sends a signal on
   `heartbeat.<node-id>` every `HeartbeatInterval` (1s); `MembershipObserver`
   subscribes to `heartbeat`, expires nodes after `HeartbeatTimeout` (5s), and
-  pushes `MembershipChange{Added, Removed, Live}` to subscribers (new
-  subscribers receive the current live set). `cluster/rendezvous` provides HRW
+  publishes the live set through `LiveNodeIDs`, an `xsync.Observable` that
+  never blocks on slow consumers. `cluster/rendezvous` provides HRW
   hashing over `*uuidpb.UUID` (`Winner`, `Wins`, `Rank`, `RankAbove`).
 - **Signals** (`internal/signal`): `Listener` receives PostgreSQL notifications
   on a single channel whose payload is a hierarchical, dot-separated topic, and
@@ -52,8 +52,9 @@ branch. The consumer that uses it is not.
   over gRPC from `Catalog` and `Reader`, signal-driven, with the service
   definition's error contract.
 - **Supervision** (`internal/supervisor`): `Run` and `Group` retry a fallible
-  function with backoff. Every engine component is infallible at the boundary
-  and supervises its own fallible parts.
+  function with backoff, unless it fails with `supervisor.Fatal`. Every engine
+  component supervises its own fallible parts and returns an error only when it
+  can not continue, which stops the engine.
 - **Schema:** `is_foreign` is gone; foreign events are never stored.
 
 **Not built** (the discarded foreign-only prototype's versions no longer exist):
@@ -205,12 +206,13 @@ source and fake applier.
 - [ ] **Step 1: Implement** the engine component. Inputs: this node's ID, the
       `MembershipObserver`, the set of appliers, the local source and the remote
       sources, and a logger. It:
-  - subscribes to membership changes and uses the `Live` set;
+  - observes `LiveNodeIDs` for the set of live nodes;
   - subscribes to streams from every source, maintaining stream → source;
   - for each stream, when `rendezvous.Wins(streamID, nodeID, live)`, runs one
     worker per applier under a `supervisor.Group`; stops them when ownership is
     lost or the stream's source disappears.
-  - Its `Run(ctx)` is infallible, like every other component.
+  - Like every other component, its `Run(ctx)` returns an error only when it
+    can not continue.
 - [ ] **Step 2: Test** with a fake source and a single live node: every event
       applied in order exactly once; ownership changes start and stop workers.
       Commit.

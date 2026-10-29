@@ -20,45 +20,6 @@ func TestMembershipObserver(t *testing.T) {
 	db := xtesting.NewDatabase(t)
 	logger := spruce.NewTestLogger(t)
 
-	await := func(want MembershipChange, channels ...<-chan MembershipChange) {
-		t.Helper()
-
-		for i, ch := range channels {
-			select {
-			case <-time.After(xtesting.WaitTimeout):
-				t.Fatalf("timed out waiting for change notification on channel %d", i)
-
-			case got := <-ch:
-				if !got.Live.IsEqual(want.Live) {
-					t.Fatalf(
-						"unexpected live nodes on channel %d: got %s, want %s",
-						i,
-						got.Live,
-						want.Live,
-					)
-				}
-
-				if !got.Added.IsEqual(want.Added) {
-					t.Fatalf(
-						"unexpected added nodes on channel %d: got %s, want %s",
-						i,
-						got.Added,
-						want.Added,
-					)
-				}
-
-				if !got.Removed.IsEqual(want.Removed) {
-					t.Fatalf(
-						"unexpected removed nodes on channel %d: got %s, want %s",
-						i,
-						got.Removed,
-						want.Removed,
-					)
-				}
-			}
-		}
-	}
-
 	startNode := func() (*uuidpb.UUID, func()) {
 		h := &Heartbeater{
 			DB:       db,
@@ -86,65 +47,48 @@ func TestMembershipObserver(t *testing.T) {
 
 	xtesting.GoE(t, observer.Run)
 
-	// Start a subscription *before* there are any nodes.
-	subscription1 := make(chan MembershipChange)
-	unsubscribe1 := observer.Subscribe(subscription1)
-	defer unsubscribe1()
+	expectLiveNodeIDs(t, observer)
 
 	node1ID, stopNode1 := startNode()
 	defer stopNode1()
 
-	await(
-		MembershipChange{
-			Added: uuidpb.NewSet(node1ID),
-			Live:  uuidpb.NewSet(node1ID),
-		},
-		subscription1,
-	)
-
-	// Start a second observer *after* a node already exists.
-	subscription2 := make(chan MembershipChange)
-	unsubscribe2 := observer.Subscribe(subscription2)
-	defer unsubscribe2()
-
-	await(
-		MembershipChange{
-			Added: uuidpb.NewSet(node1ID),
-			Live:  uuidpb.NewSet(node1ID),
-		},
-		subscription2,
-	)
+	expectLiveNodeIDs(t, observer, node1ID)
 
 	node2ID, stopNode2 := startNode()
 	defer stopNode2()
 
-	await(
-		MembershipChange{
-			Added: uuidpb.NewSet(node2ID),
-			Live:  uuidpb.NewSet(node1ID, node2ID),
-		},
-		subscription1,
-		subscription2,
-	)
+	expectLiveNodeIDs(t, observer, node1ID, node2ID)
 
 	stopNode1()
 
-	await(
-		MembershipChange{
-			Removed: uuidpb.NewSet(node1ID),
-			Live:    uuidpb.NewSet(node2ID),
-		},
-		subscription1,
-		subscription2,
-	)
+	expectLiveNodeIDs(t, observer, node2ID)
 
 	stopNode2()
 
-	await(
-		MembershipChange{
-			Removed: uuidpb.NewSet(node2ID),
-		},
-		subscription1,
-		subscription2,
-	)
+	expectLiveNodeIDs(t, observer)
+}
+
+func expectLiveNodeIDs(
+	t testing.TB,
+	observer *MembershipObserver,
+	want ...*uuidpb.UUID,
+) {
+	t.Helper()
+
+	expected := uuidpb.NewSet(want...)
+	timeout := time.After(xtesting.WaitTimeout)
+
+	for {
+		got, changed := observer.LiveNodeIDs()
+
+		if got.IsEqual(expected) {
+			return
+		}
+
+		select {
+		case <-timeout:
+			t.Fatalf("unexpected live node IDs: got %s, want %s", got, expected)
+		case <-changed:
+		}
+	}
 }
