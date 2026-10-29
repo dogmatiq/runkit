@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
@@ -37,37 +36,22 @@ type MembershipObserver struct {
 	// Logger is the target for log messages produced by the observer.
 	Logger *slog.Logger
 
-	done       xsync.Latch
+	live       xsync.Observable[*uuidpb.Set]
 	heartbeats uuidpb.Map[time.Time]
-
-	once        sync.Once
-	sub, unsub  chan *membershipSubscriber
-	subscribers map[*membershipSubscriber]struct{}
 }
 
-// MembershipChange represents a change to the set of live nodes in the
-// cluster.
-type MembershipChange struct {
-	// Added is the set of nodes that were added to the cluster.
-	Added *uuidpb.Set
-
-	// Removed is the set of nodes that were removed from the cluster.
-	Removed *uuidpb.Set
-
-	// Live is the set of nodes that are currently live in the cluster, after
-	// the changes have been applied.
-	Live *uuidpb.Set
-}
-
-// membershipSubscriber encapsulates the state of a single subscriber to
-// membership changes.
-type membershipSubscriber struct {
-	Changes      chan<- MembershipChange
-	Unsubscribed xsync.Latch
+// LiveNodeIDs returns the IDs of the nodes that are currently live in the
+// cluster, and a channel that is closed when the set changes.
+//
+// The returned set must not be modified.
+func (o *MembershipObserver) LiveNodeIDs() (*uuidpb.Set, <-chan struct{}) {
+	return o.live.Load()
 }
 
 // Run listens for heartbeat signals and updates the set of live nodes until
 // ctx is canceled.
+//
+// It must be called at most once.
 func (o *MembershipObserver) Run(ctx context.Context) error {
 	if o.HeartbeatInterval <= 0 {
 		panic("heartbeat interval must be positive")
@@ -77,9 +61,6 @@ func (o *MembershipObserver) Run(ctx context.Context) error {
 		panic("heartbeat timeout must be positive")
 	}
 
-	o.init()
-	defer o.done.Set()
-
 	heartbeats := make(chan string, heartbeatBufferSize)
 	unsubscribe := o.Signals.Subscribe(heartbeatTopic, heartbeats)
 	defer unsubscribe()
@@ -88,10 +69,6 @@ func (o *MembershipObserver) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case sub := <-o.sub:
-			o.subscribe(ctx, sub)
-		case sub := <-o.unsub:
-			delete(o.subscribers, sub)
 		case nodeID := <-heartbeats:
 			// A signal on the heartbeat topic itself carries no node ID, and so
 			// is not a heartbeat.
@@ -104,70 +81,13 @@ func (o *MembershipObserver) Run(ctx context.Context) error {
 	}
 }
 
-// Subscribe registers a channel to receive notifications about changes to the
-// set of live nodes in the cluster.
-func (o *MembershipObserver) Subscribe(ch chan<- MembershipChange) func() {
-	o.init()
-
-	sub := &membershipSubscriber{
-		Changes: ch,
-	}
-
-	select {
-	case <-o.done.Chan():
-	case o.sub <- sub:
-	}
-
-	var once sync.Once
-
-	return func() {
-		once.Do(func() {
-			sub.Unsubscribed.Set()
-
-			select {
-			case <-o.done.Chan():
-			case o.unsub <- sub:
-			}
-		})
-	}
-}
-
-func (o *MembershipObserver) init() {
-	o.once.Do(func() {
-		o.sub = make(chan *membershipSubscriber)
-		o.unsub = make(chan *membershipSubscriber)
-		o.subscribers = map[*membershipSubscriber]struct{}{}
-	})
-}
-
-// subscribe registers a new subscriber and sends it the current set of live
-// nodes.
-func (o *MembershipObserver) subscribe(ctx context.Context, sub *membershipSubscriber) {
-	o.subscribers[sub] = struct{}{}
-
-	if o.heartbeats.IsEmpty() {
-		return
-	}
-
-	live := &uuidpb.Set{}
-
-	for nodeID := range o.heartbeats.Keys() {
-		live.Add(nodeID)
-	}
-
-	o.unicast(ctx, sub, MembershipChange{
-		Added: live,
-		Live:  live,
-	})
-}
-
 // update updates the set of live nodes based on the received heartbeat
 // signals and the heartbeat timeout.
 //
 // nodeIDs is a variadic list of node IDs that have sent heartbeat signals.
 func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 	now := time.Now()
-	var added, removed, live uuidpb.Set
+	changed := false
 
 	for _, s := range nodeIDs {
 		nodeID, err := uuidpb.Parse(s)
@@ -185,7 +105,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 		o.heartbeats.Set(nodeID, now)
 
 		if !exists {
-			added.Add(nodeID)
+			changed = true
 
 			o.Logger.DebugContext(
 				ctx,
@@ -198,47 +118,27 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 	for nodeID, lastBeatAt := range o.heartbeats.All() {
 		if now.Sub(lastBeatAt) > o.HeartbeatTimeout {
 			o.heartbeats.Delete(nodeID)
-			removed.Add(nodeID)
+			changed = true
 
 			o.Logger.DebugContext(
 				ctx,
 				"node removed from cluster",
 				xslog.UUID("node_id", nodeID),
 			)
-		} else {
-			live.Add(nodeID)
 		}
 	}
 
-	if added.IsEmpty() && removed.IsEmpty() {
+	if !changed {
 		return
 	}
 
-	o.broadcast(ctx, MembershipChange{
-		Added:   &added,
-		Removed: &removed,
-		Live:    &live,
-	})
-}
+	// Consumers may still hold the previous set, so a new one is published
+	// rather than modifying it.
+	live := uuidpb.NewSet()
 
-// unicast sends a change notification to a single subscriber channel.
-func (o *MembershipObserver) unicast(ctx context.Context, sub *membershipSubscriber, change MembershipChange) {
-	select {
-	case <-ctx.Done():
-	case <-sub.Unsubscribed.Chan():
-	case sub.Changes <- change:
-	}
-}
-
-// broadcast sends a change notification to all subscriber channels.
-func (o *MembershipObserver) broadcast(ctx context.Context, change MembershipChange) {
-	var group sync.WaitGroup
-
-	for sub := range o.subscribers {
-		group.Go(func() {
-			o.unicast(ctx, sub, change)
-		})
+	for nodeID := range o.heartbeats.Keys() {
+		live.Add(nodeID)
 	}
 
-	group.Wait()
+	o.live.Store(live)
 }
