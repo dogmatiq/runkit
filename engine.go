@@ -29,15 +29,13 @@ import (
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
+	grpcgo "google.golang.org/grpc"
 )
 
 const (
 	// DefaultProjectionCompactInterval is the default minimum time between
 	// successful projection compactions.
 	DefaultProjectionCompactInterval = 6 * time.Hour
-
-	// DefaultListenAddr is the default address for the engine's gRPC server.
-	DefaultListenAddr = ":50555"
 
 	// projectionCompactTimeout is the maximum time a projection is given to
 	// compact its data in a single attempt.
@@ -80,8 +78,11 @@ type Engine struct {
 	compactInterval time.Duration
 
 	// listenAddress is the address to listen on for gRPC requests from other
-	// engines.
+	// engines. If it is empty, the engine does not listen for gRPC requests.
 	listenAddress string
+
+	// grpcOptions are the options used to create the engine's gRPC server.
+	grpcOptions []grpcgo.ServerOption
 
 	// logger is the structured logger used by the engine.
 	logger *slog.Logger
@@ -132,7 +133,6 @@ func New(
 		db:              db,
 		nodeID:          uuidpb.Generate(),
 		compactInterval: DefaultProjectionCompactInterval,
-		listenAddress:   DefaultListenAddr,
 		logger:          slog.Default(),
 	}
 
@@ -192,18 +192,23 @@ func (e *Engine) Run(ctx context.Context) error {
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
 
-	server := &grpc.Server{
-		Address: e.listenAddress,
-		EventStreamConsumerAPI: &eventstream.ConsumerAPI{
-			DB:                   e.db,
-			Catalog:              e.eventStreams,
-			Reader:               e.events,
-			RecordableEventTypes: e.recordableEventTypes(),
-			Logger: e.logger.With(
-				slog.String("component", "eventstream.consumer-api"),
-			),
-		},
-		Logger: e.logger.With(slog.String("component", "grpc.server")),
+	var server *grpc.Server
+
+	if e.listenAddress != "" {
+		server = &grpc.Server{
+			Address: e.listenAddress,
+			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
+				DB:                   e.db,
+				Catalog:              e.eventStreams,
+				Reader:               e.events,
+				RecordableEventTypes: e.recordableEventTypes(),
+				Logger: e.logger.With(
+					slog.String("component", "eventstream.consumer-api"),
+				),
+			},
+			Options: e.grpcOptions,
+			Logger:  e.logger.With(slog.String("component", "grpc.server")),
+		}
 	}
 
 	// Initialize handler state in the database.
@@ -258,14 +263,18 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	runComponent(server)
-
-	// The engine is not ready until it is listening for gRPC requests. If the
-	// server failed to listen, ctx is canceled and the failure is reported by
-	// the group.
-	if addr, err := server.ListenAddr(ctx); err == nil {
-		e.listenAddr = addr
+	if server == nil {
 		e.ready.Set()
+	} else {
+		runComponent(server)
+
+		// The engine is not ready until it is listening for gRPC requests. If
+		// the server failed to listen, ctx is canceled and the failure is
+		// reported by the group.
+		if addr, err := server.ListenAddr(ctx); err == nil {
+			e.listenAddr = addr
+			e.ready.Set()
+		}
 	}
 
 	return group.Wait()
@@ -283,7 +292,13 @@ func (e *Engine) Ready() <-chan struct{} {
 
 // ListenAddr returns the address that the engine is listening on for gRPC
 // requests from other engines.
+//
+// It returns an error if the engine was created without [WithListenAddress].
 func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
+	if e.listenAddress == "" {
+		return nil, errors.New("engine does not listen for gRPC requests")
+	}
+
 	if err := e.waitUntilReady(ctx); err != nil {
 		return nil, err
 	}

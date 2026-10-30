@@ -18,9 +18,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Added `New()` and `EngineOption`, with the `WithLogger()`,
   `WithListenAddress()` and `WithProjectionCompactInterval()` options.
 - Added a gRPC server that implements `messaginggrpc.EventStreamConsumerAPI`,
-  so that other engines can list and consume this engine's event streams. It
-  listens on `DefaultListenAddr` (`:50555`) unless `WithListenAddress()` is
-  used.
+  so that engines running other applications can consume this application's
+  events. It is disabled by default. Use `WithListenAddress()` to enable it. As
+  with any gRPC server, it is insecure unless transport credentials are
+  supplied using `grpc.Creds()`. This engine does not yet consume events from
+  other engines.
 - Added `Engine.ListenAddr()`.
 - Engines now send each other a heartbeat once per second using PostgreSQL
   notifications.
@@ -29,8 +31,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - **[BC]** The fields of `Engine` are now unexported. Use `New()` to create an
   engine, and `EngineOption` values to configure it.
-- `Engine.Run()` no longer panics when part of the engine stops unexpectedly. It
-  returns an error instead.
+- **[BC]** `WithProjectionCompactInterval()` panics if the interval is not
+  positive. Previously, a non-positive `ProjectionCompactInterval` meant that
+  `DefaultProjectionCompactInterval` was used.
+- Removed some of the conditions under which `Engine.Run()` panics. It now
+  returns an error in more cases where the engine is unable to continue.
 - `Engine.ExecuteCommand()` now returns an error once the engine has stopped.
 - The database schema has changed. Call `CreateSchema()` to update a database
   created by an earlier version.

@@ -22,6 +22,9 @@ type Server struct {
 	// [messaginggrpc.EventStreamConsumerAPI] service to serve.
 	EventStreamConsumerAPI messaginggrpc.EventStreamConsumerAPIServer
 
+	// Options are the options used to create the underlying gRPC server.
+	Options []grpc.ServerOption
+
 	// Logger is the target for log messages produced by the server.
 	Logger *slog.Logger
 
@@ -56,7 +59,7 @@ func (s *Server) serve(ctx context.Context) error {
 	}
 	defer lis.Close()
 
-	server := grpc.NewServer()
+	server := grpc.NewServer(s.Options...)
 
 	messaginggrpc.RegisterEventStreamConsumerAPIServer(server, s.EventStreamConsumerAPI)
 
