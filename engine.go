@@ -101,7 +101,7 @@ type Engine struct {
 	// populated before the ready latch is set; otherwise, it is nil.
 	listenAddr net.Addr
 
-	// appConfig is the application configuration derived from e.App.
+	// appConfig is the application configuration derived from e.app.
 	appConfig *config.Application
 
 	// signals listens for signals sent by this and other nodes.
@@ -127,8 +127,8 @@ type Engine struct {
 // New returns a new engine that runs the given application.
 //
 // db must use the [pgx] driver, for example by opening it with
-// sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db uses any other
-// driver.
+// sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db is nil or uses any
+// other driver.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -136,6 +136,10 @@ func New(
 	db *sql.DB,
 	options ...EngineOption,
 ) *Engine {
+	if db == nil {
+		panic("database must not be nil")
+	}
+
 	if _, ok := db.Driver().(*stdlib.Driver); !ok {
 		panic(fmt.Sprintf(
 			"database must use the pgx driver (github.com/jackc/pgx/v5/stdlib), got %T",
