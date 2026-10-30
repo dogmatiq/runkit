@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/spruce"
 	"golang.org/x/sync/errgroup"
@@ -25,6 +25,10 @@ const (
 	concurrentEngines = 3
 )
 
+// ProjectionCompactInterval is the projection compaction interval configured
+// on engines started by [RunEngines] and related functions.
+const ProjectionCompactInterval = 10 * time.Millisecond
+
 // RunEngines runs the given Dogma application in a test engine and executes the
 // given function while the engine is running.
 //
@@ -37,7 +41,8 @@ func RunEngines(
 	t *testing.T,
 	fn func(
 		testing.TB,
-		*dogmaengine.Engine,
+		*runkit.Engine,
+		*sql.DB,
 	),
 	routes ...dogma.HandlerRoute,
 ) {
@@ -52,11 +57,11 @@ func RunEngines(
 }
 
 // SetupThenRunEngines is like [RunEngines] but accepts a setup function that
-// receives the test database before any engine starts.
+// receives the test database before any engines start.
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
-	fn func(testing.TB, *dogmaengine.Engine),
+	fn func(testing.TB, *runkit.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -75,7 +80,7 @@ func SetupThenRunEngines(
 func RunEnginesWithDB(
 	t *testing.T,
 	db *sql.DB,
-	fn func(testing.TB, *dogmaengine.Engine),
+	fn func(testing.TB, *runkit.Engine, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -105,15 +110,16 @@ func RunEnginesWithDB(
 
 	logger := spruce.NewTestLogger(t)
 
-	var engine *dogmaengine.Engine
+	var engine *runkit.Engine
 
 	for idx := range concurrentEngines {
-		e := &dogmaengine.Engine{
-			DB:                        db,
-			App:                       app,
-			ProjectionCompactInterval: 10 * time.Millisecond,
-			Logger:                    logger.With("engine", idx),
-		}
+		e := runkit.New(
+			app,
+			db,
+			runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
+			runkit.WithListenAddress("127.0.0.1:0"),
+			runkit.WithLogger(logger.With("engine", idx)),
+		)
 
 		if engine == nil {
 			engine = e
@@ -141,6 +147,7 @@ func RunEnginesWithDB(
 	fn(
 		testingTBWithContext{t, testContext},
 		engine,
+		db,
 	)
 }
 
@@ -148,7 +155,7 @@ func RunEnginesWithDB(
 // if it returns an error.
 func ExecuteCommand(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -163,10 +170,12 @@ func ExecuteCommand(
 	)
 }
 
-// ExecuteCommandAndWait executes the given command on the engine and waits for it to be removed from the command queue.
+// ExecuteCommandAndWait executes the given command on the engine and waits for
+// it to be removed from the command queue.
 func ExecuteCommandAndWait(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
+	db *sql.DB,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -176,7 +185,7 @@ func ExecuteCommandAndWait(
 
 	WaitForCommandToBeRemovedFromQueue(
 		t,
-		engine.DB,
+		db,
 		commandEnvelope.GetBody().GetMessageId(),
 	)
 
@@ -187,7 +196,8 @@ func ExecuteCommandAndWait(
 // sequentially, and fails the test if any of them returns an error.
 func ExecuteCommandsSequentially(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
+	db *sql.DB,
 	commands ...dogma.Command,
 ) []*envelopepb.Envelope {
 	t.Helper()
@@ -195,7 +205,7 @@ func ExecuteCommandsSequentially(
 	var commandEnvelopes []*envelopepb.Envelope
 
 	for _, command := range commands {
-		commandEnvelope := ExecuteCommandAndWait(t, engine, command)
+		commandEnvelope := ExecuteCommandAndWait(t, engine, db, command)
 		commandEnvelopes = append(commandEnvelopes, commandEnvelope)
 	}
 
@@ -206,7 +216,7 @@ func ExecuteCommandsSequentially(
 // the test if it returns an error.
 func ExecuteCommandWithHook(
 	t testing.TB,
-	engine *dogmaengine.Engine,
+	engine *runkit.Engine,
 	command dogma.Command,
 	hook func(contexthook.ExecuteCommand),
 	options ...dogma.ExecuteCommandOption,

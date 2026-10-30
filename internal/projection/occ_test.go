@@ -2,13 +2,14 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -25,19 +26,19 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			const eventCount = 3
 
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount,
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -102,19 +103,19 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			const eventCount = 2
 
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount,
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()

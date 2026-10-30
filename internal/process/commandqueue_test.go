@@ -2,13 +2,14 @@ package process_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -18,20 +19,20 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
-					engine.DB,
+					db,
 					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1, // one stream with one event
 				)
 
-				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+				xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 				xtesting.ExpectCommandToBeQueued(
 					t,
-					engine.DB,
+					db,
 					stubs.CommandA1,
 				)
 			},
@@ -69,21 +70,21 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *dogmaengine.Engine) {
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 				xtesting.PopulateEventStreams(
 					t,
-					engine.DB,
+					db,
 					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1, // one stream with one event
 				)
 
-				xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
-				xtesting.WaitForNoPendingDeadlines(t, engine.DB)
+				xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+				xtesting.WaitForNoPendingDeadlines(t, db)
 				xtesting.ExpectCommandToBeQueued(
 					t,
-					engine.DB,
+					db,
 					stubs.CommandA1,
 				)
 			},
