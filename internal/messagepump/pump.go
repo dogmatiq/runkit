@@ -13,7 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
+	"golang.org/x/sync/errgroup"
 )
 
 // MessagePump is a helper for implementing a message pump that acquires and
@@ -36,8 +36,8 @@ type MessagePump struct {
 	// not be handled is attempted again.
 	BackoffBase, BackoffCap time.Duration
 
-	// Logger is the target for log messages produced by the pump and the
-	// supervisors of the dispatcher and workers it starts.
+	// Logger is the target for log messages produced by the pump and its
+	// supervisor.
 	Logger *slog.Logger
 }
 
@@ -52,25 +52,36 @@ type deliveryTask struct {
 //
 // It must be called at most once.
 func (p *MessagePump) Run(ctx context.Context) error {
-	var group supervisor.Group
+	return supervisor.Run(ctx, p.Logger, p.run)
+}
+
+// run starts the dispatcher and workers, and runs them until ctx is canceled
+// or any of them fails.
+//
+// The dispatcher and workers are restarted together, so that a delivery that
+// can not be handled is retried only after the supervisor's backoff. Such a
+// delivery is not postponed, so it would otherwise be acquired again
+// immediately. Restarting also rolls back any delivery that the dispatcher has
+// acquired but not yet handed to a worker.
+func (p *MessagePump) run(ctx context.Context) error {
+	group, ctx := errgroup.WithContext(ctx)
 	tasks := make(chan *deliveryTask)
 
 	for range max(1, p.Workers) {
-		group.Go(ctx, p.Logger, func(ctx context.Context) error {
+		group.Go(func() error {
 			return p.runWorker(ctx, tasks)
 		})
 	}
 
-	group.Go(ctx, p.Logger, func(ctx context.Context) error {
+	group.Go(func() error {
 		return p.runDispatcher(ctx, tasks)
 	})
 
-	group.Wait()
-
-	return ctx.Err()
+	return group.Wait()
 }
 
-// runWorker handles the tasks sent by the dispatcher until ctx is canceled.
+// runWorker handles the tasks sent by the dispatcher until ctx is canceled or
+// a delivery can not be handled.
 //
 // A delivery that fails or is contended is postponed, which is not a failure
 // of the worker; see [doHandle].
@@ -81,26 +92,7 @@ func (p *MessagePump) runWorker(ctx context.Context, tasks <-chan *deliveryTask)
 			return ctx.Err()
 		case task := <-tasks:
 			if err := p.doHandle(ctx, task); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-
-				// Log the error and move on to the next task, so that one
-				// failed delivery does not stall the pump. Returning the error
-				// would restart the worker after the supervisor's backoff,
-				// during which the dispatcher would block, holding a delivery
-				// it has already acquired, and with a single worker the
-				// handler would make no progress at all.
-				//
-				// The supervisor never sees the error, so check for a deadlock
-				// here instead.
-				xsql.PanicOnDeadlock(err)
-
-				task.Logger.ErrorContext(
-					ctx,
-					"unable to deliver message",
-					xslog.Error(err),
-				)
+				return fmt.Errorf("unable to deliver message: %w", err)
 			}
 		}
 	}
