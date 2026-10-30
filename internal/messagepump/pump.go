@@ -59,9 +59,8 @@ func (p *MessagePump) Run(ctx context.Context) error {
 // or any of them fails.
 //
 // The dispatcher and workers are restarted together, so that a delivery that
-// can not be handled is retried only after the supervisor's backoff. Such a
-// delivery is not postponed, so it would otherwise be acquired again
-// immediately. Restarting also rolls back any delivery that the dispatcher has
+// can not be handled is retried no sooner than the supervisor's backoff
+// allows. Restarting also rolls back any delivery that the dispatcher has
 // acquired but not yet handed to a worker.
 func (p *MessagePump) run(ctx context.Context) error {
 	group, ctx := errgroup.WithContext(ctx)
