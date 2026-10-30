@@ -96,7 +96,7 @@ func (o *MembershipObserver) update(ctx context.Context, nodeIDs ...string) {
 				ctx,
 				"ignored invalid node ID in heartbeat signal",
 				slog.String("node_id", s),
-				slog.String("error", err.Error()),
+				xslog.Error(err),
 			)
 			continue
 		}
