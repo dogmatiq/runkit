@@ -39,8 +39,8 @@ type Compactor struct {
 	Logger *slog.Logger
 }
 
-// Run compacts the projection immediately and then once per interval until
-// ctx is canceled.
+// Run attempts to compact the projection immediately and then once per interval
+// until ctx is canceled. The projection is compacted at most once per interval.
 //
 // It must be called at most once.
 func (c *Compactor) Run(ctx context.Context) error {
@@ -55,8 +55,8 @@ func (c *Compactor) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, c.Logger, c.run)
 }
 
-// run compacts the projection once per interval until ctx is canceled or an
-// attempt fails.
+// run attempts to compact the projection once per interval until ctx is
+// canceled or an attempt fails.
 //
 // The handler is expected to compact incrementally, so a failed attempt is
 // retried without waiting for the next interval.
