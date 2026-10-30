@@ -11,6 +11,12 @@ This is a reference implementation of a [Dogma] engine.
 
 </div>
 
+## Requirements
+
+The engine stores its state in [PostgreSQL]. The minimum supported version is
+PostgreSQL 18.
+
 <!-- references -->
 
 [Dogma]: https://github.com/dogmatiq/dogma
+[PostgreSQL]: https://www.postgresql.org/
