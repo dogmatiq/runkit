@@ -28,6 +28,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
@@ -124,11 +125,24 @@ type Engine struct {
 }
 
 // New returns a new engine that runs the given application.
+//
+// db must use the [pgx] driver, for example by opening it with
+// sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db uses any other
+// driver.
+//
+// [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
 	app dogma.Application,
 	db *sql.DB,
 	options ...EngineOption,
 ) *Engine {
+	if _, ok := db.Driver().(*stdlib.Driver); !ok {
+		panic(fmt.Sprintf(
+			"database must use the pgx driver (github.com/jackc/pgx/v5/stdlib), got %T",
+			db.Driver(),
+		))
+	}
+
 	e := &Engine{
 		app:             app,
 		db:              db,

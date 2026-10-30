@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
+[pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
@@ -31,6 +32,9 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - **[BC]** The fields of `Engine` are now unexported. Use `New()` to create an
   engine, and `EngineOption` values to configure it.
+- **[BC]** The database passed to `New()` must use the [pgx] driver. `New()`
+  panics if it uses any other driver.
+- PostgreSQL 18 is now the minimum supported version.
 - **[BC]** `WithProjectionCompactInterval()` panics if the interval is not
   positive. Previously, a non-positive `ProjectionCompactInterval` meant that
   `DefaultProjectionCompactInterval` was used.
