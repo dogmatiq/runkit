@@ -96,7 +96,8 @@ type Engine struct {
 	stopped xsync.Latch
 
 	// listenAddr is the address the engine is listening on for gRPC requests
-	// from other engines. It is populated before the ready latch is set.
+	// from other engines. If the engine listens for gRPC requests, it is
+	// populated before the ready latch is set; otherwise, it is nil.
 	listenAddr net.Addr
 
 	// appConfig is the application configuration derived from e.App.

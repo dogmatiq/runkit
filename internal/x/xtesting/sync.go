@@ -24,7 +24,7 @@ func init() {
 	}
 }
 
-// ExpectLatchesSetEventually waits for all of the given latches to be set. If
+// ExpectLatchesSetEventually waits for all of the given latches to be set. It
 // fails the test if all latches are not set within [WaitTimeout].
 func ExpectLatchesSetEventually(
 	t testing.TB,
