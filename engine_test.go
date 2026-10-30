@@ -2,6 +2,8 @@ package runkit_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"net"
 	"testing"
@@ -113,6 +115,19 @@ func TestEngine(t *testing.T) {
 		}
 	})
 
+	t.Run("it panics if the database does not use the pgx driver", func(t *testing.T) {
+		db := sql.OpenDB(nonPGXConnector{})
+		defer db.Close()
+
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected a panic")
+			}
+		}()
+
+		runkit.New(testApp(), db)
+	})
+
 	t.Run("it panics if the listen address is empty", func(t *testing.T) {
 		defer func() {
 			if recover() == nil {
@@ -153,6 +168,24 @@ func TestEngine(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+// nonPGXConnector is a [driver.Connector] for a driver other than pgx.
+type nonPGXConnector struct{}
+
+func (nonPGXConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New("<not implemented>")
+}
+
+func (c nonPGXConnector) Driver() driver.Driver {
+	return nonPGXDriver{}
+}
+
+// nonPGXDriver is a [driver.Driver] other than pgx.
+type nonPGXDriver struct{}
+
+func (nonPGXDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("<not implemented>")
 }
 
 // testApp returns a minimal application for testing the engine.
