@@ -295,8 +295,9 @@ func (e *Engine) Ready() <-chan struct{} {
 // requests from other engines.
 //
 // It returns an error immediately if the engine was created without
-// [WithListenAddress]. Otherwise, it blocks until the engine is ready, and
-// returns an error if the engine stops or ctx is canceled before then.
+// [WithListenAddress]. Otherwise, it blocks until the engine is ready. It
+// returns an error if ctx is canceled before then, or if the engine has
+// stopped.
 func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
 	if e.listenAddress == "" {
 		return nil, errors.New("engine does not listen for gRPC requests")
