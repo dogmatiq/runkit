@@ -117,7 +117,7 @@ func RunEnginesWithDB(
 			app,
 			db,
 			runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
-			runkit.WithListenAddress(":0"),
+			runkit.WithListenAddress("127.0.0.1:0"),
 			runkit.WithLogger(logger.With("engine", idx)),
 		)
 
