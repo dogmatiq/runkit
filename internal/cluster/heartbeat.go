@@ -8,7 +8,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
-	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
 // heartbeatTopic is the signal topic beneath which each node sends its
@@ -40,19 +40,21 @@ func (h *Heartbeater) Run(ctx context.Context) error {
 		panic("heartbeat interval must be positive")
 	}
 
-	return supervisor.Run(ctx, h.Logger, h.run)
-}
-
-// run sends heartbeats until ctx is canceled or a signal can not be sent.
-func (h *Heartbeater) run(ctx context.Context) error {
 	ticker := time.NewTicker(h.Interval)
 	defer ticker.Stop()
 
 	topic := heartbeatTopic + "." + h.NodeID.AsString()
 
 	for {
-		if err := signal.Notify(ctx, h.DB, topic); err != nil {
-			return err
+		// A heartbeat that can not be sent is retried on the next tick, so
+		// that once the database recovers this node is silent for no longer
+		// than one interval.
+		if err := signal.Notify(ctx, h.DB, topic); err != nil && ctx.Err() == nil {
+			h.Logger.WarnContext(
+				ctx,
+				"unable to send heartbeat",
+				xslog.Error(err),
+			)
 		}
 
 		select {
