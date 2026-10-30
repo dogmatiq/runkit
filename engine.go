@@ -21,7 +21,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/grpc"
+	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/process"
@@ -29,7 +29,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
-	grpcgo "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -82,7 +82,7 @@ type Engine struct {
 	listenAddress string
 
 	// grpcOptions are the options used to create the engine's gRPC server.
-	grpcOptions []grpcgo.ServerOption
+	grpcOptions []grpc.ServerOption
 
 	// logger is the structured logger used by the engine.
 	logger *slog.Logger
@@ -192,10 +192,10 @@ func (e *Engine) Run(ctx context.Context) error {
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
 
-	var server *grpc.Server
+	var server *grpcserver.Server
 
 	if e.listenAddress != "" {
-		server = &grpc.Server{
+		server = &grpcserver.Server{
 			Address: e.listenAddress,
 			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
 				DB:                   e.db,

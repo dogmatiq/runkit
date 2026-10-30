@@ -1,4 +1,4 @@
-package grpc_test
+package grpcserver_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
-	. "github.com/dogmatiq/runkit/internal/grpc"
+	. "github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

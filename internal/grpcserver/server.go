@@ -1,5 +1,5 @@
-// Package grpc serves the engine's gRPC services to other engines.
-package grpc
+// Package grpcserver serves the engine's gRPC services to other engines.
+package grpcserver
 
 import (
 	"context"
