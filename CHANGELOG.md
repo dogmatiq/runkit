@@ -34,10 +34,10 @@ The format is based on [Keep a Changelog], and this project adheres to
   engine, and `EngineOption` values to configure it.
 - **[BC]** The database passed to `New()` must use the [pgx] driver. `New()`
   panics if it uses any other driver.
-- PostgreSQL 18 is now the minimum supported version.
 - **[BC]** `WithProjectionCompactInterval()` panics if the interval is not
   positive. Previously, a non-positive `ProjectionCompactInterval` meant that
   `DefaultProjectionCompactInterval` was used.
+- PostgreSQL 18 is now the minimum supported version.
 - Removed some of the conditions under which `Engine.Run()` panics. It now
   returns an error in more cases where the engine is unable to continue.
 - `Engine.ExecuteCommand()` now returns an error once the engine has stopped.

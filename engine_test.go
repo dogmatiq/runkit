@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -120,8 +121,13 @@ func TestEngine(t *testing.T) {
 		defer db.Close()
 
 		defer func() {
-			if recover() == nil {
+			r := recover()
+			if r == nil {
 				t.Fatal("expected a panic")
+			}
+
+			if msg, _ := r.(string); !strings.Contains(msg, "pgx") {
+				t.Fatalf("unexpected panic: %v", r)
 			}
 		}()
 
@@ -177,7 +183,7 @@ func (nonPGXConnector) Connect(context.Context) (driver.Conn, error) {
 	return nil, errors.New("<not implemented>")
 }
 
-func (c nonPGXConnector) Driver() driver.Driver {
+func (nonPGXConnector) Driver() driver.Driver {
 	return nonPGXDriver{}
 }
 
