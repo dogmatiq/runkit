@@ -8,9 +8,14 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestEngine(t *testing.T) {
@@ -46,6 +51,76 @@ func TestEngine(t *testing.T) {
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Fatalf("unexpected error: %v", err)
 		}
+	})
+
+	t.Run("it creates the gRPC server with the given options", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+
+		engine := runkit.New(
+			testApp(),
+			db,
+			runkit.WithListenAddress(
+				"127.0.0.1:0",
+				grpc.ChainStreamInterceptor(
+					func(
+						any,
+						grpc.ServerStream,
+						*grpc.StreamServerInfo,
+						grpc.StreamHandler,
+					) error {
+						return status.Error(codes.PermissionDenied, "<denied>")
+					},
+				),
+			),
+			runkit.WithLogger(spruce.NewTestLogger(t)),
+		)
+
+		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+		defer cancel()
+
+		done := make(chan error, 1)
+		go func() {
+			done <- engine.Run(ctx)
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+
+		addr, err := engine.ListenAddr(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		conn, err := grpc.NewClient(
+			addr.String(),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		stream, err := messaginggrpc.
+			NewEventStreamConsumerAPIClient(conn).
+			ListEventStreams(ctx, &messaginggrpc.ListEventStreamsRequest{})
+		if err == nil {
+			_, err = stream.Recv()
+		}
+
+		if status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("expected the request to be denied by the interceptor, got %v", err)
+		}
+	})
+
+	t.Run("it panics if the listen address is empty", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected a panic")
+			}
+		}()
+
+		runkit.WithListenAddress("")
 	})
 
 	t.Run("it returns an error if it can not listen for gRPC requests", func(t *testing.T) {
