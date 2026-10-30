@@ -134,7 +134,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 
 	container, err := postgres.Run(
 		t.Context(),
-		"postgres:17-alpine",
+		"postgres:18-alpine",
 
 		// Allow container reuse, but key it based on the same session ID that
 		// testcontainers does for starting the Ryuk reaper process; otherwise
