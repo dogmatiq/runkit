@@ -18,79 +18,52 @@ locally.
 
 ---
 
-## Where things stand (2026-10-28)
-
-The infrastructure the unified path needs is built, on the `eventstream-grpc`
-branch. The consumer that uses it is not.
-
-**Built:**
-
-- **Cluster membership** (`internal/cluster`): `Heartbeater` sends a signal on
-  `heartbeat.<node-id>` every `HeartbeatInterval` (1s); `MembershipObserver`
-  subscribes to `heartbeat`, expires nodes after `HeartbeatTimeout` (5s), and
-  publishes the live set through `LiveNodeIDs`, an `xsync.Observable` that
-  never blocks on slow consumers. `cluster/rendezvous` provides HRW
-  hashing over `*uuidpb.UUID` (`Winner`, `Wins`, `Rank`, `RankAbove`).
-- **Signals** (`internal/signal`): `Listener` receives PostgreSQL notifications
-  on a single channel whose payload is a hierarchical, dot-separated topic, and
-  delivers the subtopic to subscribers of that topic or any topic above it.
-  Delivery is lossy: a signal is a hint to re-read state, never a payload. When
-  the listener starts listening it signals every subscriber, so subscribers
-  that registered before it, and signals missed during a reconnect, are
-  covered. `signal.Notify` sends from Go; triggers on `eventstream.streams`
-  and `eventstream.events` send `eventstream.create.<stream-id>` and
-  `eventstream.append.<stream-id>` for every write path.
-- **Local stream reading** (`internal/eventstream`): `Catalog` discovers streams
-  and sends new IDs to subscribers. `Reader` is the per-consumer catch-up
-  subscription for local streams: `Subscribe(streamID, checkpoint, types, ch)`
-  delivers `Batch`es (envelopes plus the checkpoint to resume from, so a
-  consumer advances past types it does not handle). Each stream has a cache of
-  recent events fed by a `scanner.Contemporary`; consumers behind the cache read
-  history through their own `scanner.Historical` and rejoin the cache when they
-  catch up; a consumer that stops keeping up is returned to history rather than
-  blocking anyone. `ConsumerAPI` serves `ListEventStreams` and `ConsumeEvents`
-  over gRPC from `Catalog` and `Reader`, signal-driven, with the service
-  definition's error contract.
-- **Supervision** (`internal/supervisor`): `Run` and `Group` retry a fallible
-  function with backoff, unless it fails with `supervisor.Fatal`. Every engine
-  component supervises its own fallible parts and returns an error only when it
-  can not continue, which stops the engine.
-- **Schema:** `is_foreign` is gone; foreign events are never stored.
-
-**Not built** (the discarded foreign-only prototype's versions no longer exist):
-
-- Peer configuration on the engine (`WithPeer` or equivalent) and remote gRPC
-  stream sources.
-- The projection applier and per-(handler, stream) worker.
-- The engine-level consumer that owns streams by rendezvous and runs workers.
-- The cut-over: projections are still served by `projection.EventPump` with
-  runkit-owned checkpoints in `handler_checkpoints`.
-- An end-to-end foreign-events test.
-
----
-
-## Decisions still binding
+## Decisions
 
 - **One projection consumption path.** Local and foreign streams are consumed
   identically; only the source differs.
+- **Local streams first.** Projections consume local streams through `Reader`
+  and `Catalog` before any remote source exists. The worker and consumer use
+  `*eventstream.Reader` and `*eventstream.Catalog` directly; the
+  `StreamSource` interface is extracted when the remote source is written, so
+  that a real second implementation shapes it.
 - **Handler-owned checkpoints.** Projections resume from
   `handler.CheckpointOffset(streamID)` and report progress via `HandleEvent`'s
   returned offset (OCC). `handler_checkpoints` becomes process-only.
+- **The scope's checkpoint is the handler's, not the scan position.**
+  `ProjectionEventScope.CheckpointOffset()` is the value `HandleEvent` last
+  returned, or `CheckpointOffset(streamID)` when the worker starts. Dogma says
+  it "may be lower than the incoming event's offset" when the stream holds
+  types the handler does not consume, so `Batch.Checkpoint`, which advances
+  past such events, is not used for it. The worker uses `Batch.Checkpoint` for
+  nothing.
+- **Retry through the supervisor.** An error from `HandleEvent` fails the
+  worker, which its supervisor restarts with backoff from
+  `CheckpointOffset(streamID)`. The `failures` and `resume_at` columns of
+  `handler_checkpoints` are not used for projections.
 - **No gRPC loopback.** The engine consumes its own streams via `Catalog` and
   `Reader`, never via its own `ConsumerAPI`.
-- **Rendezvous per-stream ownership.** Workload = stream ID, candidates = the
-  live node IDs from `MembershipObserver`. Failover is bounded by
-  `HeartbeatTimeout`; assignment is static.
+- **Rendezvous ownership, keyed by concurrency preference.** Candidates are
+  the live node IDs from `MembershipObserver`. For `MaximizeConcurrency` the
+  workload is `uuidpb.Derive(handlerKey, streamID)`, so each (handler, stream)
+  pair is placed independently. For `MinimizeConcurrency` the workload is the
+  handler key, so one node owns all of that handler's streams and a mutex in
+  the applier serializes `HandleEvent`. No advisory lock is taken. Failover is
+  bounded by `HeartbeatTimeout`; assignment is static.
+- **Ownership may briefly overlap.** While membership changes, such as at
+  startup when each node sees only itself, two nodes can both own a workload
+  and deliver the same event. Dogma's OCC contract makes this safe for a
+  correct handler, so no lease or startup delay is used. A
+  `MinimizeConcurrency` handler may briefly run on two nodes.
+- **A node that can not hear heartbeats owns nothing.** Membership is built
+  only from signals, so a node whose signal listener is disconnected sees its
+  live set empty while its own heartbeats may still reach other nodes. While
+  this node's own ID is absent from the live set, its view is unknown and it
+  runs no workers.
 - **Catch-up subscription semantics** are those `Reader` already provides:
   historical reads are isolated, contemporary delivery is shared and bounded,
   falling behind returns a consumer to history. The remote source must present
   the same shape so the worker is written once.
-- **Scan position vs checkpoint.** A `Batch.Checkpoint` is the scan position
-  (advances past irrelevant types); the handler checkpoint advances only on
-  `HandleEvent`. Resume after restart uses the handler checkpoint.
-- **Concurrency preference.** `MinimizeConcurrency` is honored by acquiring the
-  handler-keyed advisory lock via `concurrency.EnforceConcurrencyPreference`;
-  `MaximizeConcurrency` takes no lock.
 - **Projections only; processes unchanged.** Processes keep
   `AcquireEventDelivery` + SKIP LOCKED + runkit-owned checkpoints.
 - **Signals, not polling.** Local discovery and tail wakeups are signal-driven.
@@ -100,62 +73,9 @@ branch. The consumer that uses it is not.
 
 ---
 
-## Phase A — Stream sources
+## Phase A — Applier and stream worker
 
-Make local and foreign streams interchangeable to the consumer. The local
-implementation is an adapter over what exists; no new reading code.
-
-### Task A.1: `StreamSource` interface and local implementation
-
-**Files:** create `internal/eventstream/source.go` + test.
-
-- [ ] **Step 1: Define the interface** in terms of the existing shapes:
-
-  ```go
-  type StreamSource interface {
-      // SubscribeToStreams registers ch to receive the ID of each stream as it
-      // becomes available, beginning with those that already exist.
-      SubscribeToStreams(ch chan<- *uuidpb.UUID) func()
-
-      // SubscribeToEvents registers ch to receive batches of events of the
-      // given types from the given stream, starting at checkpoint.
-      SubscribeToEvents(streamID *uuidpb.UUID, checkpoint uint64, types *uuidpb.Set, ch chan<- Batch) func()
-  }
-  ```
-
-- [ ] **Step 2: Local implementation** delegating to `Catalog.StreamIDs` and
-      `Reader.Subscribe`.
-- [ ] **Step 3: Test + commit.**
-
-### Task A.2: Remote (gRPC) stream source
-
-**Files:** create `internal/eventstream/remote.go` + test (against a real
-`ConsumerAPI` server, as the gRPC tests already do).
-
-- [ ] **Step 1: Implement `StreamSource`** over
-      `messaginggrpc.EventStreamConsumerAPIClient`: `ListEventStreams` for
-      discovery, `ConsumeEvents` per subscription, each `ConsumeEventsResponse`
-      becoming a `Batch` (its envelopes and `CheckpointOffset`). Each
-      subscription is a supervised function that reconnects from the last
-      checkpoint on error.
-- [ ] **Step 2: Honor the server's contract:** a closed stream (no requested
-      type recordable) ends the subscription; `NOT_FOUND` and `OUT_OF_RANGE` are
-      failures, not retries.
-- [ ] **Step 3: Test + commit.**
-
-### Task A.3: Peer configuration
-
-**Files:** modify `engineoption.go`, `engine.go`.
-
-- [ ] **Step 1: Add `WithPeer(target string)`** (or a dynamic equivalent) and
-      build one remote `StreamSource` per peer with a gRPC client connection.
-- [ ] **Step 2: Commit.**
-
----
-
-## Phase B — Applier and stream worker
-
-### Task B.1: Projection applier
+### Task A.1: Projection applier
 
 **Files:** create `internal/projection/applier.go` + test.
 
@@ -164,88 +84,168 @@ implementation is an adapter over what exists; no new reading code.
   ```go
   type Applier interface {
       HandlerIdentity() *identitypb.Identity
+      Concurrency() dogma.ConcurrencyPreference
       EventTypeIDs() *uuidpb.Set
       ResumeOffset(ctx context.Context, streamID *uuidpb.UUID) (uint64, error)
-      Apply(ctx context.Context, streamID *uuidpb.UUID, checkpoint, offset uint64, env *envelopepb.Envelope) (next uint64, err error)
+      Apply(ctx context.Context, streamID *uuidpb.UUID, checkpoint uint64, env *envelopepb.Envelope) (next uint64, err error)
   }
   ```
 
 - [ ] **Step 2: Implement** for projections: `ResumeOffset` →
       `handler.CheckpointOffset`; `Apply` → `HandleEvent` under
-      `concurrency.EnforceConcurrencyPreference`, building the event scope as
-      `projection/eventscope.go` does.
+      `xerrors.RecoverT`, building the event scope as
+      `projection/eventscope.go` does, with the event's offset taken from the
+      envelope's `EventStreamPosition` extension and `checkpoint` as the
+      scope's checkpoint offset. For `MinimizeConcurrency`, a mutex in the
+      applier serializes `HandleEvent`.
 - [ ] **Step 3: Test + commit.**
 
-### Task B.2: Stream worker
+### Task A.2: Stream worker
 
 **Files:** create `internal/projection/streamworker.go` + test with a fake
-source and fake applier.
+applier against a real `Reader`.
 
 - [ ] **Step 1: Implement** the per-(handler, stream) loop. `Reader` already
       provides the historical ↔ contemporary transitions, so the worker is a
       loop, not a state machine:
-  - `checkpoint := applier.ResumeOffset(streamID)`; subscribe to the source at
+  - `checkpoint := applier.ResumeOffset(streamID)`; subscribe to the reader at
     `checkpoint` with the applier's types, with a small buffered channel.
-  - For each batch, `Apply` each envelope with the current checkpoint; on
-    success the checkpoint becomes the applier's returned `next`; after the
-    batch, the checkpoint becomes `Batch.Checkpoint`.
-  - On OCC conflict (`next` differs from the expected offset), unsubscribe and
-    resubscribe at `next`.
-  - Run under supervision; a restart re-derives the start from `ResumeOffset`.
+  - For each envelope of each batch, `Apply` it with `checkpoint`. If `next`
+    is the event's offset plus one, `checkpoint = next`. Otherwise an OCC
+    conflict occurred: log it, discard the rest of the batch, unsubscribe,
+    set `checkpoint = next` and resubscribe there.
+  - `Batch.Checkpoint` is ignored.
+  - Run under supervision; an `Apply` error fails the worker, and a restart
+    re-derives the start from `ResumeOffset`.
 - [ ] **Step 2: Test** catch-up from zero, delivery at the tail, OCC rewind,
-      and resume after restart. Commit.
+      resume after restart, retry after an error, and that the scope's
+      checkpoint stays at the handler's value while irrelevant events are
+      skipped. Commit.
 
 ---
 
-## Phase C — Consumer
+## Phase B — Consumer
 
-### Task C.1: Ownership and reconciliation
+### Task B.1: Ownership and reconciliation
 
 **Files:** create `internal/projection/consumer.go` + test.
 
 - [ ] **Step 1: Implement** the engine component. Inputs: this node's ID, the
-      `MembershipObserver`, the set of appliers, the local source and the remote
-      sources, and a logger. It:
-  - observes `LiveNodeIDs` for the set of live nodes;
-  - subscribes to streams from every source, maintaining stream → source;
-  - for each stream, when `rendezvous.Wins(streamID, nodeID, live)`, runs one
-    worker per applier under a `supervisor.Group`; stops them when ownership is
-    lost or the stream's source disappears.
+      `MembershipObserver`, the set of appliers, the `Catalog`, the `Reader`,
+      and a logger. It:
+  - observes `MembershipObserver.LiveNodeIDs` for the set of live nodes, and
+    runs no workers while this node's own ID is absent from it;
+  - observes `Catalog.StreamIDs` for the set of streams;
+  - for each applier and stream, computes the workload from the applier's
+    concurrency preference, and when `rendezvous.Wins(workload, nodeID, live)`
+    runs a worker under a `supervisor.Group`; stops it when ownership is lost.
   - Like every other component, its `Run(ctx)` returns an error only when it
     can not continue.
-- [ ] **Step 2: Test** with a fake source and a single live node: every event
-      applied in order exactly once; ownership changes start and stop workers.
+- [ ] **Step 2: Test** with a single live node: every event applied in order
+      exactly once; ownership changes start and stop workers; a
+      `MinimizeConcurrency` handler's streams are all owned by one node.
       Commit.
 
 ---
 
-## Phase D — Engine cut-over
+## Phase C — Engine cut-over
 
-### Task D.1: Wire the consumer
+### Task C.1: Wire the consumer
 
 **Files:** modify `engine.go`.
 
 - [ ] **Step 1: Build an applier** per non-disabled `*config.Projection`.
-- [ ] **Step 2: Construct and run** the consumer with the local source and the
-      peer sources; remove the projection `EventPump` from
-      `newComponentsForHandler` (keep the `Compactor` and the process pump).
+- [ ] **Step 2: Construct and run** the consumer; remove the projection
+      `EventPump` from `newComponentsForHandler` (keep the `Compactor` and the
+      process pump).
 - [ ] **Step 3: Build + commit.**
 
-### Task D.2: `handler_checkpoints` becomes process-only
+### Task C.2: `handler_checkpoints` becomes process-only
 
 **Files:** modify `internal/projection/*`.
 
 - [ ] **Step 1: Delete** `projection.EventPump` and its use of
       `AcquireEventDelivery`, `AdvanceStreamCheckpoint` and
       `SetCheckpointOffset`. Leave the `messagepump` helpers for processes.
+      Rows written for projections by earlier versions are left in place; the
+      DDL can not tell them from process rows.
 - [ ] **Step 2: Confirm** `projection.InitializeHandler` and `Compactor` are
       untouched. Commit.
 
-### Task D.3: Migrate projection tests
+### Task C.3: Migrate projection tests
 
-- [ ] **Step 1: Re-express** assertions on `handler_checkpoints` in terms of the
+- [ ] **Step 1: Delete** the four tests in
+      `internal/projection/eventstream_test.go` that assert on `failures` and
+      `resume_at`: `handlerFailuresCauseStreamConsumptionToBePostponed`,
+      `failureCounterIsResetOnSuccess`, `failureCounterGrowsAcrossFailures`
+      and `postponedStreamsAreNotConsumed`. The process package keeps its
+      copies.
+- [ ] **Step 2: Make the test stubs behave like real OCC handlers.** Stubs
+      that track a checkpoint compare `s.CheckpointOffset()` with their stored
+      value and, on a mismatch, return the stored value without applying the
+      event, so a duplicate delivery during an ownership overlap is not
+      reported as an error.
+- [ ] **Step 3: Re-express** the remaining uses of
+      `WaitForHandlerToConsumeAllEvents` in projection tests in terms of the
       handler's own checkpoint (`CheckpointOffsetFunc` on the stubs).
-- [ ] **Step 2: Run** `make test`. Commit.
+- [ ] **Step 4: Add** a test that a failing projection handler is retried from
+      its own checkpoint.
+- [ ] **Step 5: Run** the full suite; the existing projection tests (routing,
+      OCC, ordering, concurrency) must pass unchanged in behavior. Add the
+      `CHANGELOG.md` `[Unreleased]` entry. Commit.
+
+---
+
+## Phase D — Remote stream sources
+
+### Task D.1: `StreamSource` interface and local implementation
+
+**Files:** create `internal/eventstream/source.go` + test.
+
+- [ ] **Step 1: Extract the interface** from the consumer's and worker's use of
+      `Catalog` and `Reader`:
+
+  ```go
+  type StreamSource interface {
+      // StreamIDs returns the IDs of the streams available from the source,
+      // and a channel that is closed when more become available.
+      StreamIDs() (*uuidpb.Set, <-chan struct{})
+
+      // SubscribeToEvents registers ch to receive batches of events of the
+      // given types from the given stream, starting at checkpoint.
+      SubscribeToEvents(streamID *uuidpb.UUID, checkpoint uint64, types *uuidpb.Set, ch chan<- Batch) func()
+  }
+  ```
+
+- [ ] **Step 2: Local implementation** delegating to `Catalog.StreamIDs` and
+      `Reader.Subscribe`; the consumer takes sources instead of the catalog
+      and reader.
+- [ ] **Step 3: Test + commit.**
+
+### Task D.2: Remote (gRPC) stream source
+
+**Files:** create `internal/eventstream/remote.go` + test (against a real
+`ConsumerAPI` server, as the gRPC tests already do).
+
+- [ ] **Step 1: Implement `StreamSource`** over
+      `messaginggrpc.EventStreamConsumerAPIClient`: `ListEventStreams` for
+      discovery, `ConsumeEvents` per subscription, each `ConsumeEventsResponse`
+      becoming a `Batch` (its envelopes and `CheckpointOffset`). Discovery
+      publishes the stream IDs through an `xsync.Observable`, as `Catalog`
+      does. Each subscription is a supervised function that reconnects from
+      the last checkpoint on error.
+- [ ] **Step 2: Honor the server's contract:** a closed stream (no requested
+      type recordable) ends the subscription; `NOT_FOUND` and `OUT_OF_RANGE` are
+      failures, not retries.
+- [ ] **Step 3: Test + commit.**
+
+### Task D.3: Peer configuration
+
+**Files:** modify `engineoption.go`, `engine.go`.
+
+- [ ] **Step 1: Add `WithPeer(target string)`** (or a dynamic equivalent) and
+      build one remote `StreamSource` per peer with a gRPC client connection.
+- [ ] **Step 2: Commit.**
 
 ---
 
@@ -260,12 +260,7 @@ source and fake applier.
 - [ ] **Step 2: Debug systematically** if red: peer connection → remote source →
       discovery → ownership → type filter → delivery. Commit.
 
-### Task E.2: Local projections through the unified path
-
-- [ ] **Step 1: Run** the full suite; the existing projection tests (routing,
-      OCC, ordering, event stream) must pass unchanged in behavior. Commit.
-
-### Task E.3: Distribution, failover, catch-up
+### Task E.2: Distribution, failover, catch-up
 
 - [ ] Three replicas over one database: every event applied, total `HandleEvent`
       invocations bounded (no N× redundancy).
@@ -274,7 +269,7 @@ source and fake applier.
 - [ ] A new projection catching up from zero does not stall caught-up ones; a
       deliberately slow one drops to history and recovers.
 
-### Task E.4: Final validation
+### Task E.3: Final validation
 
 - [ ] `make precommit` green; `CHANGELOG.md` `[Unreleased]` entry. Commit.
 
