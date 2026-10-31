@@ -107,8 +107,9 @@ type Engine struct {
 	// signals listens for signals sent by this and other nodes.
 	signals *signal.Listener
 
-	// membership observes changes to the set of live nodes in the cluster.
-	membership *cluster.MembershipObserver
+	// heartbeat sends this node's heartbeats and observes the set of live
+	// nodes in the cluster.
+	heartbeat *cluster.Heartbeat
 
 	// eventStreams tracks the set of available event streams.
 	eventStreams *eventstream.Catalog
@@ -190,11 +191,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		Logger: e.logger.With(slog.String("component", "signal.listener")),
 	}
 
-	e.membership = &cluster.MembershipObserver{
-		Signals:           e.signals,
-		HeartbeatInterval: heartbeatInterval,
-		HeartbeatTimeout:  heartbeatTimeout,
-		Logger:            e.logger.With(slog.String("component", "cluster.membership-observer")),
+	e.heartbeat = &cluster.Heartbeat{
+		NodeID:   e.nodeID,
+		DB:       e.db,
+		Signals:  e.signals,
+		Interval: heartbeatInterval,
+		Timeout:  heartbeatTimeout,
+		Logger:   e.logger.With(slog.String("component", "cluster.heartbeat")),
 	}
 
 	e.eventStreams = &eventstream.Catalog{
@@ -261,16 +264,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	runComponent(e.signals)
-	runComponent(e.membership)
+	runComponent(e.heartbeat)
 	runComponent(e.eventStreams)
 	runComponent(e.events)
-
-	runComponent(&cluster.Heartbeater{
-		NodeID:   e.nodeID,
-		DB:       e.db,
-		Interval: heartbeatInterval,
-		Logger:   e.logger.With(slog.String("component", "cluster.heartbeater")),
-	})
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
