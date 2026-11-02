@@ -274,10 +274,10 @@ stop engines during a test. Phase B needs:
 
 ### Task B.1: Foreign events
 
-- [ ] `internal/projection/foreignevents_test.go`: upstream app records an
+- [x] `internal/projection/foreignevents_test.go`: upstream app records an
       event via a command; the downstream app's projection handles it.
       Historical (recorded before the downstream starts) and contemporary.
-- [ ] Debug systematically if red: dial → `RemoteCatalog` discovery → node
+- [x] Debug systematically if red: dial → `RemoteCatalog` discovery → node
       responsibility → subscription → type filter → delivery. Commit.
 
 ### Task B.2: Distribution, failover, catch-up
