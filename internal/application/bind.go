@@ -4,11 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 
 	"github.com/dogmatiq/enginekit/protobuf/identitypb"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -16,27 +14,9 @@ import (
 // not already bound to an application.
 //
 // If the database is bound to an application with the same key, the
-// application's name is updated to match id. If it is bound to an application
-// with a different key, it returns an error immediately. Otherwise, it retries
-// until it succeeds or ctx is canceled.
-func Bind(
-	ctx context.Context,
-	db *sql.DB,
-	id *identitypb.Identity,
-	logger *slog.Logger,
-) error {
-	return supervisor.Run(
-		ctx,
-		logger,
-		func(ctx context.Context) error {
-			return bind(ctx, db, id)
-		},
-	)
-}
-
-// bind makes a single attempt to bind the database to the application with the
-// given identity.
-func bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
+// application's name is updated to match id. It returns an error if the
+// database is bound to an application with a different key.
+func Bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 	var (
 		key  uuidpb.UUID
 		name string
@@ -65,14 +45,14 @@ func bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 		xsql.UUID(&key),
 		&name,
 	); err != nil {
-		return fmt.Errorf("unable to bind database to application: %w", err)
+		return err
 	}
 
 	if key.Equal(id.GetKey()) {
 		return nil
 	}
 
-	return supervisor.Fatalf(
+	return fmt.Errorf(
 		"it is already bound to application %s",
 		identitypb.New(name, &key),
 	)

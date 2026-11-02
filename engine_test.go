@@ -186,7 +186,6 @@ func TestEngine(t *testing.T) {
 			t.Context(),
 			db,
 			other,
-			spruce.NewTestLogger(t),
 		); err != nil {
 			t.Fatal(err)
 		}

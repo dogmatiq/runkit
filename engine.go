@@ -44,9 +44,9 @@ const (
 	// compact its data in a single attempt.
 	projectionCompactTimeout = 10 * time.Minute
 
-	// applicationBindTimeout is the maximum time spent trying to bind the
-	// database to the application before the engine stops.
-	applicationBindTimeout = 1 * time.Minute
+	// applicationBindTimeout is the maximum time given to bind the database to
+	// the application when the engine starts.
+	applicationBindTimeout = 15 * time.Second
 
 	// heartbeatInterval is the time between the heartbeats that each engine
 	// sends to the others in the cluster.
@@ -197,7 +197,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		bindCtx,
 		e.db,
 		e.appConfig.Identity(),
-		e.logger,
 	); err != nil {
 		return fmt.Errorf(
 			"unable to bind database to application %s: %w",
