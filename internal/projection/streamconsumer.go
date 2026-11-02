@@ -32,8 +32,8 @@ type streamConsumer struct {
 	// the stream.
 	Workload *uuidpb.UUID
 
-	// Events delivers events from the stream.
-	Events *eventstream.LocalReader
+	// EventStreams is the catalog that offers the stream.
+	EventStreams eventstream.Catalog
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.
@@ -131,7 +131,7 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 	}
 
 	batches := make(chan eventstream.Batch, sc.BufferSize)
-	unsubscribe := sc.Events.Subscribe(
+	unsubscribe := sc.EventStreams.Subscribe(
 		sc.StreamID,
 		checkpoint,
 		sc.EventTypeIDs,

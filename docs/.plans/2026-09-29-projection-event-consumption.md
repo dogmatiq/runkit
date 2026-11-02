@@ -1,4 +1,4 @@
-# Projection Event Consumption from Peers — Remaining Work
+# Projection Event Consumption from Foreign Applications — Remaining Work
 
 > **For agentic workers:** Implement this plan task-by-task. Steps use checkbox
 > (`- [ ]`) syntax for tracking. Build and test exclusively through `make`
@@ -6,13 +6,16 @@
 > language toolchains directly. Tests spin up PostgreSQL via testcontainers, so a
 > working Docker environment is required.
 
-**Goal:** Projections consume events recorded by applications running on _peer_
-engines, through the same path they already use for this application's streams.
-`eventstream.Catalog` and `eventstream.Reader` are that path; today they are
-local-only, and this work makes them span peers. Foreign events are never
+**Goal:** Projections consume events recorded by _foreign_ applications, running
+on other engines, through the same path they already use for this
+application's streams. `eventstream.Catalog` is that path; this work makes it
+span foreign applications. Foreign events are never
 persisted locally.
 
-**Done already (on `main`):** local consumption through `Catalog`/`Reader`,
+"Peer" is reserved for another node in the same cluster. An application that
+this engine consumes events from is a "foreign application".
+
+**Done already (on `main`):** local consumption through `LocalCatalog`,
 handler-owned checkpoints, `cluster.Node` responsibility by rendezvous hashing,
 retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 `grpcserver.Server`, `WithListenAddress()`).
@@ -21,62 +24,66 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 
 ## Decisions that shape the remaining work
 
-- **`Catalog` and `Reader` are the abstraction.** Today's `Catalog` and
-  `Reader` become `LocalCatalog` and `LocalReader`. `RemoteCatalog` and
-  `RemoteReader` provide the same two shapes over one peer's
-  `messaginggrpc.EventStreamConsumerAPIClient`, paired as a `Peer`. `Catalog`
-  and `Reader` become composites: `Catalog.StreamIDs()` is the union over the
-  local catalog and the current peers, and `Reader.Subscribe()` asks the
-  `Catalog` which member offers the stream and delegates to that member's
-  reader. `projection.Consumer` and `streamConsumer` keep their
-  `EventStreams *Catalog` and `Events *Reader` fields.
-- **Peers come and go.** The composite `Catalog` owns the set of peers. Adding
-  a peer returns a function that removes it, in the same style as
-  `cluster.Node.ObserveResponsibility()`; the set is owned by the catalog's
-  `Run` goroutine and changed through messaging, not a mutex. When a peer is
-  removed, its streams leave `StreamIDs()` and the composite `Reader` cancels
-  any subscriptions it had routed to that peer. Re-adding a peer makes its
+- **`Catalog` is the abstraction, for discovery and reading alike.** The
+  `Catalog` interface has `StreamIDs()` and `Subscribe()`. `LocalCatalog`
+  implements it for this application's streams, discovering them and reading
+  their events in one type over the existing `scanner` package. `RemoteCatalog`
+  implements it over one foreign application's
+  `messaginggrpc.EventStreamConsumerAPIClient`. `CompositeCatalog` implements
+  it over a set of catalogs added and removed at runtime: `StreamIDs()` is the
+  union, and `Subscribe()` is routed to the member that offers the stream.
+  There is no separate reader abstraction. `projection.Consumer` and
+  `streamConsumer` depend on the interface through one `EventStreams` field.
+- **Catalogs come and go.** `CompositeCatalog.Add(Catalog)` returns a
+  function that removes the member, in the same style as
+  `cluster.Node.ObserveResponsibility()`; the set is owned by the composite's
+  `Run` goroutine and changed through messaging, not a mutex. The local
+  catalog is added first, then one `RemoteCatalog` per foreign application.
+  When a member is removed, its streams leave `StreamIDs()` and the composite
+  cancels any subscriptions it had routed to it. Re-adding a member makes its
   streams reappear, and consumption resumes from the handler's checkpoint.
-  Configuration is static for now (`WithPeer()` at construction, added to the
-  catalog at startup); a runtime add/remove API is deferred and must need no
-  redesign.
+  Configuration is static for now (`WithForeignApplication()` at
+  construction, added to the composite at startup); a runtime add/remove API
+  is deferred and must need no redesign.
 - **Only local streams are permanent.** `LocalCatalog` keeps its guarantee that
   streams are never removed (its change detection relies on it). The composite
-  makes no such guarantee: a peer's streams disappear with the peer. Within a
-  peer's lifetime its known stream set only grows and is retained across
-  reconnects, since `RemoteCatalog` publishes IDs through an `xsync.Observable`
-  as `LocalCatalog` does.
+  makes no such guarantee: a member's streams disappear with the member. While
+  a `RemoteCatalog` is present, its known stream set only grows and is retained
+  across reconnects, since it publishes IDs through an `xsync.Observable` as
+  the local catalog does.
 - **`projection.Consumer` follows the catalog both ways.** It starts a stream
   consumer for each stream that appears and stops the stream consumer for each
-  stream that disappears, so a removed peer's streams stop being consumed. The
-  handler keeps its checkpoint for the stream. A stream ID that is not offered
-  by any member when subscribed gets a no-op subscription; the consumer stops
-  it when it notices the stream is absent.
+  stream that disappears, so a removed member's streams stop being consumed.
+  The handler keeps its checkpoint for the stream. A stream ID that no member
+  offers when subscribed gets a no-op subscription; the consumer stops it when
+  it notices the stream is absent.
 - **`ConsumerAPI` serves only this application's streams.** It depends on
-  `LocalCatalog` and `LocalReader`, never on the composites, so it never relays
-  a peer's streams. (Relay topologies are out of scope.)
-- **Remote consumption presents the same shape as local.** A `RemoteReader`
+  `*LocalCatalog`, never on the composite, so it never relays a foreign
+  application's streams. (Relay topologies are out of scope.)
+- **Remote consumption presents the same shape as local.** A `RemoteCatalog`
   subscription delivers `Batch` values (one per `ConsumeEventsResponse`, its
   `MultiEnvelope`s flattened with `envelopepb.MultiEnvelope.All()`, the
   response's `CheckpointOffset` as `Batch.Checkpoint`). The server already
   applies the type filter and moves slow clients to history, so the remote
-  reader needs no cache; gRPC flow control is its backpressure.
+  catalog needs no cache; gRPC flow control is its backpressure.
 - **Remote failures retry through the supervisor.** Each subscription and each
   discovery stream is a supervised function that reconnects from the last
-  delivered checkpoint. `NOT_FOUND` and `OUT_OF_RANGE` from a peer indicate
-  that the peer's data no longer matches the handler's checkpoint; they are
-  returned via `supervisor.Persistent` (retried slowly), not treated as fatal,
-  since one bad peer must not stop the engine. A server-closed stream (no
-  requested type recordable by the peer) ends that subscription quietly.
-- **Peers are configured statically, for now.** `WithPeer(target string,
-  options ...grpc.DialOption)` mirrors `WithListenAddress()`. Homogeneous
-  connectivity; no self-peering.
+  delivered checkpoint. `NOT_FOUND` and `OUT_OF_RANGE` from a foreign
+  application indicate that its data no longer matches the handler's
+  checkpoint; they are returned via `supervisor.Persistent` (retried slowly),
+  not treated as fatal, since one bad foreign application must not stop the
+  engine. A server-closed stream (no requested type recordable by the
+  application) ends that subscription quietly.
+- **Foreign applications are configured statically, for now.**
+  `WithForeignApplication(target string, options ...grpc.DialOption)` mirrors
+  `WithListenAddress()`. Homogeneous connectivity; an engine never consumes
+  from itself.
 - **Processes are unchanged.** They keep `AcquireEventDelivery`, SKIP LOCKED and
   engine-owned checkpoints in `eventstream.handler_checkpoints`.
 
 ---
 
-## Phase A — Catalog and Reader across peers
+## Phase A — Catalogs across foreign applications
 
 ### Task A.0: Tidy-ups left from the local work
 
@@ -96,72 +103,80 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
       behaviour changes; the whole suite must pass unchanged.
 - [x] **Step 2:** Commit.
 
-### Task A.2: Composites
+### Task A.2: One `Catalog` abstraction
 
-**Files:** create `internal/eventstream/catalog.go`, `reader.go` + tests;
-modify `internal/projection/consumer.go`.
+**Files:** `internal/eventstream/catalog.go` (interface and `Batch`),
+`localcatalog.go` (the former catalog and reader, folded together), `grpc.go`,
+`engine.go`, `internal/projection/consumer.go`, `streamconsumer.go`. The
+`scanner` package is unchanged.
 
-- [ ] **Step 1: Composite `Catalog`.** Holds a `*LocalCatalog` and a set of
-      `*Peer` owned by its `Run` goroutine. `AddPeer(*Peer) (remove func())`
-      sends to `Run` through channels (blocks until `Run` is running, no-op
-      once it has stopped, as `Node.ObserveResponsibility` does). `Run` watches
-      the local catalog's and every peer's `changed` channels and the add/remove
-      requests, and republishes the union through an `xsync.Observable`,
-      storing only when it differs. It also answers which member offers a given
-      stream, for the composite `Reader`. `Peer` is introduced here as the
-      pairing of a catalog and a reader; A.3 gives it its remote
-      implementation.
-- [ ] **Step 2: Composite `Reader`.** Holds `Local *LocalReader` and
-      `EventStreams *Catalog`. `Subscribe()` asks the catalog for the member
-      that offers the stream and delegates; a stream no member offers gets a
-      no-op unsubscribe. A subscription routed to a peer is cancelled when that
-      peer is removed. A stream offered by more than one member is not expected
-      (stream IDs are UUIDs); the first member listed wins.
+- [x] **Step 1:** Define the `Catalog` interface. Fold `LocalReader` into
+      `LocalCatalog`, whose `Run` discovers streams and reads events. Drop the
+      `Events` fields from `ConsumerAPI`, `projection.Consumer` and
+      `streamConsumer`; the projection types depend on the interface. No
+      behaviour changes; the whole suite must pass unchanged.
+- [x] **Step 2:** Commit.
+
+### Task A.3: `CompositeCatalog`
+
+**Files:** create `internal/eventstream/compositecatalog.go` + test; modify
+`internal/projection/consumer.go`.
+
+- [ ] **Step 1: `CompositeCatalog`.** `Add(Catalog) (remove func())` sends to
+      `Run` through channels (blocks until `Run` is running, no-op once it has
+      stopped, as `Node.ObserveResponsibility` does). `Run` watches every
+      member's `changed` channel and the add/remove requests, and republishes
+      the union, and which member offers each stream, through an
+      `xsync.Observable`, storing only when it differs. A stream offered by
+      more than one member is attributed to the member added first.
+- [ ] **Step 2: Routing.** `Subscribe()` delegates to the member that offers
+      the stream; a stream no member offers gets a no-op unsubscribe. A
+      subscription routed to a member is cancelled when that member is
+      removed.
 - [ ] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
       consumer gets its own cancellable context (`supervisor.Go` or
       `context.WithCancel` per stream) so that a stream missing from
       `StreamIDs()` has its consumer cancelled and removed from
       `streamConsumers`. Update the comment that says a stream consumer lives
       for the life of the consumer.
-- [ ] **Step 4:** Point `projection.Consumer` at the composites; `ConsumerAPI`
-      stays on the local types. With no peers the composites must be a
+- [ ] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
+      catalog to it, and gives it to each `projection.Consumer`; `ConsumerAPI`
+      stays on `*LocalCatalog`. With one member the composite must be a
       pass-through; the whole existing suite must pass unchanged.
-- [ ] **Step 5: Tests + commit.** Composite tests use a stub peer (a `Peer`
-      whose catalog/reader are driven by the test): union of stream IDs; change
-      notification when a member changes; adding a peer adds its streams;
-      removing one removes them and ends its subscriptions; `Consumer` stops a
-      stream consumer when its stream leaves the catalog.
+- [ ] **Step 5: Tests + commit.** With a stub `Catalog`: union of stream IDs;
+      change notification when a member changes; adding a member adds its
+      streams; removing one removes them and ends its subscriptions;
+      subscriptions are routed to the right member; `Consumer` stops a stream
+      consumer when its stream leaves the catalog.
 
-### Task A.3: Remote catalog, reader and peer
+### Task A.4: `RemoteCatalog`
 
-**Files:** create `internal/eventstream/remotecatalog.go`, `remotereader.go`
-(and extend `peer.go`) + tests against a real `ConsumerAPI` served by an
-engine, as `grpc_test.go` already does (`newConsumerClient`).
+**Files:** create `internal/eventstream/remotecatalog.go` + tests against a
+real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
+(`newConsumerClient`).
 
-- [ ] **Step 1: `RemoteCatalog`.** `Run()` holds `ListEventStreams` open under
+- [ ] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
       `supervisor.Run`, adding each `event_stream_id` to an observable set.
-- [ ] **Step 2: `RemoteReader`.** `Subscribe()` starts a supervised function:
+- [ ] **Step 2: Reading.** `Subscribe()` starts a supervised function:
       `ConsumeEvents(streamID, checkpoint, types)`, each response → `Batch`
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
       checkpoint it will reconnect from. Unsubscribe cancels it.
 - [ ] **Step 3: Honor the server's contract** as decided above: EOF ends the
       subscription; `NOT_FOUND`/`OUT_OF_RANGE` → `supervisor.Persistent`.
-- [ ] **Step 4: Remote `Peer`.** One `RemoteCatalog` and `RemoteReader` over
-      one `grpc.ClientConn`; `Run()` runs both.
-- [ ] **Step 5:** Test + commit.
+- [ ] **Step 4:** Test + commit.
 
-### Task A.4: Peer configuration
+### Task A.5: Foreign application configuration
 
 **Files:** modify `engineoption.go`, `engine.go`, `CHANGELOG.md`.
 
-- [ ] **Step 1:** Add `WithPeer(target string, options ...grpc.DialOption)`.
-      In `Run()`, one `grpc.ClientConn` and one `Peer` per option, each run as
-      a component and added to the composite `Catalog` at startup (remove on
-      shutdown is implicit in stopping).
-- [ ] **Step 2:** Changelog: add the peer-consumption entry under Added, and
-      drop "This engine does not yet consume events from other engines." from
-      the gRPC server entry. Commit.
+- [ ] **Step 1:** Add `WithForeignApplication(target string, options
+      ...grpc.DialOption)`. In `Run()`, one `grpc.ClientConn` and one
+      `RemoteCatalog` per option, run as a component and added to the
+      `CompositeCatalog` at startup.
+- [ ] **Step 2:** Changelog: add an entry for consuming events from foreign
+      applications under Added, and drop "This engine does not yet consume
+      events from other engines." from the gRPC server entry. Commit.
 
 ---
 
@@ -174,7 +189,7 @@ engine, as `grpc_test.go` already does (`newConsumerClient`).
 stop engines during a test. Phase B needs:
 
 - [ ] A way to run a second application, with its own identity and database,
-      peered to the first (the upstream must be running and have a
+      consuming from the first (the upstream must be running and have a
       `ListenAddr()` before the downstream is built).
 - [ ] A way to add and remove individual engines while a test runs, and to
       reach each engine's `*cluster.Node` (the `contexthook.Node` hook already
@@ -186,7 +201,7 @@ stop engines during a test. Phase B needs:
       event via a command; the downstream app's projection handles it.
       Historical (recorded before the downstream starts) and contemporary.
 - [ ] Debug systematically if red: dial → `RemoteCatalog` discovery → node
-      responsibility → `RemoteReader` → type filter → delivery. Commit.
+      responsibility → subscription → type filter → delivery. Commit.
 
 ### Task B.2: Distribution, failover, catch-up
 
@@ -208,14 +223,16 @@ stop engines during a test. Phase B needs:
 
 ## Out of scope (explicitly deferred)
 
-- **A runtime API for adding and removing peers.** The composites support it;
-  no engine-level API is exposed yet.
+- **A runtime API for adding and removing foreign applications.** The
+  composite supports it; no engine-level API is exposed yet.
 - **Process handlers** consumed by a node chosen by rendezvous hashing.
-- **Re-subscribing after a peer closes a stream** because it could not record
-  any requested type; if the peer later adds that type, the subscription is
-  only re-established when this engine restarts or the peer is re-added.
+- **Re-subscribing after a foreign application closes a stream** because it
+  could not record any requested type; if it later adds that type, the
+  subscription is only re-established when this engine restarts or the
+  application is re-added.
 - **Hot-spot mitigation** (weighted rendezvous, work stealing).
-- **Heterogeneous peer connectivity**, dynamic peer discovery, per-replica
-  reachability.
-- **Relay topologies**; consumers peer directly with producers.
+- **Heterogeneous connectivity**, dynamic discovery of foreign applications,
+  per-replica reachability.
+- **Relay topologies**; this engine consumes directly from the application
+  that recorded the events.
 - **Instant failover** for local projections, given up for a single model.

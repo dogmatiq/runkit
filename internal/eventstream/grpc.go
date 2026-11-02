@@ -23,11 +23,8 @@ type ConsumerAPI struct {
 	// DB is the database connection used to query event streams.
 	DB *sql.DB
 
-	// EventStreams tracks the set of available event streams.
+	// EventStreams is the catalog of event streams served to clients.
 	EventStreams *LocalCatalog
-
-	// Events delivers events to clients.
-	Events *LocalReader
 
 	// RecordableEventTypes is the set of message type IDs of every event type
 	// that the application can record. A client that requests only event types
@@ -142,7 +139,7 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 
 	batches := make(chan Batch, s.BufferSize)
-	unsubscribe := s.Events.Subscribe(streamID, checkpoint, types, batches)
+	unsubscribe := s.EventStreams.Subscribe(streamID, checkpoint, types, batches)
 	defer unsubscribe()
 
 	for {

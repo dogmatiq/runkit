@@ -122,11 +122,9 @@ type Engine struct {
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
 
-	// eventStreams tracks the set of available event streams.
+	// eventStreams is the catalog of event streams recorded by this
+	// application.
 	eventStreams *eventstream.LocalCatalog
-
-	// events delivers events from event streams to consumers.
-	events *eventstream.LocalReader
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
@@ -230,15 +228,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	e.eventStreams = &eventstream.LocalCatalog{
-		DB:      e.db,
-		Signals: e.signals,
-		Logger:  e.logger.With(slog.String("component", "eventstream.catalog")),
-	}
-
-	e.events = &eventstream.LocalReader{
 		DB:                    e.db,
 		Signals:               e.signals,
-		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),
+		Logger:                e.logger.With(slog.String("component", "eventstream.catalog")),
 		ContemporaryCacheSize: eventStreamCacheSize,
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
@@ -251,7 +243,6 @@ func (e *Engine) Run(ctx context.Context) error {
 			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
 				DB:                   e.db,
 				EventStreams:         e.eventStreams,
-				Events:               e.events,
 				RecordableEventTypes: e.recordableEventTypes(),
 				BufferSize:           eventStreamBufferSize,
 				Logger: e.logger.With(
@@ -296,7 +287,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	runComponent(e.signals)
 	runComponent(e.node)
 	runComponent(e.eventStreams)
-	runComponent(e.events)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -507,7 +497,6 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 			&projection.Consumer{
 				Node:         e.node,
 				EventStreams: e.eventStreams,
-				Events:       e.events,
 				Handler:      handlerConfig.Interface(),
 				Identity:     handlerConfig.Identity(),
 				Concurrency:  handlerConfig.ConcurrencyPreference(),

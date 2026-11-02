@@ -26,11 +26,8 @@ type Consumer struct {
 	// Node reports whether this node is responsible for each stream's workload.
 	Node *cluster.Node
 
-	// EventStreams provides the set of event streams.
-	EventStreams *eventstream.LocalCatalog
-
-	// Events delivers events from the event streams.
-	Events *eventstream.LocalReader
+	// EventStreams is the catalog of event streams to consume.
+	EventStreams eventstream.Catalog
 
 	// Handler is the projection message handler to which events are
 	// dispatched.
@@ -115,7 +112,7 @@ func (c *Consumer) ensureStreamConsumer(
 		StreamID:     streamID,
 		Node:         c.Node,
 		Workload:     workload,
-		Events:       c.Events,
+		EventStreams: c.EventStreams,
 		EventTypeIDs: c.EventTypeIDs,
 		Handler:      c.Handler,
 		HandlerLock:  c.handlerLock,
