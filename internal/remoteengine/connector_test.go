@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/eventstream"
@@ -39,16 +41,7 @@ func TestConnector(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		conn, err := grpc.NewClient(
-			addr.String(),
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { conn.Close() })
-
-		return composite, conn
+		return composite, dial(t, addr.String())
 	}
 
 	t.Run("it offers the event streams of each added remote engine", func(t *testing.T) {
@@ -116,6 +109,56 @@ func TestConnector(t *testing.T) {
 		)
 	})
 
+	t.Run("it loses subscriptions to the event streams of a remote engine that is removed", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				composite, conn := setup(t, engine)
+				streamID := xtesting.CreateEventStream(t, db)
+
+				remove := make(chan func(), 1)
+
+				connector := &Connector{
+					Discover: func(
+						ctx context.Context,
+						add func(grpc.ClientConnInterface) func(),
+					) error {
+						remove <- add(conn)
+						<-ctx.Done()
+						return ctx.Err()
+					},
+					EventStreams: composite,
+					Logger:       spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, connector.Run)
+
+				expectStreamIDs(t, composite, streamID)
+
+				lost, unsubscribe := composite.Subscribe(
+					streamID,
+					0,
+					uuidcollection.NewSet(
+						stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+					),
+					make(chan eventstream.Batch, 10),
+				)
+				defer unsubscribe()
+
+				xtesting.ExpectNoReceive(t, "lost subscription", lost)
+
+				select {
+				case <-time.After(xtesting.WaitTimeout):
+					t.Fatal("timeout waiting for the remote engine to be added")
+				case fn := <-remove:
+					fn()
+				}
+
+				xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+			},
+			app(),
+		)
+	})
+
 	t.Run("it removes the event streams of every remote engine when the discoverer returns", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
@@ -149,6 +192,61 @@ func TestConnector(t *testing.T) {
 				close(stop)
 
 				expectStreamIDs(t, composite)
+			},
+			app(),
+		)
+	})
+
+	t.Run("it runs alongside other connectors that share the catalog", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				composite, conn := setup(t, engine)
+				streamA := xtesting.CreateEventStream(t, db)
+
+				streamB := uuidpb.Generate()
+				connB := newEventStreamServer(t, streamB)
+
+				stopB := make(chan struct{})
+
+				connectorA := &Connector{
+					Discover: func(
+						ctx context.Context,
+						add func(grpc.ClientConnInterface) func(),
+					) error {
+						add(conn)
+						<-ctx.Done()
+						return ctx.Err()
+					},
+					EventStreams: composite,
+					Logger:       spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, connectorA.Run)
+
+				connectorB := &Connector{
+					Discover: func(
+						ctx context.Context,
+						add func(grpc.ClientConnInterface) func(),
+					) error {
+						add(connB)
+
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-stopB:
+							return nil
+						}
+					},
+					EventStreams: composite,
+					Logger:       spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, connectorB.Run)
+
+				expectStreamIDs(t, composite, streamA, streamB)
+
+				close(stopB)
+
+				expectStreamIDs(t, composite, streamA)
 			},
 			app(),
 		)
@@ -225,4 +323,77 @@ func expectStreamIDs(
 		case <-changed:
 		}
 	}
+}
+
+// dial returns a connection to the gRPC server at addr.
+func dial(t testing.TB, addr string) grpc.ClientConnInterface {
+	t.Helper()
+
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	return conn
+}
+
+// newEventStreamServer starts a gRPC server that offers the given event
+// streams, and returns a connection to it.
+func newEventStreamServer(
+	t testing.TB,
+	streamIDs ...*uuidpb.UUID,
+) grpc.ClientConnInterface {
+	t.Helper()
+
+	server := grpc.NewServer()
+	messaginggrpc.RegisterEventStreamConsumerAPIServer(
+		server,
+		&eventStreamServerStub{
+			StreamIDs: streamIDs,
+		},
+	)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	return dial(t, listener.Addr().String())
+}
+
+// eventStreamServerStub is an EventStreamConsumerAPI server that offers a
+// fixed set of event streams, which have no events.
+type eventStreamServerStub struct {
+	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
+
+	StreamIDs []*uuidpb.UUID
+}
+
+func (s *eventStreamServerStub) ListEventStreams(
+	_ *messaginggrpc.ListEventStreamsRequest,
+	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
+) error {
+	for _, streamID := range s.StreamIDs {
+		response := messaginggrpc.NewListEventStreamsResponseBuilder().
+			WithEventStream(
+				messaginggrpc.NewEventStreamBuilder().
+					WithEventStreamId(streamID).
+					Build(),
+			).
+			Build()
+
+		if err := res.Send(response); err != nil {
+			return err
+		}
+	}
+
+	<-res.Context().Done()
+	return res.Context().Err()
 }

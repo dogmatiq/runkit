@@ -240,7 +240,7 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       using the connection. When the discoverer returns, its connections are
       removed, and a discoverer that returns nil is not called again. Other subsystems that use remote engines later become
       further dependencies of this type.
-- [ ] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an added
+- [x] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an added
       connection's streams appear in the composite; removing it removes them
       and loses their subscriptions; a returning discoverer's connections are
       removed; `StaticRemoteEngines` adds each connection; two discoverers run
