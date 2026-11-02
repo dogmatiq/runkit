@@ -123,9 +123,14 @@ type Engine struct {
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
 
-	// eventStreams is the catalog of event streams recorded by this
+	// localEventStreams is the catalog of event streams recorded by this
 	// application.
-	eventStreams *eventstream.LocalCatalog
+	localEventStreams *eventstream.LocalCatalog
+
+	// allEventStreams is the catalog of all event streams known to this engine,
+	// including local event streams, and those provided by foreign
+	// applications.
+	allEventStreams *eventstream.CompositeCatalog
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
@@ -228,13 +233,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		Node: e.node,
 	})
 
-	e.eventStreams = &eventstream.LocalCatalog{
+	e.localEventStreams = &eventstream.LocalCatalog{
 		DB:                    e.db,
 		Signals:               e.signals,
 		Logger:                e.logger.With(slog.String("component", "eventstream.catalog")),
 		ContemporaryCacheSize: eventStreamCacheSize,
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
+
+	e.allEventStreams = &eventstream.CompositeCatalog{}
 
 	var server *grpcserver.Server
 
@@ -243,7 +250,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			Address: e.listenAddress,
 			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
 				DB:                   e.db,
-				EventStreams:         e.eventStreams,
+				EventStreams:         e.localEventStreams,
 				RecordableEventTypes: e.recordableEventTypes(),
 				BufferSize:           eventStreamBufferSize,
 				Logger: e.logger.With(
@@ -287,7 +294,10 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	runComponent(e.signals)
 	runComponent(e.node)
-	runComponent(e.eventStreams)
+	runComponent(e.localEventStreams)
+	runComponent(e.allEventStreams)
+
+	e.allEventStreams.Add(e.localEventStreams)
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.
@@ -497,7 +507,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&projection.Consumer{
 				Node:         e.node,
-				EventStreams: e.eventStreams,
+				EventStreams: e.allEventStreams,
 				Handler:      handlerConfig.Interface(),
 				Identity:     handlerConfig.Identity(),
 				Concurrency:  handlerConfig.ConcurrencyPreference(),

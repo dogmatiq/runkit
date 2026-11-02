@@ -151,7 +151,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
       for the life of the consumer. Without this, a stream consumer for a
       vanished stream would keep restarting with backoff, its subscription
       lost each time.
-- [ ] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
+- [x] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
       catalog to it, and gives it to each `projection.Consumer`; `ConsumerAPI`
       stays on `*LocalCatalog`. With one member the composite must be a
       pass-through; the whole existing suite must pass unchanged.
