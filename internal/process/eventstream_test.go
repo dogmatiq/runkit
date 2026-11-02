@@ -69,6 +69,13 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 					handlerMutex.Lock()
 					defer handlerMutex.Unlock()
 
+					// Setting the latch stops the engines, which can roll back
+					// the final delivery after the handler has returned, so
+					// another engine may deliver the final event again.
+					if checkpointOffset == eventCount {
+						return nil
+					}
+
 					gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
 					wantContent := stubs.TypeA(fmt.Sprintf("event-%d", checkpointOffset))
 
@@ -140,6 +147,13 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 				) error {
 					handlerMutex.Lock()
 					defer handlerMutex.Unlock()
+
+					// Setting the latch stops the engines, which can roll back
+					// the final delivery after the handler has returned, so
+					// another engine may deliver the final event again.
+					if checkpointOffset == eventCount {
+						return nil
+					}
 
 					gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
 
