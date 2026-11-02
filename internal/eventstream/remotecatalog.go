@@ -144,6 +144,9 @@ func (c *RemoteCatalog) Run(ctx context.Context) error {
 
 // discover adds each event stream that the application reports to the set of
 // known streams.
+//
+// If the server does not offer event streams, it returns without error and the
+// catalog offers no streams.
 func (c *RemoteCatalog) discover(ctx context.Context) error {
 	responses, err := c.Client.ListEventStreams(
 		ctx,
@@ -156,6 +159,14 @@ func (c *RemoteCatalog) discover(ctx context.Context) error {
 
 	for {
 		res, err := responses.Recv()
+		if status.Code(err) == codes.Unimplemented {
+			c.Logger.InfoContext(
+				ctx,
+				"remote engine does not offer event streams",
+			)
+			return nil
+		}
+
 		if err != nil {
 			return fmt.Errorf("unable to receive event stream: %w", err)
 		}

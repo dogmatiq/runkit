@@ -2,15 +2,23 @@ package eventstream_test
 
 import (
 	"database/sql"
+	"net"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestRemoteCatalog_streamIDs(t *testing.T) {
@@ -53,6 +61,60 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 			},
 			consumerAPIApp(),
 		)
+	})
+
+	t.Run("it offers no streams if the server does not offer event streams", func(t *testing.T) {
+		var calls atomic.Int32
+
+		server := grpc.NewServer(
+			grpc.UnknownServiceHandler(
+				func(any, grpc.ServerStream) error {
+					calls.Add(1)
+					return status.Error(codes.Unimplemented, "unknown service")
+				},
+			),
+		)
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		go server.Serve(listener)
+		t.Cleanup(server.Stop)
+
+		conn, err := grpc.NewClient(
+			listener.Addr().String(),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+
+		catalog := &RemoteCatalog{
+			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			Logger: spruce.NewTestLogger(t),
+		}
+		xtesting.GoE(t, catalog.Run)
+
+		deadline := time.After(xtesting.WaitTimeout)
+		for calls.Load() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("timeout waiting for the catalog to list event streams")
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+
+		// A failure would be retried well within this period.
+		time.Sleep(500 * time.Millisecond)
+
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("unexpected number of calls: got %d, want 1", n)
+		}
+
+		expectStreamIDs(t, catalog)
 	})
 }
 
