@@ -2,14 +2,20 @@ package eventstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sync"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"golang.org/x/sync/errgroup"
 )
 
 // RemoteCatalog is the [Catalog] of event streams recorded by a foreign
@@ -17,15 +23,43 @@ import (
 //
 // Streams are never removed while the catalog runs, so each set returned by
 // [RemoteCatalog.StreamIDs] is a superset of the sets returned before it.
+//
+// A subscription that is disconnected from the application reconnects from the
+// checkpoint of the last batch it delivered.
 type RemoteCatalog struct {
 	// Client is the gRPC client used to discover the application's event
-	// streams.
+	// streams and consume their events.
 	Client messaginggrpc.EventStreamConsumerAPIClient
 
 	// Logger is the target for log messages produced by the catalog.
 	Logger *slog.Logger
 
 	streamIDs xsync.Observable[*uuidcollection.Set]
+
+	once       sync.Once
+	sub, unsub chan *remoteSubscription
+
+	done xsync.Latch
+}
+
+// remoteSubscription is a subscription to an event stream in a
+// [RemoteCatalog].
+type remoteSubscription struct {
+	StreamID     *uuidpb.UUID
+	MessageTypes *uuidcollection.Set
+	Batches      chan<- Batch
+
+	// Checkpoint is the offset from which the subscription resumes when it
+	// reconnects. It is advanced only by the subscription's own goroutine.
+	Checkpoint uint64
+
+	// Lost is set when the catalog can no longer deliver to the subscription.
+	Lost xsync.Latch
+
+	// Cancel stops the subscription's goroutine, and Result holds its error
+	// once it has returned.
+	Cancel context.CancelFunc
+	Result *xsync.Future[error]
 }
 
 // StreamIDs returns the IDs of the known event streams, and a channel that is
@@ -36,11 +70,73 @@ func (c *RemoteCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 	return c.streamIDs.Load()
 }
 
-// Run discovers event streams until ctx is canceled.
+// Subscribe registers ch to receive events from a specific stream starting
+// at the given checkpoint offset. Events are delivered in offset order.
 //
-// It must be called at most once.
+// types is the set of message types to deliver. It must not be empty.
+//
+// lost is closed if the catalog can no longer deliver to the subscription.
+func (c *RemoteCatalog) Subscribe(
+	streamID *uuidpb.UUID,
+	checkpoint uint64,
+	types *uuidcollection.Set,
+	ch chan<- Batch,
+) (lost <-chan struct{}, unsubscribe func()) {
+	if types.IsEmpty() {
+		panic("message types must not be empty")
+	}
+
+	c.init()
+
+	sub := &remoteSubscription{
+		StreamID:     streamID,
+		MessageTypes: types,
+		Batches:      ch,
+		Checkpoint:   checkpoint,
+	}
+
+	select {
+	case <-c.done.Chan():
+		return c.done.Chan(), func() {}
+	case c.sub <- sub:
+	}
+
+	var once sync.Once
+
+	return sub.Lost.Chan(), func() {
+		once.Do(func() {
+			select {
+			case <-c.done.Chan():
+			case c.unsub <- sub:
+			}
+		})
+	}
+}
+
+func (c *RemoteCatalog) init() {
+	c.once.Do(func() {
+		c.sub = make(chan *remoteSubscription)
+		c.unsub = make(chan *remoteSubscription)
+	})
+}
+
+// Run discovers event streams and delivers events until ctx is canceled.
+//
+// It must be called at most once. Subscriptions are lost when it returns.
 func (c *RemoteCatalog) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.Logger, c.discover)
+	c.init()
+
+	group, ctx := errgroup.WithContext(ctx)
+
+	group.Go(func() error {
+		return supervisor.Run(ctx, c.Logger, c.discover)
+	})
+
+	group.Go(func() error {
+		return c.read(ctx)
+	})
+
+	return group.Wait()
 }
 
 // discover adds each event stream that the application reports to the set of
@@ -87,4 +183,110 @@ func (c *RemoteCatalog) discover(ctx context.Context) error {
 
 		c.streamIDs.Store(streamIDs)
 	}
+}
+
+// read delivers events to subscriptions until ctx is canceled.
+func (c *RemoteCatalog) read(ctx context.Context) error {
+	defer c.done.Set()
+
+	subscriptions := map[*remoteSubscription]struct{}{}
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.done.Set()
+
+			for sub := range subscriptions {
+				sub.Result.Wait()
+				sub.Lost.Set()
+			}
+
+			return ctx.Err()
+		case sub := <-c.sub:
+			subscriptions[sub] = struct{}{}
+
+			logger := c.Logger.With(
+				xslog.UUID("stream_id", sub.StreamID),
+			)
+
+			sub.Result, sub.Cancel = supervisor.Go(
+				ctx,
+				logger,
+				func(ctx context.Context) error {
+					return c.consume(ctx, sub)
+				},
+			)
+		case sub := <-c.unsub:
+			sub.Cancel()
+			delete(subscriptions, sub)
+		}
+	}
+}
+
+// consume delivers events from the application to a subscription, starting at
+// the subscription's checkpoint, until ctx is canceled or it is disconnected.
+func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) error {
+	responses, err := c.Client.ConsumeEvents(
+		ctx,
+		messaginggrpc.NewConsumeEventsRequestBuilder().
+			WithEventStreamId(sub.StreamID).
+			WithCheckpointOffset(sub.Checkpoint).
+			WithMessageTypeIds(slices.Collect(sub.MessageTypes.All())).
+			Build(),
+	)
+	if err != nil {
+		return fmt.Errorf("unable to consume events: %w", err)
+	}
+
+	for {
+		res, err := responses.Recv()
+		if err != nil {
+			return fmt.Errorf("unable to receive events: %w", err)
+		}
+
+		batch, err := newRemoteBatch(sub.StreamID, res)
+		if err != nil {
+			return supervisor.Persistent(err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case sub.Batches <- batch:
+			sub.Checkpoint = batch.Checkpoint
+		}
+	}
+}
+
+// newRemoteBatch returns a batch containing the events in a response from the
+// application.
+func newRemoteBatch(
+	streamID *uuidpb.UUID,
+	res *messaginggrpc.ConsumeEventsResponse,
+) (Batch, error) {
+	batch := Batch{
+		StreamID:   streamID,
+		Checkpoint: res.GetCheckpointOffset(),
+	}
+
+	for _, multi := range res.GetEnvelopes() {
+		if err := multi.Validate(); err != nil {
+			return Batch{}, fmt.Errorf("invalid envelope: %w", err)
+		}
+
+		for env := range multi.All() {
+			_, ok, err := envelopepb.GetExtension[*envelopepb.EventStreamPosition](env)
+			if err != nil {
+				return Batch{}, fmt.Errorf("invalid event stream position: %w", err)
+			}
+
+			if !ok {
+				return Batch{}, errors.New("event has no event stream position")
+			}
+
+			batch.Envelopes = append(batch.Envelopes, env)
+		}
+	}
+
+	return batch, nil
 }

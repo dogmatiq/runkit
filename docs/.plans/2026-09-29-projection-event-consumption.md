@@ -169,7 +169,7 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 
 - [x] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
       `supervisor.Run`, adding each `event_stream_id` to an observable set.
-- [ ] **Step 2: Reading.** `Subscribe()` starts a supervised function:
+- [x] **Step 2: Reading.** `Subscribe()` starts a supervised function:
       `ConsumeEvents(streamID, checkpoint, types)`, each response → `Batch`
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
