@@ -259,12 +259,18 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 `appKey`) on one database, exposes only the first engine, and cannot start or
 stop engines during a test. Phase B needs:
 
-- [ ] A way to run a second application, with its own identity and database,
-      consuming from the first (the upstream must be running and have a
-      `ListenAddr()` before the downstream is built).
+- [x] A way to run a second application, with its own identity and database,
+      consuming from the first. `xtesting.StartCluster(t, db, app, n,
+      options...)` (in `xtesting/cluster.go`) runs a cluster of engines and
+      waits for every engine to be ready and to see the others, returning a
+      `*Cluster` with `Engines`, `Stop()`, `Stopped()` and `Dial(t)`;
+      `RunEnginesWithDB` is built on it. `Cluster.Dial` returns one
+      connection that reaches any of the cluster's engines (a manual resolver
+      over every listen address, round-robin), as a remote engine's
+      connection should, for `StaticRemoteEngines`.
 - [ ] A way to add and remove individual engines while a test runs, and to
       reach each engine's `*cluster.Node` (the `contexthook.Node` hook already
-      exposes it).
+      exposes it). Added to `Cluster` with B.2, which needs it.
 
 ### Task B.1: Foreign events
 
@@ -288,6 +294,12 @@ stop engines during a test. Phase B needs:
 
 ### Task B.3: Final validation
 
+- [ ] Revisit `RunEngines*` handing only the first engine to tests: every
+      command in the suite is executed on, and every gRPC request sent to,
+      engine 0, so accepting commands and serving `ConsumerAPI` on the other
+      engines is never exercised. Options: leave it; hand `fn` a randomly
+      chosen engine and log which; or pass the `*Cluster` to `fn` (changes
+      the signature used by 22 test files).
 - [ ] `make precommit` green. Commit.
 
 ---

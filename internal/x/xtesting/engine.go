@@ -3,7 +3,6 @@ package xtesting
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -13,8 +12,6 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
-	"github.com/dogmatiq/spruce"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -92,105 +89,30 @@ func RunEnginesWithDB(
 		},
 	}
 
-	engineContext, stopEngines := context.WithCancel(t.Context())
-	engineGroup, engineContext := errgroup.WithContext(engineContext)
-
-	defer func() {
-		stopEngines()
-		engineGroup.Wait()
-	}()
+	cluster := StartCluster(t, db, app, concurrentEngines)
+	defer cluster.Stop()
 
 	testTimeout := 10 * time.Second
 	if os.Getenv("CI") != "" {
 		testTimeout = 1 * time.Minute
 	}
 
-	// runContext is canceled if any engine stops. The test's own timeout
-	// starts once the engines have converged.
-	runContext, stopRun := context.WithCancel(t.Context())
-	defer stopRun()
-
-	logger := spruce.NewTestLogger(t)
-
-	var engine *runkit.Engine
-	nodes := make(chan contexthook.Node, concurrentEngines)
-
-	for idx := range concurrentEngines {
-		e := runkit.New(
-			app,
-			db,
-			runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
-			runkit.WithListenAddress("127.0.0.1:0"),
-			runkit.WithLogger(logger.With("engine", idx)),
-		)
-
-		if engine == nil {
-			engine = e
-		}
-
-		engineGroup.Go(func() error {
-			defer stopRun()
-
-			ctx := contexthook.With(
-				engineContext,
-				func(n contexthook.Node) {
-					nodes <- n
-				},
-			)
-
-			err := e.Run(ctx)
-
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("engine %d stopped unexpectedly: %v", idx, err)
-			}
-
-			return err
-		})
-
-	}
-
-	select {
-	case <-engineContext.Done():
-	case <-engine.Ready():
-	}
-
-	// Wait for every engine to see all of the others, so that the test starts
-	// from a cluster that has converged.
-	convergeContext, cancelConverge := context.WithTimeout(runContext, WaitTimeout)
-	defer cancelConverge()
-
-	for range concurrentEngines {
-		var n contexthook.Node
-
-		select {
-		case <-engineContext.Done():
-		case <-convergeContext.Done():
-			t.Fatal("timeout waiting for engines to join the cluster")
-		case n = <-nodes:
-		}
-
-		for n.Node != nil {
-			peers, changed := n.Node.Peers()
-			if peers.Len() == concurrentEngines-1 {
-				break
-			}
-
-			select {
-			case <-engineContext.Done():
-				n.Node = nil
-			case <-convergeContext.Done():
-				t.Fatalf("timeout waiting for engines to see each other: %d of %d peers", peers.Len(), concurrentEngines-1)
-			case <-changed:
-			}
-		}
-	}
-
-	testContext, stopTest := context.WithTimeout(runContext, testTimeout)
+	// The test's own timeout starts once the engines have converged. Its
+	// context is canceled if any engine stops.
+	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
 	defer stopTest()
+
+	go func() {
+		select {
+		case <-testContext.Done():
+		case <-cluster.Stopped():
+			stopTest()
+		}
+	}()
 
 	fn(
 		testingTBWithContext{t, testContext},
-		engine,
+		cluster.Engines[0],
 		db,
 	)
 }
