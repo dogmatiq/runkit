@@ -2,10 +2,12 @@ package projection
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -15,13 +17,14 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// Consumer dispatches events to a projection message handler, consuming each
-// event stream whose workload this node is responsible for.
+// Consumer dispatches events from a catalog's event streams to a projection
+// message handler.
 //
 // Each stream's workload is the responsibility of one of the live nodes in the
-// cluster, chosen by rendezvous hashing. While nodes are joining or leaving,
-// more than one node may briefly consume the same stream; the handler's
-// optimistic concurrency control ensures each event is handled once.
+// cluster, chosen by rendezvous hashing, and that node consumes the stream.
+// While nodes are joining or leaving, more than one node may briefly consume
+// the same stream; the handler's optimistic concurrency control ensures each
+// event is handled once.
 type Consumer struct {
 	// Node reports whether this node is responsible for each stream's workload.
 	Node *cluster.Node
@@ -51,9 +54,9 @@ type Consumer struct {
 	// stream consumers.
 	Logger *slog.Logger
 
-	handlerLock     *semaphore.Weighted
-	streamConsumers uuidcollection.Map[*streamConsumer]
-	group           *errgroup.Group
+	handlerLock        *semaphore.Weighted
+	stopStreamConsumer uuidcollection.Map[func()]
+	group              *errgroup.Group
 }
 
 // Run consumes event streams until ctx is canceled or it is unable to continue.
@@ -73,15 +76,27 @@ func (c *Consumer) Run(ctx context.Context) error {
 	for {
 		streamIDs, changed := c.EventStreams.StreamIDs()
 
-		// Each stream has a single stream consumer for the life of the
-		// consumer, so a stream is never consumed twice at once on this node.
+		// Stopping a stream consumer waits for it to return, so a stream that
+		// leaves the catalog and comes back is never consumed twice at once on
+		// this node.
+		for streamID, stop := range c.stopStreamConsumer.All() {
+			if !streamIDs.Has(streamID) {
+				stop()
+				c.stopStreamConsumer.Delete(streamID)
+			}
+		}
+
 		for streamID := range streamIDs.All() {
 			c.ensureStreamConsumer(ctx, streamID)
 		}
 
 		select {
 		case <-ctx.Done():
-			return c.group.Wait()
+			if err := c.group.Wait(); err != nil {
+				return err
+			}
+
+			return ctx.Err()
 		case <-changed:
 		}
 	}
@@ -89,11 +104,14 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 // ensureStreamConsumer starts a stream consumer for the stream with the given
 // ID, unless one is already running.
+//
+// The stream consumer runs until ctx is canceled, it fails, or it is stopped
+// because the stream has left the catalog.
 func (c *Consumer) ensureStreamConsumer(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) {
-	if c.streamConsumers.Has(streamID) {
+	if c.stopStreamConsumer.Has(streamID) {
 		return
 	}
 
@@ -122,9 +140,25 @@ func (c *Consumer) ensureStreamConsumer(
 		),
 	}
 
-	c.streamConsumers.Set(streamID, sc)
+	ctx, cancel := context.WithCancel(ctx)
+	var stopped xsync.Latch
 
 	c.group.Go(func() error {
-		return sc.Run(ctx)
+		defer stopped.Set()
+
+		err := sc.Run(ctx)
+
+		// Run returns the context's error once the context is canceled, which
+		// is not a failure of the stream consumer.
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil
+		}
+
+		return err
+	})
+
+	c.stopStreamConsumer.Set(streamID, func() {
+		cancel()
+		stopped.Wait()
 	})
 }

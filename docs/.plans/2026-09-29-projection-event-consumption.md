@@ -143,7 +143,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
       set, passing the member's `lost` channel through. A stream no member
       offers is lost immediately. `streamConsumer` and `ConsumerAPI` treat a
       lost subscription as an error.
-- [ ] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
+- [x] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
       consumer gets its own cancellable context (`supervisor.Go` or
       `context.WithCancel` per stream) so that a stream missing from
       `StreamIDs()` has its consumer cancelled and removed from
