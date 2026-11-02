@@ -25,9 +25,9 @@ type Reader struct {
 	// DB is the database connection used to read events.
 	DB *sql.DB
 
-	// Signals is the listener used to receive signals that events have been
+	// Signals is the bus used to receive signals that events have been
 	// appended to streams.
-	Signals *signal.Listener
+	Signals *signal.Bus
 
 	// Logger is the target for log messages produced by the reader and the
 	// supervisors of the scanners it starts.

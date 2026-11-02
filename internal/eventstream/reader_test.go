@@ -18,7 +18,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -79,7 +79,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -126,7 +126,7 @@ func TestReader(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 		streamID1 := xtesting.CreateEventStream(t, db)
 		streamID2 := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -169,7 +169,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -235,7 +235,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -295,7 +295,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -337,7 +337,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -391,7 +391,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -442,7 +442,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -487,7 +487,7 @@ func TestReader(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}

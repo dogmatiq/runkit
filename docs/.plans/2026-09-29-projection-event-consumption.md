@@ -60,13 +60,13 @@ are never persisted locally.
   `MinimizeConcurrency` handler may briefly run on two nodes. Every node
   replies at once to a heartbeat from a node that has just joined, so a new
   node that is already listening learns the cluster within one signal round
-  trip. A node that misses heartbeats, at startup or while its signal listener
+  trip. A node that misses heartbeats, at startup or while its signal bus
   reconnects, learns the cluster within one heartbeat interval.
 - **A node that can not hear heartbeats consumes nothing.** The set of live
-  nodes is built only from signals, so a node whose signal listener is
-  disconnected sees its live set empty while its own heartbeats may still
-  reach other nodes. While this node's own ID is absent from the live set, its
-  view is unknown and it consumes none of its streams.
+  nodes is built only from signals, so a node whose signal bus is disconnected
+  sees its live set empty while its own heartbeats may still reach other
+  nodes. While this node's own ID is absent from the live set, its view is
+  unknown and it consumes none of its streams.
 - **Catch-up subscription semantics** are those `Reader` already provides:
   historical reads are isolated, contemporary delivery is shared and bounded,
   falling behind returns a consumer to history. The remote source must present

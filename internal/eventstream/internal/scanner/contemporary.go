@@ -22,9 +22,9 @@ type Contemporary struct {
 	// DB is the database connection used to read events from the stream.
 	DB *sql.DB
 
-	// Signals is the listener used to receive signals that events have been
+	// Signals is the bus used to receive signals that events have been
 	// appended to the stream.
-	Signals *signal.Listener
+	Signals *signal.Bus
 
 	// StreamID is the ID of the event stream being read.
 	StreamID *uuidpb.UUID

@@ -19,9 +19,9 @@ type Catalog struct {
 	// DB is the database connection used to discover event streams.
 	DB *sql.DB
 
-	// Signals is the listener used to receive signals that event streams have
+	// Signals is the bus used to receive signals that event streams have
 	// been created.
-	Signals *signal.Listener
+	Signals *signal.Bus
 
 	// Logger is the target for log messages produced by the catalog.
 	Logger *slog.Logger

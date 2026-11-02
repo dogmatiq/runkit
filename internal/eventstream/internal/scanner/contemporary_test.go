@@ -19,7 +19,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -57,7 +57,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -92,7 +92,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -131,7 +131,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -172,7 +172,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -222,7 +222,7 @@ func TestContemporary(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 		streamID := xtesting.CreateEventStream(t, db)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -247,7 +247,7 @@ func TestContemporary(t *testing.T) {
 	t.Run("it returns an error when the stream does not exist", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}

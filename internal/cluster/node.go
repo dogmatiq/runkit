@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"sync"
 	"time"
@@ -35,11 +34,8 @@ type Node struct {
 	// ID is the ID of this node.
 	ID *uuidpb.UUID
 
-	// DB is the database connection used to send heartbeat signals.
-	DB *sql.DB
-
-	// Signals is the listener used to receive heartbeat signals.
-	Signals *signal.Listener
+	// Signals is the bus used to send and receive heartbeat signals.
+	Signals *signal.Bus
 
 	// Interval is the time between the heartbeats sent by each node.
 	Interval time.Duration
@@ -204,7 +200,7 @@ func (n *Node) Run(ctx context.Context) error {
 func (n *Node) sendHeartbeat(ctx context.Context) {
 	topic := heartbeatTopic + "." + n.ID.AsString()
 
-	if err := signal.Notify(ctx, n.DB, topic); err != nil && ctx.Err() == nil {
+	if err := n.Signals.Send(ctx, topic); err != nil && ctx.Err() == nil {
 		n.Logger.WarnContext(
 			ctx,
 			"unable to send heartbeat",

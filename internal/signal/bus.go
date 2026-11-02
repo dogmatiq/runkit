@@ -17,19 +17,19 @@ import (
 // are sent. The payload of each notification is the signal's topic.
 const channel = "signal"
 
-// Listener receives signals from a PostgreSQL database and delivers them to
-// subscribers.
+// Bus sends and receives signals using a PostgreSQL database, and delivers the
+// signals it receives to subscribers.
 //
 // A signal indicates that something about a topic has changed. It carries no
 // information other than the topic itself. Delivery is lossy: a subscriber
 // whose channel is full does not receive the signal. Subscribers must read the
 // state they are interested in from the database, and must not rely on
 // receiving every signal.
-type Listener struct {
-	// DB is the database connection used to listen for signals.
+type Bus struct {
+	// DB is the database used to send and receive signals.
 	DB *sql.DB
 
-	// Logger is the target for log messages produced by the listener.
+	// Logger is the target for log messages produced by the bus.
 	Logger *slog.Logger
 
 	m           sync.Mutex
@@ -55,46 +55,60 @@ type subscriber struct {
 // is not delivered to ch.
 //
 // It returns a function that unsubscribes.
-func (l *Listener) Subscribe(topic string, ch chan<- string) func() {
+func (b *Bus) Subscribe(topic string, ch chan<- string) func() {
 	sub := &subscriber{
 		Topic:    topic,
 		Subtopic: ch,
 	}
 
-	l.m.Lock()
-	if l.subscribers == nil {
-		l.subscribers = map[*subscriber]struct{}{}
+	b.m.Lock()
+	if b.subscribers == nil {
+		b.subscribers = map[*subscriber]struct{}{}
 	}
-	l.subscribers[sub] = struct{}{}
-	l.m.Unlock()
+	b.subscribers[sub] = struct{}{}
+	b.m.Unlock()
 
 	var once sync.Once
 
 	return func() {
 		once.Do(func() {
-			l.m.Lock()
-			delete(l.subscribers, sub)
-			l.m.Unlock()
+			b.m.Lock()
+			delete(b.subscribers, sub)
+			b.m.Unlock()
 		})
 	}
 }
 
-// Run executes the listener until ctx is canceled.
-//
-// It must be called at most once. Subscribe may be called before Run.
-func (l *Listener) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, l.Logger, l.listen)
+// Send sends a signal on the given topic.
+func (b *Bus) Send(ctx context.Context, topic string) error {
+	if _, err := b.DB.ExecContext(
+		ctx,
+		`SELECT pg_notify($1, $2)`,
+		channel,
+		topic,
+	); err != nil {
+		return fmt.Errorf("unable to send signal: %w", err)
+	}
+
+	return nil
 }
 
-// listen holds a dedicated database connection with LISTEN active on the
-// signal channel, and dispatches each notification it receives.
+// Run executes the bus until ctx is canceled.
+//
+// It must be called at most once. Subscribe may be called before Run.
+func (b *Bus) Run(ctx context.Context) error {
+	return supervisor.Run(ctx, b.Logger, b.run)
+}
+
+// run holds a dedicated database connection with LISTEN active on the signal
+// channel, and dispatches each notification it receives.
 //
 // Signals sent before LISTEN is active are never received, so once it is, every
 // subscriber is signaled as though a signal had arrived on its own topic. This
-// covers both subscribers that registered before the listener started and
-// signals missed while the connection was down.
-func (l *Listener) listen(ctx context.Context) error {
-	conn, err := l.DB.Conn(ctx)
+// covers both subscribers that registered before the bus started and signals
+// missed while the connection was down.
+func (b *Bus) run(ctx context.Context) error {
+	conn, err := b.DB.Conn(ctx)
 	if err != nil {
 		return err
 	}
@@ -118,9 +132,9 @@ func (l *Listener) listen(ctx context.Context) error {
 			return fmt.Errorf("unable to listen for signals: %w", err)
 		}
 
-		l.Logger.DebugContext(ctx, "listening for signals")
+		b.Logger.DebugContext(ctx, "listening for signals")
 
-		l.wake()
+		b.wake()
 
 		for {
 			n, err := pgConn.WaitForNotification(ctx)
@@ -131,18 +145,18 @@ func (l *Listener) listen(ctx context.Context) error {
 				return fmt.Errorf("unable to wait for signal: %w", err)
 			}
 
-			l.dispatch(n.Payload)
+			b.dispatch(n.Payload)
 		}
 	})
 }
 
 // wake delivers a signal to every subscriber, as though one had been received
 // on the subscriber's own topic.
-func (l *Listener) wake() {
-	l.m.Lock()
-	defer l.m.Unlock()
+func (b *Bus) wake() {
+	b.m.Lock()
+	defer b.m.Unlock()
 
-	for sub := range l.subscribers {
+	for sub := range b.subscribers {
 		select {
 		case sub.Subtopic <- "":
 		default:
@@ -152,17 +166,17 @@ func (l *Listener) wake() {
 
 // dispatch delivers a signal to every subscriber of its topic or of a topic
 // above it.
-func (l *Listener) dispatch(topic string) {
-	l.m.Lock()
-	defer l.m.Unlock()
+func (b *Bus) dispatch(topic string) {
+	b.m.Lock()
+	defer b.m.Unlock()
 
-	for sub := range l.subscribers {
+	for sub := range b.subscribers {
 		if subtopic, ok := subtopicOf(sub.Topic, topic); ok {
 			select {
 			case sub.Subtopic <- subtopic:
 			default:
 				// The subscriber's channel is full. Delivery is lossy by design,
-				// so the signal is dropped rather than blocking the listener.
+				// so the signal is dropped rather than blocking the bus.
 			}
 		}
 	}

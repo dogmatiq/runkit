@@ -2,7 +2,6 @@ package cluster_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -20,38 +19,35 @@ func TestNode(t *testing.T) {
 		timeout  = 5 * interval
 	)
 
-	// setup returns a database and a signal listener that is listening for
-	// signals on it.
+	// setup returns a signal bus that is listening for signals on a new
+	// database.
 	//
 	// Some tests rely on a node's first heartbeat being received, and a signal
-	// sent before the listener is listening is lost.
-	setup := func(t *testing.T) (*sql.DB, *signal.Listener) {
-		db := xtesting.NewDatabase(t)
-		signals := &signal.Listener{
-			DB:     db,
+	// sent before the bus is listening is lost.
+	setup := func(t *testing.T) *signal.Bus {
+		signals := &signal.Bus{
+			DB:     xtesting.NewDatabase(t),
 			Logger: spruce.NewTestLogger(t),
 		}
 
-		// Once the listener is listening it signals every subscriber, whatever
-		// its topic.
+		// Once the bus is listening it signals every subscriber, whatever its
+		// topic.
 		listening := make(chan string, 1)
 		defer signals.Subscribe("test", listening)()
 
 		xtesting.GoE(t, signals.Run)
-		xtesting.ExpectToReceiveN(t, "signal listener to start listening", listening, "")
+		xtesting.ExpectToReceiveN(t, "signal bus to start listening", listening, "")
 
-		return db, signals
+		return signals
 	}
 
 	newNode := func(
 		t *testing.T,
-		db *sql.DB,
-		signals *signal.Listener,
+		signals *signal.Bus,
 		interval, timeout time.Duration,
 	) *Node {
 		return &Node{
 			ID:       uuidpb.Generate(),
-			DB:       db,
 			Signals:  signals,
 			Interval: interval,
 			Timeout:  timeout,
@@ -60,15 +56,15 @@ func TestNode(t *testing.T) {
 	}
 
 	t.Run("it sends heartbeats on a topic named after the node", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
 		heartbeats := make(chan string, 10)
 		defer signals.Subscribe("heartbeat", heartbeats)()
 
-		n := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
 		xtesting.GoE(t, n.Run)
 
-		// The first signal may be the listener starting, which carries no
+		// The first signal may be the bus starting, which carries no
 		// node ID; after that, every signal is a heartbeat from this node.
 		want := n.ID.AsString()
 
@@ -94,12 +90,12 @@ func TestNode(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		db.Close()
 
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: spruce.NewTestLogger(t),
 		}
 
-		n := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 		defer cancel()
@@ -118,28 +114,28 @@ func TestNode(t *testing.T) {
 	})
 
 	t.Run("it replies to a node that joins", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
 		heartbeats := make(chan string, 10)
 		defer signals.Subscribe("heartbeat", heartbeats)()
 
 		// The interval is long enough that any heartbeat after the first is
 		// sent in reply to a joining node.
-		n := newNode(t, db, signals, time.Hour, 2*time.Hour)
+		n := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, n.Run)
 
 		want := n.ID.AsString()
 		xtesting.ExpectToReceiveN(t, "first heartbeat", heartbeats, want)
 
 		joining := uuidpb.Generate().AsString()
-		if err := signal.Notify(t.Context(), db, "heartbeat."+joining); err != nil {
+		if err := signals.Send(t.Context(), "heartbeat."+joining); err != nil {
 			t.Fatal(err)
 		}
 
 		xtesting.ExpectToReceiveN(t, "heartbeats", heartbeats, joining, want)
 		xtesting.ExpectNoReceive(t, "reply to a known node", heartbeats)
 
-		if err := signal.Notify(t.Context(), db, "heartbeat."+joining); err != nil {
+		if err := signals.Send(t.Context(), "heartbeat."+joining); err != nil {
 			t.Fatal(err)
 		}
 
@@ -148,19 +144,19 @@ func TestNode(t *testing.T) {
 	})
 
 	t.Run("it tracks nodes as they start and stop", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
-		n := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
 		xtesting.GoE(t, n.Run)
 
 		expectPeers(t, n)
 
-		node1 := newNode(t, db, signals, interval, timeout)
+		node1 := newNode(t, signals, interval, timeout)
 		stopNode1 := xtesting.GoE(t, node1.Run)
 
 		expectPeers(t, n, node1.ID)
 
-		node2 := newNode(t, db, signals, interval, timeout)
+		node2 := newNode(t, signals, interval, timeout)
 		stopNode2 := xtesting.GoE(t, node2.Run)
 
 		expectPeers(t, n, node1.ID, node2.ID)
@@ -181,17 +177,17 @@ func TestNode(t *testing.T) {
 
 	// rejoin starts a new node with the same ID as n, as though n had
 	// restarted.
-	rejoin := func(t *testing.T, db *sql.DB, signals *signal.Listener, n *Node) {
-		r := newNode(t, db, signals, interval, timeout)
+	rejoin := func(t *testing.T, signals *signal.Bus, n *Node) {
+		r := newNode(t, signals, interval, timeout)
 		r.ID = n.ID
 		start(t, r)
 	}
 
 	t.Run("it reports whether this node is responsible for a workload", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
-		n := newNode(t, db, signals, interval, timeout)
-		other := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
+		other := newNode(t, signals, interval, timeout)
 
 		start(t, n)
 		stopOther := start(t, other)
@@ -206,15 +202,15 @@ func TestNode(t *testing.T) {
 		stopOther()
 		expectResponsible(t, responsible, true)
 
-		rejoin(t, db, signals, other)
+		rejoin(t, signals, other)
 		expectResponsible(t, responsible, false)
 	})
 
 	t.Run("it stops reporting changes in responsibility once unobserved", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
-		n := newNode(t, db, signals, interval, timeout)
-		other := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
+		other := newNode(t, signals, interval, timeout)
 
 		start(t, n)
 		stopOther := start(t, other)
@@ -227,7 +223,7 @@ func TestNode(t *testing.T) {
 
 		unobserve()
 
-		rejoin(t, db, signals, other)
+		rejoin(t, signals, other)
 		expectPeers(t, n, other.ID)
 
 		if got, _ := responsible(); !got {
@@ -236,10 +232,10 @@ func TestNode(t *testing.T) {
 	})
 
 	t.Run("it keeps reporting changes to a workload that is still observed elsewhere", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
-		n := newNode(t, db, signals, interval, timeout)
-		other := newNode(t, db, signals, interval, timeout)
+		n := newNode(t, signals, interval, timeout)
+		other := newNode(t, signals, interval, timeout)
 
 		start(t, n)
 		stopOther := start(t, other)
@@ -255,17 +251,17 @@ func TestNode(t *testing.T) {
 
 		unobserveFirst()
 
-		rejoin(t, db, signals, other)
+		rejoin(t, signals, other)
 		expectResponsible(t, second, false)
 	})
 
 	t.Run("it makes exactly one node responsible for each workload", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
 		nodes := []*Node{
-			newNode(t, db, signals, interval, timeout),
-			newNode(t, db, signals, interval, timeout),
-			newNode(t, db, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
 		}
 
 		for _, n := range nodes {
@@ -299,12 +295,12 @@ func TestNode(t *testing.T) {
 	})
 
 	t.Run("it learns about existing nodes without waiting for their next heartbeat", func(t *testing.T) {
-		db, signals := setup(t)
+		signals := setup(t)
 
 		// The interval and timeout are long enough that no heartbeat is sent
 		// during the test other than each node's first and its replies to a
 		// joining node, and no node times out.
-		existing := newNode(t, db, signals, time.Hour, 2*time.Hour)
+		existing := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, existing.Run)
 
 		// Wait for the existing node to hear its own heartbeat, at which point
@@ -313,7 +309,7 @@ func TestNode(t *testing.T) {
 		defer unobserve()
 		expectResponsible(t, responsible, true)
 
-		joining := newNode(t, db, signals, time.Hour, 2*time.Hour)
+		joining := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, joining.Run)
 
 		expectPeers(t, joining, existing.ID)

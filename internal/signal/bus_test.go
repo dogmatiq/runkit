@@ -1,7 +1,6 @@
 package signal_test
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
@@ -11,29 +10,29 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestListener(t *testing.T) {
+func TestBus(t *testing.T) {
 	t.Run("it delivers signals to subscribers of the topic", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
 
-		xtesting.GoE(t, listener.Run)
-		waitForListener(t, db, listener)
+		xtesting.GoE(t, bus.Run)
+		waitForBus(t, bus)
 
 		a := make(chan string, 10)
 		b := make(chan string, 10)
 
-		defer listener.Subscribe("topic-a", a)()
-		defer listener.Subscribe("topic-b", b)()
+		defer bus.Subscribe("topic-a", a)()
+		defer bus.Subscribe("topic-b", b)()
 
-		send(t, db, "topic-a")
+		send(t, bus, "topic-a")
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
 		xtesting.ExpectNoReceive(t, "signal on b", b)
 
-		send(t, db, "topic-b")
+		send(t, bus, "topic-b")
 		xtesting.ExpectToReceiveN(t, "signals on b", b, "")
 		xtesting.ExpectNoReceive(t, "signal on a", a)
 	})
@@ -41,21 +40,21 @@ func TestListener(t *testing.T) {
 	t.Run("it delivers signals to every subscriber of the topic", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
 
-		xtesting.GoE(t, listener.Run)
-		waitForListener(t, db, listener)
+		xtesting.GoE(t, bus.Run)
+		waitForBus(t, bus)
 
 		a := make(chan string, 10)
 		b := make(chan string, 10)
 
-		defer listener.Subscribe("topic", a)()
-		defer listener.Subscribe("topic", b)()
+		defer bus.Subscribe("topic", a)()
+		defer bus.Subscribe("topic", b)()
 
-		send(t, db, "topic")
+		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
 		xtesting.ExpectToReceiveN(t, "signals on b", b, "")
 	})
@@ -63,23 +62,23 @@ func TestListener(t *testing.T) {
 	t.Run("it delivers signals on topics beneath the subscribed topic", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
 
-		xtesting.GoE(t, listener.Run)
-		waitForListener(t, db, listener)
+		xtesting.GoE(t, bus.Run)
+		waitForBus(t, bus)
 
 		ch := make(chan string, 10)
-		defer listener.Subscribe("a.b", ch)()
+		defer bus.Subscribe("a.b", ch)()
 
-		send(t, db, "a.b.c")
-		send(t, db, "a.bc")
-		send(t, db, "a")
-		send(t, db, "x.a.b")
-		send(t, db, "a.b")
-		send(t, db, "a.b.c.d")
+		send(t, bus, "a.b.c")
+		send(t, bus, "a.bc")
+		send(t, bus, "a")
+		send(t, bus, "x.a.b")
+		send(t, bus, "a.b")
+		send(t, bus, "a.b.c.d")
 
 		// The value received is the part of the topic beneath the subscribed
 		// topic.
@@ -90,28 +89,28 @@ func TestListener(t *testing.T) {
 	t.Run("it stops delivering signals after unsubscribing", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
 
-		xtesting.GoE(t, listener.Run)
-		waitForListener(t, db, listener)
+		xtesting.GoE(t, bus.Run)
+		waitForBus(t, bus)
 
 		ch := make(chan string, 10)
 		witness := make(chan string, 10)
 
-		unsubscribe := listener.Subscribe("topic", ch)
-		defer listener.Subscribe("topic", witness)()
+		unsubscribe := bus.Subscribe("topic", ch)
+		defer bus.Subscribe("topic", witness)()
 
-		send(t, db, "topic")
+		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals", ch, "")
 
 		unsubscribe()
 
 		// The witness receiving the signal proves that it was dispatched after
 		// the subscription was removed.
-		send(t, db, "topic")
+		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "", "")
 		xtesting.ExpectNoReceive(t, "signal", ch)
 	})
@@ -119,23 +118,23 @@ func TestListener(t *testing.T) {
 	t.Run("it drops signals when the subscriber's channel is full", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
 
-		xtesting.GoE(t, listener.Run)
-		waitForListener(t, db, listener)
+		xtesting.GoE(t, bus.Run)
+		waitForBus(t, bus)
 
 		ch := make(chan string, 1)
 		witness := make(chan string, 10)
 
-		defer listener.Subscribe("topic", ch)()
-		defer listener.Subscribe("topic", witness)()
+		defer bus.Subscribe("topic", ch)()
+		defer bus.Subscribe("topic", witness)()
 
-		send(t, db, "topic")
-		send(t, db, "topic")
-		send(t, db, "topic")
+		send(t, bus, "topic")
+		send(t, bus, "topic")
+		send(t, bus, "topic")
 
 		// The witness receiving every signal proves that the full channel did
 		// not hold up dispatching.
@@ -146,10 +145,45 @@ func TestListener(t *testing.T) {
 		xtesting.ExpectNoReceive(t, "signal", ch)
 	})
 
+	t.Run("it sends signals to every bus", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+		logger := spruce.NewTestLogger(t)
+		bus := &Bus{
+			DB:     db,
+			Logger: logger,
+		}
+		other := &Bus{
+			DB:     db,
+			Logger: logger,
+		}
+
+		xtesting.GoE(t, bus.Run)
+		xtesting.GoE(t, other.Run)
+		waitForBus(t, bus)
+		waitForBus(t, other)
+
+		own := make(chan string, 10)
+		received := make(chan string, 10)
+
+		defer bus.Subscribe("topic", own)()
+		defer other.Subscribe("topic", received)()
+
+		if err := bus.Send(t.Context(), "topic.a"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := bus.Send(t.Context(), "topic.b"); err != nil {
+			t.Fatal(err)
+		}
+
+		xtesting.ExpectToReceiveN(t, "signals on the sending bus", own, "a", "b")
+		xtesting.ExpectToReceiveN(t, "signals on the other bus", received, "a", "b")
+	})
+
 	t.Run("it signals every subscriber when it starts listening", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
-		listener := &Listener{
+		bus := &Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -157,47 +191,47 @@ func TestListener(t *testing.T) {
 		a := make(chan string, 10)
 		b := make(chan string, 10)
 
-		defer listener.Subscribe("a", a)()
-		defer listener.Subscribe("a.b", b)()
+		defer bus.Subscribe("a", a)()
+		defer bus.Subscribe("a.b", b)()
 
-		xtesting.GoE(t, listener.Run)
+		xtesting.GoE(t, bus.Run)
 
-		// Nothing is sent; the signal comes from the listener itself, as
+		// Nothing is sent; the signal comes from the bus itself, as
 		// though it were on the subscribed topic, so that a subscriber that
-		// read state before the listener was listening can read it again.
+		// read state before the bus was listening can read it again.
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
 		xtesting.ExpectToReceiveN(t, "signals on b", b, "")
 	})
 }
 
 // send sends a signal on the given topic.
-func send(t testing.TB, db *sql.DB, topic string) {
+func send(t testing.TB, bus *Bus, topic string) {
 	t.Helper()
 
-	if err := Notify(t.Context(), db, topic); err != nil {
+	if err := bus.Send(t.Context(), topic); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// waitForListener blocks until the listener is receiving signals.
+// waitForBus blocks until the bus is receiving signals.
 //
-// Signals sent before the listener has started listening are lost, so a probe
+// Signals sent before the bus has started listening are lost, so a probe
 // signal is sent on a unique topic until it is received.
-func waitForListener(t testing.TB, db *sql.DB, listener *Listener) {
+func waitForBus(t testing.TB, bus *Bus) {
 	t.Helper()
 
 	topic := "probe." + uuidpb.Generate().AsString()
 	probes := make(chan string, 1)
-	defer listener.Subscribe(topic, probes)()
+	defer bus.Subscribe(topic, probes)()
 
 	deadline := time.After(xtesting.WaitTimeout)
 
 	for {
-		send(t, db, topic)
+		send(t, bus, topic)
 
 		select {
 		case <-deadline:
-			t.Fatal("timeout waiting for listener to start listening")
+			t.Fatal("timeout waiting for bus to start listening")
 		case <-probes:
 			return
 		case <-time.After(50 * time.Millisecond):

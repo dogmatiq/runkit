@@ -17,7 +17,7 @@ func TestCatalog(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
-		signals := &signal.Listener{
+		signals := &signal.Bus{
 			DB:     db,
 			Logger: logger,
 		}
@@ -67,9 +67,8 @@ func TestCatalog(t *testing.T) {
 
 		// Each signal causes the complete set of streams to be read again, but
 		// the set is only replaced when it has grown.
-		if err := signal.Notify(
+		if err := catalog.Signals.Send(
 			t.Context(),
-			db,
 			"eventstream.create."+want.AsString(),
 		); err != nil {
 			t.Fatal(err)

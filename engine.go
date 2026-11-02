@@ -115,8 +115,8 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.app.
 	appConfig *config.Application
 
-	// signals listens for signals sent by this and other nodes.
-	signals *signal.Listener
+	// signals sends and receives signals on behalf of this node.
+	signals *signal.Bus
 
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
@@ -211,14 +211,13 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.setupCommandTypes()
 
-	e.signals = &signal.Listener{
+	e.signals = &signal.Bus{
 		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "signal.listener")),
+		Logger: e.logger.With(slog.String("component", "signal.bus")),
 	}
 
 	e.node = &cluster.Node{
 		ID:       e.nodeID,
-		DB:       e.db,
 		Signals:  e.signals,
 		Interval: heartbeatInterval,
 		Timeout:  heartbeatTimeout,
