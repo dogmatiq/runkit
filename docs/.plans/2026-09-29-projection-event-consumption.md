@@ -155,7 +155,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
       catalog to it, and gives it to each `projection.Consumer`; `ConsumerAPI`
       stays on `*LocalCatalog`. With one member the composite must be a
       pass-through; the whole existing suite must pass unchanged.
-- [ ] **Step 5: Tests + commit.** With a stub `Catalog`: union of stream IDs;
+- [x] **Step 5: Tests + commit.** With a stub `Catalog`: union of stream IDs;
       change notification when a member changes; adding a member adds its
       streams; removing one removes them and ends its subscriptions;
       subscriptions are routed to the right member; `Consumer` stops a stream
