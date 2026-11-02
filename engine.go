@@ -483,24 +483,17 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		}
 
 	case *config.Projection:
-		eventPumpLogger := logger.With(slog.String("component", "projection.event-pump"))
-
 		return []component{
-			&messagepump.MessagePump{
-				Driver: &projection.EventPump{
-					DB:           e.db,
-					Handler:      handlerConfig.Interface(),
-					Identity:     handlerConfig.Identity(),
-					Concurrency:  handlerConfig.ConcurrencyPreference(),
-					EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-					Logger:       eventPumpLogger,
-				},
-				DB:           e.db,
-				Workers:      workers,
-				PollInterval: pollInterval,
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       eventPumpLogger,
+			&projection.Consumer{
+				Node:         e.node,
+				EventStreams: e.eventStreams,
+				Events:       e.events,
+				Handler:      handlerConfig.Interface(),
+				Identity:     handlerConfig.Identity(),
+				Concurrency:  handlerConfig.ConcurrencyPreference(),
+				EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				BufferSize:   eventStreamBufferSize,
+				Logger:       logger.With(slog.String("component", "projection.consumer")),
 			},
 			&projection.Compactor{
 				DB:       e.db,
@@ -533,7 +526,6 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 // given handler's message pump.
 func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	switch handlerConfig := handlerConfig.(type) {
-	case *config.Projection:
 	case *config.Integration:
 		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
 			return 1

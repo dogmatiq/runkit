@@ -74,7 +74,14 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			var compacted xsync.Latch
+			const eventCount = 10
+
+			var (
+				compacted   xsync.Latch
+				consumed    xsync.Latch
+				checkpoints checkpointStore
+				handled     atomic.Int32
+			)
 
 			xtesting.RunEngines(
 				t,
@@ -87,10 +94,10 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 						func(*uuidpb.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
-						10,
+						eventCount,
 					)
 
-					xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+					xtesting.ExpectLatchesSetEventually(t, &consumed)
 				},
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
@@ -100,6 +107,22 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							)
 						},
+						HandleEventFunc: func(
+							_ context.Context,
+							s dogma.ProjectionEventScope,
+							_ dogma.Event,
+						) (uint64, error) {
+							return checkpoints.HandleEvent(
+								s,
+								func() error {
+									if handled.Add(1) == eventCount {
+										consumed.Set()
+									}
+									return nil
+								},
+							)
+						},
+						CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 						CompactFunc: func(ctx context.Context, s dogma.ProjectionCompactScope) error {
 							defer compacted.Set()
 							return c.CompactFunc(ctx, s)

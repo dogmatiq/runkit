@@ -16,17 +16,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
-- Added `New()` and `EngineOption`, with the `WithLogger()`,
-  `WithListenAddress()` and `WithProjectionCompactInterval()` options.
-- Added a gRPC server that implements `messaginggrpc.EventStreamConsumerAPI`,
-  so that engines running other applications can consume this application's
-  events. It is disabled by default. Use `WithListenAddress()` to enable it. As
-  with any gRPC server, it is insecure unless transport credentials are
-  supplied using `grpc.Creds()`. This engine does not yet consume events from
-  other engines.
+- Added `New()` and the `WithLogger()`, `WithListenAddress()` and
+  `WithProjectionCompactInterval()` options.
+- Added a gRPC server so that engines running other applications can consume
+  this application's events. It is disabled by default. Use
+  `WithListenAddress()` to enable it. As with any gRPC server, it is insecure
+  unless transport credentials are supplied using `grpc.Creds()`. This engine
+  does not yet consume events from other engines.
 - Added `Engine.ListenAddr()`.
-- Engines now send each other a heartbeat once per second using PostgreSQL
-  notifications.
 
 ### Changed
 
@@ -37,12 +34,22 @@ The format is based on [Keep a Changelog], and this project adheres to
 - **[BC]** `WithProjectionCompactInterval()` panics if the interval is not
   positive. Previously, a non-positive `ProjectionCompactInterval` meant that
   `DefaultProjectionCompactInterval` was used.
+- **[BC]** `Engine.Run()` must be called at most once.
 - PostgreSQL 18 is now the minimum supported version.
 - Removed some of the conditions under which `Engine.Run()` panics. It now
   returns an error in more cases where the engine is unable to continue.
 - `Engine.ExecuteCommand()` now returns an error once the engine has stopped.
 - The database schema has changed. Call `CreateSchema()` to update a database
   created by an earlier version.
+- `ProjectionMessageHandler.Compact()` is now called with a 10-minute deadline.
+  A compaction that fails or exceeds the deadline is retried after a short
+  backoff, rather than at the next compaction interval.
+
+### Fixed
+
+- Fixed an issue where resetting a projection's storage did not cause it to be
+  rebuilt. Projections now resume from the offset returned by their
+  `CheckpointOffset()` method.
 
 ## [0.1.2] - 2026-07-04
 

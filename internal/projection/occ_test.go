@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -19,7 +20,10 @@ import (
 func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 	const handlerKey = "a2b3c4d5-6e7f-4a8b-9c0d-1e2f3a4b5c6d"
 
+	const eventCount = 3
+
 	var (
+		done             xsync.Latch
 		checkpointMutex  sync.Mutex
 		checkpointOffset uint64
 	)
@@ -27,8 +31,6 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			const eventCount = 3
-
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -38,7 +40,7 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 				eventCount,
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+			xtesting.ExpectLatchesSetEventually(t, &done)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -66,6 +68,10 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 					checkpointMutex.Lock()
 					defer checkpointMutex.Unlock()
 
+					if s.CheckpointOffset() != checkpointOffset {
+						return checkpointOffset, nil
+					}
+
 					if s.Offset() != checkpointOffset {
 						t.Errorf("unexpected offset: got %d, want %d", s.Offset(), checkpointOffset)
 					}
@@ -74,6 +80,10 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 						checkpointOffset = 2 // skip the event at offset 1
 					} else {
 						checkpointOffset++
+					}
+
+					if checkpointOffset == eventCount {
+						done.Set()
 					}
 
 					return checkpointOffset, nil
@@ -95,7 +105,10 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 	const handlerKey = "b3c4d5e6-7f8a-4b9c-8d1e-2f3a4b5c6d7e"
 
+	const eventCount = 2
+
 	var (
+		done             xsync.Latch
 		checkpointMutex  sync.Mutex
 		checkpointOffset uint64
 		conflicted       bool
@@ -104,8 +117,6 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			const eventCount = 2
-
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -115,7 +126,7 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 				eventCount,
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+			xtesting.ExpectLatchesSetEventually(t, &done)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -143,6 +154,10 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 					checkpointMutex.Lock()
 					defer checkpointMutex.Unlock()
 
+					if s.CheckpointOffset() != checkpointOffset {
+						return checkpointOffset, nil
+					}
+
 					if s.Offset() != checkpointOffset {
 						t.Errorf("unexpected offset: got %d, want %d", s.Offset(), checkpointOffset)
 					}
@@ -152,6 +167,10 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 						checkpointOffset = 0 // rewind to offset 0
 					} else {
 						checkpointOffset++
+					}
+
+					if checkpointOffset == eventCount {
+						done.Set()
 					}
 
 					return checkpointOffset, nil
