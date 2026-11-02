@@ -62,9 +62,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 - **`projection.Consumer` follows the catalog both ways.** It starts a stream
   consumer for each stream that appears and stops the stream consumer for each
   stream that disappears, so a removed member's streams stop being consumed.
-  The handler keeps its checkpoint for the stream. A stream ID that no member
-  offers when subscribed gets a no-op subscription; the consumer stops it when
-  it notices the stream is absent.
+  The handler keeps its checkpoint for the stream. A subscription to a stream
+  that no member offers is lost immediately; the stream consumer retries until
+  the consumer notices the stream is absent and stops it.
 - **`ConsumerAPI` serves only this application's streams.** It depends on
   `*LocalCatalog`, never on the composite, so it never relays a foreign
   application's streams. (Relay topologies are out of scope.)
@@ -167,7 +167,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 (`newConsumerClient`).
 
-- [ ] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
+- [x] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
       `supervisor.Run`, adding each `event_stream_id` to an observable set.
 - [ ] **Step 2: Reading.** `Subscribe()` starts a supervised function:
       `ConsumeEvents(streamID, checkpoint, types)`, each response → `Batch`
