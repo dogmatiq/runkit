@@ -14,19 +14,19 @@ type Catalog interface {
 	// The returned set must not be modified.
 	StreamIDs() (*uuidcollection.Set, <-chan struct{})
 
-	// Subscribe registers ch to receive batches of events of the given types
-	// from the stream with the given ID, starting at checkpoint.
+	// Subscribe registers ch to receive events from a specific stream starting
+	// at the given checkpoint offset.
 	//
-	// ch should be buffered. Events are delivered in offset order, and a
-	// subscriber that does not keep up never misses events.
+	// types is the set of message types the subscriber is interested in. It
+	// must not be empty.
 	//
-	// It returns a function that unsubscribes.
+	// lost is closed if the catalog can no longer deliver to the subscription.
 	Subscribe(
 		streamID *uuidpb.UUID,
 		checkpoint uint64,
 		types *uuidcollection.Set,
 		ch chan<- Batch,
-	) (unsubscribe func())
+	) (lost <-chan struct{}, unsubscribe func())
 }
 
 // Batch is a set of events delivered to a subscriber of a [Catalog], along with

@@ -92,7 +92,9 @@ func TestLocalCatalog_streamIDs(t *testing.T) {
 // IDs.
 func expectStreamIDs(
 	t testing.TB,
-	catalog *LocalCatalog,
+	catalog interface {
+		StreamIDs() (*uuidcollection.Set, <-chan struct{})
+	},
 	want ...*uuidpb.UUID,
 ) {
 	t.Helper()
@@ -150,7 +152,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		xtesting.GoE(t, catalog.Run)
 
 		batches := make(chan Batch, 10)
-		unsubscribe := catalog.Subscribe(
+		_, unsubscribe := catalog.Subscribe(
 			streamID,
 			0,
 			uuidcollection.NewSet(
@@ -203,11 +205,11 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		)
 
 		batches1 := make(chan Batch, 10)
-		unsubscribe1 := catalog.Subscribe(streamID, 0, types, batches1)
+		_, unsubscribe1 := catalog.Subscribe(streamID, 0, types, batches1)
 		defer unsubscribe1()
 
 		batches2 := make(chan Batch, 10)
-		unsubscribe2 := catalog.Subscribe(streamID, 0, types, batches2)
+		_, unsubscribe2 := catalog.Subscribe(streamID, 0, types, batches2)
 		defer unsubscribe2()
 
 		want := xtesting.AppendToEventStream(
@@ -250,11 +252,11 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		)
 
 		batches1 := make(chan Batch, 10)
-		unsubscribe1 := catalog.Subscribe(streamID1, 0, types, batches1)
+		_, unsubscribe1 := catalog.Subscribe(streamID1, 0, types, batches1)
 		defer unsubscribe1()
 
 		batches2 := make(chan Batch, 10)
-		unsubscribe2 := catalog.Subscribe(streamID2, 0, types, batches2)
+		_, unsubscribe2 := catalog.Subscribe(streamID2, 0, types, batches2)
 		defer unsubscribe2()
 
 		want1 := xtesting.AppendToEventStream(t, db, streamID1, EventE1, EventE2)
@@ -300,7 +302,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		xtesting.GoE(t, catalog.Run)
 
 		batches := make(chan Batch, 10)
-		unsubscribe := catalog.Subscribe(
+		_, unsubscribe := catalog.Subscribe(
 			streamID,
 			0,
 			uuidcollection.NewSet(
@@ -370,7 +372,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		// The channel is unbuffered so that the consumer remains in the
 		// historical phase, blocked on delivery, until the test receives.
 		batches := make(chan Batch)
-		unsubscribe := catalog.Subscribe(
+		_, unsubscribe := catalog.Subscribe(
 			streamID,
 			0,
 			uuidcollection.NewSet(
@@ -415,7 +417,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		xtesting.GoE(t, catalog.Run)
 
 		batches := make(chan Batch, 10)
-		unsubscribe := catalog.Subscribe(
+		_, unsubscribe := catalog.Subscribe(
 			streamID,
 			0,
 			uuidcollection.NewSet(
@@ -460,7 +462,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		xtesting.GoE(t, catalog.Run)
 
 		batches := make(chan Batch, 1)
-		unsubscribe := catalog.Subscribe(
+		_, unsubscribe := catalog.Subscribe(
 			streamID,
 			0,
 			uuidcollection.NewSet(
@@ -523,7 +525,7 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 
 		for i := range channels {
 			channels[i] = make(chan Batch, 1)
-			unsubscribe := catalog.Subscribe(streamID, 0, types, channels[i])
+			_, unsubscribe := catalog.Subscribe(streamID, 0, types, channels[i])
 			defer unsubscribe()
 		}
 
@@ -566,10 +568,10 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		)
 
 		batches1 := make(chan Batch, 10)
-		unsubscribe1 := catalog.Subscribe(streamID, 0, types, batches1)
+		_, unsubscribe1 := catalog.Subscribe(streamID, 0, types, batches1)
 
 		batches2 := make(chan Batch, 10)
-		unsubscribe2 := catalog.Subscribe(streamID, 0, types, batches2)
+		_, unsubscribe2 := catalog.Subscribe(streamID, 0, types, batches2)
 		defer unsubscribe2()
 
 		first := xtesting.AppendToEventStream(t, db, streamID, EventE1)
@@ -633,8 +635,43 @@ func TestLocalCatalog_subscribe(t *testing.T) {
 		stop()
 
 		// Subscribing after the catalog has stopped must not block.
-		unsubscribe := catalog.Subscribe(streamID, 0, types, make(chan Batch))
+		_, unsubscribe := catalog.Subscribe(streamID, 0, types, make(chan Batch))
 		unsubscribe()
+	})
+}
+
+func TestLocalCatalog_lost(t *testing.T) {
+	t.Run("it reports subscriptions as lost when it stops", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+		logger := spruce.NewTestLogger(t)
+
+		signals := &signal.Bus{
+			DB:     db,
+			Logger: logger,
+		}
+		xtesting.GoE(t, signals.Run)
+
+		catalog := &LocalCatalog{
+			DB:                    db,
+			Signals:               signals,
+			Logger:                logger,
+			ContemporaryCacheSize: 10,
+			HistoricalBatchSize:   10,
+		}
+		stop := xtesting.GoE(t, catalog.Run)
+
+		streamID := xtesting.CreateEventStream(t, db)
+		types := uuidcollection.NewSet(uuidpb.Generate())
+
+		lost, _ := catalog.Subscribe(streamID, 0, types, make(chan Batch, 1))
+
+		stop()
+
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatal("timeout waiting for the subscription to be lost")
+		case <-lost:
+		}
 	})
 }
 

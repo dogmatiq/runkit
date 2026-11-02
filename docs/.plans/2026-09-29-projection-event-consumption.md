@@ -39,9 +39,17 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   `cluster.Node.ObserveResponsibility()`; the set is owned by the composite's
   `Run` goroutine and changed through messaging, not a mutex. The local
   catalog is added first, then one `RemoteCatalog` per foreign application.
-  When a member is removed, its streams leave `StreamIDs()` and the composite
-  cancels any subscriptions it had routed to it. Re-adding a member makes its
-  streams reappear, and consumption resumes from the handler's checkpoint.
+  A subscription can be lost: `Subscribe()` returns a `lost` channel that the
+  catalog closes when it can no longer deliver. `LocalCatalog` closes it when
+  it stops; `RemoteCatalog` when it stops or the server closes the gRPC
+  stream; the composite passes the offering member's channel through, or an
+  already-closed one if no member offers the stream. A catalog removed from
+  the composite is stopped by whatever removed it, which is what loses its
+  subscriptions. A subscriber treats a lost subscription as an error, so its
+  supervisor restarts it from its own checkpoint, which routes it to whichever
+  member now offers the stream. No subscriber is ever left bound to a member
+  that is gone, even if the member is removed and re-added between two reads
+  of `StreamIDs()`.
   Configuration is static for now (`WithForeignApplication()` at
   construction, added to the composite at startup); a runtime add/remove API
   is deferred and must need no redesign.
@@ -73,7 +81,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   checkpoint; they are returned via `supervisor.Persistent` (retried slowly),
   not treated as fatal, since one bad foreign application must not stop the
   engine. A server-closed stream (no requested type recordable by the
-  application) ends that subscription quietly.
+  application) reports the subscription lost.
 - **Foreign applications are configured statically, for now.**
   `WithForeignApplication(target string, options ...grpc.DialOption)` mirrors
   `WithListenAddress()`. Homogeneous connectivity; an engine never consumes
@@ -122,23 +130,27 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 **Files:** create `internal/eventstream/compositecatalog.go` + test; modify
 `internal/projection/consumer.go`.
 
-- [ ] **Step 1: `CompositeCatalog`.** `Add(Catalog) (remove func())` sends to
+- [x] **Step 1: `CompositeCatalog`.** `Add(Catalog) (remove func())` sends to
       `Run` through channels (blocks until `Run` is running, no-op once it has
       stopped, as `Node.ObserveResponsibility` does). `Run` watches every
       member's `changed` channel and the add/remove requests, and republishes
-      the union, and which member offers each stream, through an
-      `xsync.Observable`, storing only when it differs. A stream offered by
-      more than one member is attributed to the member added first.
-- [ ] **Step 2: Routing.** `Subscribe()` delegates to the member that offers
-      the stream; a stream no member offers gets a no-op unsubscribe. A
-      subscription routed to a member is cancelled when that member is
-      removed.
+      the union through an `xsync.Observable`, storing only when it differs.
+      A stream offered by more than one member is a misconfiguration (the same
+      application listed twice, or this engine pointed at its own cluster):
+      `Run` returns an error naming the stream, which stops the engine.
+- [x] **Step 2: Routing.** `Subscribe()` delegates to the member that offers
+      the stream, read from a map that `publish` keeps alongside the stream
+      set, passing the member's `lost` channel through. A stream no member
+      offers is lost immediately. `streamConsumer` and `ConsumerAPI` treat a
+      lost subscription as an error.
 - [ ] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
       consumer gets its own cancellable context (`supervisor.Go` or
       `context.WithCancel` per stream) so that a stream missing from
       `StreamIDs()` has its consumer cancelled and removed from
       `streamConsumers`. Update the comment that says a stream consumer lives
-      for the life of the consumer.
+      for the life of the consumer. Without this, a stream consumer for a
+      vanished stream would keep restarting with backoff, its subscription
+      lost each time.
 - [ ] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
       catalog to it, and gives it to each `projection.Consumer`; `ConsumerAPI`
       stays on `*LocalCatalog`. With one member the composite must be a
@@ -162,8 +174,9 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
       checkpoint it will reconnect from. Unsubscribe cancels it.
-- [ ] **Step 3: Honor the server's contract** as decided above: EOF ends the
-      subscription; `NOT_FOUND`/`OUT_OF_RANGE` → `supervisor.Persistent`.
+- [ ] **Step 3: Honor the server's contract** as decided above: EOF closes the
+      subscription's `lost` channel; `NOT_FOUND`/`OUT_OF_RANGE` →
+      `supervisor.Persistent`.
 - [ ] **Step 4:** Test + commit.
 
 ### Task A.5: Foreign application configuration

@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -112,11 +113,13 @@ func (sc *streamConsumer) step(
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled, an event can not be dispatched, or
-// the handler reports an optimistic concurrency conflict.
+// checkpoint offset, until ctx is canceled, an event can not be dispatched, the
+// handler reports an optimistic concurrency conflict, or the subscription to
+// the stream is lost.
 //
-// A conflict is returned as an error so that consumption resumes from the
-// handler's checkpoint offset after a delay, rather than immediately.
+// A conflict or a lost subscription is returned as an error so that consumption
+// resumes from the handler's checkpoint offset after a delay, rather than
+// immediately.
 func (sc *streamConsumer) consume(ctx context.Context) error {
 	checkpoint, err := xerrors.RecoverT(
 		func() (uint64, error) {
@@ -131,7 +134,7 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 	}
 
 	batches := make(chan eventstream.Batch, sc.BufferSize)
-	unsubscribe := sc.EventStreams.Subscribe(
+	lost, unsubscribe := sc.EventStreams.Subscribe(
 		sc.StreamID,
 		checkpoint,
 		sc.EventTypeIDs,
@@ -145,6 +148,8 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-lost:
+			return errors.New("subscription to event stream lost")
 		case batch = <-batches:
 		}
 

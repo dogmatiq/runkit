@@ -87,22 +87,19 @@ func (c *LocalCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 	return c.streamIDs.Load()
 }
 
-// Subscribe registers ch to receive batches of events from a stream, starting
+// Subscribe registers ch to receive events from a specific stream starting
 // at the given checkpoint offset.
 //
-// types is the IDs of the message types the consumer wishes to receive. It must
-// not be empty.
+// types is the set of message types the subscriber is interested in. It
+// must not be empty.
 //
-// ch should be buffered. Events are delivered in offset order, and a consumer
-// that does not keep up never misses events.
-//
-// It returns a function that unsubscribes.
+// lost is closed if the catalog can no longer deliver to the subscription.
 func (c *LocalCatalog) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
 	types *uuidcollection.Set,
 	ch chan<- Batch,
-) func() {
+) (lost <-chan struct{}, unsubscribe func()) {
 	if types.IsEmpty() {
 		panic("message types must not be empty")
 	}
@@ -124,7 +121,7 @@ func (c *LocalCatalog) Subscribe(
 
 	var once sync.Once
 
-	return func() {
+	return c.done.Chan(), func() {
 		once.Do(func() {
 			con.Gone.Set()
 
@@ -190,11 +187,12 @@ func (c *LocalCatalog) discover(ctx context.Context) error {
 		}
 
 		// Streams are never removed, so the set has changed if and only if
-		// its size has.
+		// it contains streams that were not already known.
 		known, _ := c.streamIDs.Load()
+		discovered := streamIDs.Diff(known)
 
-		if streamIDs.Len() != known.Len() {
-			for streamID := range streamIDs.Diff(known).All() {
+		if !discovered.IsEmpty() {
+			for streamID := range discovered.All() {
 				c.Logger.DebugContext(
 					ctx,
 					"event stream discovered",

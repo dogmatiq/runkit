@@ -139,13 +139,15 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 
 	batches := make(chan Batch, s.BufferSize)
-	unsubscribe := s.EventStreams.Subscribe(streamID, checkpoint, types, batches)
+	lost, unsubscribe := s.EventStreams.Subscribe(streamID, checkpoint, types, batches)
 	defer unsubscribe()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-lost:
+			return status.Error(codes.Unavailable, "the server is shutting down")
 		case batch := <-batches:
 			if err := sendBatch(res, batch); err != nil {
 				return err
