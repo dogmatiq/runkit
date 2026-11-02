@@ -105,12 +105,15 @@ func RunEnginesWithDB(
 		testTimeout = 1 * time.Minute
 	}
 
-	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
-	defer stopTest()
+	// runContext is canceled if any engine stops. The test's own timeout
+	// starts once the engines have converged.
+	runContext, stopRun := context.WithCancel(t.Context())
+	defer stopRun()
 
 	logger := spruce.NewTestLogger(t)
 
 	var engine *runkit.Engine
+	nodes := make(chan contexthook.Node, concurrentEngines)
 
 	for idx := range concurrentEngines {
 		e := runkit.New(
@@ -126,9 +129,16 @@ func RunEnginesWithDB(
 		}
 
 		engineGroup.Go(func() error {
-			defer stopTest()
+			defer stopRun()
 
-			err := e.Run(engineContext)
+			ctx := contexthook.With(
+				engineContext,
+				func(n contexthook.Node) {
+					nodes <- n
+				},
+			)
+
+			err := e.Run(ctx)
 
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("engine %d stopped unexpectedly: %v", idx, err)
@@ -143,6 +153,40 @@ func RunEnginesWithDB(
 	case <-engineContext.Done():
 	case <-engine.Ready():
 	}
+
+	// Wait for every engine to see all of the others, so that the test starts
+	// from a cluster that has converged.
+	convergeContext, cancelConverge := context.WithTimeout(runContext, WaitTimeout)
+	defer cancelConverge()
+
+	for range concurrentEngines {
+		var n contexthook.Node
+
+		select {
+		case <-engineContext.Done():
+		case <-convergeContext.Done():
+			t.Fatal("timeout waiting for engines to join the cluster")
+		case n = <-nodes:
+		}
+
+		for n.Node != nil {
+			peers, changed := n.Node.Peers()
+			if peers.Len() == concurrentEngines-1 {
+				break
+			}
+
+			select {
+			case <-engineContext.Done():
+				n.Node = nil
+			case <-convergeContext.Done():
+				t.Fatalf("timeout waiting for engines to see each other: %d of %d peers", peers.Len(), concurrentEngines-1)
+			case <-changed:
+			}
+		}
+	}
+
+	testContext, stopTest := context.WithTimeout(runContext, testTimeout)
+	defer stopTest()
 
 	fn(
 		testingTBWithContext{t, testContext},

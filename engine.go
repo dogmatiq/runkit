@@ -20,6 +20,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
@@ -112,9 +113,8 @@ type Engine struct {
 	// signals listens for signals sent by this and other nodes.
 	signals *signal.Listener
 
-	// heartbeat sends this node's heartbeats and observes the set of live
-	// nodes in the cluster.
-	heartbeat *cluster.Heartbeat
+	// node represents this engine's node in the cluster.
+	node *cluster.Node
 
 	// eventStreams tracks the set of available event streams.
 	eventStreams *eventstream.Catalog
@@ -196,14 +196,18 @@ func (e *Engine) Run(ctx context.Context) error {
 		Logger: e.logger.With(slog.String("component", "signal.listener")),
 	}
 
-	e.heartbeat = &cluster.Heartbeat{
-		NodeID:   e.nodeID,
+	e.node = &cluster.Node{
+		ID:       e.nodeID,
 		DB:       e.db,
 		Signals:  e.signals,
 		Interval: heartbeatInterval,
 		Timeout:  heartbeatTimeout,
-		Logger:   e.logger.With(slog.String("component", "cluster.heartbeat")),
+		Logger:   e.logger.With(slog.String("component", "cluster.node")),
 	}
+
+	contexthook.Invoke(ctx, contexthook.Node{
+		Node: e.node,
+	})
 
 	e.eventStreams = &eventstream.Catalog{
 		DB:      e.db,
@@ -270,7 +274,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	runComponent(e.signals)
-	runComponent(e.heartbeat)
+	runComponent(e.node)
 	runComponent(e.eventStreams)
 	runComponent(e.events)
 
