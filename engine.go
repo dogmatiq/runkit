@@ -29,6 +29,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -302,6 +303,18 @@ func (e *Engine) Run(ctx context.Context) error {
 	runComponent(e.allEventStreams)
 
 	e.allEventStreams.Add(e.localEventStreams)
+
+	for _, d := range e.remoteEngineDiscoverers {
+		runComponent(
+			&remoteengine.Connector{
+				Discover:     d,
+				EventStreams: e.allEventStreams,
+				Logger: e.logger.With(
+					slog.String("component", "remoteengine.connector"),
+				),
+			},
+		)
+	}
 
 	// Create and run components that manage all (non-disabled) handlers within
 	// the application.

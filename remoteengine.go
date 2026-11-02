@@ -14,28 +14,29 @@ import (
 // that have multiple replicas, it represents the logical engine as a whole,
 // rather than any individual replica.
 //
-// It calls available for each remote engine as it becomes available, and calls
-// the returned unavailable function when it is no longer available, until ctx
-// is canceled.
+// It calls add for each remote engine as it becomes available, and calls the
+// returned remove function when it is no longer available, until ctx is
+// canceled.
 //
-// The engine uses conn until unavailable is called, but never closes it.
-// unavailable returns once the engine has stopped using conn, after which conn
-// may be closed. Calling it more than once has no effect.
+// The engine uses conn until remove is called, but never closes it. remove
+// returns once the engine has stopped using conn, after which conn may be
+// closed. Calling it more than once has no effect.
 //
-// Each remote engine must be reported once. Otherwise, the same resources, such
+// Each remote engine must be added once. Otherwise, the same resources, such
 // as event streams, are offered by more than one remote engine, which stops
 // this engine with an error.
 //
-// Once the discoverer returns, every remote engine that it reported available
-// is treated as unavailable. If it returns an error other than ctx's, it is
-// called again after a delay.
+// add must not be called after the discoverer returns, including from
+// goroutines that it started. Once it returns, every remote engine that it
+// added is removed. If it returns an error other than ctx's, it is called again
+// after a delay.
 type RemoteEngineDiscoverer func(
 	ctx context.Context,
-	available func(conn grpc.ClientConnInterface) (unavailable func()),
+	add func(conn grpc.ClientConnInterface) (remove func()),
 ) error
 
-// StaticRemoteEngines returns a [RemoteEngineDiscoverer] that permanently
-// reports each of the given connections as available.
+// StaticRemoteEngines returns a [RemoteEngineDiscoverer] that adds each of the
+// given connections, and never removes them.
 //
 // It panics if any of the connections is nil.
 func StaticRemoteEngines(conns ...grpc.ClientConnInterface) RemoteEngineDiscoverer {
@@ -49,10 +50,10 @@ func StaticRemoteEngines(conns ...grpc.ClientConnInterface) RemoteEngineDiscover
 
 	return func(
 		ctx context.Context,
-		available func(grpc.ClientConnInterface) func(),
+		add func(grpc.ClientConnInterface) func(),
 	) error {
 		for _, conn := range conns {
-			available(conn)
+			add(conn)
 		}
 
 		<-ctx.Done()

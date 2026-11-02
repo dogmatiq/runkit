@@ -85,9 +85,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   applications' events are consumed from _remote engines_. The engine is
   given any number of discoverers, one per use of
   `WithRemoteEngineDiscoverer()`. A `RemoteEngineDiscoverer` is a function,
-  `func(ctx, available func(conn) (unavailable func())) error`; it calls
-  `available` as each remote engine becomes available, and calls the returned
-  function when it becomes unavailable. A discoverer with configuration is a
+  `func(ctx, add func(conn) (remove func())) error`; it calls `add` as each
+  remote engine becomes available, and calls the returned `remove` function
+  when it becomes unavailable. A discoverer with configuration is a
   type whose method is passed as the function. A fixed set is declared with the
   `StaticRemoteEngines(conns ...grpc.ClientConnInterface)` helper, which
   returns a discoverer that reports each connection once:
@@ -109,17 +109,18 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   engine. The discoverer creates and owns the connection: users control
   everything about the client (credentials, resolvers, interceptors), client
   errors surface where they create it, and tests can pass in-process
-  connections. The engine uses a connection until its `unavailable` function
-  returns, and never closes it. Each report is identified by its
-  `unavailable` function, so connections are never compared and need not be
-  comparable. To change a connection (for example, new credentials) a
-  discoverer reports the old one unavailable, then the new one available.
-- **Each available connection has its own catalog.** When a connection
-  becomes available the engine creates a `RemoteCatalog` over it, runs it, and
-  adds it to the composite. When it becomes unavailable the engine removes the
-  catalog from the composite and stops it, which loses its subscriptions. A
-  discoverer runs under the supervisor for the life of the engine; when it
-  returns, every connection it reported becomes unavailable. Two connections
+  connections. The engine uses a connection until its `remove` function
+  returns, and never closes it. Each addition is identified by its `remove`
+  function, so connections are never compared and need not be comparable. To
+  change a connection (for example, new credentials) a discoverer removes the
+  old one, then adds the new one. `add` must not be called after the
+  discoverer returns, including from goroutines it started.
+- **Each added connection has its own catalog.** When a connection is added
+  the engine creates a `RemoteCatalog` over it, runs it, and adds it to the
+  composite. When it is removed the engine removes the catalog from the
+  composite and stops it, which loses its subscriptions. A discoverer runs
+  under the supervisor for the life of the engine; when it returns, every
+  connection it added is removed. Two connections
   to the same remote engine (including one per instance) are two members
   offering the same streams, which stops the engine, as does a connection to
   this engine. Homogeneous connectivity.
@@ -218,8 +219,8 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 
 ### Task A.5: Remote engine discovery
 
-**Files:** create `remoteengine.go` (public types) and an internal type that
-manages the remote catalogs; modify `engineoption.go`, `engine.go`,
+**Files:** create `remoteengine.go` (public types) and
+`internal/remoteengine/connector.go`; modify `engineoption.go`, `engine.go`,
 `CHANGELOG.md`.
 
 - [x] **Step 1: Public API.** The `RemoteEngineDiscoverer` function type,
@@ -227,22 +228,23 @@ manages the remote catalogs; modify `engineoption.go`, `engine.go`,
       RemoteEngineDiscoverer`, and `WithRemoteEngineDiscoverer()`, which may
       be given more than once, adding a discoverer each time. Docs cover what
       the connection must serve, one connection per engine (not per
-      instance), ownership (the discoverer closes it, after it is reported
-      unavailable), unavailability through the returned function, and what
-      stops the engine.
-- [ ] **Step 2: Managing remote catalogs.** An internal type, run as a
-      component, owns the available connections for one discoverer through
-      its `Run` goroutine and provides its `available` function: available →
-      run a `RemoteCatalog` over the connection and add it to the composite;
-      unavailable → remove it and stop it, returning once the catalog has
-      stopped using the connection. The engine runs one per discoverer, with
-      the discoverer under `supervisor.Run`; when the discoverer returns, its
-      connections become unavailable.
-- [ ] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an available
-      connection's streams appear in the composite; unavailable removes them
-      and loses their subscriptions; a returning discoverer's connections
-      become unavailable; `StaticRemoteEngines` reports each connection; two
-      discoverers run side by side.
+      instance), ownership (the discoverer closes it, after it is
+      removed), removal through the returned function, and what stops the
+      engine.
+- [x] **Step 2: Running discoverers.** `remoteengine.Connector`, run as a
+      component, one per discoverer, takes the composite as its
+      `EventStreams` dependency; the event stream subsystem never sees a
+      discoverer. It runs the discoverer under `supervisor.Run`; for each
+      added connection it adds a `RemoteCatalog` to the composite and runs it;
+      `remove` removes the catalog and stops it, returning once it has stopped
+      using the connection. When the discoverer returns, its connections are
+      removed, and a discoverer that returns nil is not called again. Other subsystems that use remote engines later become
+      further dependencies of this type.
+- [ ] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an added
+      connection's streams appear in the composite; removing it removes them
+      and loses their subscriptions; a returning discoverer's connections are
+      removed; `StaticRemoteEngines` adds each connection; two discoverers run
+      side by side.
 - [ ] **Step 4:** Changelog: add an entry for consuming events from remote
       engines under Added, and drop "This engine does not yet consume events
       from other engines." from the gRPC server entry. Commit.

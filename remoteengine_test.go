@@ -12,7 +12,7 @@ import (
 )
 
 func TestStaticRemoteEngines(t *testing.T) {
-	t.Run("it reports each connection available", func(t *testing.T) {
+	t.Run("it adds each connection", func(t *testing.T) {
 		a := newClientConn(t)
 		b := newClientConn(t)
 
@@ -32,7 +32,7 @@ func TestStaticRemoteEngines(t *testing.T) {
 		for _, want := range []grpc.ClientConnInterface{a, b} {
 			select {
 			case <-time.After(xtesting.WaitTimeout):
-				t.Fatal("timeout waiting for connection to be reported available")
+				t.Fatal("timeout waiting for connection to be added")
 			case got := <-reported:
 				if got != want {
 					t.Fatal("unexpected connection")
