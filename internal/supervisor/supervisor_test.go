@@ -126,6 +126,27 @@ func TestRun_backoff(t *testing.T) {
 		})
 	})
 
+	t.Run("it grows the delay from the transient cap after a persistent error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			got := delays(
+				t,
+				17,
+				func(call int) error {
+					if call < 15 {
+						return errors.New("<error>")
+					}
+					return Persistent(errors.New("<error>"))
+				},
+			)
+
+			// The first persistent error follows 15 transient errors, so its
+			// delay is drawn from double the 15 second cap.
+			if d := got[15]; d > 30*time.Second {
+				t.Fatalf("expected the delay to grow from the transient cap, got %s", d)
+			}
+		})
+	})
+
 	t.Run("it resets the delay when fn runs for long enough before failing", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			got := delays(

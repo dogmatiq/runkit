@@ -59,8 +59,8 @@ func Go(
 //
 // The delay doubles with each consecutive failure, up to a limit. The limit is
 // higher when the error was created by [Persistent] or [Persistentf], so that
-// failures unlikely to resolve themselves are retried less often. The delay returns to its
-// initial value once fn runs for long enough before failing.
+// failures unlikely to resolve themselves are retried less often. The delay
+// returns to its initial value once fn runs for long enough before failing.
 func Run(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -85,23 +85,22 @@ func Run(
 
 		xsql.PanicOnDeadlock(err)
 
-		if backoff == 0 || time.Since(startedAt) >= resetThreshold {
-			backoff = baseDelay
-			failures = 0
-		} else {
-			backoff = min(2*backoff, persistentMaxDelay)
-		}
-
-		failures++
-
 		limit := transientMaxDelay
 		if _, ok := errors.AsType[persistentError](err); ok {
 			limit = persistentMaxDelay
 		}
 
+		if backoff == 0 || time.Since(startedAt) >= resetThreshold {
+			backoff = baseDelay
+			failures = 0
+		} else {
+			backoff = min(2*backoff, limit)
+		}
+
+		failures++
+
 		// Randomize between 50%-100% of the backoff to avoid thundering herds.
-		capped := min(backoff, limit)
-		delay := capped/2 + rand.N(capped/2)
+		delay := backoff/2 + rand.N(backoff/2)
 
 		logger.ErrorContext(
 			ctx,
