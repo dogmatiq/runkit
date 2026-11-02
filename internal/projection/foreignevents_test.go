@@ -25,7 +25,7 @@ func TestForeignEvents_historicalEventsAreHandled(t *testing.T) {
 		3,
 	)
 
-	xtesting.ExecuteCommand(t, upstream.Engines[0], stubs.CommandA1)
+	xtesting.ExecuteCommand(t, upstream, stubs.CommandA1)
 
 	var handled xsync.Latch
 
@@ -67,7 +67,7 @@ func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
 		),
 	)
 
-	xtesting.ExecuteCommand(t, upstream.Engines[0], stubs.CommandA1)
+	xtesting.ExecuteCommand(t, upstream, stubs.CommandA1)
 
 	xtesting.ExpectLatchesSetEventually(t, &handled)
 }

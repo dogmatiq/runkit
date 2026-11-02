@@ -261,16 +261,18 @@ stop engines during a test. Phase B needs:
 
 - [x] A way to run a second application, with its own identity and database,
       consuming from the first. `xtesting.StartCluster(t, db, app, n,
-      options...)` (in `xtesting/cluster.go`) runs a cluster of engines and
-      waits for every engine to be ready and to see the others, returning a
-      `*Cluster` with `Engines`, `Stop()`, `Stopped()` and `Dial(t)`;
-      `RunEnginesWithDB` is built on it. `Cluster.Dial` returns one
-      connection that reaches any of the cluster's engines (a manual resolver
+      options...)` (in `xtesting/cluster.go`) runs `app` on `n` nodes and
+      waits for every node to be ready and to see the others, returning a
+      `*Cluster` (one logical engine) with `Nodes()`, `Stop()`, `Failed()` and
+      `Dial(t)`; `RunEnginesWithDB` is built on it. `Cluster.Dial` returns one
+      connection that reaches any of the cluster's nodes (a manual resolver
       over every listen address, round-robin), as a remote engine's
       connection should, for `StaticRemoteEngines`.
-- [ ] A way to add and remove individual engines while a test runs, and to
-      reach each engine's `*cluster.Node` (the `contexthook.Node` hook already
-      exposes it). Added to `Cluster` with B.2, which needs it.
+- [x] A way to add and remove individual nodes while a test runs:
+      `Cluster.AddNode(t)` and `Cluster.StopNode(e)`, each node running with
+      its own context. `Cluster` implements `dogma.CommandExecutor`,
+      executing each command on its running nodes in turn, and the
+      `xtesting.ExecuteCommand*` helpers accept any executor.
 
 ### Task B.1: Foreign events
 

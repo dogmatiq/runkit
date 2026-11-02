@@ -105,23 +105,23 @@ func RunEnginesWithDB(
 	go func() {
 		select {
 		case <-testContext.Done():
-		case <-cluster.Stopped():
+		case <-cluster.Failed():
 			stopTest()
 		}
 	}()
 
 	fn(
 		testingTBWithContext{t, testContext},
-		cluster.Engines[0],
+		cluster.Nodes()[0],
 		db,
 	)
 }
 
-// ExecuteCommand executes the given command on the engine, and fails the test
-// if it returns an error.
+// ExecuteCommand executes the given command using the executor, and fails the
+// test if it returns an error.
 func ExecuteCommand(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -129,25 +129,25 @@ func ExecuteCommand(
 
 	return ExecuteCommandWithHook(
 		t,
-		engine,
+		executor,
 		command,
 		func(contexthook.ExecuteCommand) {},
 		options...,
 	)
 }
 
-// ExecuteCommandAndWait executes the given command on the engine and waits for
-// it to be removed from the command queue.
+// ExecuteCommandAndWait executes the given command using the executor and
+// waits for it to be removed from the command queue.
 func ExecuteCommandAndWait(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	db *sql.DB,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
 	t.Helper()
 
-	commandEnvelope := ExecuteCommand(t, engine, command, options...)
+	commandEnvelope := ExecuteCommand(t, executor, command, options...)
 
 	WaitForCommandToBeRemovedFromQueue(
 		t,
@@ -158,11 +158,11 @@ func ExecuteCommandAndWait(
 	return commandEnvelope
 }
 
-// ExecuteCommandsSequentially executes the given commands on the engine
+// ExecuteCommandsSequentially executes the given commands using the executor
 // sequentially, and fails the test if any of them returns an error.
 func ExecuteCommandsSequentially(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	db *sql.DB,
 	commands ...dogma.Command,
 ) []*envelopepb.Envelope {
@@ -171,18 +171,18 @@ func ExecuteCommandsSequentially(
 	var commandEnvelopes []*envelopepb.Envelope
 
 	for _, command := range commands {
-		commandEnvelope := ExecuteCommandAndWait(t, engine, db, command)
+		commandEnvelope := ExecuteCommandAndWait(t, executor, db, command)
 		commandEnvelopes = append(commandEnvelopes, commandEnvelope)
 	}
 
 	return commandEnvelopes
 }
 
-// ExecuteCommandWithHook executes the given command on the engine, and fails
-// the test if it returns an error.
+// ExecuteCommandWithHook executes the given command using the executor, and
+// fails the test if it returns an error.
 func ExecuteCommandWithHook(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	command dogma.Command,
 	hook func(contexthook.ExecuteCommand),
 	options ...dogma.ExecuteCommandOption,
@@ -199,7 +199,7 @@ func ExecuteCommandWithHook(
 		},
 	)
 
-	if err := engine.ExecuteCommand(
+	if err := executor.ExecuteCommand(
 		ctx,
 		command,
 		options...,
