@@ -12,7 +12,10 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
+	"github.com/dogmatiq/enginekit/protobuf/identitypb"
+	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
@@ -171,6 +174,38 @@ func TestEngine(t *testing.T) {
 
 		var opErr *net.OpError
 		if !errors.As(err, &opErr) || opErr.Op != "listen" {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("it returns an error if the database is bound to a different application", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+
+		other := identitypb.New("<other>", uuidpb.Generate())
+		if err := application.Bind(
+			t.Context(),
+			db,
+			other,
+			spruce.NewTestLogger(t),
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		engine := runkit.New(
+			testApp(),
+			db,
+			runkit.WithLogger(spruce.NewTestLogger(t)),
+		)
+
+		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+		defer cancel()
+
+		err := engine.Run(ctx)
+		if err == nil || errors.Is(err, ctx.Err()) {
+			t.Fatalf("expected a binding error, got %v", err)
+		}
+
+		if !strings.Contains(err.Error(), other.GetKey().AsString()) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

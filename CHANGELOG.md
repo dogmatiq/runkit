@@ -35,6 +35,10 @@ The format is based on [Keep a Changelog], and this project adheres to
   positive. Previously, a non-positive `ProjectionCompactInterval` meant that
   `DefaultProjectionCompactInterval` was used.
 - **[BC]** `Engine.Run()` must be called at most once.
+- **[BC]** A database can only be used by a single application. The first
+  engine to run against a database binds it to that engine's application.
+  `Engine.Run()` returns an error if the database is bound to an application
+  with a different identity key.
 - PostgreSQL 18 is now the minimum supported version.
 - Removed some of the conditions under which `Engine.Run()` panics. It now
   returns an error in more cases where the engine is unable to continue.

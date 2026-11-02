@@ -19,6 +19,7 @@ import (
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/aggregate"
+	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
@@ -42,6 +43,10 @@ const (
 	// projectionCompactTimeout is the maximum time a projection is given to
 	// compact its data in a single attempt.
 	projectionCompactTimeout = 10 * time.Minute
+
+	// applicationBindTimeout is the maximum time spent trying to bind the
+	// database to the application before the engine stops.
+	applicationBindTimeout = 1 * time.Minute
 
 	// heartbeatInterval is the time between the heartbeats that each engine
 	// sends to the others in the cluster.
@@ -183,6 +188,22 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	if err := config.Validate(e.appConfig, config.ForExecution()); err != nil {
 		return fmt.Errorf("invalid application configuration: %w", err)
+	}
+
+	bindCtx, cancelBind := context.WithTimeout(ctx, applicationBindTimeout)
+	defer cancelBind()
+
+	if err := application.Bind(
+		bindCtx,
+		e.db,
+		e.appConfig.Identity(),
+		e.logger,
+	); err != nil {
+		return fmt.Errorf(
+			"unable to bind database to application %s: %w",
+			e.appConfig.Identity(),
+			err,
+		)
 	}
 
 	e.packer = &envelopepb.Packer{
