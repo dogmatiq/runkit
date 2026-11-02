@@ -174,10 +174,10 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
       checkpoint it will reconnect from. Unsubscribe cancels it.
-- [ ] **Step 3: Honor the server's contract** as decided above: EOF closes the
+- [x] **Step 3: Honor the server's contract** as decided above: EOF closes the
       subscription's `lost` channel; `NOT_FOUND`/`OUT_OF_RANGE` →
       `supervisor.Persistent`.
-- [ ] **Step 4:** Test + commit.
+- [x] **Step 4:** Test + commit.
 
 ### Task A.5: Foreign application configuration
 

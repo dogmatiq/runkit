@@ -6,6 +6,7 @@ import (
 
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -141,6 +142,65 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				defer unsubscribe()
 
 				expectToReceiveEnvelopes(t, batches, envelopes[0], envelopes[2])
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it reports a subscription as lost when the application closes the stream", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				streamID, _ := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+				client, _ := newConsumerClient(t, engine)
+
+				catalog := &RemoteCatalog{
+					Client: client,
+					Logger: spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, catalog.Run)
+
+				// The application can not record events of type X, so it closes
+				// the stream once it has delivered the existing events.
+				lost, unsubscribe := catalog.Subscribe(
+					streamID,
+					0,
+					uuidcollection.NewSet(
+						stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeX]](),
+					),
+					make(chan Batch, 10),
+				)
+				defer unsubscribe()
+
+				xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it does not report a subscription as lost when the stream is not found", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				client, _ := newConsumerClient(t, engine)
+
+				catalog := &RemoteCatalog{
+					Client: client,
+					Logger: spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, catalog.Run)
+
+				lost, unsubscribe := catalog.Subscribe(
+					uuidpb.Generate(),
+					0,
+					uuidcollection.NewSet(
+						stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+					),
+					make(chan Batch, 10),
+				)
+				defer unsubscribe()
+
+				xtesting.ExpectNoReceive(t, "lost subscription", lost)
 			},
 			consumerAPIApp(),
 		)

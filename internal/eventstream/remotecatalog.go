@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"slices"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // RemoteCatalog is the [Catalog] of event streams recorded by a foreign
@@ -225,6 +228,12 @@ func (c *RemoteCatalog) read(ctx context.Context) error {
 
 // consume delivers events from the application to a subscription, starting at
 // the subscription's checkpoint, until ctx is canceled or it is disconnected.
+//
+// The application closes the stream once it has delivered every event of the
+// requested types that it is able to record, at which point the subscription is
+// lost. If the application does not recognize the stream, or the checkpoint is
+// beyond the end of the stream, its data does not match the subscription's, so
+// the failure is persistent.
 func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) error {
 	responses, err := c.Client.ConsumeEvents(
 		ctx,
@@ -240,8 +249,18 @@ func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) er
 
 	for {
 		res, err := responses.Recv()
+		if err == io.EOF {
+			sub.Lost.Set()
+			return nil
+		}
+
 		if err != nil {
-			return fmt.Errorf("unable to receive events: %w", err)
+			switch status.Code(err) {
+			case codes.NotFound, codes.OutOfRange:
+				return supervisor.Persistentf("unable to receive events: %w", err)
+			default:
+				return fmt.Errorf("unable to receive events: %w", err)
+			}
 		}
 
 		batch, err := newRemoteBatch(sub.StreamID, res)
