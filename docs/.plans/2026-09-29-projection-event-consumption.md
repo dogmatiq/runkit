@@ -245,7 +245,7 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       and loses their subscriptions; a returning discoverer's connections are
       removed; `StaticRemoteEngines` adds each connection; two discoverers run
       side by side.
-- [ ] **Step 4:** Changelog: add an entry for consuming events from remote
+- [x] **Step 4:** Changelog: add an entry for consuming events from remote
       engines under Added, and drop "This engine does not yet consume events
       from other engines." from the gRPC server entry. Commit.
 

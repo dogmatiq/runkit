@@ -21,9 +21,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Added a gRPC server so that engines running other applications can consume
   this application's events. It is disabled by default. Use
   `WithListenAddress()` to enable it. As with any gRPC server, it is insecure
-  unless transport credentials are supplied using `grpc.Creds()`. This engine
-  does not yet consume events from other engines.
+  unless transport credentials are supplied using `grpc.Creds()`.
 - Added `Engine.ListenAddr()`.
+- Added `RemoteEngineDiscoverer`, `StaticRemoteEngines()` and the
+  `WithRemoteEngineDiscoverer()` option, so that projections can consume events
+  recorded by applications running on remote engines. A discoverer adds and
+  removes gRPC connections to remote engines as they become available and
+  unavailable. Use `StaticRemoteEngines()` for a fixed set of connections.
 
 ### Changed
 
