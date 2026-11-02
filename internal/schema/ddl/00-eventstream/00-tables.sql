@@ -64,7 +64,7 @@ ON eventstream.events (
 
 --------------------------------------------------------------------------------
 -- The "handler_checkpoints" table tracks per-stream checkpoint progress for
--- each event consumer (e.g. projection handlers).
+-- each process handler.
 --
 -- A row is locked with SELECT FOR UPDATE SKIP LOCKED to serialize event
 -- processing for a specific handler/stream pair.
