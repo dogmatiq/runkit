@@ -14,6 +14,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// CreateEventStream creates a new event stream and returns its ID.
+func CreateEventStream(
+	t testing.TB,
+	x xsql.Executor,
+) *uuidpb.UUID {
+	t.Helper()
+
+	streamIDs := CreateEventStreams(t, x, 1)
+	return streamIDs[0]
+}
+
 // CreateEventStreams creates the given number of event streams.
 func CreateEventStreams(
 	t testing.TB,
@@ -98,19 +109,39 @@ func PopulateEventStreams(
 	}
 }
 
+// AppendToNewEventStream creates a new event stream and appends the given
+// events to it.
+func AppendToNewEventStream(
+	t testing.TB,
+	x xsql.Executor,
+	events ...dogma.Event,
+) (*uuidpb.UUID, []*envelopepb.Envelope) {
+	t.Helper()
+
+	streamID := CreateEventStream(t, x)
+	envelopes := AppendToEventStream(t, x, streamID, events...)
+	return streamID, envelopes
+}
+
 // AppendToEventStream appends events to an existing event stream.
+//
+// The returned envelopes have the [envelopepb.EventStreamPosition] extension
+// set, as they would when read back from the stream.
 func AppendToEventStream(
 	t testing.TB,
 	x xsql.Executor,
 	streamID *uuidpb.UUID,
 	events ...dogma.Event,
-) {
+) []*envelopepb.Envelope {
 	t.Helper()
+
+	var envelopes []*envelopepb.Envelope
 
 	for _, event := range events {
 		env := packTestEvent(t, event)
+		envelopes = append(envelopes, env)
 
-		if _, err := x.ExecContext(
+		row := x.QueryRowContext(
 			t.Context(),
 			`SELECT eventstream.append(
 				$1,
@@ -124,10 +155,23 @@ func AppendToEventStream(
 			xsql.UUID(env.GetBody().GetMessageId()),
 			xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
 			xsql.Envelope(env),
-		); err != nil {
+		)
+
+		var nextOffset uint64
+		if err := row.Scan(&nextOffset); err != nil {
 			t.Fatal(err)
 		}
+
+		envelopepb.SetExtension(
+			env.GetBody(),
+			envelopepb.NewEventStreamPositionBuilder().
+				WithStreamId(streamID).
+				WithOffset(nextOffset-1).
+				Build(),
+		)
 	}
+
+	return envelopes
 }
 
 // ExpectEventCount asserts that the total number of events in the database
@@ -399,20 +443,4 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 	}
 
 	return env
-}
-
-// ExpectEqualEvents asserts that got and want contain the same events.
-func ExpectEqualEvents(
-	t testing.TB,
-	description string,
-	got []dogma.Event,
-	want ...dogma.Event,
-) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Logf("expectation failed: %s", description)
-		t.Logf("+++ got:\n%s", dapper.Format(got))
-		t.Logf("--- want:\n%s", dapper.Format(want))
-		t.FailNow()
-	}
 }

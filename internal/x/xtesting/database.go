@@ -134,7 +134,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 
 	container, err := postgres.Run(
 		t.Context(),
-		"postgres:17-alpine",
+		"postgres:18-alpine",
 
 		// Allow container reuse, but key it based on the same session ID that
 		// testcontainers does for starting the Ryuk reaper process; otherwise
@@ -151,9 +151,7 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		postgres.WithUsername(username),
 		postgres.WithPassword(password),
 		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Cmd: []string{"-c", "max_connections=1000"},
-			},
+			Cmd: []string{"-c", "max_connections=1000"},
 		}),
 	)
 	if err != nil {
@@ -234,9 +232,12 @@ func ExpectQueryResult[T comparable](
 	}
 }
 
-// WaitForQueryResult executes a database query and fails the test if it does
-// not produce a row with the wanted value in the first column within
-// [WaitTimeout].
+// WaitForQueryResult executes a database query repeatedly until it produces a
+// row with the wanted value in the first column. If this does not occur within
+// [WaitTimeout], the test fails.
+//
+// An error from the query does not fail the test until the timeout, as it may
+// be transient. If the timeout is reached, the most recent error is reported.
 func WaitForQueryResult[T comparable](
 	t testing.TB,
 	description string,
@@ -250,6 +251,8 @@ func WaitForQueryResult[T comparable](
 	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
 	defer cancel()
 
+	var lastErr error
+
 	for {
 		row := q.QueryRowContext(
 			ctx,
@@ -258,19 +261,24 @@ func WaitForQueryResult[T comparable](
 		)
 
 		var got T
-		if err := row.Scan(&got); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				t.Fatalf("expectation failed: %s: unable to scan row: %s", description, err)
+		if err := row.Scan(&got); err == nil {
+			if got == want {
+				return
 			}
-		} else if got == want {
-			return
+
+			lastErr = nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			lastErr = err
 		}
 
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				t.Fatalf("expectation failed: %s: %s", description, lastErr)
+			}
+
 			t.Fatalf("expectation failed: %s: timed out waiting for value to become %v", description, want)
 		case <-time.After(5 * time.Millisecond):
-			continue
 		}
 	}
 }

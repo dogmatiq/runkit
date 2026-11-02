@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -26,7 +27,7 @@ func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -73,23 +74,30 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			var compacted xsync.Latch
+			const eventCount = 10
+
+			var (
+				compacted   xsync.Latch
+				consumed    xsync.Latch
+				checkpoints checkpointStore
+				handled     atomic.Int32
+			)
 
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *dogmaengine.Engine) {
+				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 					xtesting.ExpectLatchesSetEventually(t, &compacted)
 
 					xtesting.PopulateEventStreams(
 						t,
-						engine.DB,
+						db,
 						func(*uuidpb.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
-						10,
+						eventCount,
 					)
 
-					xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+					xtesting.ExpectLatchesSetEventually(t, &consumed)
 				},
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
@@ -99,6 +107,22 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 							)
 						},
+						HandleEventFunc: func(
+							_ context.Context,
+							s dogma.ProjectionEventScope,
+							_ dogma.Event,
+						) (uint64, error) {
+							return checkpoints.HandleEvent(
+								s,
+								func() error {
+									if handled.Add(1) == eventCount {
+										consumed.Set()
+									}
+									return nil
+								},
+							)
+						},
+						CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 						CompactFunc: func(ctx context.Context, s dogma.ProjectionCompactScope) error {
 							defer compacted.Set()
 							return c.CompactFunc(ctx, s)
@@ -121,7 +145,7 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &called)
 		},
 		dogma.ViaProjection(
@@ -163,7 +187,6 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 	var (
 		m               sync.Mutex
-		compactInterval time.Duration
 		lastCompactedAt time.Time
 		calls           int
 		done            xsync.Latch
@@ -171,15 +194,7 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			m.Lock()
-			compactInterval = engine.ProjectionCompactInterval
-			m.Unlock()
-
-			if compactInterval <= 0 {
-				panic("engine did not set a projection compact interval")
-			}
-
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
@@ -194,14 +209,8 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 					m.Lock()
 					defer m.Unlock()
 
-					if compactInterval == 0 {
-						// Compact happened to run before we captured the
-						// interval from the engine, ignore this call entirely.
-						return nil
-					}
-
-					if time.Since(lastCompactedAt) < compactInterval {
-						t.Errorf("compaction called too soon: gap %v, want >= %v", time.Since(lastCompactedAt), compactInterval)
+					if time.Since(lastCompactedAt) < xtesting.ProjectionCompactInterval {
+						t.Errorf("compaction called too soon: gap %v, want >= %v", time.Since(lastCompactedAt), xtesting.ProjectionCompactInterval)
 					}
 
 					calls++

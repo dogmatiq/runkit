@@ -2,6 +2,7 @@ package runkit_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -13,15 +14,15 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-// TestCommandExecutor_duplicateIdempotencyKeyIsIgnored verifies that executing
+// TestExecuteCommand_duplicateIdempotencyKeyIsIgnored verifies that executing
 // a command with the same idempotency key twice results in the handler being
 // invoked only once.
-func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
+func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -38,9 +39,9 @@ func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
-			xtesting.ExpectEventCount(t, engine.DB, 1)
+			xtesting.ExpectEventCount(t, db, 1)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -69,12 +70,12 @@ func TestCommandExecutor_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_differentIdempotencyKeysDoNotInterfere verifies that
+// TestExecuteCommand_differentIdempotencyKeysDoNotInterfere verifies that
 // commands with different idempotency keys are handled independently.
-func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
+func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -91,9 +92,9 @@ func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
-			xtesting.ExpectEventCount(t, engine.DB, 2)
+			xtesting.ExpectEventCount(t, db, 2)
 		},
 		dogma.ViaIntegration(
 			&stubs.IntegrationMessageHandlerStub{
@@ -117,13 +118,13 @@ func TestCommandExecutor_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	)
 }
 
-// TestCommandExecutor_eventObserverSeesEventsWithDirectCausation verifies that
+// TestExecuteCommand_eventObserverSeesEventsWithDirectCausation verifies that
 // event observers are called with events recorded directly by the command that
 // was executed.
-func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
+func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			var called bool
 
 			if err := engine.ExecuteCommand(
@@ -168,14 +169,14 @@ func TestCommandExecutor_eventObserverSeesEventsWithDirectCausation(t *testing.T
 	)
 }
 
-// TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation verifies
+// TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation verifies
 // that event observers are called with events recorded indirectly, that is, not
 // directly by the command that was executed, but rather after a chain of
 // causation that starts with the command.
-func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
+func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			err := engine.ExecuteCommand(
 				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "start"},
@@ -266,21 +267,24 @@ func TestCommandExecutor_eventObserverSeesEventsWithIndirectCausation(t *testing
 	)
 }
 
-// TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
+// TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
 // that ExecuteCommand returns ErrEventObserverNotSatisfied when no observer
 // returns true.
-func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
+func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
-			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-			defer cancel()
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			ctx, expire := xtesting.ContextWithManualDeadline(t.Context())
 
 			err := engine.ExecuteCommand(
 				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "unsatisfied"},
 				dogma.WithEventObserver(
 					func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
+						// The event has been observed without satisfying the
+						// observer; stop waiting as though the deadline had
+						// passed.
+						expire()
 						return false, nil
 					},
 				),
@@ -312,15 +316,17 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing
 	)
 }
 
-// TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded verifies that
+// TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded verifies that
 // ExecuteCommand returns ErrEventObserverNotSatisfied when the handler does not
 // record any events.
-func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+	var expire func()
+
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
-			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-			defer cancel()
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			var ctx context.Context
+			ctx, expire = xtesting.ContextWithManualDeadline(t.Context())
 
 			err := engine.ExecuteCommand(
 				ctx,
@@ -346,20 +352,30 @@ func TestCommandExecutor_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 				},
+				HandleCommandFunc: func(
+					context.Context,
+					dogma.IntegrationCommandScope,
+					dogma.Command,
+				) error {
+					// The command has been handled without recording any
+					// events; stop waiting as though the deadline had passed.
+					expire()
+					return nil
+				},
 			},
 		),
 	)
 }
 
-// TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated verifies
+// TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated verifies
 // that event observers are invoked with the original events when a command is
 // deduplicated via its idempotency key.
-func TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
+func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
 	var handled xsync.Latch
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			if err := engine.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
@@ -368,7 +384,7 @@ func TestCommandExecutor_eventObserverIsInvokedWhenCommandIsDeduplicated(t *test
 				t.Fatal(err)
 			}
 
-			xtesting.WaitForEmptyCommandQueue(t, engine.DB)
+			xtesting.WaitForEmptyCommandQueue(t, db)
 
 			// Second call is deduplicated, but observer sees the original events.
 			var called bool

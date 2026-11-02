@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -24,10 +24,10 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1
@@ -107,10 +107,10 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -119,7 +119,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventB1
 				},
@@ -205,7 +205,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 				1, // one stream with one historical event
 			)
 		},
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
@@ -229,36 +229,37 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 	)
 }
 
-// TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents verifies that
-// adding a new event route to a handler does not cause the engine to deliver
-// historical events of that type.
+// TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
+// verifies that adding a new event route to a handler causes the engine to
+// deliver historical events of that type that are after the handler's
+// checkpoint offset for each stream.
 //
-// For streams that are already "tracked" by the handler because they contain
-// events of a type the handler is already configured to handle, this property
-// is maintained trivially by checkpoint offsets.
-//
-// The interesting case is a stream that was previously ignored by the handler
-// because it did not contain any relevant event types, that has become relevant
-// due to the addition of the new route. In this case, the handler must begin
-// consuming from the stream's current head, not from the beginning.
-
-func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T) {
+// The handler's checkpoint offset advances only when it handles an event, so
+// it is not moved past events of types that the handler did not consume at the
+// time. Dogma allows some, all or none of the historical events of a newly
+// routed type to be delivered.
+func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint(t *testing.T) {
 	t.Parallel()
 
 	const handlerKey = "6d6fff71-9441-4b9e-aea9-86867f009283"
 
-	db := xtesting.NewDatabase(t)
-	var streamID *uuidpb.UUID
+	var (
+		db          = xtesting.NewDatabase(t)
+		checkpoints checkpointStore
+		mixed       *uuidpb.UUID
+		onlyB       *uuidpb.UUID
+		handledA    xsync.Latch
+	)
 
-	// Run "version 1" of the handler with only a TypeA route. It consumes from
-	// the relevant streams and establishes its checkpoint offsets.
+	// Run "version 1" of the handler with only a TypeA route. It handles the
+	// TypeA event, establishing its checkpoint offset on that stream.
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			// Create one stream that contains an event that the handler is
-			// configured to handle, and an event that it is not.
-			xtesting.PopulateEventStreams(
+			// configured to handle, followed by an event that it is not.
+			mixed = xtesting.PopulateEventStreams(
 				t,
 				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
@@ -268,21 +269,21 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 
 					return stubs.EventB1
 				},
-				2, // one stream with both a TypeA and TypeB event
-			)
+				2,
+			)[0]
 
 			// Create a second stream that contains only an event that the
 			// handler is not configured to handle at this stage.
-			streamID = xtesting.PopulateEventStreams(
+			onlyB = xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(streamID *uuidpb.UUID, _ uint64) dogma.Event {
-					return stubs.EventB1
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return stubs.EventB2
 				},
-				1, // one stream with only a TypeB event
+				1,
 			)[0]
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.ExpectLatchesSetEventually(t, &handledA)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -295,30 +296,30 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 				HandleEventFunc: func(
 					_ context.Context,
 					s dogma.ProjectionEventScope,
-					m dogma.Event,
+					_ dogma.Event,
 				) (uint64, error) {
-					return s.Offset() + 1, nil
+					return checkpoints.HandleEvent(
+						s,
+						func() error {
+							handledA.Set()
+							return nil
+						},
+					)
 				},
+				CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 			},
 		),
 	)
 
-	var done xsync.Latch
+	var handledB1, handledB2 xsync.Latch
 
 	// Restart the engines with "version 2" of the handler, which has an
 	// additional TypeB route.
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			// Append an additional TypeB event to the same stream after the
-			// handler has checkpointed.
-			xtesting.AppendToEventStream(t, engine.DB, streamID, stubs.EventB2)
-
-			// Wait for the additional event to be delivered, confirming the
-			// handler is routed events that are appended after the route is
-			// added.
-			xtesting.ExpectLatchesSetEventually(t, &done)
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			xtesting.ExpectLatchesSetEventually(t, &handledB1, &handledB2)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -334,18 +335,33 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 					s dogma.ProjectionEventScope,
 					m dogma.Event,
 				) (uint64, error) {
-					switch m := m.(type) {
-					case *stubs.EventStub[stubs.TypeB]:
-						switch m.Content {
-						case "B1":
-							t.Errorf("historical TypeB event was delivered after adding route")
-						case "B2":
-							done.Set()
-						}
-					}
+					return checkpoints.HandleEvent(
+						s,
+						func() error {
+							e, ok := m.(*stubs.EventStub[stubs.TypeB])
+							if !ok {
+								t.Errorf("unexpected event delivered after adding route: %T", m)
+								return nil
+							}
 
-					return s.Offset() + 1, nil
+							switch e.Content {
+							case "B1":
+								if s.StreamID() != mixed.AsString() || s.Offset() != 1 {
+									t.Errorf("unexpected position of B1: stream %s, offset %d", s.StreamID(), s.Offset())
+								}
+								handledB1.Set()
+							case "B2":
+								if s.StreamID() != onlyB.AsString() || s.Offset() != 0 {
+									t.Errorf("unexpected position of B2: stream %s, offset %d", s.StreamID(), s.Offset())
+								}
+								handledB2.Set()
+							}
+
+							return nil
+						},
+					)
 				},
+				CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 			},
 		),
 	)

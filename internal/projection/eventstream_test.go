@@ -6,16 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	dogmaengine "github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -32,10 +29,10 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
@@ -62,6 +59,10 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 					handlerMutex.Lock()
 					defer handlerMutex.Unlock()
 
+					if s.CheckpointOffset() != checkpointOffset {
+						return checkpointOffset, nil
+					}
+
 					gotOffset := s.Offset()
 					wantOffset := checkpointOffset
 
@@ -83,30 +84,40 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 					return checkpointOffset, nil
 				},
+				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+					handlerMutex.Lock()
+					defer handlerMutex.Unlock()
+
+					return checkpointOffset, nil
+				},
 			},
 		),
 	)
 }
 
 // TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError verifies
-// that when a handler returns an error, the event is redelivered, and
-// subsequent events are still delivered in order.
+// that when a handler returns an error, the event is redelivered from the
+// handler's own checkpoint offset, rather than from the start of the stream,
+// and each event is handled exactly once, in order.
 func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *testing.T) {
-	const eventCount = 5
+	const (
+		eventCount   = 5
+		failedOffset = 2
+	)
 
 	var (
-		done         xsync.Latch
-		handlerMutex sync.Mutex
-		seen         = map[uint64]bool{}
-		handled      int
+		done        xsync.Latch
+		checkpoints checkpointStore
+		failed      bool
+		handled     []uint64
 	)
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
@@ -130,144 +141,102 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 					s dogma.ProjectionEventScope,
 					m dogma.Event,
 				) (uint64, error) {
-					handlerMutex.Lock()
-					defer handlerMutex.Unlock()
+					return checkpoints.HandleEvent(
+						s,
+						func() error {
+							offset := s.Offset()
 
-					offset := s.Offset()
+							if offset == failedOffset && !failed {
+								failed = true
+								return errors.New("<error>")
+							}
 
-					if !seen[offset] {
-						seen[offset] = true
-						return 0, errors.New("<error>")
-					}
+							gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
+							wantContent := stubs.TypeA(fmt.Sprintf("event-%d", offset))
 
-					gotContent := m.(*stubs.EventStub[stubs.TypeA]).Content
-					wantContent := stubs.TypeA(fmt.Sprintf("event-%d", offset))
+							if gotContent != wantContent {
+								t.Errorf("unexpected event content at offset %d: got %q, want %q", offset, gotContent, wantContent)
+							}
 
-					if gotContent != wantContent {
-						t.Errorf("unexpected event content at offset %d: got %q, want %q", offset, gotContent, wantContent)
-					}
+							if want := uint64(len(handled)); offset != want {
+								t.Errorf("unexpected event offset: got %d, want %d", offset, want)
+							}
 
-					handled++
-					if handled == eventCount {
-						done.Set()
-					}
+							handled = append(handled, offset)
+							if len(handled) == eventCount {
+								done.Set()
+							}
 
-					return s.Offset() + 1, nil
+							return nil
+						},
+					)
 				},
+				CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 			},
 		),
 	)
 }
 
-// TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed verifies
-// that if handling an event fails (either via error return or panic),
-// consumption of the stream is postponed.
-func TestEventStream_handlerFailuresCauseStreamConsumptionToBePostponed(t *testing.T) {
-	cases := []struct {
-		Name            string
-		HandleEventFunc func(
-			context.Context,
-			dogma.ProjectionEventScope,
-			dogma.Event,
-		) (uint64, error)
-	}{
-		{
-			"returns error",
-			func(
-				context.Context,
-				dogma.ProjectionEventScope,
-				dogma.Event,
-			) (uint64, error) {
-				return 0, fmt.Errorf("<handler error>")
-			},
-		},
-		{
-			"panics",
-			func(
-				context.Context,
-				dogma.ProjectionEventScope,
-				dogma.Event,
-			) (uint64, error) {
-				panic("<handler panic>")
-			},
-		},
+// TestEventStream_checkpointOffsetIsUnchangedBySkippedEvents verifies that the
+// checkpoint offset passed to the handler is the offset the handler itself last
+// returned, even when events of types it does not consume have been skipped.
+func TestEventStream_checkpointOffsetIsUnchangedBySkippedEvents(t *testing.T) {
+	type delivery struct {
+		Offset     uint64
+		Checkpoint uint64
 	}
-
-	for _, c := range cases {
-		const handlerKey = "626fb93e-35a2-4aa8-a5b4-b5ebbaedc5ff"
-
-		t.Run(c.Name, func(t *testing.T) {
-			xtesting.RunEngines(
-				t,
-				func(t testing.TB, engine *dogmaengine.Engine) {
-					streamIDs := xtesting.PopulateEventStreams(
-						t,
-						engine.DB,
-						func(*uuidpb.UUID, uint64) dogma.Event {
-							return stubs.EventA1
-						},
-						1,
-					)
-
-					xtesting.WaitForHandlerToPostponeConsumingStream(
-						t,
-						engine.DB,
-						handlerKey,
-						streamIDs[0],
-					)
-				},
-				dogma.ViaProjection(
-					&stubs.ProjectionMessageHandlerStub{
-						ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-							c.Identity("<handler>", handlerKey)
-							c.Routes(
-								dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-							)
-						},
-						HandleEventFunc: c.HandleEventFunc,
-					},
-				),
-			)
-		})
-	}
-}
-
-// TestEventStream_failureCounterIsResetOnSuccess verifies that after a handler
-// fails and then subsequently succeeds, the failures counter is reset to zero.
-func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
-	const handlerKey = "128649ef-b2d5-4247-a00c-c3d615abd8a5"
 
 	var (
-		done      xsync.Latch
-		hasFailed atomic.Bool
+		done        xsync.Latch
+		checkpoints checkpointStore
+		m           sync.Mutex
+		deliveries  []delivery
 	)
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			streamIDs := xtesting.PopulateEventStreams(
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
-				func(*uuidpb.UUID, uint64) dogma.Event {
-					return stubs.EventA1
+				db,
+				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					switch offset {
+					case 0:
+						return stubs.EventA1
+					case 3:
+						return stubs.EventA2
+					default:
+						return stubs.EventB1
+					}
 				},
-				1,
+				4,
 			)
 
-			xtesting.WaitForStreamFailureCounterToReset(
-				t,
-				engine.DB,
-				handlerKey,
-				streamIDs...,
-			)
-
-			done.Set()
 			xtesting.ExpectLatchesSetEventually(t, &done)
+
+			m.Lock()
+			defer m.Unlock()
+
+			xtesting.Expect(
+				t,
+				"unexpected deliveries",
+				deliveries,
+				[]delivery{
+					{
+						Offset:     0,
+						Checkpoint: 0,
+					},
+					{
+						Offset:     3,
+						Checkpoint: 1,
+					},
+				},
+			)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", handlerKey)
+					c.Identity("<handler>", "0b1c7e3f-5a2d-4e8b-9c6f-1d2e3f4a5b6c")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
@@ -277,126 +246,96 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 					s dogma.ProjectionEventScope,
 					_ dogma.Event,
 				) (uint64, error) {
-					if hasFailed.CompareAndSwap(false, true) {
-						return 0, errors.New("<error>")
-					}
+					return checkpoints.HandleEvent(
+						s,
+						func() error {
+							m.Lock()
+							defer m.Unlock()
 
-					return s.Offset() + 1, nil
+							deliveries = append(
+								deliveries,
+								delivery{
+									Offset:     s.Offset(),
+									Checkpoint: s.CheckpointOffset(),
+								},
+							)
+
+							if len(deliveries) == 2 {
+								done.Set()
+							}
+
+							return nil
+						},
+					)
 				},
+				CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 			},
 		),
 	)
 }
 
-// TestEventStream_failureCounterGrowsAcrossFailures verifies that consecutive
-// handler failures cause the failures counter to grow, so that the backoff
-// window widens with each retry.
-func TestEventStream_failureCounterGrowsAcrossFailures(t *testing.T) {
-	const (
-		handlerKey  = "8b1f5d4e-7c3a-4b6c-9d2e-1a0f6c5e8d4f"
-		minFailures = 3
+// TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset verifies
+// that the engine starts delivering events from the offset returned by the
+// handler's CheckpointOffset() method.
+func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testing.T) {
+	const eventCount = 4
+
+	var (
+		done             xsync.Latch
+		m                sync.Mutex
+		checkpointOffset uint64 = 2
 	)
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			streamIDs := xtesting.PopulateEventStreams(
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
-				1,
+				eventCount,
 			)
 
-			xtesting.WaitForStreamFailureCounter(
-				t,
-				engine.DB,
-				handlerKey,
-				minFailures,
-				streamIDs...,
-			)
+			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
 				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", handlerKey)
+					c.Identity("<handler>", "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f")
 					c.Routes(
 						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
 					)
 				},
 				HandleEventFunc: func(
-					context.Context,
-					dogma.ProjectionEventScope,
-					dogma.Event,
+					_ context.Context,
+					s dogma.ProjectionEventScope,
+					_ dogma.Event,
 				) (uint64, error) {
-					return 0, errors.New("<error>")
+					m.Lock()
+					defer m.Unlock()
+
+					if s.CheckpointOffset() != checkpointOffset {
+						return checkpointOffset, nil
+					}
+
+					if s.Offset() < 2 {
+						t.Errorf("event before the handler's checkpoint offset was delivered: offset %d", s.Offset())
+					}
+
+					checkpointOffset = s.Offset() + 1
+					if checkpointOffset == eventCount {
+						done.Set()
+					}
+
+					return checkpointOffset, nil
 				},
-			},
-		),
-	)
-}
+				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+					m.Lock()
+					defer m.Unlock()
 
-// TestEventStream_postponedStreamsAreNotConsumed verifies that a stream with
-// resume_at in the future is not acquired for reading.
-func TestEventStream_postponedStreamsAreNotConsumed(t *testing.T) {
-	const handlerKey = "42e8b109-35f0-45d9-9ec4-959e34cf113e"
-
-	xtesting.RunEngines(
-		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
-			var streamIDs []*uuidpb.UUID
-
-			xtesting.Transact(t, engine.DB, func(tx *sql.Tx) {
-				streamIDs = xtesting.PopulateEventStreams(
-					t,
-					tx,
-					func(*uuidpb.UUID, uint64) dogma.Event {
-						return stubs.EventA1
-					},
-					1,
-				)
-
-				xtesting.PostponeStreamConsumption(
-					t,
-					tx,
-					handlerKey,
-					streamIDs[0],
-				)
-			})
-
-			// Allow several poll cycles to pass.
-			time.Sleep(50 * time.Millisecond)
-
-			xtesting.WaitForQueryResult(
-				t,
-				fmt.Sprintf("handler %q still has resume_at in the future", handlerKey),
-				1,
-				engine.DB,
-				`SELECT COUNT(*)
-				FROM eventstream.handler_checkpoints
-				WHERE handler_key = $1
-				AND stream_id = $2
-				AND resume_at > clock_timestamp()`,
-				handlerKey,
-				xsql.UUID(streamIDs[0]),
-			)
-		},
-		dogma.ViaProjection(
-			&stubs.ProjectionMessageHandlerStub{
-				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
-					c.Identity("<handler>", handlerKey)
-					c.Routes(
-						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
-					)
-				},
-				HandleEventFunc: func(
-					context.Context,
-					dogma.ProjectionEventScope,
-					dogma.Event,
-				) (uint64, error) {
-					t.Error("handler was called for a postponed stream")
-					return 0, nil
+					return checkpointOffset, nil
 				},
 			},
 		),

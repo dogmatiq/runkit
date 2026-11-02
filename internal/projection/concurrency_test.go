@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,7 +10,8 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
-	dogmaengine "github.com/dogmatiq/runkit"
+	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -24,10 +26,10 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
@@ -68,21 +70,28 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPreference(t *testing.T) {
 	const handlerKey = "ca363143-d35b-4e71-81f1-2ecd3458ae59"
 
-	var concurrent atomic.Int32
+	const eventCount = 20
+
+	var (
+		concurrent  atomic.Int32
+		checkpoints checkpointStore
+		handled     atomic.Int32
+		done        xsync.Latch
+	)
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *dogmaengine.Engine) {
+		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
-				engine.DB,
+				db,
 				func(*uuidpb.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
-				10, 10, // 2 streams, 10 events each
+				eventCount/2, eventCount/2, // 2 streams
 			)
 
-			xtesting.WaitForHandlerToConsumeAllEvents(t, engine.DB, handlerKey)
+			xtesting.ExpectLatchesSetEventually(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -109,8 +118,17 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 					// dispatch to be observable.
 					time.Sleep(5 * time.Millisecond)
 
-					return s.Offset() + 1, nil
+					return checkpoints.HandleEvent(
+						s,
+						func() error {
+							if handled.Add(1) == eventCount {
+								done.Set()
+							}
+							return nil
+						},
+					)
 				},
+				CheckpointOffsetFunc: checkpoints.CheckpointOffset,
 			},
 		),
 	)
