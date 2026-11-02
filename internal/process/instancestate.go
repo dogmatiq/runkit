@@ -7,9 +7,9 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/envelope"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -182,7 +182,7 @@ func endInstance(
 func persistDeadlines(
 	ctx context.Context,
 	tx *sql.Tx,
-	packer *envelopepb.EffectPacker,
+	packer *envelope.EffectPacker,
 ) error {
 	deadlineEnvelopes, ok := packer.Seal()
 	if !ok {

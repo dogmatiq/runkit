@@ -6,9 +6,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/ringbuffer"
 	"github.com/dogmatiq/runkit/internal/signal"
@@ -48,7 +49,7 @@ type Reader struct {
 	group   *supervisor.Group
 	synced  chan *scanner.Consumer
 	batches chan scanner.Batch
-	streams uuidpb.Map[*readerStream]
+	streams uuidcollection.Map[*readerStream]
 }
 
 // readerStream is the reader's state for an event stream.
@@ -82,7 +83,7 @@ type readerStream struct {
 func (r *Reader) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
-	types *uuidpb.Set,
+	types *uuidcollection.Set,
 	ch chan<- Batch,
 ) func() {
 	if types.IsEmpty() {
@@ -143,7 +144,7 @@ func (r *Reader) Run(ctx context.Context) error {
 
 	r.synced = make(chan *scanner.Consumer)
 	r.batches = make(chan scanner.Batch)
-	r.streams = uuidpb.Map[*readerStream]{}
+	r.streams = uuidcollection.Map[*readerStream]{}
 
 	for {
 		select {

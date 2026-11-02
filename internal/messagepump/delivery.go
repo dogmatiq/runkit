@@ -1,7 +1,7 @@
 package messagepump
 
 import (
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // Delivery describes a unit of work scoped to the delivery of a single message

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -16,7 +17,7 @@ import (
 func AcquireCommandDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
-	messageTypeIDs *uuidpb.Set,
+	messageTypeIDs *uuidcollection.Set,
 ) (Delivery, bool, error) {
 	row := tx.QueryRowContext(
 		ctx,

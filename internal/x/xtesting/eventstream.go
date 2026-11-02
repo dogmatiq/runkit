@@ -7,9 +7,10 @@ import (
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -240,7 +241,7 @@ func ExpectContiguousEvents(
 			)
 		}
 
-		got, err := envelopepb.Unpack[dogma.Event](env)
+		got, err := envelope.Unpack[dogma.Event](env)
 		if err != nil {
 			t.Fatalf("unable to unpack event: %v", err)
 		}

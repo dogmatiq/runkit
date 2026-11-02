@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/envelopepb"
 )
 
 // ErrFailed is returned by [Driver.HandleDelivery] to indicate that the

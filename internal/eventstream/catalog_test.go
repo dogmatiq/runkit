@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -92,7 +93,7 @@ func expectStreamIDs(
 ) {
 	t.Helper()
 
-	expected := uuidpb.NewSet(want...)
+	expected := uuidcollection.NewSet(want...)
 	timeout := time.After(xtesting.WaitTimeout)
 
 	for {

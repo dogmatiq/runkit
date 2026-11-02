@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"iter"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary

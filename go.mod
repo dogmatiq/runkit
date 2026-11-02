@@ -5,7 +5,8 @@ go 1.27.0
 require (
 	github.com/dogmatiq/dapper v0.7.0
 	github.com/dogmatiq/dogma v0.25.0
-	github.com/dogmatiq/enginekit v0.28.0
+	github.com/dogmatiq/enginekit v0.29.0
+	github.com/dogmatiq/protobuf v0.2.0
 	github.com/dogmatiq/spruce v0.2.4
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
@@ -34,7 +35,6 @@ require (
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dogmatiq/jumble v0.1.0 // indirect
-	github.com/dogmatiq/primo v0.4.4 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect

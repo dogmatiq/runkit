@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
@@ -24,8 +25,8 @@ type EventPump struct {
 	DB                   *sql.DB
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
-	Packer               *envelopepb.Packer
-	EventTypeIDs         *uuidpb.Set
+	Packer               *envelope.Packer
+	EventTypeIDs         *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	Logger               *slog.Logger
 }
@@ -70,13 +71,13 @@ func (p *EventPump) HandleDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
-	envelope *envelopepb.Envelope,
+	env *envelopepb.Envelope,
 	logger *slog.Logger,
 ) error {
 	var event dogma.Event
 
 	if err := xmessage.UnpackMessage(
-		envelope,
+		env,
 		&event,
 	); err != nil {
 		logger.ErrorContext(
@@ -153,19 +154,19 @@ func (p *EventPump) HandleDelivery(
 			instanceID: instanceID,
 			root:       root,
 			commandPacker: p.Packer.PackEffects(
-				envelope,
+				env,
 				p.Identity,
-				envelopepb.WithInstanceID(instanceID),
+				envelope.WithInstanceID(instanceID),
 			),
 			deadlinePacker: p.Packer.PackEffects(
-				envelope,
+				env,
 				p.Identity,
-				envelopepb.WithInstanceID(instanceID),
+				envelope.WithInstanceID(instanceID),
 			),
 			logger:               instanceLogger,
 			outboundMessageTypes: p.OutboundMessageTypes,
 		},
-		envelope.GetBody().GetCreatedAt().AsTime(),
+		env.GetBody().GetCreatedAt().AsTime(),
 	}
 
 	if err := xerrors.Recover(

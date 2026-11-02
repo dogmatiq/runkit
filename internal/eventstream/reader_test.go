@@ -5,8 +5,8 @@ import (
 	"time"
 
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -51,7 +51,7 @@ func TestReader(t *testing.T) {
 		unsubscribe := reader.Subscribe(
 			streamID,
 			0,
-			uuidpb.NewSet(
+			uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			batches,
@@ -96,7 +96,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, reader.Run)
 
-		types := uuidpb.NewSet(
+		types := uuidcollection.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 
@@ -143,7 +143,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, reader.Run)
 
-		types := uuidpb.NewSet(
+		types := uuidcollection.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 
@@ -201,7 +201,7 @@ func TestReader(t *testing.T) {
 		unsubscribe := reader.Subscribe(
 			streamID,
 			0,
-			uuidpb.NewSet(
+			uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			batches,
@@ -271,7 +271,7 @@ func TestReader(t *testing.T) {
 		unsubscribe := reader.Subscribe(
 			streamID,
 			0,
-			uuidpb.NewSet(
+			uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			batches,
@@ -316,7 +316,7 @@ func TestReader(t *testing.T) {
 		unsubscribe := reader.Subscribe(
 			streamID,
 			0,
-			uuidpb.NewSet(
+			uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			batches,
@@ -361,7 +361,7 @@ func TestReader(t *testing.T) {
 		unsubscribe := reader.Subscribe(
 			streamID,
 			0,
-			uuidpb.NewSet(
+			uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			batches,
@@ -408,7 +408,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, reader.Run)
 
-		types := uuidpb.NewSet(
+		types := uuidcollection.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 
@@ -459,7 +459,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, reader.Run)
 
-		types := uuidpb.NewSet(
+		types := uuidcollection.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 
@@ -512,7 +512,7 @@ func TestReader(t *testing.T) {
 
 		stop := xtesting.GoE(t, reader.Run)
 
-		types := uuidpb.NewSet(
+		types := uuidcollection.NewSet(
 			MessageTypeUUID[*EventStub[TypeE]](),
 		)
 

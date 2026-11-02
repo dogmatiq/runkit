@@ -6,9 +6,10 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/supervisor"
@@ -36,7 +37,7 @@ type streamConsumer struct {
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.
-	EventTypeIDs *uuidpb.Set
+	EventTypeIDs *uuidcollection.Set
 
 	// Handler is the projection message handler to which events are
 	// dispatched.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 

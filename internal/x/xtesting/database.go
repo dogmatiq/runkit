@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/schema"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/testcontainers/testcontainers-go"

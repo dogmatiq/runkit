@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
@@ -27,8 +29,8 @@ type CommandPump struct {
 	DB                   *sql.DB
 	Handler              dogma.AggregateMessageHandler[dogma.AggregateRoot]
 	Identity             *identitypb.Identity
-	Packer               *envelopepb.Packer
-	CommandTypeIDs       *uuidpb.Set
+	Packer               *envelope.Packer
+	CommandTypeIDs       *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -53,13 +55,13 @@ func (p *CommandPump) HandleDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
-	envelope *envelopepb.Envelope,
+	env *envelopepb.Envelope,
 	logger *slog.Logger,
 ) error {
 	var commandForRouting, commandForHandling dogma.Command
 
 	if err := xmessage.UnpackMessage(
-		envelope,
+		env,
 		&commandForRouting,
 		&commandForHandling,
 	); err != nil {
@@ -98,9 +100,9 @@ func (p *CommandPump) HandleDelivery(
 	)
 
 	packer := p.Packer.PackEffects(
-		envelope,
+		env,
 		p.Identity,
-		envelopepb.WithInstanceID(instanceID),
+		envelope.WithInstanceID(instanceID),
 	)
 
 	if err := xerrors.Recover(

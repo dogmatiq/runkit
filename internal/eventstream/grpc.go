@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -32,7 +33,7 @@ type ConsumerAPI struct {
 	// that the application can record. A client that requests only event types
 	// outside this set is sent any existing events, after which its stream is
 	// closed, as no further events can ever be produced for it.
-	RecordableEventTypes *uuidpb.Set
+	RecordableEventTypes *uuidcollection.Set
 
 	// BufferSize is the number of batches of events buffered for each client
 	// of [ConsumerAPI.ConsumeEvents]. When the buffer is full the client is
@@ -50,7 +51,7 @@ func (s *ConsumerAPI) ListEventStreams(
 	res grpc.ServerStreamingServer[messaginggrpc.ListEventStreamsResponse],
 ) error {
 	ctx := res.Context()
-	var sent uuidpb.Set
+	var sent uuidcollection.Set
 
 	for {
 		streamIDs, changed := s.EventStreams.StreamIDs()
@@ -124,7 +125,7 @@ func (s *ConsumerAPI) ConsumeEvents(
 	// on the stream, so the consumer always subscribes to every requested type.
 	// The recordable types are only used to decide whether to wait for new
 	// events once the existing ones have been delivered.
-	types := uuidpb.NewSet(req.GetMessageTypeIds()...)
+	types := uuidcollection.NewSet(req.GetMessageTypeIds()...)
 
 	if types.IsEmpty() {
 		return nil
@@ -162,7 +163,7 @@ func (s *ConsumerAPI) ConsumeEvents(
 
 // canRecordAny returns true if the application can record events of at least
 // one of the given types.
-func (s *ConsumerAPI) canRecordAny(types *uuidpb.Set) bool {
+func (s *ConsumerAPI) canRecordAny(types *uuidcollection.Set) bool {
 	for id := range types.All() {
 		if s.RecordableEventTypes.Has(id) {
 			return true

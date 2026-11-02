@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // EnforceConcurrencyPreference calls fn, optionally serializing execution

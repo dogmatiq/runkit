@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -134,14 +136,14 @@ func (e *Engine) ExecuteCommand(
 func (e *Engine) resolveExecuteCommandOptions(
 	options []dogma.ExecuteCommandOption,
 ) (
-	packOptions []envelopepb.PackCommandOption,
-	eventTypes uuidpb.Set,
+	packOptions []envelope.PackCommandOption,
+	eventTypes uuidcollection.Set,
 	eventObservers []dogma.EventObserver[dogma.Event],
 ) {
 	for _, opt := range options {
 		switch opt := opt.(type) {
 		case dogma.IdempotencyKeyOption:
-			packOptions = append(packOptions, envelopepb.WithIdempotencyKey(opt.Key()))
+			packOptions = append(packOptions, envelope.WithIdempotencyKey(opt.Key()))
 
 		case dogma.EventObserverOption:
 			eventObservers = append(eventObservers, opt.Observer())
@@ -166,10 +168,10 @@ func waitForEvents(
 	ctx context.Context,
 	q xsql.Querier,
 	correlationID *uuidpb.UUID,
-	eventTypes uuidpb.Set,
+	eventTypes uuidcollection.Set,
 	eventObservers []dogma.EventObserver[dogma.Event],
 ) error {
-	var nextOffsets uuidpb.Map[uint64]
+	var nextOffsets uuidcollection.Map[uint64]
 
 	for {
 		satisfied, err := pollForEvents(
@@ -200,9 +202,9 @@ func pollForEvents(
 	ctx context.Context,
 	q xsql.Querier,
 	correlationID *uuidpb.UUID,
-	eventTypes uuidpb.Set,
+	eventTypes uuidcollection.Set,
 	observers []dogma.EventObserver[dogma.Event],
-	nextOffsets uuidpb.Map[uint64],
+	nextOffsets uuidcollection.Map[uint64],
 ) (satisfied bool, err error) {
 	var (
 		streamIDs []string
@@ -263,7 +265,7 @@ func pollForEvents(
 			return false, fmt.Errorf("unable to scan event envelope: %w", err)
 		}
 
-		event, err := envelopepb.Unpack[dogma.Event](eventEnvelope)
+		event, err := envelope.Unpack[dogma.Event](eventEnvelope)
 		if err != nil {
 			return false, err
 		}

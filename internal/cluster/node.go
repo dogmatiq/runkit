@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/zeebo/xxh3"
@@ -47,14 +48,14 @@ type Node struct {
 	// Logger is the target for log messages produced by the node.
 	Logger *slog.Logger
 
-	peers xsync.Observable[*uuidpb.Set]
+	peers xsync.Observable[*uuidcollection.Set]
 
 	once       sync.Once
 	observe    chan *observer
 	unobserve  chan *observer
 	done       xsync.Latch
-	heartbeats uuidpb.Map[time.Time]
-	observers  uuidpb.Map[map[*observer]struct{}]
+	heartbeats uuidcollection.Map[time.Time]
+	observers  uuidcollection.Map[map[*observer]struct{}]
 }
 
 // observer is a caller's interest in whether this node is responsible for a
@@ -66,7 +67,7 @@ type observer struct {
 
 // Peers returns the IDs of the other live nodes in the cluster, and a channel
 // that is closed when that set changes.
-func (n *Node) Peers() (*uuidpb.Set, <-chan struct{}) {
+func (n *Node) Peers() (*uuidcollection.Set, <-chan struct{}) {
 	peers, changed := n.peers.Load()
 	return peers.Clone(), changed
 }
@@ -278,7 +279,7 @@ func (n *Node) publishMembershipChange() {
 
 	// [Node.Peers] may be cloning the published set on another goroutine, so a
 	// new set is built rather than modifying it.
-	peers := uuidpb.NewSet()
+	peers := uuidcollection.NewSet()
 
 	for peerID := range n.heartbeats.Keys() {
 		if peerID.Equal(n.ID) {

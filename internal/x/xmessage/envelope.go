@@ -4,7 +4,8 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/protobuf/envelopepb"
 )
 
 // Unpack unmarshals an envelope from its binary representation and unpacks the
@@ -17,22 +18,22 @@ func Unpack[
 	S dogma.MessageValidationScope,
 ](
 	data []byte,
-	envelope *envelopepb.Envelope,
+	env *envelopepb.Envelope,
 	messages ...*T,
 ) error {
-	if envelope == nil {
+	if env == nil {
 		panic("envelope must not be nil")
 	}
 
-	if err := envelope.UnmarshalBinary(data); err != nil {
+	if err := env.UnmarshalBinary(data); err != nil {
 		return fmt.Errorf("unable to unmarshal envelope: %w", err)
 	}
 
-	if err := envelope.Validate(); err != nil {
+	if err := env.Validate(); err != nil {
 		return err
 	}
 
-	return UnpackMessage(envelope, messages...)
+	return UnpackMessage(env, messages...)
 }
 
 // UnpackMessage unpacks the message(s) from an already-parsed envelope.
@@ -46,11 +47,11 @@ func UnpackMessage[
 	},
 	S dogma.MessageValidationScope,
 ](
-	envelope *envelopepb.Envelope,
+	env *envelopepb.Envelope,
 	messages ...*T,
 ) error {
 	for idx := range messages {
-		m, err := envelopepb.Unpack[T](envelope)
+		m, err := envelope.Unpack[T](env)
 		if err != nil {
 			return err
 		}
@@ -60,7 +61,7 @@ func UnpackMessage[
 			// of the same data _must_ be valid too.
 			s := ValidationScope{
 				IsNewMessage: false,
-				Envelope:     envelope,
+				Envelope:     env,
 			}
 
 			if err := m.Validate(any(s).(S)); err != nil {

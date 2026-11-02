@@ -5,8 +5,9 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/identitypb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -43,7 +44,7 @@ type Consumer struct {
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes. It must not be empty.
-	EventTypeIDs *uuidpb.Set
+	EventTypeIDs *uuidcollection.Set
 
 	// BufferSize is the number of batches of events that each stream consumer
 	// buffers while waiting to dispatch them. It must be positive.
@@ -54,7 +55,7 @@ type Consumer struct {
 	Logger *slog.Logger
 
 	handlerLock     *semaphore.Weighted
-	streamConsumers uuidpb.Map[*streamConsumer]
+	streamConsumers uuidcollection.Map[*streamConsumer]
 	group           *errgroup.Group
 }
 
