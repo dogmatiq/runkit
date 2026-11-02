@@ -66,8 +66,9 @@ const (
 	eventStreamBatchSize = 100
 
 	// eventStreamBufferSize is the number of batches of events buffered for
-	// each subscriber to an event stream. It absorbs short bursts of appends;
-	// a subscriber that falls further behind reads historical events instead.
+	// each subscription to an event stream. It absorbs short bursts of appends;
+	// a subscription that falls further behind is served historical events
+	// instead.
 	eventStreamBufferSize = 4
 )
 

@@ -667,11 +667,7 @@ func TestLocalCatalog_lost(t *testing.T) {
 
 		stop()
 
-		select {
-		case <-time.After(xtesting.WaitTimeout):
-			t.Fatal("timeout waiting for the subscription to be lost")
-		case <-lost:
-		}
+		xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
 	})
 }
 

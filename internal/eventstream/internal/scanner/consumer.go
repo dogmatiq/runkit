@@ -9,8 +9,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
-// Consumer represents a subscriber registered to receive events from a
-// specific event stream.
+// Consumer represents a subscription to a specific event stream.
 type Consumer struct {
 	// ID is the unique identifier of the consumer, used purely for logging
 	// purposes.

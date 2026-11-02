@@ -131,7 +131,7 @@ func TestCompositeCatalog_subscribe(t *testing.T) {
 			t.Fatal("unexpected channel")
 		}
 
-		expectNotLost(t, lost)
+		xtesting.ExpectNoReceive(t, "lost subscription", lost)
 
 		unsubscribe()
 		xtesting.ExpectToReceiveN(t, "unsubscription", sub.Unsubscribed, struct{}{})
@@ -152,7 +152,7 @@ func TestCompositeCatalog_subscribe(t *testing.T) {
 		)
 		defer unsubscribe()
 
-		expectLost(t, lost)
+		xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
 		xtesting.ExpectNoReceive(t, "subscription", cat.Subscriptions)
 	})
 
@@ -174,31 +174,8 @@ func TestCompositeCatalog_subscribe(t *testing.T) {
 		sub := expectSubscription(t, cat, streamID, 0, types)
 		close(sub.Lost)
 
-		expectLost(t, lost)
+		xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
 	})
-}
-
-// expectLost asserts that a subscription is reported as lost.
-func expectLost(t testing.TB, lost <-chan struct{}) {
-	t.Helper()
-
-	select {
-	case <-time.After(xtesting.WaitTimeout):
-		t.Fatal("timeout waiting for the subscription to be lost")
-	case <-lost:
-	}
-}
-
-// expectNotLost asserts that a subscription is not reported as lost within a
-// short period.
-func expectNotLost(t testing.TB, lost <-chan struct{}) {
-	t.Helper()
-
-	select {
-	case <-lost:
-		t.Fatal("subscription was unexpectedly lost")
-	case <-time.After(100 * time.Millisecond):
-	}
 }
 
 // catalogStub is a [Catalog] that offers the streams given to it by the test,

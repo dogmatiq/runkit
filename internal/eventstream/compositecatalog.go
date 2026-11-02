@@ -45,10 +45,10 @@ func (c *CompositeCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 }
 
 // Subscribe registers ch to receive events from a specific stream starting at
-// the given checkpoint offset, via the catalog that offers the stream.
+// the given checkpoint offset, via the catalog that offers the stream. Events
+// are delivered in offset order.
 //
-// types is the set of message types the subscriber is interested in. It must
-// not be empty.
+// types is the set of message types to deliver. It must not be empty.
 //
 // lost is closed if the catalog can no longer deliver to the subscription: if
 // no catalog offers the stream, or if the catalog that offers it loses the

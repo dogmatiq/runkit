@@ -25,9 +25,9 @@ import (
 // Streams are never removed, so each set returned by [LocalCatalog.StreamIDs]
 // is a superset of the sets returned before it.
 //
-// Subscribers are served from a cache of each stream's most recent events. A
-// subscriber whose checkpoint is behind the cache reads historical events until
-// it catches up.
+// Subscriptions are served from a cache of each stream's most recent events. A
+// subscription whose checkpoint is behind the cache is served historical events
+// until it catches up.
 type LocalCatalog struct {
 	// DB is the database connection used to discover event streams and read
 	// events.
@@ -42,7 +42,7 @@ type LocalCatalog struct {
 	Logger *slog.Logger
 
 	// ContemporaryCacheSize is the number of recent events cached per stream
-	// for delivery to subscribers that are keeping up. It must be positive.
+	// for delivery to subscriptions that are keeping up. It must be positive.
 	ContemporaryCacheSize int
 
 	// HistoricalBatchSize is the maximum number of events read per query when
@@ -63,10 +63,10 @@ type LocalCatalog struct {
 
 // localStream is the catalog's state for an event stream.
 type localStream struct {
-	// Cache holds the most recent events, up to the reader's cache size.
+	// Cache holds the most recent events, up to the catalog's cache size.
 	//
 	// It is nil until the stream's contemporary scanner has sent its first
-	// batch, at which point the reader knows the stream's position.
+	// batch, at which point the catalog knows the stream's position.
 	Cache *ringbuffer.Ring[*envelopepb.Envelope]
 
 	// [CacheBegin, CacheEnd) is a half-open interval representing the range of
@@ -88,10 +88,9 @@ func (c *LocalCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 }
 
 // Subscribe registers ch to receive events from a specific stream starting
-// at the given checkpoint offset.
+// at the given checkpoint offset. Events are delivered in offset order.
 //
-// types is the set of message types the subscriber is interested in. It
-// must not be empty.
+// types is the set of message types to deliver. It must not be empty.
 //
 // lost is closed if the catalog can no longer deliver to the subscription.
 func (c *LocalCatalog) Subscribe(
@@ -143,7 +142,7 @@ func (c *LocalCatalog) init() {
 // Run discovers event streams and delivers events until ctx is canceled or it
 // is unable to continue.
 //
-// It must be called at most once; after it returns, Subscribe has no effect.
+// It must be called at most once. Subscriptions are lost when it returns.
 func (c *LocalCatalog) Run(ctx context.Context) error {
 	if c.ContemporaryCacheSize <= 0 {
 		panic("cache size must be positive")
@@ -244,7 +243,7 @@ func (c *LocalCatalog) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, 
 	return streamIDs, nil
 }
 
-// read delivers events to subscribers until ctx is canceled or it is unable to
+// read delivers events to subscriptions until ctx is canceled or it is unable to
 // continue.
 func (c *LocalCatalog) read(ctx context.Context) error {
 	c.group, ctx = supervisor.WithContext(ctx)
@@ -362,7 +361,7 @@ func (c *LocalCatalog) dispatchBatch(ctx context.Context, b scanner.Batch) {
 
 	s, ok := c.streams.Get(b.StreamID)
 	if !ok {
-		// Scanners are only ever started for streams the reader knows about.
+		// Scanners are only ever started for streams the catalog knows about.
 		panic("received events from an unknown stream")
 	}
 

@@ -139,7 +139,12 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 
 	batches := make(chan Batch, s.BufferSize)
-	lost, unsubscribe := s.EventStreams.Subscribe(streamID, checkpoint, types, batches)
+	lost, unsubscribe := s.EventStreams.Subscribe(
+		streamID,
+		checkpoint,
+		types,
+		batches,
+	)
 	defer unsubscribe()
 
 	for {

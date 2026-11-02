@@ -15,10 +15,9 @@ type Catalog interface {
 	StreamIDs() (*uuidcollection.Set, <-chan struct{})
 
 	// Subscribe registers ch to receive events from a specific stream starting
-	// at the given checkpoint offset.
+	// at the given checkpoint offset. Events are delivered in offset order.
 	//
-	// types is the set of message types the subscriber is interested in. It
-	// must not be empty.
+	// types is the set of message types to deliver. It must not be empty.
 	//
 	// lost is closed if the catalog can no longer deliver to the subscription.
 	Subscribe(
@@ -29,9 +28,9 @@ type Catalog interface {
 	) (lost <-chan struct{}, unsubscribe func())
 }
 
-// Batch is a set of events delivered to a subscriber of a [Catalog], along with
-// the checkpoint from which the subscriber should resume afterwards.
+// Batch is a set of events delivered to a [Catalog] subscription, along with
+// the checkpoint from which to resume afterwards.
 //
 // A batch may contain no events, indicating only that the checkpoint has
-// advanced past events that are not of a type the subscriber is interested in.
+// advanced past events that are not of a subscribed type.
 type Batch = scanner.Batch
