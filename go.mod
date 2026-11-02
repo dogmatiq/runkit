@@ -1,11 +1,11 @@
 module github.com/dogmatiq/runkit
 
-go 1.27
+go 1.27.0
 
 require (
-	github.com/dogmatiq/dapper v0.6.1
+	github.com/dogmatiq/dapper v0.7.0
 	github.com/dogmatiq/dogma v0.25.0
-	github.com/dogmatiq/enginekit v0.27.7
+	github.com/dogmatiq/enginekit v0.28.0
 	github.com/dogmatiq/spruce v0.2.4
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
@@ -14,7 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/zeebo/xxh3 v1.1.0
 	golang.org/x/sync v0.24.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	pgregory.net/rapid v1.3.0
 )
@@ -34,6 +34,7 @@ require (
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dogmatiq/jumble v0.1.0 // indirect
+	github.com/dogmatiq/primo v0.4.4 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -72,9 +73,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 )
