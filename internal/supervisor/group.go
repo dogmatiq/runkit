@@ -47,8 +47,8 @@ func (g *Group) Go(
 
 // Wait blocks until every function started with [Group.Go] has returned.
 //
-// It returns the error passed to [Fatal] by the first function to fail
-// fatally, or nil if none did.
+// It returns the error from the first function to fail fatally, or nil if none
+// did.
 func (g *Group) Wait() error {
 	return g.group.Wait()
 }

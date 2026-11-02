@@ -2,7 +2,6 @@ package projection
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
@@ -119,8 +118,9 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		},
 	)
 	if err != nil {
-		return supervisor.Persistent(
-			fmt.Errorf("unable to load checkpoint offset: %w", err),
+		return supervisor.Persistentf(
+			"unable to load checkpoint offset: %w",
+			err,
 		)
 	}
 
@@ -203,8 +203,10 @@ func (sc *streamConsumer) dispatch(
 ) (uint64, error) {
 	var event dogma.Event
 	if err := xmessage.UnpackMessage(env, &event); err != nil {
-		return 0, supervisor.Persistent(
-			fmt.Errorf("unable to unmarshal event at offset %d: %w", offset, err),
+		return 0, supervisor.Persistentf(
+			"unable to unmarshal event at offset %d: %w",
+			offset,
+			err,
 		)
 	}
 
@@ -234,8 +236,10 @@ func (sc *streamConsumer) dispatch(
 		},
 	)
 	if err != nil {
-		return 0, supervisor.Persistent(
-			fmt.Errorf("unable to handle event at offset %d: %w", offset, err),
+		return 0, supervisor.Persistentf(
+			"unable to handle event at offset %d: %w",
+			offset,
+			err,
 		)
 	}
 

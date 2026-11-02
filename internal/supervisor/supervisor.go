@@ -19,11 +19,11 @@ const (
 	baseDelay = 100 * time.Millisecond
 
 	// transientMaxDelay is the maximum backoff duration after a failure that
-	// is not created by [Persistent].
+	// is not created by [Persistent] or [Persistentf].
 	transientMaxDelay = 15 * time.Second
 
 	// persistentMaxDelay is the maximum backoff duration after a failure
-	// created by [Persistent].
+	// created by [Persistent] or [Persistentf].
 	persistentMaxDelay = 5 * time.Minute
 
 	// resetThreshold is how long fn must run before failing for the backoff to
@@ -52,14 +52,14 @@ func Go(
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //
-// A nil return from fn is success. An error created by [Fatal] is returned to
-// the caller without retrying. Any other error is logged and fn is called again
-// after a delay. Once ctx is canceled, fn is not called again regardless of
-// what it returned.
+// A nil return from fn is success. An error created by [Fatal] or [Fatalf] is
+// returned to the caller without retrying. Any other error is logged and fn is
+// called again after a delay. Once ctx is canceled, fn is not called again
+// regardless of what it returned.
 //
 // The delay doubles with each consecutive failure, up to a limit. The limit is
-// higher when the error was created by [Persistent], so that failures unlikely
-// to resolve themselves are retried less often. The delay returns to its
+// higher when the error was created by [Persistent] or [Persistentf], so that
+// failures unlikely to resolve themselves are retried less often. The delay returns to its
 // initial value once fn runs for long enough before failing.
 func Run(
 	ctx context.Context,
