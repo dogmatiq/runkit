@@ -111,7 +111,10 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 			)
 		},
 	); err != nil {
-		return err
+		return supervisor.Persistentf(
+			"unable to compact projection: %w",
+			err,
+		)
 	}
 
 	if _, err := tx.ExecContext(
