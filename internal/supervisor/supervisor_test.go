@@ -38,152 +38,158 @@ func TestRun(t *testing.T) {
 	})
 }
 
-func TestGroup(t *testing.T) {
-	t.Run("it finishes when fn succeeds", func(t *testing.T) {
-		logger := spruce.NewTestLogger(t)
-
+func TestRun_backoff(t *testing.T) {
+	// delays runs fn under Run until it has been called n times, and returns
+	// the delay before each retry. fn is passed the number of the call, from
+	// zero, and its error is returned for every call except the last.
+	delays := func(
+		t *testing.T,
+		n int,
+		fn func(call int) error,
+	) []time.Duration {
 		var (
-			group Group
-			calls atomic.Int32
+			calls    int
+			returned time.Time
+			delays   []time.Duration
 		)
 
-		group.Go(
+		err := Run(
 			t.Context(),
-			logger,
+			spruce.NewTestLogger(t),
 			func(context.Context) error {
-				calls.Add(1)
-				return nil
+				if calls > 0 {
+					delays = append(delays, time.Since(returned))
+				}
+
+				call := calls
+				calls++
+
+				var err error
+				if calls < n {
+					err = fn(call)
+				}
+
+				returned = time.Now()
+				return err
 			},
 		)
-
-		group.Wait()
-
-		if got := calls.Load(); got != 1 {
-			t.Fatalf("unexpected number of calls: got %d, want 1", got)
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
 
-	t.Run("it retries after a delay until fn succeeds", func(t *testing.T) {
+		return delays
+	}
+
+	t.Run("it caps the delay at 15 seconds", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			logger := spruce.NewTestLogger(t)
-			start := time.Now()
-
-			var (
-				group Group
-				calls atomic.Int32
-			)
-
-			group.Go(
-				t.Context(),
-				logger,
-				func(context.Context) error {
-					if calls.Add(1) < 3 {
-						return errors.New("<error>")
-					}
-					return nil
-				},
-			)
-
-			group.Wait()
-
-			if got := calls.Load(); got != 3 {
-				t.Fatalf("unexpected number of calls: got %d, want 3", got)
-			}
-
-			// Two failures means two backoff delays. The first is at least
-			// half of the base delay (50ms) and the second at least half of
-			// the doubled delay (100ms), so at least 150ms must have elapsed
-			// on the virtual clock.
-			if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
-				t.Fatalf("expected at least 150ms of backoff, got %s", elapsed)
-			}
-		})
-	})
-
-	t.Run("it finishes when the context is canceled during a delay", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			logger := spruce.NewTestLogger(t)
-
-			ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
-			defer cancel()
-
-			var (
-				group Group
-				calls atomic.Int32
-			)
-
-			group.Go(
-				ctx,
-				logger,
-				func(context.Context) error {
-					calls.Add(1)
+			got := delays(
+				t,
+				15,
+				func(int) error {
 					return errors.New("<error>")
 				},
 			)
 
-			group.Wait()
-
-			if ctx.Err() == nil {
-				t.Fatal("expected the group to finish only after the context was canceled")
+			for i, d := range got {
+				if d > 15*time.Second {
+					t.Fatalf("delay %d exceeds 15s: %s", i, d)
+				}
 			}
 
-			if calls.Load() == 0 {
-				t.Fatal("expected fn to be called at least once")
+			if last := got[len(got)-1]; last < 7500*time.Millisecond {
+				t.Fatalf("expected the final delay to reach the cap, got %s", last)
 			}
 		})
 	})
 
-	t.Run("it does not retry when fn returns after the context is canceled", func(t *testing.T) {
-		logger := spruce.NewTestLogger(t)
+	t.Run("it allows a longer delay after a persistent error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			got := delays(
+				t,
+				15,
+				func(int) error {
+					return Persistent(errors.New("<error>"))
+				},
+			)
 
-		ctx, cancel := context.WithCancel(t.Context())
+			for i, d := range got {
+				if d > 5*time.Minute {
+					t.Fatalf("delay %d exceeds 5m: %s", i, d)
+				}
+			}
 
-		var (
-			group Group
-			calls atomic.Int32
-		)
-
-		group.Go(
-			ctx,
-			logger,
-			func(context.Context) error {
-				calls.Add(1)
-				cancel()
-				return errors.New("<error>")
-			},
-		)
-
-		group.Wait()
-
-		if got := calls.Load(); got != 1 {
-			t.Fatalf("unexpected number of calls: got %d, want 1", got)
-		}
+			// Delays longer than the reset threshold must not reset the backoff,
+			// so the final delays are close to the cap.
+			if last := got[len(got)-1]; last < 150*time.Second {
+				t.Fatalf("expected the final delay to reach the cap, got %s", last)
+			}
+		})
 	})
 
-	t.Run("it waits for multiple functions", func(t *testing.T) {
-		logger := spruce.NewTestLogger(t)
+	t.Run("it resets the delay when fn runs for long enough before failing", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			got := delays(
+				t,
+				6,
+				func(call int) error {
+					if call == 4 {
+						time.Sleep(3 * time.Minute)
+					}
+					return errors.New("<error>")
+				},
+			)
 
-		var (
-			group Group
-			calls atomic.Int32
-		)
+			// The delay after the long-running call is drawn from the base
+			// delay, which is at most 100ms.
+			if d := got[4]; d > 100*time.Millisecond {
+				t.Fatalf("expected the delay to reset, got %s", d)
+			}
+		})
+	})
+}
 
-		for range 3 {
-			group.Go(
+func TestGo(t *testing.T) {
+	t.Run("it holds the context's error when canceled", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			logger := spruce.NewTestLogger(t)
+			started := make(chan struct{})
+
+			result, cancel := Go(
+				t.Context(),
+				logger,
+				func(ctx context.Context) error {
+					close(started)
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			)
+
+			<-started
+			cancel()
+
+			if err := result.Wait(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("unexpected error: got %v, want %v", err, context.Canceled)
+			}
+		})
+	})
+
+	t.Run("it holds a fatal error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			logger := spruce.NewTestLogger(t)
+			want := errors.New("<error>")
+
+			result, cancel := Go(
 				t.Context(),
 				logger,
 				func(context.Context) error {
-					calls.Add(1)
-					return nil
+					return Fatal(want)
 				},
 			)
-		}
+			defer cancel()
 
-		group.Wait()
-
-		if got := calls.Load(); got != 3 {
-			t.Fatalf("unexpected number of calls: got %d, want 3", got)
-		}
+			if err := result.Wait(); err != want {
+				t.Fatalf("unexpected error: got %v, want %v", err, want)
+			}
+		})
 	})
-
 }

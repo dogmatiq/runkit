@@ -45,7 +45,7 @@ type Reader struct {
 	sub, unsub chan *scanner.Consumer
 
 	done    xsync.Latch
-	group   supervisor.Group
+	group   *supervisor.Group
 	synced  chan *scanner.Consumer
 	batches chan scanner.Batch
 	streams uuidpb.Map[*readerStream]
@@ -125,7 +125,7 @@ func (r *Reader) init() {
 	})
 }
 
-// Run executes the reader until ctx is canceled.
+// Run executes the reader until ctx is canceled or it is unable to continue.
 //
 // It must be called at most once; after it returns, Subscribe has no effect.
 func (r *Reader) Run(ctx context.Context) error {
@@ -138,10 +138,8 @@ func (r *Reader) Run(ctx context.Context) error {
 	}
 
 	r.init()
-	defer func() {
-		r.done.Set()
-		r.group.Wait()
-	}()
+	r.group, ctx = supervisor.WithContext(ctx)
+	defer r.done.Set()
 
 	r.synced = make(chan *scanner.Consumer)
 	r.batches = make(chan scanner.Batch)
@@ -150,6 +148,12 @@ func (r *Reader) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			r.done.Set()
+
+			if err := r.group.Wait(); err != nil {
+				return err
+			}
+
 			return ctx.Err()
 		case c := <-r.sub:
 			r.handleSubscribe(ctx, c)
@@ -376,7 +380,7 @@ func (r *Reader) serveHistorical(ctx context.Context, c *scanner.Consumer) {
 		xslog.UUID("stream_id", c.StreamID),
 	)
 
-	r.group.Go(ctx, logger, hs.Run)
+	r.group.Go(logger, hs.Run)
 }
 
 // streamByID returns the reader's state for the given stream, starting the
@@ -409,7 +413,7 @@ func (r *Reader) streamByID(ctx context.Context, streamID *uuidpb.UUID) *readerS
 		xslog.UUID("stream_id", streamID),
 	)
 
-	r.group.Go(ctx, logger, cs.Run)
+	r.group.Go(logger, cs.Run)
 
 	return s
 }

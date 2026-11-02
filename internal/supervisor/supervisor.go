@@ -7,9 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
-	"sync"
 	"time"
 
+	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -18,54 +18,49 @@ const (
 	// baseDelay is the initial backoff duration.
 	baseDelay = 100 * time.Millisecond
 
-	// maxDelay is the maximum backoff duration.
-	maxDelay = 15 * time.Second
+	// transientMaxDelay is the maximum backoff duration after a failure that
+	// is not created by [Persistent].
+	transientMaxDelay = 15 * time.Second
 
-	// resetThreshold is how long fn must go without failing before the backoff
-	// is reset to [baseDelay].
+	// persistentMaxDelay is the maximum backoff duration after a failure
+	// created by [Persistent].
+	persistentMaxDelay = 5 * time.Minute
+
+	// resetThreshold is how long fn must run before failing for the backoff to
+	// be reset to [baseDelay].
 	resetThreshold = 3 * time.Minute
 )
 
-// Group runs supervised functions in their own goroutines and waits for them
-// to finish.
+// Go calls [Run] in a new goroutine, with a context derived from ctx.
 //
-// It is used in the same way as [sync.WaitGroup]: the zero value is ready to
-// use, and it must not be copied after first use.
-type Group struct {
-	wg sync.WaitGroup
-}
-
-// Go calls [Run] in a new goroutine.
-//
-// The error returned by [Run] is discarded, so fn must not return an error
-// created by [Fatal].
-func (g *Group) Go(
+// It returns a future that holds the error returned by [Run] once it returns,
+// and a function that cancels the context.
+func Go(
 	ctx context.Context,
 	logger *slog.Logger,
 	fn func(context.Context) error,
-) {
-	g.wg.Go(func() {
-		Run(ctx, logger, fn)
-	})
-}
+) (*xsync.Future[error], context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	result := &xsync.Future[error]{}
 
-// Wait blocks until every function started with [Group.Go] has finished.
-func (g *Group) Wait() {
-	g.wg.Wait()
+	go func() {
+		result.Store(Run(ctx, logger, fn))
+	}()
+
+	return result, cancel
 }
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //
 // A nil return from fn is success. An error created by [Fatal] is returned to
 // the caller without retrying. Any other error is logged and fn is called again
-// after an exponential backoff. Once ctx is canceled, fn is not called again
-// regardless of what it returned.
+// after a delay. Once ctx is canceled, fn is not called again regardless of
+// what it returned.
 //
-// fn is always called with the same ctx, so state it keeps outside of its own
-// scope persists across calls.
-//
-// It returns nil if fn succeeded, the error passed to [Fatal] if fn failed
-// fatally, otherwise ctx's error.
+// The delay doubles with each consecutive failure, up to a limit. The limit is
+// higher when the error was created by [Persistent], so that failures unlikely
+// to resolve themselves are retried less often. The delay returns to its
+// initial value once fn runs for long enough before failing.
 func Run(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -73,11 +68,11 @@ func Run(
 ) error {
 	var (
 		backoff  time.Duration
-		failedAt time.Time
 		failures uint64
 	)
 
 	for {
+		startedAt := time.Now()
 		err := fn(ctx)
 
 		if ctx.Err() != nil || err == nil {
@@ -90,20 +85,23 @@ func Run(
 
 		xsql.PanicOnDeadlock(err)
 
-		now := time.Now()
-
-		if backoff == 0 || now.Sub(failedAt) >= resetThreshold {
+		if backoff == 0 || time.Since(startedAt) >= resetThreshold {
 			backoff = baseDelay
 			failures = 0
 		} else {
-			backoff = min(2*backoff, maxDelay)
+			backoff = min(2*backoff, persistentMaxDelay)
 		}
 
-		failedAt = now
 		failures++
 
+		limit := transientMaxDelay
+		if _, ok := errors.AsType[persistentError](err); ok {
+			limit = persistentMaxDelay
+		}
+
 		// Randomize between 50%-100% of the backoff to avoid thundering herds.
-		delay := backoff/2 + rand.N(backoff/2)
+		capped := min(backoff, limit)
+		delay := capped/2 + rand.N(capped/2)
 
 		logger.ErrorContext(
 			ctx,
@@ -119,23 +117,4 @@ func Run(
 		case <-time.After(delay):
 		}
 	}
-}
-
-// Fatal returns an error that causes [Run] to stop retrying and return err.
-//
-// It is used for failures that retrying can not recover from.
-func Fatal(err error) error {
-	return fatalError{err}
-}
-
-type fatalError struct {
-	err error
-}
-
-func (e fatalError) Error() string {
-	return e.err.Error()
-}
-
-func (e fatalError) Unwrap() error {
-	return e.err
 }
