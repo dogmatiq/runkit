@@ -13,7 +13,8 @@ span foreign applications. Foreign events are never
 persisted locally.
 
 "Peer" is reserved for another node in the same cluster. An application that
-this engine consumes events from is a "foreign application".
+this engine consumes events from is a "foreign application", and the engine
+it is consumed from is a "remote engine".
 
 **Done already (on `main`):** local consumption through `LocalCatalog`,
 handler-owned checkpoints, `cluster.Node` responsibility by rendezvous hashing,
@@ -38,7 +39,8 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   function that removes the member, in the same style as
   `cluster.Node.ObserveResponsibility()`; the set is owned by the composite's
   `Run` goroutine and changed through messaging, not a mutex. The local
-  catalog is added first, then one `RemoteCatalog` per foreign application.
+  catalog is added first, then one `RemoteCatalog` per available remote
+  engine.
   A subscription can be lost: `Subscribe()` returns a `lost` channel that the
   catalog closes when it can no longer deliver. `LocalCatalog` closes it when
   it stops; `RemoteCatalog` when it stops or the server closes the gRPC
@@ -50,9 +52,6 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   member now offers the stream. No subscriber is ever left bound to a member
   that is gone, even if the member is removed and re-added between two reads
   of `StreamIDs()`.
-  Configuration is static for now (`WithForeignApplication()` at
-  construction, added to the composite at startup); a runtime add/remove API
-  is deferred and must need no redesign.
 - **Only local streams are permanent.** `LocalCatalog` keeps its guarantee that
   streams are never removed (its change detection relies on it). The composite
   makes no such guarantee: a member's streams disappear with the member. While
@@ -82,10 +81,48 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   not treated as fatal, since one bad foreign application must not stop the
   engine. A server-closed stream (no requested type recordable by the
   application) reports the subscription lost.
-- **Foreign applications are configured statically, for now.**
-  `WithForeignApplication(target string, options ...grpc.DialOption)` mirrors
-  `WithListenAddress()`. Homogeneous connectivity; an engine never consumes
-  from itself.
+- **Remote engines are discovered, even when the set is static.** Foreign
+  applications' events are consumed from _remote engines_. The engine is
+  given any number of `RemoteEngineDiscoverer`s, one per use of
+  `WithRemoteEngineDiscoverer()`, and runs each with its own
+  `RemoteEngineObserver`, which it supplies. A discoverer calls
+  `RemoteEngineAvailable(conn)` and `RemoteEngineUnavailable(conn)` as remote
+  engines come and go. A fixed set is declared with the
+  `StaticRemoteEngines(conns ...grpc.ClientConnInterface)` helper, which
+  returns a discoverer that reports each connection once:
+  `WithRemoteEngineDiscoverer(StaticRemoteEngines(orders, billing))`. There
+  is no option that configures a remote engine directly.
+- **A remote engine is the logical engine, not an instance.** As with
+  `runkit.Engine`, an engine is every instance sharing its storage; each
+  instance is a node of its cluster, and an engine that does not cluster has
+  one instance. A connection reaches any of a remote engine's instances
+  (typically one gRPC target covering them all), so a discoverer reports one
+  connection per engine, not per instance. "Remote engine" makes no claim
+  about how many applications the engine hosts, or which APIs it offers
+  beyond `EventStreamConsumerAPI` today. `messaginggrpc` does not tie a
+  server's streams to an application (only each envelope's
+  `Source.Application` does); identifying the application per stream is
+  proposed in dogmatiq/protobuf#6.
+- **A discovered remote engine is a gRPC connection.** The discoverer reports
+  a `grpc.ClientConnInterface`; there is no value type describing a remote
+  engine. The discoverer creates and owns the connection: users control
+  everything about the client (credentials, resolvers, interceptors), client
+  errors surface where they create it, and tests can pass in-process
+  connections. The engine uses a connection until `RemoteEngineUnavailable`
+  returns for it, and never closes it. Connections are identified by
+  equality; reporting one that is already available, or reporting an unknown
+  one unavailable, does nothing. To change a connection (for example, new
+  credentials) a discoverer reports the old one unavailable, then the new one
+  available.
+- **Each available connection has its own catalog.** When a connection
+  becomes available the engine creates a `RemoteCatalog` over it, runs it, and
+  adds it to the composite. When it becomes unavailable the engine removes the
+  catalog from the composite and stops it, which loses its subscriptions. A
+  discoverer runs under the supervisor for the life of the engine; when it
+  returns, every connection it reported becomes unavailable. Two connections
+  to the same remote engine (including one per instance) are two members
+  offering the same streams, which stops the engine, as does a connection to
+  this engine. Homogeneous connectivity.
 - **Processes are unchanged.** They keep `AcquireEventDelivery`, SKIP LOCKED and
   engine-owned checkpoints in `eventstream.handler_checkpoints`.
 
@@ -179,17 +216,36 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       `supervisor.Persistent`.
 - [x] **Step 4:** Test + commit.
 
-### Task A.5: Foreign application configuration
+### Task A.5: Remote engine discovery
 
-**Files:** modify `engineoption.go`, `engine.go`, `CHANGELOG.md`.
+**Files:** create `remoteengine.go` (public types) and an internal type that
+manages the remote catalogs; modify `engineoption.go`, `engine.go`,
+`CHANGELOG.md`.
 
-- [ ] **Step 1:** Add `WithForeignApplication(target string, options
-      ...grpc.DialOption)`. In `Run()`, one `grpc.ClientConn` and one
-      `RemoteCatalog` per option, run as a component and added to the
-      `CompositeCatalog` at startup.
-- [ ] **Step 2:** Changelog: add an entry for consuming events from foreign
-      applications under Added, and drop "This engine does not yet consume
-      events from other engines." from the gRPC server entry. Commit.
+- [ ] **Step 1: Public API.** `RemoteEngineDiscoverer`, `RemoteEngineObserver`,
+      `StaticRemoteEngines(conns ...grpc.ClientConnInterface)
+      RemoteEngineDiscoverer`, and `WithRemoteEngineDiscoverer()`, which may
+      be given more than once, adding a discoverer each time. Docs cover what
+      the connection must serve, one connection per engine (not per
+      instance), ownership (the discoverer closes it, after it is reported
+      unavailable), credentials (mutual TLS example), identity by equality,
+      and what stops the engine.
+- [ ] **Step 2: Managing remote catalogs.** An internal type, run as a
+      component, owns the available connections for one discoverer through
+      its `Run` goroutine and implements the observer: available → run a
+      `RemoteCatalog` over the connection and add it to the composite;
+      unavailable → remove it and stop it, returning once the catalog has
+      stopped using the connection. The engine runs one per discoverer, with
+      the discoverer under `supervisor.Run`; when the discoverer returns, its
+      connections become unavailable.
+- [ ] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an available
+      connection's streams appear in the composite; unavailable removes them
+      and loses their subscriptions; a returning discoverer's connections
+      become unavailable; `StaticRemoteEngines` reports each connection; two
+      discoverers run side by side.
+- [ ] **Step 4:** Changelog: add an entry for consuming events from remote
+      engines under Added, and drop "This engine does not yet consume events
+      from other engines." from the gRPC server entry. Commit.
 
 ---
 
@@ -236,16 +292,15 @@ stop engines during a test. Phase B needs:
 
 ## Out of scope (explicitly deferred)
 
-- **A runtime API for adding and removing foreign applications.** The
-  composite supports it; no engine-level API is exposed yet.
+- **Discoverers other than `StaticRemoteEngines`** (DNS, Kubernetes,
+  registries). The interface allows them; runkit provides none yet.
 - **Process handlers** consumed by a node chosen by rendezvous hashing.
 - **Re-subscribing after a foreign application closes a stream** because it
   could not record any requested type; if it later adds that type, the
   subscription is only re-established when this engine restarts or the
   application is re-added.
 - **Hot-spot mitigation** (weighted rendezvous, work stealing).
-- **Heterogeneous connectivity**, dynamic discovery of foreign applications,
-  per-replica reachability.
+- **Heterogeneous connectivity**, per-replica reachability.
 - **Relay topologies**; this engine consumes directly from the application
   that recorded the events.
 - **Instant failover** for local projections, given up for a single model.
