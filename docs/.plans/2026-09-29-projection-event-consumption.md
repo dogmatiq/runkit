@@ -83,11 +83,12 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   application) reports the subscription lost.
 - **Remote engines are discovered, even when the set is static.** Foreign
   applications' events are consumed from _remote engines_. The engine is
-  given any number of `RemoteEngineDiscoverer`s, one per use of
-  `WithRemoteEngineDiscoverer()`, and runs each with its own
-  `RemoteEngineObserver`, which it supplies. A discoverer calls
-  `RemoteEngineAvailable(conn)` and `RemoteEngineUnavailable(conn)` as remote
-  engines come and go. A fixed set is declared with the
+  given any number of discoverers, one per use of
+  `WithRemoteEngineDiscoverer()`. A `RemoteEngineDiscoverer` is a function,
+  `func(ctx, available func(conn) (unavailable func())) error`; it calls
+  `available` as each remote engine becomes available, and calls the returned
+  function when it becomes unavailable. A discoverer with configuration is a
+  type whose method is passed as the function. A fixed set is declared with the
   `StaticRemoteEngines(conns ...grpc.ClientConnInterface)` helper, which
   returns a discoverer that reports each connection once:
   `WithRemoteEngineDiscoverer(StaticRemoteEngines(orders, billing))`. There
@@ -108,12 +109,11 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   engine. The discoverer creates and owns the connection: users control
   everything about the client (credentials, resolvers, interceptors), client
   errors surface where they create it, and tests can pass in-process
-  connections. The engine uses a connection until `RemoteEngineUnavailable`
-  returns for it, and never closes it. Connections are identified by
-  equality; reporting one that is already available, or reporting an unknown
-  one unavailable, does nothing. To change a connection (for example, new
-  credentials) a discoverer reports the old one unavailable, then the new one
-  available.
+  connections. The engine uses a connection until its `unavailable` function
+  returns, and never closes it. Each report is identified by its
+  `unavailable` function, so connections are never compared and need not be
+  comparable. To change a connection (for example, new credentials) a
+  discoverer reports the old one unavailable, then the new one available.
 - **Each available connection has its own catalog.** When a connection
   becomes available the engine creates a `RemoteCatalog` over it, runs it, and
   adds it to the composite. When it becomes unavailable the engine removes the
@@ -222,18 +222,18 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 manages the remote catalogs; modify `engineoption.go`, `engine.go`,
 `CHANGELOG.md`.
 
-- [ ] **Step 1: Public API.** `RemoteEngineDiscoverer`, `RemoteEngineObserver`,
+- [x] **Step 1: Public API.** The `RemoteEngineDiscoverer` function type,
       `StaticRemoteEngines(conns ...grpc.ClientConnInterface)
       RemoteEngineDiscoverer`, and `WithRemoteEngineDiscoverer()`, which may
       be given more than once, adding a discoverer each time. Docs cover what
       the connection must serve, one connection per engine (not per
       instance), ownership (the discoverer closes it, after it is reported
-      unavailable), credentials (mutual TLS example), identity by equality,
-      and what stops the engine.
+      unavailable), unavailability through the returned function, and what
+      stops the engine.
 - [ ] **Step 2: Managing remote catalogs.** An internal type, run as a
       component, owns the available connections for one discoverer through
-      its `Run` goroutine and implements the observer: available → run a
-      `RemoteCatalog` over the connection and add it to the composite;
+      its `Run` goroutine and provides its `available` function: available →
+      run a `RemoteCatalog` over the connection and add it to the composite;
       unavailable → remove it and stop it, returning once the catalog has
       stopped using the connection. The engine runs one per discoverer, with
       the discoverer under `supervisor.Run`; when the discoverer returns, its

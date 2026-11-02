@@ -98,6 +98,10 @@ type Engine struct {
 	// grpcOptions are the options used to create the engine's gRPC server.
 	grpcOptions []grpc.ServerOption
 
+	// remoteEngineDiscoverers are the discoverers that the engine uses to find
+	// remote engines.
+	remoteEngineDiscoverers []RemoteEngineDiscoverer
+
 	// logger is the structured logger used by the engine.
 	logger *slog.Logger
 
