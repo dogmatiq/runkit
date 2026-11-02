@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -21,24 +21,85 @@ import (
 func TestDistribution_eachEventIsHandledOnceAfterTheClusterConverges(t *testing.T) {
 	t.Parallel()
 
-	const (
-		streamCount = 10
-		eventCount  = 10
-	)
-
 	db := xtesting.NewDatabase(t)
-	handler := &countingProjection{
-		Want: streamCount * eventCount,
-	}
+	handler := &countingProjection{}
 
 	xtesting.StartCluster(t, db, handler.App(), 3)
+
+	populateStreams(t, db, 10, 10)
+	handler.ExpectHandledEventually(t, 100, xtesting.WaitTimeout)
+
+	handler.ExpectEachEventHandledOnce(t)
+}
+
+// TestDistribution_eachEventIsHandledOnceWhenANodeJoins verifies that when a
+// node joins the cluster, the streams that it becomes responsible for are
+// handed over to it without dropping or duplicating any events.
+func TestDistribution_eachEventIsHandledOnceWhenANodeJoins(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	handler := &countingProjection{}
+
+	cluster := xtesting.StartCluster(t, db, handler.App(), 2)
+
+	// With 30 streams, the new node is all but certain to become responsible
+	// for at least one of them.
+	streamIDs := populateStreams(t, db, 30, 3)
+	handler.ExpectHandledEventually(t, 90, xtesting.WaitTimeout)
+
+	cluster.AddNode(t)
+
+	appendToEachStream(t, db, streamIDs, 3)
+	handler.ExpectHandledEventually(t, 180, xtesting.WaitTimeout)
+
+	handler.ExpectEachEventHandledOnce(t)
+}
+
+// TestDistribution_streamsOfAStoppedNodeAreConsumedByTheOthers verifies that
+// when a node stops, the streams that it was responsible for are consumed by
+// the remaining nodes once they see that it has left the cluster.
+func TestDistribution_streamsOfAStoppedNodeAreConsumedByTheOthers(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	handler := &countingProjection{}
+
+	cluster := xtesting.StartCluster(t, db, handler.App(), 3)
+
+	// With 30 streams, the stopped node is all but certain to have been
+	// responsible for at least one of them.
+	streamIDs := populateStreams(t, db, 30, 3)
+	handler.ExpectHandledEventually(t, 90, xtesting.WaitTimeout)
+
+	cluster.StopNode(cluster.Nodes()[1])
+
+	appendToEachStream(t, db, streamIDs, 3)
+
+	// A stopped node does not announce that it is leaving, so the others only
+	// see that it has left once it misses its heartbeats, which takes up to
+	// the heartbeat timeout plus one heartbeat interval.
+	handler.ExpectHandledEventually(t, 180, 6*time.Second+xtesting.WaitTimeout)
+
+	handler.ExpectEachEventHandledOnce(t)
+}
+
+// populateStreams creates streamCount event streams, each containing
+// eventCount events, and returns their IDs.
+func populateStreams(
+	t testing.TB,
+	db *sql.DB,
+	streamCount int,
+	eventCount uint64,
+) []*uuidpb.UUID {
+	t.Helper()
 
 	counts := make([]uint64, streamCount)
 	for i := range counts {
 		counts[i] = eventCount
 	}
 
-	xtesting.PopulateEventStreams(
+	return xtesting.PopulateEventStreams(
 		t,
 		db,
 		func(*uuidpb.UUID, uint64) dogma.Event {
@@ -46,24 +107,27 @@ func TestDistribution_eachEventIsHandledOnceAfterTheClusterConverges(t *testing.
 		},
 		counts...,
 	)
+}
 
-	xtesting.ExpectLatchesSetEventually(t, &handler.Done)
+// appendToEachStream appends eventCount events to each of the given streams.
+func appendToEachStream(
+	t testing.TB,
+	db *sql.DB,
+	streamIDs []*uuidpb.UUID,
+	eventCount int,
+) {
+	t.Helper()
 
-	// Allow time for any duplicate delivery to occur.
-	time.Sleep(200 * time.Millisecond)
-
-	handler.ExpectEachEventHandledOnce(t)
+	for range eventCount {
+		for _, streamID := range streamIDs {
+			xtesting.AppendToEventStream(t, db, streamID, stubs.EventA1)
+		}
+	}
 }
 
 // countingProjection is a projection that records how many times each event is
 // passed to it.
 type countingProjection struct {
-	// Want is the number of distinct events after which Done is set.
-	Want int
-
-	// Done is set once Want distinct events have been handled.
-	Done xsync.Latch
-
 	checkpoints checkpointStore
 
 	m     sync.Mutex
@@ -111,17 +175,44 @@ func (p *countingProjection) handleEvent(
 	key := fmt.Sprintf("%s@%d", s.StreamID(), s.Offset())
 	p.calls[key]++
 
-	if len(p.calls) == p.Want {
-		p.Done.Set()
-	}
-
 	return p.checkpoints.HandleEvent(s, nil)
 }
 
+// ExpectHandledEventually waits for n distinct events to have been passed to
+// the projection, and fails the test if that takes longer than timeout.
+func (p *countingProjection) ExpectHandledEventually(
+	t testing.TB,
+	n int,
+	timeout time.Duration,
+) {
+	t.Helper()
+
+	deadline := time.After(timeout)
+
+	for {
+		p.m.Lock()
+		handled := len(p.calls)
+		p.m.Unlock()
+
+		if handled >= n {
+			return
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for events to be handled: %d of %d", handled, n)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // ExpectEachEventHandledOnce asserts that no event was passed to the
-// projection more than once.
+// projection more than once, after allowing a short time for any duplicate
+// delivery to occur.
 func (p *countingProjection) ExpectEachEventHandledOnce(t testing.TB) {
 	t.Helper()
+
+	time.Sleep(200 * time.Millisecond)
 
 	p.m.Lock()
 	defer p.m.Unlock()
