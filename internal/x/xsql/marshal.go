@@ -66,33 +66,33 @@ func UUIDSeq(seq iter.Seq[*uuidpb.UUID]) any {
 
 // Envelope returns a value that marshals and unmarshals an envelope to/from its
 // binary representation as used in the database.
-func Envelope(envelope *envelopepb.Envelope) ScannerValuer {
-	if envelope == nil {
+func Envelope(env *envelopepb.Envelope) ScannerValuer {
+	if env == nil {
 		panic("envelope must not be nil")
 	}
 
 	return scannerValuerFuncs{
 		func(v any) error {
-			if envelope == nil {
+			if env == nil {
 				return fmt.Errorf("cannot scan into nil envelope pointer")
 			}
 
 			switch v := v.(type) {
 			case nil:
-				envelope.Reset()
+				env.Reset()
 				return nil
 			case []byte:
-				return envelope.UnmarshalBinary(v)
+				return env.UnmarshalBinary(v)
 			default:
-				return fmt.Errorf("cannot scan %T into %T", v, envelope)
+				return fmt.Errorf("cannot scan %T into %T", v, env)
 			}
 		},
 		func() (driver.Value, error) {
-			if envelope == nil {
+			if env == nil {
 				return nil, nil
 			}
 
-			return envelope.MarshalBinary()
+			return env.MarshalBinary()
 		},
 	}
 }

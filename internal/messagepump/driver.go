@@ -50,7 +50,7 @@ type Driver interface {
 		ctx context.Context,
 		tx *sql.Tx,
 		del Delivery,
-		envelope *envelopepb.Envelope,
+		env *envelopepb.Envelope,
 		logger *slog.Logger,
 	) error
 }
