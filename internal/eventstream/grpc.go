@@ -16,28 +16,29 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// consumeBufferSize is the number of batches buffered for each client of
-// [ConsumerAPI.ConsumeEvents]. When the buffer is full the client is returned
-// to reading historical events, which blocks until the client catches up.
-const consumeBufferSize = 10
-
 // ConsumerAPI is a gRPC server that implements the
 // [messaginggrpc.EventStreamConsumerAPI] service.
 type ConsumerAPI struct {
 	// DB is the database connection used to query event streams.
 	DB *sql.DB
 
-	// Catalog tracks the set of available event streams.
-	Catalog *Catalog
+	// EventStreams tracks the set of available event streams.
+	EventStreams *Catalog
 
-	// Reader delivers events to clients.
-	Reader *Reader
+	// Events delivers events to clients.
+	Events *Reader
 
 	// RecordableEventTypes is the set of message type IDs of every event type
 	// that the application can record. A client that requests only event types
 	// outside this set is sent any existing events, after which its stream is
 	// closed, as no further events can ever be produced for it.
 	RecordableEventTypes *uuidpb.Set
+
+	// BufferSize is the number of batches of events buffered for each client
+	// of [ConsumerAPI.ConsumeEvents]. When the buffer is full the client is
+	// returned to reading historical events, which blocks until the client
+	// catches up. It must be positive.
+	BufferSize int
 
 	// Logger is the target for log messages produced by the server.
 	Logger *slog.Logger
@@ -52,7 +53,7 @@ func (s *ConsumerAPI) ListEventStreams(
 	var sent uuidpb.Set
 
 	for {
-		streamIDs, changed := s.Catalog.StreamIDs()
+		streamIDs, changed := s.EventStreams.StreamIDs()
 
 		for id := range streamIDs.Diff(&sent).All() {
 			stream, err := s.loadEventStream(ctx, id)
@@ -93,6 +94,10 @@ func (s *ConsumerAPI) ConsumeEvents(
 	req *messaginggrpc.ConsumeEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.ConsumeEventsResponse],
 ) error {
+	if s.BufferSize <= 0 {
+		panic("buffer size must be positive")
+	}
+
 	ctx := res.Context()
 	streamID := req.GetEventStreamId()
 	checkpoint := req.GetCheckpointOffset()
@@ -135,8 +140,8 @@ func (s *ConsumerAPI) ConsumeEvents(
 		return nil
 	}
 
-	batches := make(chan Batch, consumeBufferSize)
-	unsubscribe := s.Reader.Subscribe(streamID, checkpoint, types, batches)
+	batches := make(chan Batch, s.BufferSize)
+	unsubscribe := s.Events.Subscribe(streamID, checkpoint, types, batches)
 	defer unsubscribe()
 
 	for {
