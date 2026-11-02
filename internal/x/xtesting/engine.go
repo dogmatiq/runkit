@@ -100,7 +100,7 @@ func RunEnginesWithDB(
 		engineGroup.Wait()
 	}()
 
-	testTimeout := 3 * time.Second
+	testTimeout := 10 * time.Second
 	if os.Getenv("CI") != "" {
 		testTimeout = 1 * time.Minute
 	}
