@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
@@ -16,7 +16,7 @@ import (
 type commandScope struct {
 	instanceID           string
 	root                 dogma.AggregateRoot
-	packer               *envelopepb.EffectPacker
+	packer               *envelope.EffectPacker
 	logger               *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }

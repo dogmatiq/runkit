@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -26,7 +27,7 @@ type Catalog struct {
 	// Logger is the target for log messages produced by the catalog.
 	Logger *slog.Logger
 
-	streamIDs xsync.Observable[*uuidpb.Set]
+	streamIDs xsync.Observable[*uuidcollection.Set]
 }
 
 // StreamIDs returns the IDs of the known event streams, and a channel that is
@@ -34,7 +35,7 @@ type Catalog struct {
 //
 // Streams are never removed, so each set is a superset of the sets returned
 // before it. The returned set must not be modified.
-func (c *Catalog) StreamIDs() (*uuidpb.Set, <-chan struct{}) {
+func (c *Catalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 	return c.streamIDs.Load()
 }
 
@@ -88,7 +89,7 @@ func (c *Catalog) discover(ctx context.Context) error {
 }
 
 // loadStreamIDs returns the IDs of all event streams.
-func (c *Catalog) loadStreamIDs(ctx context.Context) (*uuidpb.Set, error) {
+func (c *Catalog) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) {
 	rows, err := c.DB.QueryContext(
 		ctx,
 		`SELECT id
@@ -99,7 +100,7 @@ func (c *Catalog) loadStreamIDs(ctx context.Context) (*uuidpb.Set, error) {
 	}
 	defer rows.Close()
 
-	streamIDs := uuidpb.NewSet()
+	streamIDs := uuidcollection.NewSet()
 
 	for rows.Next() {
 		streamID := &uuidpb.UUID{}

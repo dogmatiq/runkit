@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"google.golang.org/grpc"
 )

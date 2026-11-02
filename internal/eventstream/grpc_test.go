@@ -13,9 +13,9 @@ import (
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"golang.org/x/sync/errgroup"
@@ -400,8 +400,8 @@ func expectResponse(
 	var got []dogma.Event
 
 	for _, envelopes := range res.GetEnvelopes() {
-		for envelope := range envelopes.All() {
-			event, err := envelopepb.Unpack[dogma.Event](envelope)
+		for env := range envelopes.All() {
+			event, err := envelope.Unpack[dogma.Event](env)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -579,8 +579,8 @@ func consumeEvents(
 		}
 
 		for _, envelopes := range consumeResponse.GetEnvelopes() {
-			for envelope := range envelopes.All() {
-				event, err := envelopepb.Unpack[dogma.Event](envelope)
+			for env := range envelopes.All() {
+				event, err := envelope.Unpack[dogma.Event](env)
 				if err != nil {
 					return err
 				}

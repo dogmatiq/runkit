@@ -8,7 +8,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -24,7 +25,7 @@ func AcquireEventDelivery(
 	tx *sql.Tx,
 	logger *slog.Logger,
 	handlerKey *uuidpb.UUID,
-	messageTypeIDs *uuidpb.Set,
+	messageTypeIDs *uuidcollection.Set,
 ) (Delivery, bool, error) {
 	// Acquire a stream for the handler to read from, then find the next pending
 	// event on that stream (if any) in a single round-trip.

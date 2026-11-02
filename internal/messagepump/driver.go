@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/envelopepb"
 )
 
 // ErrFailed is returned by [Driver.HandleDelivery] to indicate that the
@@ -50,7 +50,7 @@ type Driver interface {
 		ctx context.Context,
 		tx *sql.Tx,
 		del Delivery,
-		envelope *envelopepb.Envelope,
+		env *envelopepb.Envelope,
 		logger *slog.Logger,
 	) error
 }

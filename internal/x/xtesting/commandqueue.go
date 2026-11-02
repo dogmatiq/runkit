@@ -7,9 +7,10 @@ import (
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -79,7 +80,7 @@ func ExpectCommandToBeQueued(
 			t.Fatalf("unable to scan event: %v", err)
 		}
 
-		got, err := envelopepb.Unpack[dogma.Command](env)
+		got, err := envelope.Unpack[dogma.Command](env)
 		if err != nil {
 			t.Fatalf("unable to unpack command: %v", err)
 		}

@@ -14,10 +14,11 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
+	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/enginekit/message"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -128,7 +129,7 @@ type Engine struct {
 	events *eventstream.Reader
 
 	// packer is used to pack messages into envelopes for persistence.
-	packer *envelopepb.Packer
+	packer *envelope.Packer
 
 	// commandTypes is the set of command types that the engine accepts for
 	// execution.
@@ -205,7 +206,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		)
 	}
 
-	e.packer = &envelopepb.Packer{
+	e.packer = &envelope.Packer{
 		Application: e.appConfig.Identity(),
 	}
 
@@ -560,14 +561,14 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 func (*Engine) inboundMessageTypeIDsForHandler(
 	handlerConfig config.Handler,
 	messageKind message.Kind,
-) *uuidpb.Set {
+) *uuidcollection.Set {
 	inboundRoutes := handlerConfig.
 		RouteSet().
 		Filter(config.FilterByMessageKind(messageKind)).
 		Filter(config.FilterByMessageDirection(config.InboundDirection)).
 		Routes()
 
-	messageTypeIDs := &uuidpb.Set{}
+	messageTypeIDs := &uuidcollection.Set{}
 
 	for route := range inboundRoutes {
 		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
@@ -579,14 +580,14 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 
 // recordableEventTypes returns the message type IDs of all event types that
 // may be recorded by any (non-disabled) handler within the application.
-func (e *Engine) recordableEventTypes() *uuidpb.Set {
+func (e *Engine) recordableEventTypes() *uuidcollection.Set {
 	outboundEventRoutes := e.appConfig.
 		RouteSet().
 		Filter(config.FilterByMessageKind(message.EventKind)).
 		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
 		Routes()
 
-	messageTypeIDs := &uuidpb.Set{}
+	messageTypeIDs := &uuidcollection.Set{}
 
 	for route, handlerConfig := range outboundEventRoutes {
 		if !handlerConfig.IsDisabled() {

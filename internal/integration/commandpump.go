@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/identitypb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/concurrency"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -28,8 +30,8 @@ type CommandPump struct {
 	Handler              dogma.IntegrationMessageHandler
 	Identity             *identitypb.Identity
 	Concurrency          dogma.ConcurrencyPreference
-	Packer               *envelopepb.Packer
-	CommandTypeIDs       *uuidpb.Set
+	Packer               *envelope.Packer
+	CommandTypeIDs       *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -54,13 +56,13 @@ func (p *CommandPump) HandleDelivery(
 	ctx context.Context,
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
-	envelope *envelopepb.Envelope,
+	env *envelopepb.Envelope,
 	logger *slog.Logger,
 ) error {
 	var commandForHandling dogma.Command
 
 	if err := xmessage.UnpackMessage(
-		envelope,
+		env,
 		&commandForHandling,
 	); err != nil {
 		logger.ErrorContext(
@@ -72,7 +74,7 @@ func (p *CommandPump) HandleDelivery(
 	}
 
 	packer := p.Packer.PackEffects(
-		envelope,
+		env,
 		p.Identity,
 	)
 

@@ -6,8 +6,9 @@ import (
 	"time"
 
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -30,7 +31,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -85,7 +86,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -148,7 +149,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -200,7 +201,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -252,7 +253,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -295,7 +296,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -341,7 +342,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -386,7 +387,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -436,7 +437,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -479,7 +480,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch)
 		consumer := &Consumer{
 			StreamID: streamID,
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -550,7 +551,7 @@ func TestHistorical(t *testing.T) {
 		batches := make(chan Batch, 10)
 		consumer := &Consumer{
 			StreamID: uuidpb.Generate(),
-			MessageTypes: uuidpb.NewSet(
+			MessageTypes: uuidcollection.NewSet(
 				MessageTypeUUID[*EventStub[TypeE]](),
 			),
 			Batches: batches,
@@ -586,7 +587,7 @@ func TestHistorical(t *testing.T) {
 
 		consumer := &Consumer{
 			StreamID:     streamID,
-			MessageTypes: uuidpb.NewSet(),
+			MessageTypes: uuidcollection.NewSet(),
 			Batches:      make(chan Batch, 10),
 		}
 		consumer.Checkpoint.Store(0)

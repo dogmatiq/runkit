@@ -9,8 +9,8 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
@@ -157,10 +157,10 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 
 		logger := p.Logger.With(slog.Group("delivery", attrs...))
 
-		envelope := &envelopepb.Envelope{}
-		err = envelope.UnmarshalBinary(del.EnvelopeBytes)
+		env := &envelopepb.Envelope{}
+		err = env.UnmarshalBinary(del.EnvelopeBytes)
 		if err == nil {
-			err = envelope.Validate()
+			err = env.Validate()
 		}
 
 		if err != nil {
@@ -192,9 +192,9 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 		return &deliveryTask{
 			tx,
 			del,
-			envelope,
+			env,
 			logger.With(
-				xslog.Envelope("message", envelope),
+				xslog.Envelope("message", env),
 			),
 		}, true, nil
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dogmatiq/enginekit/grpc/messaginggrpc"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
 	. "github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"

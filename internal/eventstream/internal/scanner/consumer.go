@@ -3,9 +3,10 @@ package scanner
 import (
 	"sync/atomic"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
-	"github.com/dogmatiq/enginekit/protobuf/uuidpb"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // Consumer represents a subscriber registered to receive events from a
@@ -28,7 +29,7 @@ type Consumer struct {
 
 	// MessageTypes is the set of message types that the consumer is interested
 	// in receiving. It must not be empty.
-	MessageTypes *uuidpb.Set
+	MessageTypes *uuidcollection.Set
 
 	// Batches is the channel on which the consumer is sent batches of events
 	// that are appended to the specified stream ID, if they are one of the

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -14,7 +14,7 @@ import (
 func addCommandsToQueue(
 	ctx context.Context,
 	tx *sql.Tx,
-	packer *envelopepb.EffectPacker,
+	packer *envelope.EffectPacker,
 ) error {
 	commandEnvelopes, ok := packer.Seal()
 	if !ok {

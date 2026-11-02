@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
@@ -19,8 +19,8 @@ type messageScope struct {
 	root                 dogma.ProcessRoot
 	mutated              bool
 	ended                bool
-	commandPacker        *envelopepb.EffectPacker
-	deadlinePacker       *envelopepb.EffectPacker
+	commandPacker        *envelope.EffectPacker
+	deadlinePacker       *envelope.EffectPacker
 	logger               *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }
@@ -85,7 +85,7 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic(fmt.Sprintf("this handler is not configured to schedule deadlines of type %T", d))
 	}
 
-	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelopepb.WithScheduledFor(t))
+	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelope.WithScheduledFor(t))
 
 	if err := d.Validate(
 		xmessage.ValidationScope{

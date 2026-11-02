@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/envelopepb"
 )
 
 // ValidationScope implements [dogma.CommandValidationScope],
