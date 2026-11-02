@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
@@ -110,7 +111,11 @@ func (sc *streamConsumer) step(
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled or an event can not be dispatched.
+// checkpoint offset, until ctx is canceled, an event can not be dispatched, or
+// the handler reports an optimistic concurrency conflict.
+//
+// A conflict is returned as an error so that consumption resumes from the
+// handler's checkpoint offset after a delay, rather than immediately.
 func (sc *streamConsumer) consume(ctx context.Context) error {
 	checkpoint, err := xerrors.RecoverT(
 		func() (uint64, error) {
@@ -124,24 +129,6 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		)
 	}
 
-	for {
-		checkpoint, err = sc.consumeFrom(ctx, checkpoint)
-		if err != nil {
-			return err
-		}
-	}
-}
-
-// consumeFrom dispatches events starting at checkpoint until ctx is canceled,
-// an event can not be dispatched, or the handler reports an optimistic
-// concurrency conflict.
-//
-// When a conflict occurs, it returns the handler's checkpoint offset, from
-// which consumption resumes.
-func (sc *streamConsumer) consumeFrom(
-	ctx context.Context,
-	checkpoint uint64,
-) (uint64, error) {
 	batches := make(chan eventstream.Batch, sc.BufferSize)
 	unsubscribe := sc.Events.Subscribe(
 		sc.StreamID,
@@ -156,7 +143,7 @@ func (sc *streamConsumer) consumeFrom(
 
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return ctx.Err()
 		case batch = <-batches:
 		}
 
@@ -171,19 +158,16 @@ func (sc *streamConsumer) consumeFrom(
 
 			next, err := sc.dispatch(ctx, offset, checkpoint, env)
 			if err != nil {
-				return 0, err
+				return err
 			}
 
 			if next != offset+1 {
-				sc.Logger.WarnContext(
-					ctx,
-					"optimistic concurrency conflict",
-					slog.Uint64("offset", offset),
-					slog.Uint64("expected_checkpoint_offset", offset+1),
-					slog.Uint64("actual_checkpoint_offset", next),
+				return fmt.Errorf(
+					"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
+					offset,
+					offset+1,
+					next,
 				)
-
-				return next, nil
 			}
 
 			checkpoint = next
