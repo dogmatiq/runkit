@@ -17,12 +17,13 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
-// Reader delivers events from event streams to consumers.
+// LocalReader delivers events from the event streams recorded by this
+// application to consumers.
 //
 // Consumers are served from a cache of each stream's most recent events. A
 // consumer whose checkpoint is behind the cache reads historical events until
 // it catches up.
-type Reader struct {
+type LocalReader struct {
 	// DB is the database connection used to read events.
 	DB *sql.DB
 
@@ -80,7 +81,7 @@ type readerStream struct {
 // that does not keep up never misses events.
 //
 // It returns a function that unsubscribes.
-func (r *Reader) Subscribe(
+func (r *LocalReader) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
 	types *uuidcollection.Set,
@@ -119,7 +120,7 @@ func (r *Reader) Subscribe(
 	}
 }
 
-func (r *Reader) init() {
+func (r *LocalReader) init() {
 	r.once.Do(func() {
 		r.sub = make(chan *scanner.Consumer)
 		r.unsub = make(chan *scanner.Consumer)
@@ -129,7 +130,7 @@ func (r *Reader) init() {
 // Run executes the reader until ctx is canceled or it is unable to continue.
 //
 // It must be called at most once; after it returns, Subscribe has no effect.
-func (r *Reader) Run(ctx context.Context) error {
+func (r *LocalReader) Run(ctx context.Context) error {
 	if r.ContemporaryCacheSize <= 0 {
 		panic("cache size must be positive")
 	}
@@ -172,7 +173,7 @@ func (r *Reader) Run(ctx context.Context) error {
 //
 // The consumer is served from the stream's cache, falling back to historical
 // events if its checkpoint is not within the cache.
-func (r *Reader) handleSubscribe(ctx context.Context, c *scanner.Consumer) {
+func (r *LocalReader) handleSubscribe(ctx context.Context, c *scanner.Consumer) {
 	r.Logger.DebugContext(
 		ctx,
 		"consumer subscribed",
@@ -189,7 +190,7 @@ func (r *Reader) handleSubscribe(ctx context.Context, c *scanner.Consumer) {
 // A consumer that is reading historical events is stopped by its Gone latch,
 // which has already been set. A consumer that is reading contemporary events
 // is simply forgotten.
-func (r *Reader) handleUnsubscribe(ctx context.Context, c *scanner.Consumer) {
+func (r *LocalReader) handleUnsubscribe(ctx context.Context, c *scanner.Consumer) {
 	if s, ok := r.streams.Get(c.StreamID); ok {
 		delete(s.ContemporaryConsumers, c)
 	}
@@ -205,7 +206,7 @@ func (r *Reader) handleUnsubscribe(ctx context.Context, c *scanner.Consumer) {
 
 // handleSynced handles a consumer that has caught up to the tail of its stream
 // by reading historical events, and returns it to being served from the cache.
-func (r *Reader) handleSynced(ctx context.Context, c *scanner.Consumer) {
+func (r *LocalReader) handleSynced(ctx context.Context, c *scanner.Consumer) {
 	// Gone is set before an unsubscription is sent to the reader. If it is set
 	// here, the unsubscription has either already been handled, in which case
 	// the consumer must not be re-added, or is still pending, in which case
@@ -228,7 +229,7 @@ func (r *Reader) handleSynced(ctx context.Context, c *scanner.Consumer) {
 
 // handleDesynced returns a consumer that has fallen behind the tail of its
 // stream to reading historical events.
-func (r *Reader) handleDesynced(ctx context.Context, s *readerStream, c *scanner.Consumer) {
+func (r *LocalReader) handleDesynced(ctx context.Context, s *readerStream, c *scanner.Consumer) {
 	delete(s.ContemporaryConsumers, c)
 
 	r.Logger.DebugContext(
@@ -247,7 +248,7 @@ func (r *Reader) handleDesynced(ctx context.Context, s *readerStream, c *scanner
 //
 // The events are added to the stream's cache and every contemporary consumer of
 // the stream is synchronized with it.
-func (r *Reader) dispatchBatch(ctx context.Context, b scanner.Batch) {
+func (r *LocalReader) dispatchBatch(ctx context.Context, b scanner.Batch) {
 	// The scanner's batches are contiguous, so the offset at which the batch
 	// begins is its checkpoint less the number of events it contains.
 	offset := b.Checkpoint - uint64(len(b.Envelopes))
@@ -309,7 +310,7 @@ func (r *Reader) dispatchBatch(ctx context.Context, b scanner.Batch) {
 //
 // If the stream's position is not yet known, nothing is done; the consumer is
 // synchronized when the scanner's first batch arrives.
-func (r *Reader) syncConsumer(ctx context.Context, s *readerStream, c *scanner.Consumer) {
+func (r *LocalReader) syncConsumer(ctx context.Context, s *readerStream, c *scanner.Consumer) {
 	if s.Cache == nil {
 		return
 	}
@@ -357,7 +358,7 @@ func (r *Reader) syncConsumer(ctx context.Context, s *readerStream, c *scanner.C
 
 // serveContemporary adds a consumer to the set served from the stream's cache
 // and synchronizes it.
-func (r *Reader) serveContemporary(ctx context.Context, c *scanner.Consumer) {
+func (r *LocalReader) serveContemporary(ctx context.Context, c *scanner.Consumer) {
 	s := r.streamByID(ctx, c.StreamID)
 	s.ContemporaryConsumers[c] = struct{}{}
 	r.syncConsumer(ctx, s, c)
@@ -367,7 +368,7 @@ func (r *Reader) serveContemporary(ctx context.Context, c *scanner.Consumer) {
 //
 // The scanner stops of its own accord when the consumer catches up to the tail
 // of the stream, or when the consumer is gone.
-func (r *Reader) serveHistorical(ctx context.Context, c *scanner.Consumer) {
+func (r *LocalReader) serveHistorical(ctx context.Context, c *scanner.Consumer) {
 	hs := &scanner.Historical{
 		DB:        r.DB,
 		Consumer:  c,
@@ -390,7 +391,7 @@ func (r *Reader) serveHistorical(ctx context.Context, c *scanner.Consumer) {
 // The scanner runs until the reader stops, even if the stream has no consumers.
 // The number of streams is small and bounded by write concurrency, and keeping
 // the scanner running keeps the cache primed for the next consumer.
-func (r *Reader) streamByID(ctx context.Context, streamID *uuidpb.UUID) *readerStream {
+func (r *LocalReader) streamByID(ctx context.Context, streamID *uuidpb.UUID) *readerStream {
 	if s, ok := r.streams.Get(streamID); ok {
 		return s
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestReader(t *testing.T) {
+func TestLocalReader(t *testing.T) {
 	t.Run("it delivers historical then contemporary events in order", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
@@ -37,7 +37,7 @@ func TestReader(t *testing.T) {
 		// A cache size of one means the consumer, which starts at the beginning
 		// of the stream, is behind the cache and so reads historical events
 		// before catching up.
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -86,7 +86,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -133,7 +133,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -187,7 +187,7 @@ func TestReader(t *testing.T) {
 		// A cache size of one means the consumer, which starts at the beginning
 		// of the stream, is behind the cache and so reads historical events
 		// before catching up.
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -255,7 +255,7 @@ func TestReader(t *testing.T) {
 		// of the stream, is behind the cache and so reads historical events. A
 		// historical batch size of one means each event is delivered in its
 		// own batch.
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -302,7 +302,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -347,7 +347,7 @@ func TestReader(t *testing.T) {
 		// A tiny cache and a consumer channel that holds a single batch
 		// guarantee that the consumer falls behind and is bounced between the
 		// contemporary and historical scanners.
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -398,7 +398,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -413,8 +413,8 @@ func TestReader(t *testing.T) {
 		)
 
 		// Many consumers that each hold a single batch cause the contemporary
-		// scanner to desynchronize consumers at the same time as the Reader is
-		// handing other consumers to it. This would deadlock if the Reader did
+		// scanner to desynchronize consumers at the same time as the reader is
+		// handing other consumers to it. This would deadlock if the reader did
 		// not keep accepting desynchronized consumers while doing so.
 		const consumers = 5
 		channels := make([]chan Batch, consumers)
@@ -449,7 +449,7 @@ func TestReader(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,
@@ -502,7 +502,7 @@ func TestReader(t *testing.T) {
 			EventE2,
 		)
 
-		reader := &Reader{
+		reader := &LocalReader{
 			DB:                    db,
 			Signals:               signals,
 			Logger:                logger,

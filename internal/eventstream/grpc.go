@@ -24,10 +24,10 @@ type ConsumerAPI struct {
 	DB *sql.DB
 
 	// EventStreams tracks the set of available event streams.
-	EventStreams *Catalog
+	EventStreams *LocalCatalog
 
 	// Events delivers events to clients.
-	Events *Reader
+	Events *LocalReader
 
 	// RecordableEventTypes is the set of message type IDs of every event type
 	// that the application can record. A client that requests only event types

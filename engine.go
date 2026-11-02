@@ -123,10 +123,10 @@ type Engine struct {
 	node *cluster.Node
 
 	// eventStreams tracks the set of available event streams.
-	eventStreams *eventstream.Catalog
+	eventStreams *eventstream.LocalCatalog
 
 	// events delivers events from event streams to consumers.
-	events *eventstream.Reader
+	events *eventstream.LocalReader
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
@@ -229,13 +229,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		Node: e.node,
 	})
 
-	e.eventStreams = &eventstream.Catalog{
+	e.eventStreams = &eventstream.LocalCatalog{
 		DB:      e.db,
 		Signals: e.signals,
 		Logger:  e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
-	e.events = &eventstream.Reader{
+	e.events = &eventstream.LocalReader{
 		DB:                    e.db,
 		Signals:               e.signals,
 		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),

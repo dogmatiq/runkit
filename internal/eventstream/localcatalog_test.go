@@ -13,8 +13,8 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestCatalog(t *testing.T) {
-	setup := func(t *testing.T) (*sql.DB, *Catalog) {
+func TestLocalCatalog(t *testing.T) {
+	setup := func(t *testing.T) (*sql.DB, *LocalCatalog) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -25,7 +25,7 @@ func TestCatalog(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
-		catalog := &Catalog{
+		catalog := &LocalCatalog{
 			DB:      db,
 			Signals: signals,
 			Logger:  logger,
@@ -88,7 +88,7 @@ func TestCatalog(t *testing.T) {
 // IDs.
 func expectStreamIDs(
 	t testing.TB,
-	catalog *Catalog,
+	catalog *LocalCatalog,
 	want ...*uuidpb.UUID,
 ) {
 	t.Helper()

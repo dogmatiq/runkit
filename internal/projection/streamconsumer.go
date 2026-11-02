@@ -33,7 +33,7 @@ type streamConsumer struct {
 	Workload *uuidpb.UUID
 
 	// Events delivers events from the stream.
-	Events *eventstream.Reader
+	Events *eventstream.LocalReader
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.

@@ -27,10 +27,10 @@ type Consumer struct {
 	Node *cluster.Node
 
 	// EventStreams provides the set of event streams.
-	EventStreams *eventstream.Catalog
+	EventStreams *eventstream.LocalCatalog
 
 	// Events delivers events from the event streams.
-	Events *eventstream.Reader
+	Events *eventstream.LocalReader
 
 	// Handler is the projection message handler to which events are
 	// dispatched.

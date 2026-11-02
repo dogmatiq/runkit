@@ -15,8 +15,8 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Catalog tracks the set of available event streams.
-type Catalog struct {
+// LocalCatalog tracks the set of event streams recorded by this application.
+type LocalCatalog struct {
 	// DB is the database connection used to discover event streams.
 	DB *sql.DB
 
@@ -35,20 +35,20 @@ type Catalog struct {
 //
 // Streams are never removed, so each set is a superset of the sets returned
 // before it. The returned set must not be modified.
-func (c *Catalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
+func (c *LocalCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 	return c.streamIDs.Load()
 }
 
 // Run discovers event streams until ctx is canceled.
 //
 // It must be called at most once.
-func (c *Catalog) Run(ctx context.Context) error {
+func (c *LocalCatalog) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, c.Logger, c.discover)
 }
 
 // discover reads the set of event streams, then waits for a stream to be
 // created and reads it again.
-func (c *Catalog) discover(ctx context.Context) error {
+func (c *LocalCatalog) discover(ctx context.Context) error {
 	// Subscribe to signals about new streams _before_ querying, so that a
 	// stream created between the query and the subscription is not missed.
 	//
@@ -89,7 +89,7 @@ func (c *Catalog) discover(ctx context.Context) error {
 }
 
 // loadStreamIDs returns the IDs of all event streams.
-func (c *Catalog) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) {
+func (c *LocalCatalog) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) {
 	rows, err := c.DB.QueryContext(
 		ctx,
 		`SELECT id

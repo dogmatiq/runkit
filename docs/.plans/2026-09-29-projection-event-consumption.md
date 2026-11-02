@@ -80,7 +80,7 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 
 ### Task A.0: Tidy-ups left from the local work
 
-- [ ] `internal/schema/ddl/00-eventstream/00-tables.sql`: the comment on
+- [x] `internal/schema/ddl/00-eventstream/00-tables.sql`: the comment on
       `handler_checkpoints` still names projection handlers; it is now used by
       processes only. Commit.
 
@@ -89,12 +89,12 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 **Files:** in `internal/eventstream/`, `git mv catalog.go localcatalog.go`,
 `reader.go localreader.go` (and their `_test.go` files likewise).
 
-- [ ] **Step 1:** Rename `Catalog` → `LocalCatalog` and `Reader` →
+- [x] **Step 1:** Rename `Catalog` → `LocalCatalog` and `Reader` →
       `LocalReader` (types, tests, engine wiring, `ConsumerAPI` and
       `projection.Consumer` fields), with the files moved as above so the local
       implementations live in `localcatalog.go` and `localreader.go`. No
       behaviour changes; the whole suite must pass unchanged.
-- [ ] **Step 2:** Commit.
+- [x] **Step 2:** Commit.
 
 ### Task A.2: Composites
 
