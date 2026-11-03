@@ -300,6 +300,9 @@ stop engines during a test. Phase B needs:
 - [x] Remote failover: a downstream projection keeps consuming when the
       upstream node it is connected to stops; the test dials the two upstream
       nodes in order and stops the first (`foreignevents_test.go`).
+- [x] A projection consumes local and foreign streams at once, and a
+      projection that handles none of a remote engine's event types does not
+      retry against it (`foreignevents_test.go`).
 
 ### Task B.3: Final validation
 
@@ -309,7 +312,7 @@ stop engines during a test. Phase B needs:
       which executes each command on a node chosen at random. gRPC tests
       dial the first node; every node runs the same `ConsumerAPI` over the
       same database.
-- [ ] `make precommit` green. Commit.
+- [x] `make precommit` green. Commit.
 
 ---
 
