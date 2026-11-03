@@ -10,7 +10,7 @@ import (
 
 func TestJitter(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		d := time.Duration(rapid.Int64Range(2, int64(time.Hour)).Draw(t, "d"))
+		d := time.Duration(rapid.Int64Min(0).Draw(t, "d"))
 
 		got := Jitter(d)
 
