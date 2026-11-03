@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
 )
 
@@ -49,44 +50,45 @@ func (c *Connector) discover(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	err := c.Discover(
-		ctx,
-		func(conn grpc.ClientConnInterface) func() {
-			if ctx.Err() != nil {
-				return func() {}
-			}
+	add := func(conn grpc.ClientConnInterface) func() {
+		if ctx.Err() != nil {
+			return func() {}
+		}
 
-			ctx, cancel := context.WithCancel(ctx)
+		ctx, cancel := context.WithCancel(ctx)
 
-			logger := c.Logger
-			if t, ok := conn.(interface{ Target() string }); ok {
-				logger = logger.With(
-					slog.String("target", t.Target()),
-				)
-			}
+		logger := c.Logger
+		if t, ok := conn.(interface{ Target() string }); ok {
+			logger = logger.With(
+				slog.String("target", t.Target()),
+			)
+		}
 
-			catalog := &eventstream.RemoteCatalog{
-				Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
-				Logger: logger,
-			}
+		catalog := &eventstream.RemoteCatalog{
+			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			Logger: logger,
+		}
 
-			removeCatalog := c.EventStreams.Add(catalog)
-			stopped := make(chan struct{})
+		removeCatalog := c.EventStreams.Add(catalog)
+		stopped := make(chan struct{})
 
-			connections.Go(func() {
-				defer close(stopped)
-				defer removeCatalog()
+		connections.Go(func() {
+			defer close(stopped)
+			defer removeCatalog()
 
-				catalog.Run(ctx)
-			})
+			catalog.Run(ctx)
+		})
 
-			return func() {
-				removeCatalog()
-				cancel()
-				<-stopped
-			}
-		},
-	)
+		return func() {
+			removeCatalog()
+			cancel()
+			<-stopped
+		}
+	}
+
+	err := xerrors.Recover(func() error {
+		return c.Discover(ctx, add)
+	})
 
 	if err == nil && ctx.Err() == nil {
 		return errors.New("discoverer stopped before the context was canceled")

@@ -288,6 +288,36 @@ func TestConnector(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("it calls the discoverer again if it panics", func(t *testing.T) {
+		var calls atomic.Int32
+
+		connector := &Connector{
+			Discover: func(
+				ctx context.Context,
+				_ func(grpc.ClientConnInterface) func(),
+			) error {
+				if calls.Add(1) == 1 {
+					panic("<panic>")
+				}
+
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			EventStreams: &eventstream.CompositeCatalog{},
+			Logger:       spruce.NewTestLogger(t),
+		}
+		xtesting.GoE(t, connector.Run)
+
+		deadline := time.After(xtesting.WaitTimeout)
+		for calls.Load() < 2 {
+			select {
+			case <-deadline:
+				t.Fatal("timeout waiting for the discoverer to be called again")
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	})
 }
 
 // app returns a handler route for an application that records events, so
