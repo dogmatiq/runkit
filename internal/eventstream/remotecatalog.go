@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"slices"
 	"sync"
 	"time"
@@ -358,7 +357,7 @@ func (c *RemoteCatalog) waitToRecheck(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(c.RecheckInterval/2 + rand.N(c.RecheckInterval/2)):
+	case <-time.After(supervisor.Jitter(c.RecheckInterval)):
 		return nil
 	}
 }

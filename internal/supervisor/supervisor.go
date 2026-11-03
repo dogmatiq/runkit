@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math/rand/v2"
 	"time"
 
 	"github.com/dogmatiq/enginekit/x/xsync"
@@ -99,8 +98,7 @@ func Run(
 
 		failures++
 
-		// Randomize between 50%-100% of the backoff to avoid thundering herds.
-		delay := backoff/2 + rand.N(backoff/2)
+		delay := Jitter(backoff)
 
 		logger.ErrorContext(
 			ctx,
