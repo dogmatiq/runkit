@@ -263,15 +263,17 @@ stop engines during a test. Phase B needs:
       consuming from the first. `xtesting.StartCluster(t, db, app, n,
       options...)` (in `xtesting/cluster.go`) runs `app` on `n` nodes and
       waits for every node to be ready and to see the others, returning a
-      `*Cluster` (one logical engine) with `Nodes()`, `Stop()`, `Failed()` and
-      `Dial(t)`; `RunEnginesWithDB` is built on it. `Cluster.Dial` returns one
-      connection that reaches any of the cluster's nodes (a manual resolver
-      over every listen address, round-robin), as a remote engine's
-      connection should, for `StaticRemoteEngines`.
+      `*Cluster` (one logical engine) with `Nodes()`, `Stop()` and
+      `Failed()`; `RunEnginesWithDB` is built on it. A `Cluster` is used only
+      from the test's goroutine, so it needs no locking.
+      `xtesting.Dial(t, engines...)` returns one connection to the given
+      engines (a manual resolver over their listen addresses, `pick_first`),
+      using the first and failing over to the others in the order given, for
+      `StaticRemoteEngines`.
 - [x] A way to add and remove individual nodes while a test runs:
       `Cluster.AddNode(t)` and `Cluster.StopNode(e)`, each node running with
       its own context. `Cluster` implements `dogma.CommandExecutor`,
-      executing each command on its running nodes in turn, and the
+      executing each command on a running node chosen at random, and the
       `xtesting.ExecuteCommand*` helpers accept any executor.
 
 ### Task B.1: Foreign events
@@ -284,23 +286,27 @@ stop engines during a test. Phase B needs:
 
 ### Task B.2: Distribution, failover, catch-up
 
-- [ ] Three replicas over one database: after the cluster converges, every
+- [x] Three nodes over one database: after the cluster converges, every
       event is handled and `HandleEvent` is called exactly once per event
-      (duplicates are allowed only while membership changes).
-- [ ] Add a replica: streams move, nothing dropped or duplicated after
-      convergence. Remove one: its streams are consumed elsewhere within about
-      the heartbeat timeout.
-- [ ] A slow gRPC client of `ConsumerAPI` is returned to history and still
-      receives every event in order (the local equivalent is already covered in
-      `reader_test.go`).
+      (`internal/projection/distribution_test.go`).
+- [x] Add a node: streams move, nothing dropped or duplicated. Remove one:
+      its streams are consumed elsewhere once it misses its heartbeats
+      (about the heartbeat timeout plus one interval; the test waits for
+      it, as heartbeat timing is not configurable).
+- [x] A slow gRPC client of `ConsumerAPI` is returned to history and still
+      receives every event in order (`grpc_test.go`).
+- [x] Remote failover: a downstream projection keeps consuming when the
+      upstream node it is connected to stops; the test dials the two upstream
+      nodes in order and stops the first (`foreignevents_test.go`).
 
 ### Task B.3: Final validation
 
 - [x] `RunEngines*` handed only the first engine to tests, so accepting
       commands and serving `ConsumerAPI` on the other nodes was never
-      exercised. Resolved: `fn` receives the `*xtesting.Cluster`, which
-      executes commands on each node in turn, and the gRPC tests connect
-      with `Cluster.Dial`, which spreads requests across the nodes.
+      exercised. Resolved for commands: `fn` receives the `*xtesting.Cluster`,
+      which executes each command on a node chosen at random. gRPC tests
+      dial the first node; every node runs the same `ConsumerAPI` over the
+      same database.
 - [ ] `make precommit` green. Commit.
 
 ---

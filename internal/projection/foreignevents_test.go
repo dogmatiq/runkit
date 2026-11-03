@@ -2,12 +2,10 @@ package projection_test
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -27,19 +25,19 @@ func TestForeignEvents_historicalEventsAreHandled(t *testing.T) {
 
 	xtesting.ExecuteCommand(t, upstream, stubs.CommandA1)
 
-	var handled xsync.Latch
+	handled := make(chan dogma.Event, 10)
 
 	xtesting.StartCluster(
 		t,
 		xtesting.NewDatabase(t),
-		downstreamApp(t, &handled),
+		downstreamApp(handled),
 		3,
 		runkit.WithRemoteEngineDiscoverer(
 			runkit.StaticRemoteEngines(xtesting.Dial(t, upstream.Nodes()[0])),
 		),
 	)
 
-	xtesting.ExpectLatchesSetEventually(t, &handled)
+	xtesting.ExpectToReceiveN(t, "handled event", handled, dogma.Event(stubs.EventA1))
 }
 
 // TestForeignEvents_contemporaryEventsAreHandled verifies that a projection
@@ -55,12 +53,12 @@ func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
 		3,
 	)
 
-	var handled xsync.Latch
+	handled := make(chan dogma.Event, 10)
 
 	xtesting.StartCluster(
 		t,
 		xtesting.NewDatabase(t),
-		downstreamApp(t, &handled),
+		downstreamApp(handled),
 		3,
 		runkit.WithRemoteEngineDiscoverer(
 			runkit.StaticRemoteEngines(xtesting.Dial(t, upstream.Nodes()[0])),
@@ -69,11 +67,50 @@ func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
 
 	xtesting.ExecuteCommand(t, upstream, stubs.CommandA1)
 
-	xtesting.ExpectLatchesSetEventually(t, &handled)
+	xtesting.ExpectToReceiveN(t, "handled event", handled, dogma.Event(stubs.EventA1))
 }
 
-// upstreamApp returns an application that records [stubs.EventA1] when it
-// executes [stubs.CommandA1].
+// TestForeignEvents_consumptionContinuesWhenAnUpstreamNodeStops verifies that a
+// projection keeps handling a foreign application's events when the node of
+// the remote engine that it is connected to stops.
+func TestForeignEvents_consumptionContinuesWhenAnUpstreamNodeStops(t *testing.T) {
+	t.Parallel()
+
+	upstream := xtesting.StartCluster(
+		t,
+		xtesting.NewDatabase(t),
+		upstreamApp(),
+		2,
+	)
+
+	// The downstream cluster's connection to the remote engine sends requests
+	// to the first upstream node until it stops, then to the second.
+	nodes := upstream.Nodes()
+	conn := xtesting.Dial(t, nodes[0], nodes[1])
+
+	handled := make(chan dogma.Event, 10)
+
+	xtesting.StartCluster(
+		t,
+		xtesting.NewDatabase(t),
+		downstreamApp(handled),
+		3,
+		runkit.WithRemoteEngineDiscoverer(
+			runkit.StaticRemoteEngines(conn),
+		),
+	)
+
+	xtesting.ExecuteCommand(t, upstream, stubs.CommandA1)
+	xtesting.ExpectToReceiveN(t, "handled event", handled, dogma.Event(stubs.EventA1))
+
+	upstream.StopNode(nodes[0])
+
+	xtesting.ExecuteCommand(t, upstream, stubs.CommandA2)
+	xtesting.ExpectToReceiveN(t, "handled event", handled, dogma.Event(stubs.EventA2))
+}
+
+// upstreamApp returns an application that records an event of type A, with the
+// same content as the command, when it executes a command of type A.
 func upstreamApp() dogma.Application {
 	return &stubs.ApplicationStub{
 		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
@@ -91,9 +128,13 @@ func upstreamApp() dogma.Application {
 						HandleCommandFunc: func(
 							_ context.Context,
 							s dogma.IntegrationCommandScope,
-							_ dogma.Command,
+							m dogma.Command,
 						) error {
-							s.RecordEvent(stubs.EventA1)
+							s.RecordEvent(
+								&stubs.EventStub[stubs.TypeA]{
+									Content: m.(*stubs.CommandStub[stubs.TypeA]).Content,
+								},
+							)
 							return nil
 						},
 					},
@@ -103,9 +144,9 @@ func upstreamApp() dogma.Application {
 	}
 }
 
-// downstreamApp returns an application with a projection that sets handled
-// when it handles [stubs.EventA1].
-func downstreamApp(t testing.TB, handled *xsync.Latch) dogma.Application {
+// downstreamApp returns an application with a projection that sends each event
+// of type A that it handles to the given channel.
+func downstreamApp(handled chan<- dogma.Event) dogma.Application {
 	var checkpoints checkpointStore
 
 	return &stubs.ApplicationStub{
@@ -128,11 +169,7 @@ func downstreamApp(t testing.TB, handled *xsync.Latch) dogma.Application {
 							return checkpoints.HandleEvent(
 								s,
 								func() error {
-									if !reflect.DeepEqual(m, stubs.EventA1) {
-										t.Errorf("unexpected event: %v", m)
-									}
-
-									handled.Set()
+									handled <- m
 									return nil
 								},
 							)
