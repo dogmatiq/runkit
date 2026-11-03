@@ -44,13 +44,14 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   catalog closes when it can no longer deliver. `LocalCatalog` and
   `RemoteCatalog` close it when they stop; the composite passes the offering
   member's channel through, or an already-closed one if no member offers the
-  stream. A catalog removed from
-  the composite is stopped by whatever removed it, which is what loses its
-  subscriptions. A subscriber treats a lost subscription as an error, so its
-  supervisor restarts it from its own checkpoint, which routes it to whichever
-  member now offers the stream. No subscriber is ever left bound to a member
-  that is gone, even if the member is removed and re-added between two reads
-  of `StreamIDs()`.
+  stream. A catalog is removed from the composite before whatever removed it
+  stops it, and removal returns only once the composite has stopped offering
+  the catalog's streams, so by the time a subscription is lost its stream is
+  no longer offered via that member. A stream consumer whose subscription is
+  lost is not failing: it subscribes again from its own checkpoint as soon as
+  the stream is offered, which routes it to whichever member now offers it.
+  No subscriber is ever left bound to a member that is gone, even if the
+  member is removed and re-added between two reads of `StreamIDs()`.
 - **Only local streams are permanent.** `LocalCatalog` keeps its guarantee that
   streams are never removed (its change detection relies on it). The composite
   makes no such guarantee: a member's streams disappear with the member. While
@@ -61,8 +62,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   consumer for each stream that appears and stops the stream consumer for each
   stream that disappears, so a removed member's streams stop being consumed.
   The handler keeps its checkpoint for the stream. A subscription to a stream
-  that no member offers is lost immediately; the stream consumer retries until
-  the consumer notices the stream is absent and stops it.
+  that no member offers is lost immediately; the stream consumer waits for the
+  stream to be offered again, until the consumer notices the stream is absent
+  and stops it.
 - **`ConsumerAPI` serves only this application's streams.** It depends on
   `*LocalCatalog`, never on the composite, so it never relays a foreign
   application's streams. (Relay topologies are out of scope.)
@@ -123,8 +125,8 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   under the supervisor for the life of the engine; when it returns, every
   connection it added is removed. Two connections
   to the same remote engine (including one per instance) are two members
-  offering the same streams, which stops the engine, as does a connection to
-  this engine. Homogeneous connectivity.
+  offering the same streams, as is a connection to this engine; each such
+  stream is served by one of them. Homogeneous connectivity.
 - **Processes are unchanged.** They keep `AcquireEventDelivery`, SKIP LOCKED and
   engine-owned checkpoints in `eventstream.handler_checkpoints`.
 
@@ -180,16 +182,16 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 - [x] **Step 2: Routing.** `Subscribe()` delegates to the member that offers
       the stream, read from a map that `publish` keeps alongside the stream
       set, passing the member's `lost` channel through. A stream no member
-      offers is lost immediately. `streamConsumer` and `ConsumerAPI` treat a
-      lost subscription as an error.
+      offers is lost immediately. `streamConsumer` subscribes again once the
+      stream is offered; `ConsumerAPI` ends the gRPC stream as unavailable.
 - [x] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
       consumer gets its own cancellable context (`supervisor.Go` or
       `context.WithCancel` per stream) so that a stream missing from
       `StreamIDs()` has its consumer cancelled and forgotten. Update the
       comment that says a stream consumer lives for the life of the
       consumer. Without this, a stream consumer for a
-      vanished stream would keep restarting with backoff, its subscription
-      lost each time.
+      vanished stream would wait for it to be offered again for as long as the
+      consumer runs.
 - [x] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
       catalog to it, and gives it to each `projection.Consumer`; `ConsumerAPI`
       stays on `*LocalCatalog`. With one member the composite must be a
@@ -325,10 +327,6 @@ stop engines during a test. Phase B needs:
 - **Discoverers other than `StaticRemoteEngines`** (DNS, Kubernetes,
   registries). The interface allows them; runkit provides none yet.
 - **Process handlers** consumed by a node chosen by rendezvous hashing.
-- **Re-subscribing after a foreign application closes a stream** because it
-  could not record any requested type; if it later adds that type, the
-  subscription is only re-established when this engine restarts or the
-  application is re-added.
 - **Hot-spot mitigation** (weighted rendezvous, work stealing).
 - **Heterogeneous connectivity**, per-replica reachability.
 - **Relay topologies**; this engine consumes directly from the application
