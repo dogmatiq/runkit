@@ -32,7 +32,7 @@ func TestConnector(t *testing.T) {
 		composite := &eventstream.CompositeCatalog{}
 		xtesting.GoE(t, composite.Run)
 
-		return composite, cluster.Dial(t)
+		return composite, xtesting.Dial(t, cluster.Nodes()[0])
 	}
 
 	t.Run("it offers the event streams of each added remote engine", func(t *testing.T) {

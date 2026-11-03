@@ -14,20 +14,22 @@ import (
 // that have multiple replicas, it represents the logical engine as a whole,
 // rather than any individual replica.
 //
-// It calls add for each remote engine as it becomes available, and calls the
-// returned remove function when it is no longer available, until ctx is
+// It calls the add function for each remote engine as it becomes available,
+// passing a connection to the remote engine, and calls the remove function
+// that it returns when the remote engine is no longer available, until ctx is
 // canceled.
 //
-// The engine uses conn until remove is called, but never closes it. remove
-// returns once the engine has stopped using conn, after which conn may be
-// closed. Calling it more than once has no effect.
+// The engine uses the connection until the remove function is called, but
+// never closes it. The remove function returns once the engine has stopped
+// using the connection, after which it may be closed. Calling the remove
+// function more than once has no effect.
 //
 // Each remote engine must be added once. Otherwise, the same resources, such
 // as event streams, are offered by more than one remote engine, which stops
 // this engine with an error.
 //
-// add must not be called after the discoverer returns, including from
-// goroutines that it started. Once it returns, every remote engine that it
+// The add function must not be called after the discoverer returns, including
+// from goroutines that it started. Once it returns, every remote engine that it
 // added is removed. If it returns an error other than ctx's, it is called again
 // after a delay.
 type RemoteEngineDiscoverer func(

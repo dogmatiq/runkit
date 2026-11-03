@@ -35,7 +35,7 @@ func TestForeignEvents_historicalEventsAreHandled(t *testing.T) {
 		downstreamApp(t, &handled),
 		3,
 		runkit.WithRemoteEngineDiscoverer(
-			runkit.StaticRemoteEngines(upstream.Dial(t)),
+			runkit.StaticRemoteEngines(xtesting.Dial(t, upstream.Nodes()[0])),
 		),
 	)
 
@@ -63,7 +63,7 @@ func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
 		downstreamApp(t, &handled),
 		3,
 		runkit.WithRemoteEngineDiscoverer(
-			runkit.StaticRemoteEngines(upstream.Dial(t)),
+			runkit.StaticRemoteEngines(xtesting.Dial(t, upstream.Nodes()[0])),
 		),
 	)
 

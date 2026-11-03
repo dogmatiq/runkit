@@ -337,7 +337,7 @@ func newConsumerClient(
 	ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 	t.Cleanup(cancel)
 
-	return messaginggrpc.NewEventStreamConsumerAPIClient(cluster.Dial(t)), ctx
+	return messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.Dial(t, cluster.Nodes()[0])), ctx
 }
 
 // consume begins consuming events of the given types from the given stream.
@@ -451,7 +451,7 @@ func ExpectEvents(
 ) {
 	t.Helper()
 
-	client := messaginggrpc.NewEventStreamConsumerAPIClient(cluster.Dial(t))
+	client := messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.Dial(t, cluster.Nodes()[0]))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

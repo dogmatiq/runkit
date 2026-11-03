@@ -30,8 +30,7 @@ const ProjectionCompactInterval = 10 * time.Millisecond
 //
 // Multiple nodes are run to ensure that behavior is consistent when multiple
 // engines run against the same database. fn receives the [Cluster], which
-// executes commands on each node in turn, and whose [Cluster.Dial] reaches any
-// node.
+// executes each command on a node chosen at random.
 //
 // If any of the nodes stop before fn returns, the context passed to fn is
 // canceled, and the test fails.
