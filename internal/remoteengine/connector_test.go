@@ -150,20 +150,28 @@ func TestConnector(t *testing.T) {
 		)
 	})
 
-	t.Run("it removes the event streams of every remote engine when the discoverer returns", func(t *testing.T) {
+	t.Run("it removes the event streams of every remote engine when the discoverer returns, and calls it again", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				composite, conn := setup(t, cluster)
 				streamID := xtesting.CreateEventStream(t, db)
 
-				stop := make(chan struct{})
+				var (
+					calls atomic.Int32
+					stop  = make(chan struct{})
+				)
 
 				connector := &Connector{
 					Discover: func(
 						ctx context.Context,
 						add func(grpc.ClientConnInterface) func(),
 					) error {
+						if calls.Add(1) > 1 {
+							<-ctx.Done()
+							return ctx.Err()
+						}
+
 						add(conn)
 
 						select {
@@ -183,11 +191,19 @@ func TestConnector(t *testing.T) {
 				close(stop)
 
 				expectStreamIDs(t, composite)
+
+				deadline := time.After(xtesting.WaitTimeout)
+				for calls.Load() < 2 {
+					select {
+					case <-deadline:
+						t.Fatal("timeout waiting for the discoverer to be called again")
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
 			},
 			app(),
 		)
 	})
-
 	t.Run("it runs alongside other connectors that share the catalog", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,

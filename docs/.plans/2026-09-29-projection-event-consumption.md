@@ -9,8 +9,7 @@
 **Goal:** Projections consume events recorded by _foreign_ applications, running
 on other engines, through the same path they already use for this
 application's streams. `eventstream.Catalog` is that path; this work makes it
-span foreign applications. Foreign events are never
-persisted locally.
+span foreign applications. Foreign events are never persisted locally.
 
 "Peer" is reserved for another node in the same cluster. An application that
 this engine consumes events from is a "foreign application", and the engine
@@ -42,10 +41,10 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   catalog is added first, then one `RemoteCatalog` per available remote
   engine.
   A subscription can be lost: `Subscribe()` returns a `lost` channel that the
-  catalog closes when it can no longer deliver. `LocalCatalog` closes it when
-  it stops; `RemoteCatalog` when it stops or the server closes the gRPC
-  stream; the composite passes the offering member's channel through, or an
-  already-closed one if no member offers the stream. A catalog removed from
+  catalog closes when it can no longer deliver. `LocalCatalog` and
+  `RemoteCatalog` close it when they stop; the composite passes the offering
+  member's channel through, or an already-closed one if no member offers the
+  stream. A catalog removed from
   the composite is stopped by whatever removed it, which is what loses its
   subscriptions. A subscriber treats a lost subscription as an error, so its
   supervisor restarts it from its own checkpoint, which routes it to whichever
@@ -186,9 +185,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 - [x] **Step 3: `projection.Consumer` stops as well as starts.** Each stream
       consumer gets its own cancellable context (`supervisor.Go` or
       `context.WithCancel` per stream) so that a stream missing from
-      `StreamIDs()` has its consumer cancelled and removed from
-      `streamConsumers`. Update the comment that says a stream consumer lives
-      for the life of the consumer. Without this, a stream consumer for a
+      `StreamIDs()` has its consumer cancelled and forgotten. Update the
+      comment that says a stream consumer lives for the life of the
+      consumer. Without this, a stream consumer for a
       vanished stream would keep restarting with backoff, its subscription
       lost each time.
 - [x] **Step 4:** The engine builds a `CompositeCatalog`, adds the local
@@ -208,7 +207,9 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 (`newConsumerClient`).
 
 - [x] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
-      `supervisor.Run`, adding each `event_stream_id` to an observable set.
+      `supervisor.Run`, adding each `event_stream_id` to an observable set. A
+      remote engine that does not implement the service (`UNIMPLEMENTED`) is
+      logged once and offers no streams; discovery is not retried for it.
 - [x] **Step 2: Reading.** `Subscribe()` starts a supervised function:
       `ConsumeEvents(streamID, checkpoint, types)`, each response → `Batch`
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
@@ -240,8 +241,10 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       added connection it adds a `RemoteCatalog` to the composite and runs it;
       `remove` removes the catalog and stops it, returning once it has stopped
       using the connection. When the discoverer returns, its connections are
-      removed, and a discoverer that returns nil is not called again. Other subsystems that use remote engines later become
-      further dependencies of this type.
+      removed; a discoverer that returns before its context is canceled, even
+      without an error, is logged and called again after a delay. Other
+      subsystems that use remote engines later become further dependencies of
+      this type.
 - [x] **Step 3: Tests + commit.** Against a real `ConsumerAPI`: an added
       connection's streams appear in the composite; removing it removes them
       and loses their subscriptions; a returning discoverer's connections are

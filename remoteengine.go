@@ -28,10 +28,10 @@ import (
 // as event streams, are offered by more than one remote engine, which stops
 // this engine with an error.
 //
-// The add function must not be called after the discoverer returns, including
-// from goroutines that it started. Once it returns, every remote engine that it
-// added is removed. If it returns an error other than ctx's, it is called again
-// after a delay.
+// The discoverer must not return until ctx is canceled. The add function must
+// not be called after it returns, including from goroutines that it started.
+// If it returns before ctx is canceled, with or without an error, every remote
+// engine that it added is removed and it is called again after a delay.
 type RemoteEngineDiscoverer func(
 	ctx context.Context,
 	add func(conn grpc.ClientConnInterface) (remove func()),

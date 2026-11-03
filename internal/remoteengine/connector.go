@@ -2,6 +2,7 @@ package remoteengine
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -33,16 +34,14 @@ type Connector struct {
 
 // Run discovers remote engines until ctx is canceled.
 func (c *Connector) Run(ctx context.Context) error {
-	if err := supervisor.Run(ctx, c.Logger, c.discover); err != nil {
-		return err
-	}
-
-	<-ctx.Done()
-	return ctx.Err()
+	return supervisor.Run(ctx, c.Logger, c.discover)
 }
 
 // discover calls Discover, connecting to each remote engine that it adds until
 // the engine is removed or Discover returns.
+//
+// Discover is expected to run until ctx is canceled, so returning before then
+// is a failure, even without an error.
 func (c *Connector) discover(ctx context.Context) error {
 	var connections sync.WaitGroup
 	defer connections.Wait()
@@ -50,7 +49,7 @@ func (c *Connector) discover(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	return c.Discover(
+	err := c.Discover(
 		ctx,
 		func(conn grpc.ClientConnInterface) func() {
 			if ctx.Err() != nil {
@@ -88,4 +87,10 @@ func (c *Connector) discover(ctx context.Context) error {
 			}
 		},
 	)
+
+	if err == nil && ctx.Err() == nil {
+		return errors.New("discoverer stopped before the context was canceled")
+	}
+
+	return err
 }
