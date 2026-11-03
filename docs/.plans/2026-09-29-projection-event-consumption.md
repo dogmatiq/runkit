@@ -174,9 +174,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
       stopped, as `Node.ObserveResponsibility` does). `Run` watches every
       member's `changed` channel and the add/remove requests, and republishes
       the union through an `xsync.Observable`, storing only when it differs.
-      A stream offered by more than one member is a misconfiguration (the same
-      application listed twice, or this engine pointed at its own cluster):
-      `Run` returns an error naming the stream, which stops the engine.
+      A stream offered by more than one member (the same application listed
+      twice, or this engine pointed at its own cluster) is served by one of
+      them.
 - [x] **Step 2: Routing.** `Subscribe()` delegates to the member that offers
       the stream, read from a map that `publish` keeps alongside the stream
       set, passing the member's `lost` channel through. A stream no member

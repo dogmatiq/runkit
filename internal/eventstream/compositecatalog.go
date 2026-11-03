@@ -2,7 +2,6 @@ package eventstream
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -15,7 +14,8 @@ import (
 // added and removed while it runs. A catalog's streams are removed along with
 // it.
 //
-// Each stream must be offered by exactly one of the catalogs.
+// More than one catalog may offer the same stream, in which case it is
+// unspecified which of them serves each subscription.
 type CompositeCatalog struct {
 	streamIDs xsync.Observable[*uuidcollection.Set]
 	routes    atomic.Pointer[uuidcollection.Map[*compositeMember]]
@@ -110,8 +110,7 @@ func (c *CompositeCatalog) init() {
 	})
 }
 
-// Run tracks the available event streams until ctx is canceled, or a stream is
-// offered by more than one catalog.
+// Run tracks the available event streams until ctx is canceled.
 //
 // It must be called at most once.
 func (c *CompositeCatalog) Run(ctx context.Context) error {
@@ -122,9 +121,7 @@ func (c *CompositeCatalog) Run(ctx context.Context) error {
 	c.members = map[*compositeMember]struct{}{}
 
 	for {
-		if err := c.publish(); err != nil {
-			return err
-		}
+		c.publish()
 
 		select {
 		case <-ctx.Done():
@@ -170,10 +167,8 @@ func (c *CompositeCatalog) addMember(ctx context.Context, m *compositeMember) {
 }
 
 // publish publishes the current set of available event streams, if it differs
-// from the published set, and the catalog that offers each.
-//
-// It returns an error if a stream is offered by more than one catalog.
-func (c *CompositeCatalog) publish() error {
+// from the published set, and the catalog that serves each.
+func (c *CompositeCatalog) publish() {
 	streamIDs := uuidcollection.NewSet()
 	routes := &uuidcollection.Map[*compositeMember]{}
 
@@ -182,10 +177,7 @@ func (c *CompositeCatalog) publish() error {
 
 		for streamID := range ids.All() {
 			if streamIDs.Has(streamID) {
-				return fmt.Errorf(
-					"event stream %s is offered by more than one catalog",
-					streamID,
-				)
+				continue
 			}
 
 			streamIDs.Add(streamID)
@@ -198,6 +190,4 @@ func (c *CompositeCatalog) publish() error {
 	if prev, _ := c.streamIDs.Load(); !prev.IsEqual(streamIDs) {
 		c.streamIDs.Store(streamIDs)
 	}
-
-	return nil
 }

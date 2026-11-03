@@ -1,7 +1,6 @@
 package eventstream_test
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -68,36 +67,6 @@ func TestCompositeCatalog_streamIDs(t *testing.T) {
 
 		removeA()
 		expectStreamIDs(t, composite, streamB)
-	})
-
-	t.Run("it stops when a stream is offered by more than one catalog", func(t *testing.T) {
-		composite := &CompositeCatalog{}
-
-		result := make(chan error, 1)
-		go func() {
-			result <- composite.Run(t.Context())
-		}()
-
-		a := newCatalogStub()
-		b := newCatalogStub()
-
-		streamID := uuidpb.Generate()
-		a.Offer(streamID)
-
-		composite.Add(a)
-		composite.Add(b)
-		expectStreamIDs(t, composite, streamID)
-
-		b.Offer(streamID)
-
-		select {
-		case <-time.After(xtesting.WaitTimeout):
-			t.Fatal("timeout waiting for the composite to stop")
-		case err := <-result:
-			if err == nil || !strings.Contains(err.Error(), streamID.AsString()) {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		}
 	})
 }
 
@@ -175,6 +144,76 @@ func TestCompositeCatalog_subscribe(t *testing.T) {
 		close(sub.Lost)
 
 		xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+	})
+
+	t.Run("it subscribes via one of the catalogs when more than one offers the stream", func(t *testing.T) {
+		composite := &CompositeCatalog{}
+		xtesting.GoE(t, composite.Run)
+
+		a := newCatalogStub()
+		b := newCatalogStub()
+
+		streamID := uuidpb.Generate()
+		streamA := uuidpb.Generate()
+		streamB := uuidpb.Generate()
+
+		a.Offer(streamID)
+		a.Offer(streamA)
+		b.Offer(streamID)
+		b.Offer(streamB)
+
+		composite.Add(a)
+		composite.Add(b)
+		expectStreamIDs(t, composite, streamID, streamA, streamB)
+
+		_, unsubscribe := composite.Subscribe(
+			streamID,
+			0,
+			uuidcollection.NewSet(uuidpb.Generate()),
+			make(chan Batch, 10),
+		)
+		defer unsubscribe()
+
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatal("timeout waiting for subscription")
+		case <-a.Subscriptions:
+			xtesting.ExpectNoReceive(t, "subscription", b.Subscriptions)
+		case <-b.Subscriptions:
+			xtesting.ExpectNoReceive(t, "subscription", a.Subscriptions)
+		}
+	})
+
+	t.Run("it subscribes via the remaining catalog that offers the stream when another is removed", func(t *testing.T) {
+		composite := &CompositeCatalog{}
+		xtesting.GoE(t, composite.Run)
+
+		a := newCatalogStub()
+		b := newCatalogStub()
+
+		streamID := uuidpb.Generate()
+		streamA := uuidpb.Generate()
+		streamB := uuidpb.Generate()
+
+		a.Offer(streamID)
+		a.Offer(streamA)
+		b.Offer(streamID)
+		b.Offer(streamB)
+
+		removeA := composite.Add(a)
+		composite.Add(b)
+		expectStreamIDs(t, composite, streamID, streamA, streamB)
+
+		removeA()
+		expectStreamIDs(t, composite, streamID, streamB)
+
+		types := uuidcollection.NewSet(uuidpb.Generate())
+
+		_, unsubscribe := composite.Subscribe(streamID, 0, types, make(chan Batch, 10))
+		defer unsubscribe()
+
+		expectSubscription(t, b, streamID, 0, types)
+		xtesting.ExpectNoReceive(t, "subscription", a.Subscriptions)
 	})
 }
 

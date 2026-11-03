@@ -15,23 +15,22 @@ import (
 // rather than any individual replica.
 //
 // It calls the add function for each remote engine as it becomes available,
-// passing a connection to the remote engine, and calls the remove function
-// that it returns when the remote engine is no longer available, until ctx is
-// canceled.
+// passing a connection to the remote engine, and calls the remove function that
+// it returns when the remote engine is no longer available.
 //
-// The engine uses the connection until the remove function is called, but
-// never closes it. The remove function returns once the engine has stopped
+// This engine uses the connection until the remove function is called, but
+// never closes it. The remove function blocks until the engine has stopped
 // using the connection, after which it may be closed. Calling the remove
 // function more than once has no effect.
 //
-// Each remote engine must be added once. Otherwise, the same resources, such
-// as event streams, are offered by more than one remote engine, which stops
-// this engine with an error.
+// If two remote engines offer the same resource, such as the same event stream,
+// this engine chooses one of them to use. There are no guarantees about which
+// is chosen, and the choice may change over time even if the set of available
+// remote engines remains the same.
 //
-// The discoverer must not return until ctx is canceled. The add function must
-// not be called after it returns, including from goroutines that it started.
-// If it returns before ctx is canceled, with or without an error, every remote
-// engine that it added is removed and it is called again after a delay.
+// The discoverer should run until ctx is canceled. If it returns before then,
+// every remote engine that it added is removed and it is called again after a
+// delay. The add function must not be called after the discoverer returns.
 type RemoteEngineDiscoverer func(
 	ctx context.Context,
 	add func(conn grpc.ClientConnInterface) (remove func()),
