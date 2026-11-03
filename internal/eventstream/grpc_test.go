@@ -8,12 +8,14 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -320,6 +322,72 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventA1)
 
 				expectResponse(t, responses, 3, stubs.EventA1)
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it delivers every event in order to a client that falls behind", func(t *testing.T) {
+		const eventCount = 1000
+
+		var streamID *uuidpb.UUID
+
+		xtesting.SetupThenRunEngines(
+			t,
+			func(t testing.TB, db *sql.DB) {
+				streamID = xtesting.CreateEventStream(t, db)
+			},
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client := messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.Dial(t, cluster.Nodes()[0]))
+				responses := consume(t, t.Context(), client, streamID, 0, typeA)
+
+				// Receiving the first event shows that the server is
+				// delivering contemporary events to the client.
+				xtesting.AppendToEventStream(t, db, streamID, stubs.EventA1)
+				expectResponse(t, responses, 1, stubs.EventA1)
+
+				// While the client is not reading, append more data than gRPC
+				// flow control and the server's buffer can hold, so that the
+				// server falls back to reading historical events for the
+				// client.
+				padding := strings.Repeat("x", 2000)
+				var want []dogma.Event
+
+				for i := range eventCount {
+					event := &stubs.EventStub[stubs.TypeA]{
+						Content: stubs.TypeA(fmt.Sprintf("%d %s", i, padding)),
+					}
+					want = append(want, event)
+					xtesting.AppendToEventStream(t, db, streamID, event)
+				}
+
+				var got []dogma.Event
+				next := uint64(1)
+
+				for len(got) < eventCount {
+					res, err := responses.Recv()
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					for _, envelopes := range res.GetEnvelopes() {
+						for env := range envelopes.All() {
+							pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
+							if pos.GetOffset() != next {
+								t.Fatalf("unexpected offset: got %d, want %d", pos.GetOffset(), next)
+							}
+							next++
+
+							event, err := envelope.Unpack[dogma.Event](env)
+							if err != nil {
+								t.Fatal(err)
+							}
+							got = append(got, event)
+						}
+					}
+				}
+
+				xtesting.Expect(t, "events", got, want)
 			},
 			consumerAPIApp(),
 		)
