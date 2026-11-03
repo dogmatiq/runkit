@@ -1,6 +1,7 @@
 package projection_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -81,6 +82,31 @@ func TestConsumer(t *testing.T) {
 		catalog.Offer(streamID)
 		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
 	})
+
+	t.Run("it subscribes again when a subscription is lost while the stream is offered", func(t *testing.T) {
+		catalog := setup(t)
+		streamID := uuidpb.Generate()
+
+		catalog.Offer(streamID)
+		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+
+		catalog.LoseSubscriptions()
+		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
+		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+	})
+
+	t.Run("it stops consuming when a subscription is lost after the stream leaves the catalog", func(t *testing.T) {
+		catalog := setup(t)
+		streamID := uuidpb.Generate()
+
+		catalog.Offer(streamID)
+		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+
+		catalog.Offer()
+		catalog.LoseSubscriptions()
+		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
+		xtesting.ExpectNoReceive(t, "subscription", catalog.Subscribed)
+	})
 }
 
 // catalogStub is an [eventstream.Catalog] that offers the streams given to it
@@ -89,6 +115,9 @@ type catalogStub struct {
 	streamIDs    xsync.Observable[*uuidcollection.Set]
 	Subscribed   chan *uuidpb.UUID
 	Unsubscribed chan *uuidpb.UUID
+
+	m    sync.Mutex
+	lost []chan struct{}
 }
 
 func (s *catalogStub) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
@@ -101,11 +130,29 @@ func (s *catalogStub) Subscribe(
 	_ *uuidcollection.Set,
 	_ chan<- eventstream.Batch,
 ) (<-chan struct{}, func()) {
+	lost := make(chan struct{})
+
+	s.m.Lock()
+	s.lost = append(s.lost, lost)
+	s.m.Unlock()
+
 	s.Subscribed <- streamID
 
-	return nil, func() {
+	return lost, func() {
 		s.Unsubscribed <- streamID
 	}
+}
+
+// LoseSubscriptions reports every subscription made so far as lost.
+func (s *catalogStub) LoseSubscriptions() {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	for _, lost := range s.lost {
+		close(lost)
+	}
+
+	s.lost = nil
 }
 
 // Offer replaces the set of streams that the catalog offers.

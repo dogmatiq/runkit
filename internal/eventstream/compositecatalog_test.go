@@ -68,6 +68,31 @@ func TestCompositeCatalog_streamIDs(t *testing.T) {
 		removeA()
 		expectStreamIDs(t, composite, streamB)
 	})
+
+	t.Run("it no longer reports a catalog's streams once removing it returns", func(t *testing.T) {
+		composite := &CompositeCatalog{}
+		xtesting.GoE(t, composite.Run)
+
+		a := newCatalogStub()
+		b := newCatalogStub()
+
+		streamA := uuidpb.Generate()
+		streamB := uuidpb.Generate()
+
+		a.Offer(streamA)
+		b.Offer(streamB)
+
+		removeA := composite.Add(a)
+		composite.Add(b)
+		expectStreamIDs(t, composite, streamA, streamB)
+
+		removeA()
+
+		streamIDs, _ := composite.StreamIDs()
+		if want := uuidcollection.NewSet(streamB); !streamIDs.IsEqual(want) {
+			t.Fatalf("unexpected stream IDs: got %s, want %s", streamIDs, want)
+		}
+	})
 }
 
 func TestCompositeCatalog_subscribe(t *testing.T) {

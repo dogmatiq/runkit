@@ -34,6 +34,10 @@ type compositeMember struct {
 
 	// Gone is set when the member is removed.
 	Gone xsync.Latch
+
+	// Removed is set once the composite has published its streams and routes
+	// without the member.
+	Removed xsync.Latch
 }
 
 // StreamIDs returns the IDs of the available event streams, and a channel that
@@ -52,8 +56,9 @@ func (c *CompositeCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 //
 // lost is closed if the catalog can no longer deliver to the subscription: if
 // no catalog offers the stream, or if the catalog that offers it loses the
-// subscription. A catalog that is removed from the composite is expected to be
-// stopped, at which point its subscriptions are lost.
+// subscription. A catalog is expected to be stopped only after it is removed
+// from the composite, so that its streams are no longer offered via it by the
+// time its subscriptions are lost.
 func (c *CompositeCatalog) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
@@ -72,7 +77,10 @@ func (c *CompositeCatalog) Subscribe(
 
 // Add makes the event streams offered by cat available from the composite.
 //
-// It returns a function that removes cat, along with its streams.
+// It returns a function that removes cat, along with its streams. Once that
+// function returns, cat's streams are no longer reported by
+// [CompositeCatalog.StreamIDs] unless another catalog offers them, and
+// subscriptions are no longer made via cat.
 //
 // It blocks until [CompositeCatalog.Run] has been called. If the composite has
 // stopped, it has no effect.
@@ -98,6 +106,7 @@ func (c *CompositeCatalog) Add(cat Catalog) (remove func()) {
 			select {
 			case <-c.done.Chan():
 			case c.remove <- m:
+				m.Removed.Wait()
 			}
 		})
 	}
@@ -120,17 +129,21 @@ func (c *CompositeCatalog) Run(ctx context.Context) error {
 	c.changed = make(chan struct{}, 1)
 	c.members = map[*compositeMember]struct{}{}
 
-	for {
-		c.publish()
+	c.publish()
 
+	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case m := <-c.add:
 			c.addMember(ctx, m)
+			c.publish()
 		case m := <-c.remove:
 			delete(c.members, m)
+			c.publish()
+			m.Removed.Set()
 		case <-c.changed:
+			c.publish()
 		}
 	}
 }

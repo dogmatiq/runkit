@@ -2,7 +2,6 @@ package projection
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -113,13 +112,11 @@ func (sc *streamConsumer) step(
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled, an event can not be dispatched, the
-// handler reports an optimistic concurrency conflict, or the subscription to
-// the stream is lost.
+// checkpoint offset, until ctx is canceled, an event can not be dispatched, or
+// the handler reports an optimistic concurrency conflict.
 //
-// A conflict or a lost subscription is returned as an error so that consumption
-// resumes from the handler's checkpoint offset after a delay, rather than
-// immediately.
+// A conflict is returned as an error so that consumption resumes from the
+// handler's checkpoint offset after a delay, rather than immediately.
 func (sc *streamConsumer) consume(ctx context.Context) error {
 	checkpoint, err := xerrors.RecoverT(
 		func() (uint64, error) {
@@ -133,6 +130,28 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		)
 	}
 
+	for {
+		checkpoint, err = sc.consumeSubscription(ctx, checkpoint)
+		if err != nil {
+			return err
+		}
+
+		if err := sc.waitUntilOffered(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// consumeSubscription subscribes to the stream from the given checkpoint
+// offset and dispatches its events until the subscription is lost, ctx is
+// canceled, an event can not be dispatched, or the handler reports an
+// optimistic concurrency conflict.
+//
+// It returns the checkpoint offset from which to resume.
+func (sc *streamConsumer) consumeSubscription(
+	ctx context.Context,
+	checkpoint uint64,
+) (uint64, error) {
 	batches := make(chan eventstream.Batch, sc.BufferSize)
 	lost, unsubscribe := sc.EventStreams.Subscribe(
 		sc.StreamID,
@@ -147,9 +166,10 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return checkpoint, ctx.Err()
 		case <-lost:
-			return errors.New("subscription to event stream lost")
+			sc.Logger.DebugContext(ctx, "subscription to event stream lost")
+			return checkpoint, nil
 		case batch = <-batches:
 		}
 
@@ -164,11 +184,11 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 
 			next, err := sc.dispatch(ctx, offset, checkpoint, env)
 			if err != nil {
-				return err
+				return checkpoint, err
 			}
 
 			if next != offset+1 {
-				return fmt.Errorf(
+				return checkpoint, fmt.Errorf(
 					"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
 					offset,
 					offset+1,
@@ -177,6 +197,29 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 			}
 
 			checkpoint = next
+		}
+	}
+}
+
+// waitUntilOffered blocks until the catalog offers the stream, or ctx is
+// canceled.
+//
+// A subscription is lost only once the stream is no longer offered by the
+// catalog that served it. If the stream is still offered, another catalog
+// serves it. Otherwise, the [Consumer] stops the stream consumer, unless the
+// stream is offered again first.
+func (sc *streamConsumer) waitUntilOffered(ctx context.Context) error {
+	for {
+		streamIDs, changed := sc.EventStreams.StreamIDs()
+
+		if streamIDs.Has(sc.StreamID) {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
 		}
 	}
 }

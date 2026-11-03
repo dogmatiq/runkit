@@ -61,8 +61,6 @@ func (c *Connector) discover(ctx context.Context) error {
 			return func() {}
 		}
 
-		ctx, cancel := context.WithCancel(ctx)
-
 		logger := c.Logger
 		if t, ok := conn.(interface{ Target() string }); ok {
 			logger = logger.With(
@@ -77,18 +75,30 @@ func (c *Connector) discover(ctx context.Context) error {
 		}
 
 		removeCatalog := c.EventStreams.Add(catalog)
+
+		// The catalog is removed before it is stopped, so that its streams are
+		// no longer offered by the time its subscriptions are lost. Its context
+		// is therefore canceled only after removal, rather than along with ctx.
+		catalogCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+		remove := func() {
+			removeCatalog()
+			cancel()
+		}
+
+		deregister := context.AfterFunc(ctx, remove)
 		stopped := make(chan struct{})
 
 		connections.Go(func() {
 			defer close(stopped)
 			defer removeCatalog()
 
-			catalog.Run(ctx)
+			catalog.Run(catalogCtx)
 		})
 
 		return func() {
-			removeCatalog()
-			cancel()
+			deregister()
+			remove()
 			<-stopped
 		}
 	}

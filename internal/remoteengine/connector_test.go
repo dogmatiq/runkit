@@ -102,7 +102,7 @@ func TestConnector(t *testing.T) {
 		)
 	})
 
-	t.Run("it loses subscriptions to the event streams of a remote engine that is removed", func(t *testing.T) {
+	t.Run("it loses subscriptions to the event streams of a remote engine that is removed, after it stops offering them", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -148,6 +148,65 @@ func TestConnector(t *testing.T) {
 				}
 
 				xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+
+				if streamIDs, _ := composite.StreamIDs(); streamIDs.Has(streamID) {
+					t.Fatal("expected the stream to no longer be offered")
+				}
+			},
+			app(),
+		)
+	})
+
+	t.Run("it loses subscriptions to the event streams of every remote engine when the discoverer returns, after it stops offering them", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
+				streamID := xtesting.CreateEventStream(t, db)
+
+				stop := make(chan struct{})
+
+				connector := &Connector{
+					Discover: func(
+						ctx context.Context,
+						add func(grpc.ClientConnInterface) func(),
+					) error {
+						add(conn)
+
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-stop:
+							return nil
+						}
+					},
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
+				}
+				xtesting.GoE(t, connector.Run)
+
+				expectStreamIDs(t, composite, streamID)
+
+				lost, unsubscribe := composite.Subscribe(
+					streamID,
+					0,
+					uuidcollection.NewSet(
+						stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+					),
+					make(chan eventstream.Batch, 10),
+				)
+				defer unsubscribe()
+
+				xtesting.ExpectNoReceive(t, "lost subscription", lost)
+
+				close(stop)
+
+				xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+
+				if streamIDs, _ := composite.StreamIDs(); streamIDs.Has(streamID) {
+					t.Fatal("expected the stream to no longer be offered")
+				}
 			},
 			app(),
 		)
