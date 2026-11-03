@@ -11,6 +11,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"google.golang.org/grpc"
 )
 
@@ -93,7 +94,13 @@ func (c *Connector) discover(ctx context.Context) error {
 			defer close(stopped)
 			defer removeCatalog()
 
-			catalog.Run(catalogCtx)
+			if err := catalog.Run(catalogCtx); catalogCtx.Err() == nil {
+				logger.ErrorContext(
+					catalogCtx,
+					"stopped consuming events from remote engine",
+					xslog.Error(err),
+				)
+			}
 		})
 
 		return func() {
