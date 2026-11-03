@@ -79,9 +79,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   checkpoint; they are returned via `supervisor.Persistent` (retried slowly),
   not treated as fatal, since one bad foreign application must not stop the
   engine. A server-closed stream (no requested type recordable by the
-  application) leaves the subscription in place, receiving nothing more, so
-  that projections which handle none of a remote engine's event types do not
-  retry against it.
+  application) leaves the subscription in place and is requested again after a
+  fixed interval of three minutes, since a later deployment of the application
+  may record those types.
 - **Remote engines are discovered, even when the set is static.** Foreign
   applications' events are consumed from _remote engines_. The engine is
   given any number of discoverers, one per use of
@@ -209,14 +209,15 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
 - [x] **Step 1: Discovery.** `Run()` holds `ListEventStreams` open under
       `supervisor.Run`, adding each `event_stream_id` to an observable set. A
       remote engine that does not implement the service (`UNIMPLEMENTED`) is
-      logged once and offers no streams; discovery is not retried for it.
+      logged once and offers no streams; it is asked again at the same
+      interval as a server-closed stream.
 - [x] **Step 2: Reading.** `Subscribe()` starts a supervised function:
       `ConsumeEvents(streamID, checkpoint, types)`, each response → `Batch`
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
       checkpoint it will reconnect from. Unsubscribe cancels it.
-- [x] **Step 3: Honor the server's contract** as decided above: EOF ends the
-      subscription's goroutine, leaving the subscription in place;
+- [x] **Step 3: Honor the server's contract** as decided above: EOF leaves the
+      subscription in place, and it is requested again after an interval;
       `NOT_FOUND`/`OUT_OF_RANGE` → `supervisor.Persistent`.
 - [x] **Step 4:** Test + commit.
 

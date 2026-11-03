@@ -1,7 +1,9 @@
 package eventstream_test
 
 import (
+	"context"
 	"database/sql"
+	"io"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -29,8 +31,9 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -47,8 +50,9 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -92,8 +96,9 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 		t.Cleanup(func() { conn.Close() })
 
 		catalog := &RemoteCatalog{
-			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
-			Logger: spruce.NewTestLogger(t),
+			Client:          messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			RecheckInterval: time.Hour,
+			Logger:          spruce.NewTestLogger(t),
 		}
 		xtesting.GoE(t, catalog.Run)
 
@@ -115,6 +120,46 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 
 		expectStreamIDs(t, catalog)
 	})
+
+	t.Run("it lists event streams again after the server reports that it does not offer them", func(t *testing.T) {
+		streamID := uuidpb.Generate()
+
+		var calls atomic.Int32
+
+		client := &messaginggrpc.EventStreamConsumerAPIClientStub{
+			ListEventStreamsFunc: func(
+				ctx context.Context,
+				_ *messaginggrpc.ListEventStreamsRequest,
+				_ ...grpc.CallOption,
+			) (messaginggrpc.EventStreamConsumerAPI_ListEventStreamsClient, error) {
+				if calls.Add(1) == 1 {
+					return nil, status.Error(codes.Unimplemented, "<unimplemented>")
+				}
+
+				return &streamClientStub[messaginggrpc.ListEventStreamsResponse]{
+					Ctx: ctx,
+					Responses: []*messaginggrpc.ListEventStreamsResponse{
+						messaginggrpc.NewListEventStreamsResponseBuilder().
+							WithEventStream(
+								messaginggrpc.NewEventStreamBuilder().
+									WithEventStreamId(streamID).
+									Build(),
+							).
+							Build(),
+					},
+				}, nil
+			},
+		}
+
+		catalog := &RemoteCatalog{
+			Client:          client,
+			RecheckInterval: 10 * time.Millisecond,
+			Logger:          spruce.NewTestLogger(t),
+		}
+		xtesting.GoE(t, catalog.Run)
+
+		expectStreamIDs(t, catalog, streamID)
+	})
 }
 
 func TestRemoteCatalog_subscribe(t *testing.T) {
@@ -133,8 +178,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -186,8 +232,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -216,8 +263,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -244,6 +292,69 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 		)
 	})
 
+	t.Run("it consumes again from the checkpoint after the application closes the stream", func(t *testing.T) {
+		streamID := uuidpb.Generate()
+		checkpoints := make(chan uint64, 2)
+
+		client := &messaginggrpc.EventStreamConsumerAPIClientStub{
+			ConsumeEventsFunc: func(
+				ctx context.Context,
+				req *messaginggrpc.ConsumeEventsRequest,
+				_ ...grpc.CallOption,
+			) (messaginggrpc.EventStreamConsumerAPI_ConsumeEventsClient, error) {
+				checkpoint := req.GetCheckpointOffset()
+				checkpoints <- checkpoint
+
+				stream := &streamClientStub[messaginggrpc.ConsumeEventsResponse]{
+					Ctx: ctx,
+					Responses: []*messaginggrpc.ConsumeEventsResponse{
+						messaginggrpc.NewConsumeEventsResponseBuilder().
+							WithCheckpointOffset(checkpoint + 1).
+							Build(),
+					},
+				}
+
+				if checkpoint == 0 {
+					stream.Err = io.EOF
+				}
+
+				return stream, nil
+			},
+		}
+
+		catalog := &RemoteCatalog{
+			Client:          client,
+			RecheckInterval: 10 * time.Millisecond,
+			Logger:          spruce.NewTestLogger(t),
+		}
+		xtesting.GoE(t, catalog.Run)
+
+		batches := make(chan Batch, 10)
+		lost, unsubscribe := catalog.Subscribe(
+			streamID,
+			0,
+			uuidcollection.NewSet(uuidpb.Generate()),
+			batches,
+		)
+		defer unsubscribe()
+
+		xtesting.ExpectToReceiveN(t, "checkpoint", checkpoints, 0, 1)
+		xtesting.ExpectToReceiveN(
+			t,
+			"batch",
+			batches,
+			Batch{
+				StreamID:   streamID,
+				Checkpoint: 1,
+			},
+			Batch{
+				StreamID:   streamID,
+				Checkpoint: 2,
+			},
+		)
+		xtesting.ExpectNoReceive(t, "lost subscription", lost)
+	})
+
 	t.Run("it does not report a subscription as lost when the stream is not found", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
@@ -251,8 +362,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, catalog.Run)
 
@@ -280,8 +392,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
-					Client: client,
-					Logger: spruce.NewTestLogger(t),
+					Client:          client,
+					RecheckInterval: time.Hour,
+					Logger:          spruce.NewTestLogger(t),
 				}
 				stop := xtesting.GoE(t, catalog.Run)
 
@@ -304,4 +417,29 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 			consumerAPIApp(),
 		)
 	})
+}
+
+// streamClientStub is a server-streaming gRPC client that receives the given
+// responses, then returns Err. If Err is nil, it waits until Ctx is canceled.
+type streamClientStub[T any] struct {
+	grpc.ClientStream
+
+	Ctx       context.Context
+	Responses []*T
+	Err       error
+}
+
+func (s *streamClientStub[T]) Recv() (*T, error) {
+	if len(s.Responses) > 0 {
+		res := s.Responses[0]
+		s.Responses = s.Responses[1:]
+		return res, nil
+	}
+
+	if s.Err != nil {
+		return nil, s.Err
+	}
+
+	<-s.Ctx.Done()
+	return nil, s.Ctx.Err()
 }

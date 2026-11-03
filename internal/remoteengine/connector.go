@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/eventstream"
@@ -27,6 +28,11 @@ type Connector struct {
 	// EventStreams is the catalog to which the event streams offered by each
 	// available remote engine are added.
 	EventStreams *eventstream.CompositeCatalog
+
+	// EventStreamRecheckInterval is how long the connector waits before asking
+	// a remote engine again after it reports having no events or event streams
+	// to offer.
+	EventStreamRecheckInterval time.Duration
 
 	// Logger is the target for log messages produced by the connector and its
 	// connections to remote engines.
@@ -65,8 +71,9 @@ func (c *Connector) discover(ctx context.Context) error {
 		}
 
 		catalog := &eventstream.RemoteCatalog{
-			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
-			Logger: logger,
+			Client:          messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			RecheckInterval: c.EventStreamRecheckInterval,
+			Logger:          logger,
 		}
 
 		removeCatalog := c.EventStreams.Add(catalog)

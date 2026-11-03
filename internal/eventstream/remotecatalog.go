@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
@@ -31,12 +33,18 @@ import (
 // checkpoint of the last batch it delivered.
 //
 // If the application can not record any of a subscription's message types, it
-// delivers the existing events and then closes the stream. The subscription
-// is not reported lost; it simply receives nothing more.
+// delivers the existing events and then closes the stream. The subscription is
+// not reported lost. Instead, the catalog asks the application again after a
+// delay. It does the same if the application does not offer event streams.
 type RemoteCatalog struct {
 	// Client is the gRPC client used to discover the application's event
 	// streams and consume their events.
 	Client messaginggrpc.EventStreamConsumerAPIClient
+
+	// RecheckInterval is how long the catalog waits before asking the
+	// application again after it reports having nothing to offer. It must be
+	// positive.
+	RecheckInterval time.Duration
 
 	// Logger is the target for log messages produced by the catalog.
 	Logger *slog.Logger
@@ -131,6 +139,10 @@ func (c *RemoteCatalog) init() {
 //
 // It must be called at most once. Subscriptions are lost when it returns.
 func (c *RemoteCatalog) Run(ctx context.Context) error {
+	if c.RecheckInterval <= 0 {
+		panic("recheck interval must be positive")
+	}
+
 	c.init()
 
 	group, ctx := errgroup.WithContext(ctx)
@@ -149,9 +161,34 @@ func (c *RemoteCatalog) Run(ctx context.Context) error {
 // discover adds each event stream that the application reports to the set of
 // known streams.
 //
-// If the server does not offer event streams, it returns without error and the
-// catalog offers no streams.
+// If the server does not offer event streams, it asks again after the recheck
+// interval.
 func (c *RemoteCatalog) discover(ctx context.Context) error {
+	reported := false
+
+	for {
+		err := c.listEventStreams(ctx)
+		if status.Code(err) != codes.Unimplemented {
+			return err
+		}
+
+		if !reported {
+			c.Logger.InfoContext(
+				ctx,
+				"remote engine does not offer event streams",
+			)
+			reported = true
+		}
+
+		if err := c.waitToRecheck(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// listEventStreams adds each event stream that the application reports to the
+// set of known streams, until ctx is canceled or the server stops listing them.
+func (c *RemoteCatalog) listEventStreams(ctx context.Context) error {
 	responses, err := c.Client.ListEventStreams(
 		ctx,
 		messaginggrpc.NewListEventStreamsRequestBuilder().
@@ -163,14 +200,6 @@ func (c *RemoteCatalog) discover(ctx context.Context) error {
 
 	for {
 		res, err := responses.Recv()
-		if status.Code(err) == codes.Unimplemented {
-			c.Logger.InfoContext(
-				ctx,
-				"remote engine does not offer event streams",
-			)
-			return nil
-		}
-
 		if err != nil {
 			return fmt.Errorf("unable to receive event stream: %w", err)
 		}
@@ -245,12 +274,29 @@ func (c *RemoteCatalog) read(ctx context.Context) error {
 // consume delivers events from the application to a subscription, starting at
 // the subscription's checkpoint, until ctx is canceled or it is disconnected.
 //
+// Each time the application closes the stream, consume asks again after the
+// recheck interval.
+func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) error {
+	for {
+		if err := c.consumeStream(ctx, sub); err != nil {
+			return err
+		}
+
+		if err := c.waitToRecheck(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// consumeStream delivers events from the application to a subscription,
+// starting at the subscription's checkpoint, until the application closes the
+// stream.
+//
 // The application closes the stream once it has delivered every event of the
-// requested types that it is able to record, at which point the subscription
-// has nothing more to receive and consume returns. If the application does not
+// requested types that it is able to record. If the application does not
 // recognize the stream, or the checkpoint is beyond the end of the stream, its
 // data does not match the subscription's, so the failure is persistent.
-func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) error {
+func (c *RemoteCatalog) consumeStream(ctx context.Context, sub *remoteSubscription) error {
 	responses, err := c.Client.ConsumeEvents(
 		ctx,
 		messaginggrpc.NewConsumeEventsRequestBuilder().
@@ -294,6 +340,18 @@ func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) er
 		case sub.Batches <- batch:
 			sub.Checkpoint = batch.Checkpoint
 		}
+	}
+}
+
+// waitToRecheck waits for between half and all of the recheck interval, chosen
+// at random so that rechecks that become due together are spread out, or until
+// ctx is canceled.
+func (c *RemoteCatalog) waitToRecheck(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(c.RecheckInterval/2 + rand.N(c.RecheckInterval/2)):
+		return nil
 	}
 }
 

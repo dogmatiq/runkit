@@ -51,8 +51,9 @@ func TestConnector(t *testing.T) {
 						<-ctx.Done()
 						return ctx.Err()
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connector.Run)
 
@@ -80,8 +81,9 @@ func TestConnector(t *testing.T) {
 						<-ctx.Done()
 						return ctx.Err()
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connector.Run)
 
@@ -118,8 +120,9 @@ func TestConnector(t *testing.T) {
 						<-ctx.Done()
 						return ctx.Err()
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connector.Run)
 
@@ -181,8 +184,9 @@ func TestConnector(t *testing.T) {
 							return nil
 						}
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connector.Run)
 
@@ -225,8 +229,9 @@ func TestConnector(t *testing.T) {
 						<-ctx.Done()
 						return ctx.Err()
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connectorA.Run)
 
@@ -244,8 +249,9 @@ func TestConnector(t *testing.T) {
 							return nil
 						}
 					},
-					EventStreams: composite,
-					Logger:       spruce.NewTestLogger(t),
+					EventStreams:               composite,
+					EventStreamRecheckInterval: time.Hour,
+					Logger:                     spruce.NewTestLogger(t),
 				}
 				xtesting.GoE(t, connectorB.Run)
 
@@ -274,8 +280,9 @@ func TestConnector(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			},
-			EventStreams: &eventstream.CompositeCatalog{},
-			Logger:       spruce.NewTestLogger(t),
+			EventStreams:               &eventstream.CompositeCatalog{},
+			EventStreamRecheckInterval: time.Hour,
+			Logger:                     spruce.NewTestLogger(t),
 		}
 		xtesting.GoE(t, connector.Run)
 
@@ -304,8 +311,9 @@ func TestConnector(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			},
-			EventStreams: &eventstream.CompositeCatalog{},
-			Logger:       spruce.NewTestLogger(t),
+			EventStreams:               &eventstream.CompositeCatalog{},
+			EventStreamRecheckInterval: time.Hour,
+			Logger:                     spruce.NewTestLogger(t),
 		}
 		xtesting.GoE(t, connector.Run)
 

@@ -71,6 +71,11 @@ const (
 	// a subscription that falls further behind is served historical events
 	// instead.
 	eventStreamBufferSize = 4
+
+	// eventStreamRecheckInterval is how long the engine waits before asking a
+	// remote engine again after it reports having no events or event streams to
+	// offer.
+	eventStreamRecheckInterval = 3 * time.Minute
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -307,8 +312,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	for _, d := range e.remoteEngineDiscoverers {
 		runComponent(
 			&remoteengine.Connector{
-				Discover:     d,
-				EventStreams: e.allEventStreams,
+				Discover:                   d,
+				EventStreams:               e.allEventStreams,
+				EventStreamRecheckInterval: eventStreamRecheckInterval,
 				Logger: e.logger.With(
 					slog.String("component", "remoteengine.connector"),
 				),
