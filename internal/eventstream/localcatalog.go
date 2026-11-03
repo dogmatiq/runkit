@@ -350,7 +350,7 @@ func (c *LocalCatalog) handleDesynced(ctx context.Context, s *localStream, con *
 }
 
 // dispatchBatch handles a batch of events read from a stream by its
-// contemporary
+// contemporary scanner.
 //
 // The events are added to the stream's cache and every contemporary consumer of
 // the stream is synchronized with it.
