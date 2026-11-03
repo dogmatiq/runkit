@@ -80,7 +80,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   checkpoint; they are returned via `supervisor.Persistent` (retried slowly),
   not treated as fatal, since one bad foreign application must not stop the
   engine. A server-closed stream (no requested type recordable by the
-  application) reports the subscription lost.
+  application) leaves the subscription in place, receiving nothing more, so
+  that projections which handle none of a remote engine's event types do not
+  retry against it.
 - **Remote engines are discovered, even when the set is static.** Foreign
   applications' events are consumed from _remote engines_. The engine is
   given any number of discoverers, one per use of
@@ -212,9 +214,9 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       (set `StreamID`; flatten `MultiEnvelope`s; validate each envelope carries
       `envelopepb.EventStreamPosition`), blocking send on `ch`, then advance the
       checkpoint it will reconnect from. Unsubscribe cancels it.
-- [x] **Step 3: Honor the server's contract** as decided above: EOF closes the
-      subscription's `lost` channel; `NOT_FOUND`/`OUT_OF_RANGE` →
-      `supervisor.Persistent`.
+- [x] **Step 3: Honor the server's contract** as decided above: EOF ends the
+      subscription's goroutine, leaving the subscription in place;
+      `NOT_FOUND`/`OUT_OF_RANGE` → `supervisor.Persistent`.
 - [x] **Step 4:** Test + commit.
 
 ### Task A.5: Remote engine discovery

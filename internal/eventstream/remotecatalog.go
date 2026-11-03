@@ -29,6 +29,10 @@ import (
 //
 // A subscription that is disconnected from the application reconnects from the
 // checkpoint of the last batch it delivered.
+//
+// If the application can not record any of a subscription's message types, it
+// delivers the existing events and then closes the stream. The subscription
+// is not reported lost; it simply receives nothing more.
 type RemoteCatalog struct {
 	// Client is the gRPC client used to discover the application's event
 	// streams and consume their events.
@@ -241,10 +245,10 @@ func (c *RemoteCatalog) read(ctx context.Context) error {
 // the subscription's checkpoint, until ctx is canceled or it is disconnected.
 //
 // The application closes the stream once it has delivered every event of the
-// requested types that it is able to record, at which point the subscription is
-// lost. If the application does not recognize the stream, or the checkpoint is
-// beyond the end of the stream, its data does not match the subscription's, so
-// the failure is persistent.
+// requested types that it is able to record, at which point the subscription
+// has nothing more to receive and consume returns. If the application does not
+// recognize the stream, or the checkpoint is beyond the end of the stream, its
+// data does not match the subscription's, so the failure is persistent.
 func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) error {
 	responses, err := c.Client.ConsumeEvents(
 		ctx,
@@ -261,7 +265,11 @@ func (c *RemoteCatalog) consume(ctx context.Context, sub *remoteSubscription) er
 	for {
 		res, err := responses.Recv()
 		if err == io.EOF {
-			sub.Lost.Set()
+			c.Logger.DebugContext(
+				ctx,
+				"remote engine has no more events for subscription",
+				xslog.UUID("stream_id", sub.StreamID),
+			)
 			return nil
 		}
 

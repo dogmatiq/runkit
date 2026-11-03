@@ -208,7 +208,7 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 		)
 	})
 
-	t.Run("it reports a subscription as lost when the application closes the stream", func(t *testing.T) {
+	t.Run("it keeps a subscription that the application will never deliver to", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -223,17 +223,22 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 
 				// The application can not record events of type X, so it closes
 				// the stream once it has delivered the existing events.
+				batches := make(chan Batch, 10)
 				lost, unsubscribe := catalog.Subscribe(
 					streamID,
 					0,
 					uuidcollection.NewSet(
 						stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeX]](),
 					),
-					make(chan Batch, 10),
+					batches,
 				)
 				defer unsubscribe()
 
-				xtesting.ExpectToReceiveN(t, "lost subscription", lost, struct{}{})
+				xtesting.ExpectToReceiveN(t, "batch", batches, Batch{
+					StreamID:   streamID,
+					Checkpoint: 1,
+				})
+				xtesting.ExpectNoReceive(t, "lost subscription", lost)
 			},
 			consumerAPIApp(),
 		)
