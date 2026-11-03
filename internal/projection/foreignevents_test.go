@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,11 +138,11 @@ func TestForeignEvents_localAndForeignEventsAreHandled(t *testing.T) {
 	}
 }
 
-// TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetry verifies
-// that a projection which handles none of the event types that a foreign
-// application records subscribes to each of its streams once, rather than
-// re-subscribing repeatedly after the application closes the stream.
-func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetry(t *testing.T) {
+// TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetryImmediately
+// verifies that a projection which handles none of the event types that a
+// foreign application records does not re-subscribe to its streams as soon as
+// the application closes them, but waits for the recheck interval.
+func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetryImmediately(t *testing.T) {
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(
@@ -163,7 +162,7 @@ func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetry(t *testing
 		t.Fatal(err)
 	}
 
-	var subscriptions atomic.Int32
+	subscriptions := make(chan struct{}, 10)
 
 	conn, err := grpc.NewClient(
 		addr.String(),
@@ -178,7 +177,10 @@ func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetry(t *testing
 				opts ...grpc.CallOption,
 			) (grpc.ClientStream, error) {
 				if desc.StreamName == "ConsumeEvents" {
-					subscriptions.Add(1)
+					select {
+					case subscriptions <- struct{}{}:
+					default:
+					}
 				}
 				return streamer(ctx, desc, cc, method, opts...)
 			},
@@ -206,12 +208,14 @@ func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetry(t *testing
 		),
 	)
 
-	// Re-subscribing after the upstream closes the stream would happen several
-	// times within this period.
-	time.Sleep(2 * time.Second)
+	xtesting.ExpectToReceiveN(t, "subscription", subscriptions, struct{}{})
 
-	if n := subscriptions.Load(); n != 1 {
-		t.Fatalf("unexpected number of subscriptions: got %d, want 1", n)
+	// Re-subscribing as soon as the upstream closes the stream, even after the
+	// supervisor's initial backoff, would happen within this period.
+	select {
+	case <-subscriptions:
+		t.Fatal("unexpected re-subscription")
+	case <-time.After(500 * time.Millisecond):
 	}
 }
 
