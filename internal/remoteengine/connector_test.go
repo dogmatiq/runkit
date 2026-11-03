@@ -14,7 +14,6 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -25,30 +24,22 @@ import (
 
 func TestConnector(t *testing.T) {
 	// setup returns a running composite catalog, and a connection to the given
-	// engine.
+	// cluster.
 	setup := func(
 		t testing.TB,
-		engine *runkit.Engine,
+		cluster *xtesting.Cluster,
 	) (*eventstream.CompositeCatalog, grpc.ClientConnInterface) {
 		composite := &eventstream.CompositeCatalog{}
 		xtesting.GoE(t, composite.Run)
 
-		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
-		defer cancel()
-
-		addr, err := engine.ListenAddr(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		return composite, dial(t, addr.String())
+		return composite, cluster.Dial(t)
 	}
 
 	t.Run("it offers the event streams of each added remote engine", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				composite, conn := setup(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
 				streamID := xtesting.CreateEventStream(t, db)
 
 				connector := &Connector{
@@ -74,8 +65,8 @@ func TestConnector(t *testing.T) {
 	t.Run("it removes the event streams of a remote engine that is removed", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				composite, conn := setup(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
 				streamID := xtesting.CreateEventStream(t, db)
 
 				remove := make(chan func(), 1)
@@ -112,8 +103,8 @@ func TestConnector(t *testing.T) {
 	t.Run("it loses subscriptions to the event streams of a remote engine that is removed", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				composite, conn := setup(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
 				streamID := xtesting.CreateEventStream(t, db)
 
 				remove := make(chan func(), 1)
@@ -162,8 +153,8 @@ func TestConnector(t *testing.T) {
 	t.Run("it removes the event streams of every remote engine when the discoverer returns", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				composite, conn := setup(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
 				streamID := xtesting.CreateEventStream(t, db)
 
 				stop := make(chan struct{})
@@ -200,8 +191,8 @@ func TestConnector(t *testing.T) {
 	t.Run("it runs alongside other connectors that share the catalog", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				composite, conn := setup(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				composite, conn := setup(t, cluster)
 				streamA := xtesting.CreateEventStream(t, db)
 
 				streamB := uuidpb.Generate()

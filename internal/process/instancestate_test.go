@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -22,7 +21,7 @@ func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -89,7 +88,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -167,7 +166,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -264,7 +263,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			counts := make([]uint64, streamCount)
 			for i := range counts {
 				counts[i] = eventsPerStream

@@ -296,12 +296,11 @@ stop engines during a test. Phase B needs:
 
 ### Task B.3: Final validation
 
-- [ ] Revisit `RunEngines*` handing only the first engine to tests: every
-      command in the suite is executed on, and every gRPC request sent to,
-      engine 0, so accepting commands and serving `ConsumerAPI` on the other
-      engines is never exercised. Options: leave it; hand `fn` a randomly
-      chosen engine and log which; or pass the `*Cluster` to `fn` (changes
-      the signature used by 22 test files).
+- [x] `RunEngines*` handed only the first engine to tests, so accepting
+      commands and serving `ConsumerAPI` on the other nodes was never
+      exercised. Resolved: `fn` receives the `*xtesting.Cluster`, which
+      executes commands on each node in turn, and the gRPC tests connect
+      with `Cluster.Dial`, which spreads requests across the nodes.
 - [ ] `make precommit` green. Commit.
 
 ---

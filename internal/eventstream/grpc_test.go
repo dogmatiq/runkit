@@ -16,12 +16,10 @@ import (
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -67,10 +65,10 @@ func consumerAPIApp() dogma.HandlerRoute {
 func TestConsumeAPIServer_contemporary(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
-			xtesting.ExecuteCommand(t, engine, stubs.CommandB1)
-			xtesting.ExecuteCommand(t, engine, stubs.CommandC1)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandB1)
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandC1)
 
 			messageTypeIDs := []*uuidpb.UUID{
 				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
@@ -79,7 +77,7 @@ func TestConsumeAPIServer_contemporary(t *testing.T) {
 
 			ExpectEvents(
 				t,
-				engine,
+				cluster,
 				messageTypeIDs,
 				[]dogma.Event{stubs.EventA1},
 				[]dogma.Event{stubs.EventC1},
@@ -92,10 +90,10 @@ func TestConsumeAPIServer_contemporary(t *testing.T) {
 func TestConsumeAPIServer_historical(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
-				engine,
+				cluster,
 				db,
 				stubs.CommandA1,
 				stubs.CommandB1,
@@ -109,7 +107,7 @@ func TestConsumeAPIServer_historical(t *testing.T) {
 
 			ExpectEvents(
 				t,
-				engine,
+				cluster,
 				messageTypeIDs,
 				[]dogma.Event{stubs.EventA1},
 				[]dogma.Event{stubs.EventC1},
@@ -126,8 +124,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 	t.Run("it returns NOT_FOUND for an unrecognized stream", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 				streamID := uuidpb.Generate()
 
 				responses := consume(t, ctx, client, streamID, 0, typeA)
@@ -161,8 +159,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				streamID = xtesting.CreateEventStream(t, db)
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventA1, stubs.EventA2)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 3, typeA)
 
@@ -183,8 +181,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 			func(t testing.TB, db *sql.DB) {
 				streamID = xtesting.CreateEventStream(t, db)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeX)
 
@@ -202,8 +200,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 			func(t testing.TB, db *sql.DB) {
 				streamID = xtesting.CreateEventStream(t, db)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0)
 
@@ -222,8 +220,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				streamID = xtesting.CreateEventStream(t, db)
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeX)
 
@@ -243,8 +241,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				streamID = xtesting.CreateEventStream(t, db)
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1, stubs.EventE1)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeX)
 
@@ -266,8 +264,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				streamID = xtesting.CreateEventStream(t, db)
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeA, typeX)
 
@@ -289,8 +287,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 			func(t testing.TB, db *sql.DB) {
 				streamID = xtesting.CreateEventStream(t, db)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeA)
 
@@ -310,8 +308,8 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 			func(t testing.TB, db *sql.DB) {
 				streamID = xtesting.CreateEventStream(t, db)
 			},
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, ctx := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
 
 				responses := consume(t, ctx, client, streamID, 0, typeA)
 
@@ -328,32 +326,18 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 	})
 }
 
-// newConsumerClient returns a client for the engine's consumer API, and a
+// newConsumerClient returns a client for the cluster's consumer API, and a
 // context that is canceled when the test's wait timeout elapses.
 func newConsumerClient(
 	t testing.TB,
-	engine *runkit.Engine,
+	cluster *xtesting.Cluster,
 ) (messaginggrpc.EventStreamConsumerAPIClient, context.Context) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 	t.Cleanup(cancel)
 
-	addr, err := engine.ListenAddr(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	conn, err := grpc.NewClient(
-		addr.String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
-
-	return messaginggrpc.NewEventStreamConsumerAPIClient(conn), ctx
+	return messaginggrpc.NewEventStreamConsumerAPIClient(cluster.Dial(t)), ctx
 }
 
 // consume begins consuming events of the given types from the given stream.
@@ -461,27 +445,13 @@ func expectEOF(
 
 func ExpectEvents(
 	t testing.TB,
-	engine *runkit.Engine,
+	cluster *xtesting.Cluster,
 	messageTypeIDs []*uuidpb.UUID,
 	want ...[]dogma.Event,
 ) {
 	t.Helper()
 
-	addr, err := engine.ListenAddr(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	conn, err := grpc.NewClient(
-		addr.String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatalf("unable to create gRPC client: %s", err)
-	}
-	defer conn.Close()
-
-	client := messaginggrpc.NewEventStreamConsumerAPIClient(conn)
+	client := messaginggrpc.NewEventStreamConsumerAPIClient(cluster.Dial(t))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

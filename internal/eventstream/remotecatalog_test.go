@@ -11,7 +11,6 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -25,9 +24,9 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 	t.Run("it reports streams that exist when it starts", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				streamIDs := xtesting.CreateEventStreams(t, db, 3)
-				client, _ := newConsumerClient(t, engine)
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -44,8 +43,8 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 	t.Run("it reports streams that are created after it starts", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, _ := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -122,7 +121,7 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 	t.Run("it delivers historical then contemporary events in order", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				streamID, historical := xtesting.AppendToNewEventStream(
 					t,
 					db,
@@ -131,7 +130,7 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 					stubs.EventA3,
 				)
 
-				client, _ := newConsumerClient(t, engine)
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -173,7 +172,7 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 	t.Run("it delivers only events of the requested types", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				streamID := xtesting.CreateEventStream(t, db)
 				envelopes := xtesting.AppendToEventStream(
 					t,
@@ -184,7 +183,7 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 					stubs.EventA2,
 				)
 
-				client, _ := newConsumerClient(t, engine)
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -212,9 +211,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 	t.Run("it reports a subscription as lost when the application closes the stream", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				streamID, _ := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
-				client, _ := newConsumerClient(t, engine)
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -243,8 +242,8 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 	t.Run("it does not report a subscription as lost when the stream is not found", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				client, _ := newConsumerClient(t, engine)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,
@@ -271,9 +270,9 @@ func TestRemoteCatalog_subscribe(t *testing.T) {
 	t.Run("it reports subscriptions as lost when it stops", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				streamID := xtesting.CreateEventStream(t, db)
-				client, _ := newConsumerClient(t, engine)
+				client, _ := newConsumerClient(t, cluster)
 
 				catalog := &RemoteCatalog{
 					Client: client,

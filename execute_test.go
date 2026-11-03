@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -22,8 +21,8 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			if err := engine.ExecuteCommand(
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
@@ -31,7 +30,7 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := engine.ExecuteCommand(
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
@@ -75,8 +74,8 @@ func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
 func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			if err := engine.ExecuteCommand(
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key-1>"),
@@ -84,7 +83,7 @@ func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := engine.ExecuteCommand(
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key-2>"),
@@ -124,10 +123,10 @@ func TestExecuteCommand_differentIdempotencyKeysDoNotInterfere(t *testing.T) {
 func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			var called bool
 
-			if err := engine.ExecuteCommand(
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "observe"},
 				dogma.WithEventObserver(
@@ -176,8 +175,8 @@ func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T)
 func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			err := engine.ExecuteCommand(
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			err := cluster.ExecuteCommand(
 				t.Context(),
 				&stubs.CommandStub[stubs.TypeA]{Content: "start"},
 				dogma.WithEventObserver(
@@ -273,10 +272,10 @@ func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.
 func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			ctx, expire := xtesting.ContextWithManualDeadline(t.Context())
 
-			err := engine.ExecuteCommand(
+			err := cluster.ExecuteCommand(
 				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "unsatisfied"},
 				dogma.WithEventObserver(
@@ -324,11 +323,11 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			var ctx context.Context
 			ctx, expire = xtesting.ContextWithManualDeadline(t.Context())
 
-			err := engine.ExecuteCommand(
+			err := cluster.ExecuteCommand(
 				ctx,
 				&stubs.CommandStub[stubs.TypeA]{Content: "no-events"},
 				dogma.WithEventObserver(
@@ -375,8 +374,8 @@ func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testi
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			if err := engine.ExecuteCommand(
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),
@@ -388,7 +387,7 @@ func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testi
 
 			// Second call is deduplicated, but observer sees the original events.
 			var called bool
-			if err := engine.ExecuteCommand(
+			if err := cluster.ExecuteCommand(
 				t.Context(),
 				stubs.CommandA1,
 				dogma.WithIdempotencyKey("<idempotency-key>"),

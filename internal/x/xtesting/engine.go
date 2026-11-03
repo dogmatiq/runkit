@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 )
 
@@ -26,19 +25,21 @@ const (
 // on engines started by [RunEngines] and related functions.
 const ProjectionCompactInterval = 10 * time.Millisecond
 
-// RunEngines runs the given Dogma application in a test engine and executes the
-// given function while the engine is running.
+// RunEngines runs the given Dogma application on a cluster of nodes, and
+// executes the given function while the cluster is running.
 //
-// Multiple engines are run concurrently to ensure that behavior is consistent
-// when multiple engines running against the same database.
+// Multiple nodes are run to ensure that behavior is consistent when multiple
+// engines run against the same database. fn receives the [Cluster], which
+// executes commands on each node in turn, and whose [Cluster.Dial] reaches any
+// node.
 //
-// If any of the engines stop before fn returns, the context passed to fn is
+// If any of the nodes stop before fn returns, the context passed to fn is
 // canceled, and the test fails.
 func RunEngines(
 	t *testing.T,
 	fn func(
 		testing.TB,
-		*runkit.Engine,
+		*Cluster,
 		*sql.DB,
 	),
 	routes ...dogma.HandlerRoute,
@@ -58,7 +59,7 @@ func RunEngines(
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
-	fn func(testing.TB, *runkit.Engine, *sql.DB),
+	fn func(testing.TB, *Cluster, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -77,7 +78,7 @@ func SetupThenRunEngines(
 func RunEnginesWithDB(
 	t *testing.T,
 	db *sql.DB,
-	fn func(testing.TB, *runkit.Engine, *sql.DB),
+	fn func(testing.TB, *Cluster, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -112,7 +113,7 @@ func RunEnginesWithDB(
 
 	fn(
 		testingTBWithContext{t, testContext},
-		cluster.Nodes()[0],
+		cluster,
 		db,
 	)
 }
