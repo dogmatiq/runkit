@@ -24,47 +24,88 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 
 ## Decisions that shape the remaining work
 
-- **`Catalog` is the abstraction, for discovery and reading alike.** The
-  `Catalog` interface has `StreamIDs()` and `Subscribe()`. `LocalCatalog`
-  implements it for this application's streams, discovering them and reading
-  their events in one type over the existing `scanner` package. `RemoteCatalog`
+- **One `Catalog` interface, whose subscriptions may end.** `Catalog` has
+  `StreamIDs()`, an `xsync.ObservableR` of the stream IDs it currently offers,
+  and `Subscribe()`, which returns `unsubscribe` and an
+  `xsync.FutureR[error]`, treated like any error result: resolved if the
+  subscription ends, nil if it succeeded. A subscription delivers batches in
+  order until it ends or is unsubscribed, and one that has ended is not
+  resumed. It succeeds when it has delivered every event it can: the
+  application that records the stream, as currently deployed, will not append
+  events of the requested types to it, though a later deployment may. The
+  stream must be in the current set. A subscription to a stream that is not
+  offered, or that stops being offered, ends with `ErrStreamNotFound`, and
+  only after the set has been published without the stream. The name matches
+  the `NOT_FOUND` that `ConsumerAPI` answers with.
+  `LocalCatalog` implements the interface for this application's streams,
+  discovering them and reading their events in one type over the existing
+  `scanner` package; its subscriptions never end otherwise. `RemoteCatalog`
   implements it over one foreign application's
-  `messaginggrpc.EventStreamConsumerAPIClient`. `CompositeCatalog` implements
-  it over a set of catalogs added and removed at runtime: `StreamIDs()` is the
-  union, and `Subscribe()` is routed to the member that offers the stream.
-  There is no separate reader abstraction. `projection.Consumer` and
-  `streamConsumer` depend on the interface through one `EventStreams` field.
-- **Catalogs come and go.** `CompositeCatalog.Add(Catalog)` returns a
-  function that removes the member, in the same style as
-  `cluster.Node.ObserveResponsibility()`; the set is owned by the composite's
-  `Run` goroutine and changed through messaging, not a mutex. The local
-  catalog is added first, then one `RemoteCatalog` per available remote
-  engine.
-  A subscription can be lost: `Subscribe()` returns a `lost` channel that the
-  catalog closes when it can no longer deliver. `LocalCatalog` and
-  `RemoteCatalog` close it when they stop; the composite passes the offering
-  member's channel through, or an already-closed one if no member offers the
-  stream. A catalog is removed from the composite before whatever removed it
-  stops it, and removal returns only once the composite has stopped offering
-  the catalog's streams, so by the time a subscription is lost its stream is
-  no longer offered via that member. A stream consumer whose subscription is
-  lost is not failing: it subscribes again from its own checkpoint as soon as
-  the stream is offered, which routes it to whichever member now offers it.
-  No subscriber is ever left bound to a member that is gone, even if the
-  member is removed and re-added between two reads of `StreamIDs()`.
-- **Only local streams are permanent.** `LocalCatalog` keeps its guarantee that
-  streams are never removed (its change detection relies on it). The composite
-  makes no such guarantee: a member's streams disappear with the member. While
-  a `RemoteCatalog` is present, its known stream set only grows and is retained
-  across reconnects, since it publishes IDs through an `xsync.Observable` as
-  the local catalog does.
+  `messaginggrpc.EventStreamConsumerAPIClient`; each subscription is one
+  `ConsumeEvents` call, which ends when the call does. `CompositeCatalog`
+  implements it over a set of members added and removed at runtime; its
+  subscriptions end only with `ErrStreamNotFound`, since it starts a new
+  member subscription whenever one ends any other way. `projection.Consumer`
+  and `streamConsumer` depend on the interface through one `EventStreams`
+  field, and `ConsumerAPI` on `*LocalCatalog` directly. Members know nothing
+  about retrying, and the composite knows nothing about gRPC. The receive-only
+  `xsync` views are from enginekit v0.30.0. There is no separate reader
+  abstraction.
+- **Catalogs come and go, and the composite keeps subscriptions alive across
+  them.** `CompositeCatalog.Add(Catalog)` returns a function that removes the
+  member, in the same style as `cluster.Node.ObserveResponsibility()`. The
+  members, the route for each stream, and the subscriptions are owned by the
+  composite's `Run` goroutine and changed through messaging, not a mutex or
+  atomics. The local catalog is added first, then one `RemoteCatalog` per
+  available remote engine.
+  Each subscription has a goroutine that forwards batches from an attempt on
+  one member to the subscriber's channel, recording each batch's checkpoint
+  after forwarding it. When the attempt ends, or the member is removed or
+  stops offering the stream, the goroutine starts the next attempt from the
+  recorded checkpoint on the next member that offers the stream, in rotation.
+  A member that advertises a stream but can not deliver it — an instance that
+  died behind a per-instance discoverer, or a load balancer routed to the
+  wrong application — therefore does not hold the subscription while another
+  member can serve it. A nil ending means the member delivered everything it
+  can for now; the next attempt waits the backstop interval described below.
+  A non-nil ending is a failure, retried through `supervisor.Run` with its
+  backoff, honoring `supervisor.Persistent`. If no member offers the stream,
+  the composite publishes its set without it and then ends the subscription
+  with `ErrStreamNotFound`. The subscriber sees none of the rest: it
+  subscribes once, from its own checkpoint, and reads batches until it
+  unsubscribes or the stream goes away.
+  Resuming from the last forwarded batch is correct here even though the
+  stream consumer resumes from the handler's checkpoint (dogmatiq/dogma#221).
+  That rule covers the handler failing, where its checkpoint may be behind;
+  moving a subscription is continuity for a subscriber that has not failed.
+  Batches the old member delivered that were not forwarded are dropped and
+  delivered again by the next attempt.
+- **A stream is offered while a connected server advertises it.**
+  `LocalCatalog` never removes a stream; its change detection relies on that.
+  `RemoteCatalog` offers the streams listed by its current `ListEventStreams`
+  call: when the call ends, for any reason, it stops offering all of them, and
+  offers each again as the re-issued call lists it. A remote engine that
+  restarts therefore revokes and re-advertises its streams, which ends every
+  subscription to them and brings the subscribers back against the new
+  deployment. That is how a subscription that succeeded is reopened without a
+  signal from the server (dogmatiq/protobuf#8): recordable types come from the
+  application's configuration, so they change only with a deployment, and a
+  server-streaming call can not outlive the process serving it, even behind a
+  proxy. A network blip does the same at the cost of restarting the
+  subscribers, whose `ConsumeEvents` calls broke on the same blip. A stream
+  offered by two members stays offered while either offers it, and its
+  subscriptions move rather than end.
 - **`projection.Consumer` follows the catalog both ways.** It starts a stream
   consumer for each stream that appears and stops the stream consumer for each
   stream that disappears, so a removed member's streams stop being consumed.
-  The handler keeps its checkpoint for the stream. A subscription to a stream
-  that no member offers is lost immediately; the stream consumer waits for the
-  stream to be offered again, until the consumer notices the stream is absent
-  and stops it.
+  The handler keeps its checkpoint for the stream. A stream consumer whose
+  subscription ends with `ErrStreamNotFound` waits until the catalog offers
+  the stream again, then subscribes again from the handler's checkpoint,
+  unless the consumer stops it first because the stream stayed away. The
+  stream may already be back by the time the stream consumer sees the ending;
+  it then subscribes again at once, which is correct, since a member now
+  offers it. It can not spin on a stale set, because the set is updated before
+  the subscription ends.
 - **`ConsumerAPI` serves only this application's streams.** It depends on
   `*LocalCatalog`, never on the composite, so it never relays a foreign
   application's streams. (Relay topologies are out of scope.)
@@ -74,16 +115,28 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
   response's `CheckpointOffset` as `Batch.Checkpoint`). The server already
   applies the type filter and moves slow clients to history, so the remote
   catalog needs no cache; gRPC flow control is its backpressure.
-- **Remote failures retry through the supervisor.** Each subscription and each
-  discovery stream is a supervised function that reconnects from the last
-  delivered checkpoint. `NOT_FOUND` and `OUT_OF_RANGE` from a foreign
-  application indicate that its data no longer matches the handler's
-  checkpoint; they are returned via `supervisor.Persistent` (retried slowly),
-  not treated as fatal, since one bad foreign application must not stop the
-  engine. A server-closed stream (no requested type recordable by the
-  application) leaves the subscription in place and is requested again after a
-  fixed interval of three minutes, since a later deployment of the application
-  may record those types.
+- **Remote failures are reported; the composite retries.** A `RemoteCatalog`
+  subscription is one `ConsumeEvents` call. Each response becomes a `Batch`
+  sent on the subscriber's channel, and the attempt ends when the call does.
+  EOF ends it with nil: the application closed the stream because it can not
+  record any of the requested types. `NOT_FOUND` and `OUT_OF_RANGE` mean the
+  application's data no longer matches the checkpoint; they end the attempt
+  with `supervisor.Persistent`, so the composite retries slowly and never
+  fatally, since one bad foreign application must not stop the engine. Any
+  other error ends it as a transient failure. Discovery stays supervised
+  inside `RemoteCatalog`: `ListEventStreams` is held open under
+  `supervisor.Run`, and an engine that does not implement the service is
+  asked again after a recheck interval of three minutes.
+  A subscription that succeeded is reopened when the remote engine's streams
+  are re-advertised, as above. As a backstop, the composite also reopens it
+  after a long interval, in the order of tens of minutes, which covers two
+  cases the reconnect does not. A server that is not runkit may change what it
+  can record without restarting. And a rolling deploy that removes a type has
+  the new replicas close the stream while the old ones still append events of
+  that type; the client is then connected to a replica that will not restart,
+  and the backstop poll delivers the straggling events up to the head before
+  the stream closes again. In both cases events are delayed, never lost. The
+  engine passes the backstop interval to the composite.
 - **Remote engines are discovered, even when the set is static.** Foreign
   applications' events are consumed from _remote engines_. The engine is
   given any number of discoverers, one per use of
@@ -121,8 +174,9 @@ retry through the supervisor, the gRPC server side (`ConsumerAPI`,
 - **Each added connection has its own catalog.** When a connection is added
   the engine creates a `RemoteCatalog` over it, runs it, and adds it to the
   composite. When it is removed the engine removes the catalog from the
-  composite and stops it, which loses its subscriptions. A discoverer runs
-  under the supervisor for the life of the engine; when it returns, every
+  composite and stops it; the composite moves its subscriptions to other
+  members that offer the streams, or ends them. A discoverer
+  runs under the supervisor for the life of the engine; when it returns, every
   connection it added is removed. Two connections
   to the same remote engine (including one per instance) are two members
   offering the same streams, as is a connection to this engine; each such
@@ -257,6 +311,90 @@ real `ConsumerAPI` served by an engine, as `grpc_test.go` already does
       engines under Added, and drop "This engine does not yet consume events
       from other engines." from the gRPC server entry. Commit.
 
+### Task A.6: The composite owns retry and rotation
+
+**Why:** with the route chosen once at subscribe time and each member retrying
+privately, the first member to offer a stream holds every subscription to it
+for as long as it stays listed, whatever happens. A member that advertises a
+stream but can not deliver it never yields to one that can. The composite is
+the only party that knows the alternatives, so it must see each attempt end.
+This supersedes the `lost` channel and the rule that a catalog is removed
+before it is stopped. It also replaces the per-stream recheck: a remote
+engine's streams are revoked and re-advertised when its `ListEventStreams`
+call is re-established, which reopens every subscription to them.
+
+**Files:** `internal/eventstream/catalog.go`, `compositecatalog.go`,
+`localcatalog.go`, `remotecatalog.go`, `grpc.go`,
+`internal/projection/streamconsumer.go`, `engine.go`, and their tests.
+
+- [ ] **Step 1: Interface.** `StreamIDs()` returns
+      `xsync.ObservableR[*uuidcollection.Set]`. `Subscribe()` takes `streamID,
+      types, checkpoint, ch` and returns `unsubscribe` and an
+      `xsync.FutureR[error]`, last, as an error result. `ErrStreamNotFound`
+      is the error a subscription ends with when the stream is not in the set.
+      Implementations and test stubs use the interface's parameter names,
+      `cp` included. Bump enginekit to v0.30.0; `Future.Ready()` is now
+      `Chan()`, used once, in code that Step 5 changes. The docs do not name
+      the supervisor; how a persistent failure is marked is shared between
+      `RemoteCatalog` and the composite through the `supervisor` package. No
+      `Done()`: no member stops without being removed, except the local
+      catalog when the engine is already stopping.
+- [ ] **Step 2: `RemoteCatalog` makes one attempt per subscription, and
+      offers only what its current listing advertises.** `consumeStream` runs
+      once in its own goroutine and its result is stored in the returned
+      future. Drop `consume`, the per-subscription checkpoint, and the recheck
+      wait from subscriptions; keep the recheck for `UNIMPLEMENTED`.
+      Unsubscribe cancels the call. A subscription to a stream not in the set
+      ends immediately with `ErrStreamNotFound`. The set is cleared when the
+      `ListEventStreams` call ends and rebuilt as the re-issued call lists
+      streams; drop the "only grows" doc. Tests: the attempt ends with nil at
+      EOF, with a persistent error on `NOT_FOUND` and `OUT_OF_RANGE`, and with
+      a transient error on disconnect; a stream not in the set ends the
+      subscription at once; the streams are revoked when the listing ends and
+      offered again when it is re-established.
+- [ ] **Step 3: `LocalCatalog` and `ConsumerAPI`.** `LocalCatalog.Subscribe()`
+      ends a subscription to a stream not in its set with
+      `ErrStreamNotFound`, and otherwise returns a future that is never
+      resolved. `ConsumerAPI` drops its `lost` branch, and returns
+      `UNAVAILABLE` when the subscription ends with `ErrStreamNotFound`,
+      which happens only while the catalog has not yet discovered a stream the
+      database already has; the client retries. `grpcserver` stops the server
+      with `Stop`, so the handler's context covers shutdown.
+- [ ] **Step 4: The composite owns subscriptions.** `Subscribe()` sends the
+      subscription to `Run` through a channel, as `Add` does. Each subscription
+      has a goroutine running `supervisor.Run` over an attempt, then waiting
+      the backstop interval after a nil ending, in a loop. An attempt asks
+      `Run` for the next member offering the stream — not the one that just
+      failed, when there is another; subscribes to it with an intermediate
+      channel; forwards batches, recording each checkpoint after forwarding;
+      and returns the ending. When no member offers the stream, `Run`
+      publishes the set without it and then ends the subscription with
+      `ErrStreamNotFound`. `Run` cancels the attempts on a member it removes
+      and on a member that stops offering the stream. `routes` becomes a field
+      of `Run`, not an atomic. Tests, with a stub `Catalog`: a failed attempt
+      moves to another member that offers the stream; a lone member is
+      retried; a subscription to a stream no member offers ends with
+      `ErrStreamNotFound` after the set is published without it, both at
+      subscribe time and when the last member offering it leaves or stops
+      offering it; a member that stops offering a stream another member
+      offers has its subscriptions moved; a nil ending waits the backstop
+      interval; the next attempt starts from the last forwarded checkpoint;
+      removing a member moves its subscriptions; unsubscribing stops
+      everything.
+- [ ] **Step 5: `streamConsumer` handles one ending.** `consume` loads the
+      checkpoint, subscribes, and dispatches until ctx is canceled, an event
+      can not be dispatched, or the subscription ends. If it ends with
+      `ErrStreamNotFound`, `consume` waits until the stream is offered again
+      (`waitUntilOffered` stays) and subscribes again from the handler's
+      checkpoint. Any other ending is returned as a failure; the composite
+      never produces one. `consumeSubscription` goes. The lost-subscription
+      tests in `consumer_test.go` become tests of this ending.
+- [ ] **Step 6: Wiring and docs.** The engine passes the backstop interval to
+      the composite and keeps the three-minute recheck for the connector.
+      Update the PR body's design, failure and known-limitation sections, and
+      the "in the meantime" line in dogmatiq/protobuf#8. File the union rule
+      as a follow-up (see out of scope). `make precommit` green. Commit.
+
 ---
 
 ## Phase B — End-to-end and hardening
@@ -332,3 +470,10 @@ stop engines during a test. Phase B needs:
 - **Relay topologies**; this engine consumes directly from the application
   that recorded the events.
 - **Instant failover** for local projections, given up for a single model.
+- **Closing a stream at head only when no live replica can record the
+  requested types**, the union rule proposed in dogmatiq/protobuf#8. Without
+  it, a rolling deploy that removes a type delays that type's straggling
+  events by up to the backstop interval. With it, `ConsumerAPI` would depend
+  on the cluster and on a table of each node's recordable types, since a
+  heartbeat carries only the node's ID. Not worth that coupling for a bounded
+  delay in a rare case.
