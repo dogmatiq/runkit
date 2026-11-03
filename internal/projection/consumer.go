@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -79,12 +80,16 @@ func (c *Consumer) Run(ctx context.Context) error {
 		// Stopping a stream consumer waits for it to return, so a stream that
 		// leaves the catalog and comes back is never consumed twice at once on
 		// this node.
+		var stopping sync.WaitGroup
+
 		for streamID, stop := range c.stopStreamConsumer.All() {
 			if !streamIDs.Has(streamID) {
-				stop()
+				stopping.Go(stop)
 				c.stopStreamConsumer.Delete(streamID)
 			}
 		}
+
+		stopping.Wait()
 
 		for streamID := range streamIDs.All() {
 			c.ensureStreamConsumer(ctx, streamID)
