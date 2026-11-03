@@ -236,6 +236,7 @@ func (c *RemoteCatalog) read(ctx context.Context) error {
 			)
 		case sub := <-c.unsub:
 			sub.Cancel()
+			sub.Result.Wait()
 			delete(subscriptions, sub)
 		}
 	}
