@@ -160,6 +160,47 @@ func TestRemoteCatalog_streamIDs(t *testing.T) {
 
 		expectStreamIDs(t, catalog, streamID)
 	})
+
+	t.Run("it reports streams listed after a stream with an invalid ID", func(t *testing.T) {
+		streamID := uuidpb.Generate()
+
+		client := &messaginggrpc.EventStreamConsumerAPIClientStub{
+			ListEventStreamsFunc: func(
+				ctx context.Context,
+				_ *messaginggrpc.ListEventStreamsRequest,
+				_ ...grpc.CallOption,
+			) (messaginggrpc.EventStreamConsumerAPI_ListEventStreamsClient, error) {
+				return &streamClientStub[messaginggrpc.ListEventStreamsResponse]{
+					Ctx: ctx,
+					Responses: []*messaginggrpc.ListEventStreamsResponse{
+						messaginggrpc.NewListEventStreamsResponseBuilder().
+							WithEventStream(
+								messaginggrpc.NewEventStreamBuilder().
+									WithEventStreamId(&uuidpb.UUID{}).
+									Build(),
+							).
+							Build(),
+						messaginggrpc.NewListEventStreamsResponseBuilder().
+							WithEventStream(
+								messaginggrpc.NewEventStreamBuilder().
+									WithEventStreamId(streamID).
+									Build(),
+							).
+							Build(),
+					},
+				}, nil
+			},
+		}
+
+		catalog := &RemoteCatalog{
+			Client:          client,
+			RecheckInterval: time.Hour,
+			Logger:          spruce.NewTestLogger(t),
+		}
+		xtesting.GoE(t, catalog.Run)
+
+		expectStreamIDs(t, catalog, streamID)
+	})
 }
 
 func TestRemoteCatalog_subscribe(t *testing.T) {

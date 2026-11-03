@@ -188,6 +188,9 @@ func (c *RemoteCatalog) discover(ctx context.Context) error {
 
 // listEventStreams adds each event stream that the application reports to the
 // set of known streams, until ctx is canceled or the server stops listing them.
+//
+// A stream with an invalid ID is ignored, so that it does not prevent the
+// streams listed after it from being discovered.
 func (c *RemoteCatalog) listEventStreams(ctx context.Context) error {
 	responses, err := c.Client.ListEventStreams(
 		ctx,
@@ -207,7 +210,12 @@ func (c *RemoteCatalog) listEventStreams(ctx context.Context) error {
 		streamID := res.GetEventStream().GetEventStreamId()
 
 		if err := streamID.Validate(); err != nil {
-			return supervisor.Persistentf("invalid event stream ID: %w", err)
+			c.Logger.WarnContext(
+				ctx,
+				"ignored event stream with invalid ID",
+				xslog.Error(err),
+			)
+			continue
 		}
 
 		known, _ := c.streamIDs.Load()
