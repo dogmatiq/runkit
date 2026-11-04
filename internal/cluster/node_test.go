@@ -196,66 +196,13 @@ func TestNode(t *testing.T) {
 		stopOther := start(t, other)
 
 		workload := workloadFor(t, other, n)
-
-		responsible, unobserve := n.ObserveResponsibility(workload)
-		defer unobserve()
-
-		expectResponsible(t, responsible, false)
+		expectNodeResponsibleFor(t, n, workload, false)
 
 		stopOther()
-		expectResponsible(t, responsible, true)
+		expectNodeResponsibleFor(t, n, workload, true)
 
 		rejoin(t, signals, other)
-		expectResponsible(t, responsible, false)
-	})
-
-	t.Run("it stops reporting changes in responsibility once unobserved", func(t *testing.T) {
-		signals := setup(t)
-
-		n := newNode(t, signals, interval, timeout)
-		other := newNode(t, signals, interval, timeout)
-
-		start(t, n)
-		stopOther := start(t, other)
-
-		workload := workloadFor(t, other, n)
-		stopOther()
-
-		responsible, unobserve := n.ObserveResponsibility(workload)
-		expectResponsible(t, responsible, true)
-
-		unobserve()
-
-		rejoin(t, signals, other)
-		expectPeers(t, n, other.ID)
-
-		if got, _ := responsible(); !got {
-			t.Fatal("responsibility changed after unobserving")
-		}
-	})
-
-	t.Run("it keeps reporting changes to a workload that is still observed elsewhere", func(t *testing.T) {
-		signals := setup(t)
-
-		n := newNode(t, signals, interval, timeout)
-		other := newNode(t, signals, interval, timeout)
-
-		start(t, n)
-		stopOther := start(t, other)
-
-		workload := workloadFor(t, other, n)
-		stopOther()
-
-		_, unobserveFirst := n.ObserveResponsibility(workload)
-		second, unobserveSecond := n.ObserveResponsibility(workload)
-		defer unobserveSecond()
-
-		expectResponsible(t, second, true)
-
-		unobserveFirst()
-
-		rejoin(t, signals, other)
-		expectResponsible(t, second, false)
+		expectNodeResponsibleFor(t, n, workload, false)
 	})
 
 	t.Run("it makes exactly one node responsible for each workload", func(t *testing.T) {
@@ -283,17 +230,7 @@ func TestNode(t *testing.T) {
 		}
 
 		for range 20 {
-			workload := uuidpb.Generate()
-
-			var observers []func() (bool, <-chan struct{})
-			for _, n := range nodes {
-				responsible, unobserve := n.ObserveResponsibility(workload)
-				defer unobserve()
-
-				observers = append(observers, responsible)
-			}
-
-			expectExactlyOneResponsible(t, workload, observers)
+			expectExactlyOneResponsible(t, uuidpb.Generate(), nodes)
 		}
 	})
 
@@ -333,9 +270,7 @@ func TestNode(t *testing.T) {
 
 		// Wait for the existing node to hear its own heartbeat, at which point
 		// it is responsible for any workload, being the only live node.
-		responsible, unobserve := existing.ObserveResponsibility(uuidpb.Generate())
-		defer unobserve()
-		expectResponsible(t, responsible, true)
+		expectNodeResponsibleFor(t, existing, uuidpb.Generate(), true)
 
 		joining := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, joining.Run)
@@ -397,57 +332,44 @@ func expectNodeResponsibleFor(
 	}
 }
 
-func expectResponsible(
+func expectExactlyOneResponsible(
 	t testing.TB,
-	responsible func() (bool, <-chan struct{}),
-	want bool,
+	workload *uuidpb.UUID,
+	nodes []*Node,
 ) {
 	t.Helper()
 
 	timeout := time.After(xtesting.WaitTimeout)
 
 	for {
-		got, changed := responsible()
+		responsible := responsibleNodes(workload, nodes)
 
-		if got == want {
+		if len(responsible) == 1 {
 			return
 		}
 
 		select {
 		case <-timeout:
-			t.Fatalf("unexpected responsibility: got %t, want %t", got, want)
-		case <-changed:
+			t.Fatalf("expected exactly one node to be responsible for workload %s, got %d", workload, len(responsible))
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
 }
 
-func expectExactlyOneResponsible(
-	t testing.TB,
-	workload *uuidpb.UUID,
-	observers []func() (bool, <-chan struct{}),
-) {
-	t.Helper()
+// responsibleNodes returns the nodes that are responsible for the given
+// workload, according to their own memberships.
+func responsibleNodes(workload *uuidpb.UUID, nodes []*Node) []*Node {
+	var responsible []*Node
 
-	timeout := time.After(xtesting.WaitTimeout)
+	for _, n := range nodes {
+		m, _ := n.Membership().Load()
 
-	for {
-		count := 0
-		for _, responsible := range observers {
-			if ok, _ := responsible(); ok {
-				count++
-			}
-		}
-
-		if count == 1 {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("expected exactly one node to be responsible for workload %s, got %d", workload, count)
-		case <-time.After(5 * time.Millisecond):
+		if m.LocalNodeIsResponsibleFor(workload) {
+			responsible = append(responsible, n)
 		}
 	}
+
+	return responsible
 }
 
 // workloadFor returns a workload that the responsible node is responsible for
@@ -476,23 +398,7 @@ func workloadFor(
 	for {
 		workload := uuidpb.Generate()
 
-		var observers []func() (bool, <-chan struct{})
-		var unobservers []func()
-
-		for _, n := range nodes {
-			o, unobserve := n.ObserveResponsibility(workload)
-			observers = append(observers, o)
-			unobservers = append(unobservers, unobserve)
-		}
-
-		expectExactlyOneResponsible(t, workload, observers)
-		ok, _ := observers[0]()
-
-		for _, unobserve := range unobservers {
-			unobserve()
-		}
-
-		if ok {
+		if got := responsibleNodes(workload, nodes); len(got) == 1 && got[0] == responsible {
 			return workload
 		}
 	}

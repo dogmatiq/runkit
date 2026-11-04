@@ -24,10 +24,10 @@ import (
 )
 
 func TestConsumer(t *testing.T) {
-	// setup starts a consumer of a new catalog, and returns the catalog and a
-	// channel that receives the offset of each event that the consumer's
-	// handler handles.
-	setup := func(t *testing.T) (*eventstream.Catalog, <-chan uint64) {
+	// setup starts a consumer of a new catalog, and returns the catalog, the
+	// consumer's node, which is not yet running, and a channel that receives
+	// the offset of each event that the consumer's handler handles.
+	setup := func(t *testing.T) (*eventstream.Catalog, *cluster.Node, <-chan uint64) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -44,7 +44,6 @@ func TestConsumer(t *testing.T) {
 			Timeout:  100 * time.Millisecond,
 			Logger:   logger,
 		}
-		xtesting.GoE(t, node.Run)
 
 		catalog := &eventstream.Catalog{
 			CacheSize: 10,
@@ -94,7 +93,7 @@ func TestConsumer(t *testing.T) {
 		}
 		xtesting.GoE(t, consumer.Run)
 
-		return catalog, handled
+		return catalog, node, handled
 	}
 
 	// watch watches the given source with the catalog until the returned
@@ -113,7 +112,8 @@ func TestConsumer(t *testing.T) {
 	}
 
 	t.Run("it consumes a stream that joins the catalog", func(t *testing.T) {
-		catalog, handled := setup(t)
+		catalog, node, handled := setup(t)
+		xtesting.GoE(t, node.Run)
 
 		src := &source.Memory{}
 		watch(t, catalog, src)
@@ -123,8 +123,27 @@ func TestConsumer(t *testing.T) {
 		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 	})
 
+	t.Run("it consumes streams once this node is responsible for them", func(t *testing.T) {
+		catalog, node, handled := setup(t)
+
+		src := &source.Memory{}
+		watch(t, catalog, src)
+
+		streamID := uuidpb.Generate()
+		src.Append(newSegment(t, streamID, 0, EventA1))
+		expectStreamIDs(t, catalog, streamID)
+
+		// A node is responsible for nothing until it hears its own heartbeats,
+		// after which it is responsible for everything, being the only node.
+		xtesting.ExpectNoReceive(t, "handled event", handled)
+
+		xtesting.GoE(t, node.Run)
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
+	})
+
 	t.Run("it consumes a stream again when it returns to the catalog", func(t *testing.T) {
-		catalog, handled := setup(t)
+		catalog, node, handled := setup(t)
+		xtesting.GoE(t, node.Run)
 
 		src := &source.Memory{}
 		stop := watch(t, catalog, src)
@@ -144,7 +163,8 @@ func TestConsumer(t *testing.T) {
 	})
 
 	t.Run("it continues consuming a stream when another source takes over", func(t *testing.T) {
-		catalog, handled := setup(t)
+		catalog, node, handled := setup(t)
+		xtesting.GoE(t, node.Run)
 
 		first := &source.Memory{}
 		second := &deliveringSource{

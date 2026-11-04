@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -29,25 +28,6 @@ const (
 	// be reset to [baseDelay].
 	resetThreshold = 3 * time.Minute
 )
-
-// Go calls [Run] in a new goroutine, with a context derived from ctx.
-//
-// It returns a future that holds the error returned by [Run] once it returns,
-// and a function that cancels the context.
-func Go(
-	ctx context.Context,
-	logger *slog.Logger,
-	fn func(context.Context) error,
-) (*xsync.Future[error], context.CancelFunc) {
-	ctx, cancel := context.WithCancel(ctx)
-	result := &xsync.Future[error]{}
-
-	go func() {
-		result.Store(Run(ctx, logger, fn))
-	}()
-
-	return result, cancel
-}
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //

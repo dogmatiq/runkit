@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -48,20 +47,7 @@ type Node struct {
 	Logger *slog.Logger
 
 	membership xsync.Observable[*Membership]
-
-	once       sync.Once
-	observe    chan *observer
-	unobserve  chan *observer
-	done       xsync.Latch
 	heartbeats uuidcollection.Map[time.Time]
-	observers  uuidcollection.Map[map[*observer]struct{}]
-}
-
-// observer is a caller's interest in whether this node is responsible for a
-// workload, created by [Node.ObserveResponsibility].
-type observer struct {
-	Workload    *uuidpb.UUID
-	Responsible xsync.Observable[bool]
 }
 
 // Membership returns an observable of this node's view of the live nodes in
@@ -73,55 +59,8 @@ func (n *Node) Membership() xsync.ObservableR[*Membership] {
 	return &n.membership
 }
 
-// ObserveResponsibility observes whether this node is responsible for the
-// given rendezvous workload among the live nodes in the cluster.
-//
-// responsible returns true while this node is responsible for the workload, and
-// a channel that is closed when that changes. This node is responsible for no
-// workloads while it can not hear its own heartbeats.
-//
-// unobserve stops observing the workload, after which responsible no longer
-// changes.
-//
-// It blocks until [Node.Run] has been called. If the node has stopped, this
-// node is never responsible for the workload.
-func (n *Node) ObserveResponsibility(workload *uuidpb.UUID) (
-	responsible func() (bool, <-chan struct{}),
-	unobserve func(),
-) {
-	n.init()
-
-	o := &observer{
-		Workload: workload,
-	}
-
-	select {
-	case <-n.done.Chan():
-		return o.Responsible.Load, func() {}
-	case n.observe <- o:
-	}
-
-	var once sync.Once
-
-	return o.Responsible.Load, func() {
-		once.Do(func() {
-			select {
-			case <-n.done.Chan():
-			case n.unobserve <- o:
-			}
-		})
-	}
-}
-
-func (n *Node) init() {
-	n.once.Do(func() {
-		n.observe = make(chan *observer)
-		n.unobserve = make(chan *observer)
-	})
-}
-
-// Run sends and receives heartbeats, and reports whether this node is
-// responsible for each observed workload, until ctx is canceled.
+// Run sends and receives heartbeats, and publishes the membership as it
+// changes, until ctx is canceled.
 //
 // It must be called at most once.
 func (n *Node) Run(ctx context.Context) error {
@@ -133,21 +72,9 @@ func (n *Node) Run(ctx context.Context) error {
 		panic("heartbeat timeout must be greater than the heartbeat interval")
 	}
 
-	n.init()
-
-	defer func() {
-		n.done.Set()
-
-		// Once this node has stopped, it is no longer responsible for any
-		// workload.
-		n.membership.Store(&Membership{})
-
-		for observers := range n.observers.Values() {
-			for o := range observers {
-				xsync.ChangeObservable(&o.Responsible, false)
-			}
-		}
-	}()
+	// Once this node has stopped, it is no longer responsible for any
+	// workload.
+	defer n.membership.Store(&Membership{})
 
 	heartbeats := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
 
@@ -160,12 +87,6 @@ func (n *Node) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-
-		case o := <-n.observe:
-			n.addObserver(o)
-
-		case o := <-n.unobserve:
-			n.removeObserver(o)
 
 		case nodeID, ok := <-heartbeats:
 			if !ok {
@@ -271,8 +192,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 }
 
 // publishMembershipChange publishes the membership after the set of live
-// nodes has changed, and updates whether this node is responsible for each
-// observed workload.
+// nodes has changed.
 func (n *Node) publishMembershipChange() {
 	m := &Membership{
 		nodeID: n.ID,
@@ -288,45 +208,4 @@ func (n *Node) publishMembershipChange() {
 	}
 
 	n.membership.Store(m)
-
-	for workload, observers := range n.observers.All() {
-		responsible := m.LocalNodeIsResponsibleFor(workload)
-
-		for o := range observers {
-			xsync.ChangeObservable(&o.Responsible, responsible)
-		}
-	}
-}
-
-// addObserver adds o to the observers of its workload, and sets whether this
-// node is responsible for it.
-func (n *Node) addObserver(o *observer) {
-	observers, ok := n.observers.Get(o.Workload)
-	if !ok {
-		observers = map[*observer]struct{}{}
-		n.observers.Set(o.Workload, observers)
-	}
-
-	observers[o] = struct{}{}
-
-	m, _ := n.membership.Load()
-
-	xsync.ChangeObservable(
-		&o.Responsible,
-		m.LocalNodeIsResponsibleFor(o.Workload),
-	)
-}
-
-// removeObserver removes o from the observers of its workload.
-func (n *Node) removeObserver(o *observer) {
-	observers, ok := n.observers.Get(o.Workload)
-	if !ok {
-		return
-	}
-
-	delete(observers, o)
-
-	if len(observers) == 0 {
-		n.observers.Delete(o.Workload)
-	}
 }

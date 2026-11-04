@@ -27,7 +27,8 @@ import (
 // the same stream; the handler's optimistic concurrency control ensures each
 // event is handled once.
 type Consumer struct {
-	// Node reports whether this node is responsible for each stream's workload.
+	// Node is this engine's node in the cluster. Its membership determines
+	// which streams this node consumes.
 	Node *cluster.Node
 
 	// EventStreams is the catalog of event streams to consume.
@@ -56,7 +57,8 @@ type Consumer struct {
 	group              *errgroup.Group
 }
 
-// Run consumes event streams until ctx is canceled or it is unable to continue.
+// Run consumes the event streams that this node is responsible for until ctx is
+// canceled or it is unable to continue.
 //
 // It must be called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
@@ -67,25 +69,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 	c.group, ctx = errgroup.WithContext(ctx)
 
 	for {
-		streamIDs, changed := c.EventStreams.StreamIDs().Load()
+		streamIDs, streamIDsChanged := c.EventStreams.StreamIDs().Load()
+		membership, membershipChanged := c.Node.Membership().Load()
 
-		// Stopping a stream consumer waits for it to return, so a stream that
-		// leaves the catalog and comes back is never consumed twice at once on
-		// this node.
-		var stopping sync.WaitGroup
-
-		for streamID, stop := range c.stopStreamConsumer.All() {
-			if !streamIDs.Has(streamID) {
-				stopping.Go(stop)
-				c.stopStreamConsumer.Delete(streamID)
-			}
-		}
-
-		stopping.Wait()
-
-		for streamID := range streamIDs.All() {
-			c.ensureStreamConsumer(ctx, streamID)
-		}
+		c.reconcile(ctx, streamIDs, membership)
 
 		select {
 		case <-ctx.Done():
@@ -94,39 +81,69 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 
 			return ctx.Err()
-		case <-changed:
+		case <-streamIDsChanged:
+		case <-membershipChanged:
 		}
 	}
 }
 
-// ensureStreamConsumer starts a stream consumer for the stream with the given
-// ID, unless one is already running.
-//
-// The stream consumer runs until ctx is canceled, it fails, or it is stopped
-// because the stream has left the catalog.
-func (c *Consumer) ensureStreamConsumer(
+// reconcile starts a stream consumer for each of the given streams that this
+// node is responsible for in the given membership, and stops every other
+// stream consumer.
+func (c *Consumer) reconcile(
+	ctx context.Context,
+	streamIDs *uuidcollection.Set,
+	membership *cluster.Membership,
+) {
+	responsible := uuidcollection.NewSet()
+
+	for streamID := range streamIDs.All() {
+		if membership.LocalNodeIsResponsibleFor(c.workload(streamID)) {
+			responsible.Add(streamID)
+		}
+	}
+
+	// Stopping a stream consumer waits for it to return, so a stream is never
+	// consumed twice at once on this node.
+	var stopping sync.WaitGroup
+
+	for streamID, stop := range c.stopStreamConsumer.All() {
+		if !responsible.Has(streamID) {
+			stopping.Go(stop)
+			c.stopStreamConsumer.Delete(streamID)
+		}
+	}
+
+	stopping.Wait()
+
+	for streamID := range responsible.All() {
+		if !c.stopStreamConsumer.Has(streamID) {
+			c.startStreamConsumer(ctx, streamID)
+		}
+	}
+}
+
+// workload returns the rendezvous workload that determines which node consumes
+// the stream with the given ID.
+func (c *Consumer) workload(streamID *uuidpb.UUID) *uuidpb.UUID {
+	if c.Concurrency == dogma.MinimizeConcurrency {
+		return c.Identity.GetKey()
+	}
+
+	// If the handler does not prefer to minimize concurrency, derive a unique
+	// workload from both the handler identity and the stream ID such that both
+	// handlers and streams are distributed evenly across nodes.
+	return uuidpb.Derive(c.Identity.GetKey(), streamID.AsString())
+}
+
+// startStreamConsumer starts a stream consumer for the stream with the given
+// ID, which runs until ctx is canceled, it fails fatally, or it is stopped.
+func (c *Consumer) startStreamConsumer(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) {
-	if c.stopStreamConsumer.Has(streamID) {
-		return
-	}
-
-	// workload is the rendezvous workload that determines which node consumes
-	// the stream.
-	workload := c.Identity.GetKey()
-
-	if c.Concurrency != dogma.MinimizeConcurrency {
-		// If the handler does not prefer to minimize concurrency, derive a
-		// unique workload from both the handler identity and the stream ID such
-		// that both handlers and streams are distributed evenly across nodes.
-		workload = uuidpb.Derive(workload, streamID.AsString())
-	}
-
 	sc := &streamConsumer{
 		StreamID:     streamID,
-		Node:         c.Node,
-		Workload:     workload,
 		EventStreams: c.EventStreams,
 		EventTypeIDs: c.EventTypeIDs,
 		Handler:      c.Handler,

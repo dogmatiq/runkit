@@ -293,7 +293,7 @@ Every step is green under `make test` unless marked otherwise.
       membership, until step 9b. `node_test.go` and `xtesting`'s
       cluster convergence move onto `Membership`, with a new case for a
       stopped node being responsible for nothing.
-- [ ] **Step 9b.** The projection consumer reconciles in one place. Before
+- [x] **Step 9b.** The projection consumer reconciles in one place. Before
       this, three layers react to overlapping changes: the `Consumer` starts
       and stops a stream consumer as streams join and leave the catalog; each
       stream consumer starts and stops consumption as the node's
@@ -310,8 +310,14 @@ Every step is green under `make test` unless marked otherwise.
     only in the moment before the loop cancels it, is retried like any other
     failure.
   - `ObserveResponsibility` and its observers are deleted, and its tests in
-    `node_test.go` move onto `Membership`. `consumer_test.go` gains a case
-    for responsibility moving to another node and back.
+    `node_test.go` move onto `Membership`; the two about unobserving go.
+    `supervisor.Go`, which only `step` used, is deleted.
+  - `consumer_test.go` gains a case for a node that becomes responsible for
+    a stream, by starting the consumer's node after the stream is in the
+    catalog. Responsibility moving away is not tested here: a consumer that
+    has not yet noticed may still handle an event appended after the test
+    sees the new membership, so the test would be racy. The distribution
+    tests cover it end to end.
 - [ ] **Step 10.** `ConsumerAPI.ConsumeEvents` rewritten over `Consume` on the
       old protocol, deleting the shim; `grpc_test.go` passes unchanged. This
       shrinks step 11 to the wire mapping.

@@ -2,16 +2,13 @@ package projection
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -25,13 +22,6 @@ import (
 type streamConsumer struct {
 	// StreamID is the ID of the stream from which events are consumed.
 	StreamID *uuidpb.UUID
-
-	// Node reports whether this node is responsible for the stream's workload.
-	Node *cluster.Node
-
-	// Workload is the rendezvous workload that determines which node consumes
-	// the stream.
-	Workload *uuidpb.UUID
 
 	// EventStreams is the catalog from which the stream is consumed.
 	EventStreams *eventstream.Catalog
@@ -54,58 +44,12 @@ type streamConsumer struct {
 	Logger *slog.Logger
 }
 
-// Run consumes the stream while this node is responsible for its workload,
-// until ctx is canceled.
+// Run consumes the stream until ctx is canceled or it fails fatally.
 func (sc *streamConsumer) Run(ctx context.Context) error {
-	responsible, unobserve := sc.Node.ObserveResponsibility(sc.Workload)
-	defer unobserve()
+	sc.Logger.DebugContext(ctx, "started consuming event stream")
+	defer sc.Logger.DebugContext(ctx, "stopped consuming event stream")
 
-	for {
-		if err := sc.step(ctx, responsible); err != nil {
-			return err
-		}
-	}
-}
-
-// step runs the stream consumer until ctx is canceled or its responsibility
-// changes, consuming the stream if this node is responsible for its workload.
-//
-// responsible reports whether this node is responsible for the stream's
-// workload, and returns a channel that is closed when that changes.
-func (sc *streamConsumer) step(
-	ctx context.Context,
-	responsible func() (bool, <-chan struct{}),
-) error {
-	isResponsible, responsibilityChanged := responsible()
-
-	var (
-		consumerResult  *xsync.Future[error]
-		consumerStopped <-chan struct{}
-	)
-
-	if isResponsible {
-		sc.Logger.DebugContext(ctx, "started consuming event stream")
-
-		var cancel context.CancelFunc
-		consumerResult, cancel = supervisor.Go(ctx, sc.Logger, sc.consume)
-		consumerStopped = consumerResult.Chan()
-
-		defer func() {
-			cancel()
-			consumerResult.Wait()
-
-			sc.Logger.DebugContext(ctx, "stopped consuming event stream")
-		}()
-	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-responsibilityChanged:
-		return nil
-	case <-consumerStopped:
-		return consumerResult.Wait()
-	}
+	return supervisor.Run(ctx, sc.Logger, sc.consume)
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
@@ -115,6 +59,9 @@ func (sc *streamConsumer) step(
 //
 // A conflict is returned as an error so that consumption resumes from the
 // handler's checkpoint offset after a delay, rather than immediately.
+//
+// It also fails if the catalog no longer has the stream, which happens only
+// between the stream leaving the catalog and the [Consumer] noticing.
 func (sc *streamConsumer) consume(ctx context.Context) error {
 	checkpoint, err := xerrors.RecoverT(
 		func() (uint64, error) {
@@ -128,49 +75,17 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		)
 	}
 
-	for {
-		err := sc.EventStreams.Consume(
-			ctx,
-			sc.StreamID,
-			sc.EventTypeIDs,
-			checkpoint,
-			func(seg eventstream.Segment) error {
-				var err error
-				checkpoint, err = sc.dispatchSegment(ctx, checkpoint, seg)
-				return err
-			},
-		)
-
-		if !errors.Is(err, eventstream.ErrStreamNotFound) {
+	return sc.EventStreams.Consume(
+		ctx,
+		sc.StreamID,
+		sc.EventTypeIDs,
+		checkpoint,
+		func(seg eventstream.Segment) error {
+			var err error
+			checkpoint, err = sc.dispatchSegment(ctx, checkpoint, seg)
 			return err
-		}
-
-		sc.Logger.DebugContext(ctx, "event stream left the catalog")
-
-		if err := sc.waitForStream(ctx); err != nil {
-			return err
-		}
-	}
-}
-
-// waitForStream blocks until the catalog has the stream, or ctx is canceled.
-//
-// The [Consumer] stops the stream consumer once the stream has left the
-// catalog, unless the stream returns first.
-func (sc *streamConsumer) waitForStream(ctx context.Context) error {
-	for {
-		streamIDs, changed := sc.EventStreams.StreamIDs().Load()
-
-		if streamIDs.Has(sc.StreamID) {
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-changed:
-		}
-	}
+		},
+	)
 }
 
 // dispatchSegment dispatches the events in a segment, and returns the
