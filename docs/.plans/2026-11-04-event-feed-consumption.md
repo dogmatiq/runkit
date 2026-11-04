@@ -464,16 +464,28 @@ Every step is green under `make test` unless marked otherwise.
       consumer handles a segment's events in turn and returns the first
       failure, retrying outside `Consume`. Test: `Watch` returns only once a
       read in progress has returned.
-- [ ] **Step 16.** Un-skip `foreignevents_test.go`. The historical,
+- [x] **Step 16.** Un-skip `foreignevents_test.go`. The historical,
       contemporary, local-and-foreign and upstream-node-stops cases pass as
       they are. "Does not retry immediately" becomes: a projection handling
       none of a remote engine's types opens at most the initial `ReadEvents`
       per stream and none after a quiet period, and the node holds exactly one
       `WatchEvents`. A per-method call-counting dial helper replaces the inline
       interceptor.
-- [ ] **Step 17.** New end-to-end scenarios: two projections on one node share
-      one `WatchEvents`; a feed reconnect (an interceptor fails the first
-      `RecvMsg` after N messages) leaves every event handled once. Tests only.
+  - As built, merged with step 17 and trimmed to what only end-to-end tests
+    can show, which is the engine's wiring: the discoverer option, the
+    connector, the shared catalog and the projection consumer, with the
+    event types the engine computes. Two tests remain. One projection handles
+    a foreign event recorded before the downstream engine starts, one
+    recorded while it runs, and a local event. A node with two projections
+    of the same foreign type makes one `WatchEvents` call, counted by
+    `dialCountingWatches` (runkit #65).
+  - Dropped as covered elsewhere: the upstream-node-stops case
+    (`source.Remote`'s cluster test and the catalog's restart test), feed
+    reconnect catch-up (`source.Remote`'s catch-up test through a catalog),
+    and the quiet-period `ReadEvents` count, which re-tested catalog
+    caching. "Does not retry immediately" no longer applies, as there is no
+    recheck interval.
+- [x] **Step 17.** Folded into step 16.
 
 ### Phase 8: Takeover between sources
 
