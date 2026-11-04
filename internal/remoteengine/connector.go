@@ -4,7 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 
+	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
@@ -21,6 +27,17 @@ type Connector struct {
 		add func(conn grpc.ClientConnInterface) (remove func()),
 	) error
 
+	// EventStreams is the catalog to which each available remote engine's
+	// event streams are added.
+	EventStreams *eventstream.Catalog
+
+	// EventTypeIDs is the set of event types to deliver from each remote
+	// engine.
+	//
+	// If it is empty, remote engines are not watched at all, as watching for
+	// an empty set of types would deliver events of every type.
+	EventTypeIDs *uuidcollection.Set
+
 	// Logger is the target for log messages produced by the connector and its
 	// connections to remote engines.
 	Logger *slog.Logger
@@ -31,15 +48,41 @@ func (c *Connector) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, c.Logger, c.discover)
 }
 
-// discover calls Discover until it returns.
+// discover calls Discover, watching each remote engine that it adds for event
+// streams until the remote engine is removed or Discover returns.
 //
 // Discover is expected to run until ctx is canceled, so returning before then
 // is a failure, even without an error.
-//
-// Nothing is done with the remote engines that Discover adds yet.
 func (c *Connector) discover(ctx context.Context) error {
-	add := func(grpc.ClientConnInterface) func() {
-		return func() {}
+	var watchers sync.WaitGroup
+	defer watchers.Wait()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	add := func(conn grpc.ClientConnInterface) func() {
+		if ctx.Err() != nil || c.EventTypeIDs.IsEmpty() {
+			return func() {}
+		}
+
+		src := &source.Remote{
+			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+		}
+
+		ctx, cancel := context.WithCancel(ctx)
+		var stopped xsync.Latch
+
+		// The catalog watches the source until ctx is canceled, retrying it
+		// whenever it fails, so it has no other error to report.
+		watchers.Go(func() {
+			defer stopped.Set()
+			c.EventStreams.Watch(ctx, src, c.EventTypeIDs)
+		})
+
+		return func() {
+			cancel()
+			<-stopped.Chan()
+		}
 	}
 
 	err := xerrors.Recover(func() error {

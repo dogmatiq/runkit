@@ -428,12 +428,31 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 7: Wire it up end to end (new protobuf)
 
-- [ ] **Step 15.** `Connector` adds a `source.Remote` per connection to the
+- [x] **Step 15.** `Connector` adds a `source.Remote` per connection to the
       catalog with the projection event-type union, and removes it on
       removal. `engine.go` adds `consumedEventTypeIDs()` — the union of
       inbound event types of enabled projections — and passes it to the
       connectors; the local source is added with no limit.
       `connector_test.go` is rebuilt over a `WatchEvents` stub server.
+  - As built: the union already exists as `projectionEventTypeIDs()` from
+    step 11, so the engine computes it once and uses it for both the local
+    watch and every connector; the local source is watched for it too, not
+    with no limit.
+  - `Connector` gains `EventStreams` and `EventTypeIDs`. Each connection
+    `add`ed runs `Catalog.Watch` over a `source.Remote` on its own context,
+    and its `remove` cancels that context and waits for `Watch` to return,
+    by which point the source's feeds are closed and any `ReadEvents` they
+    were serving has been canceled. A canceled call may still be unwinding
+    when `remove` returns. Discover returning cancels every connection's
+    context, and `discover` waits for them all. With no event types, `add`
+    does nothing.
+  - `connector_test.go` keeps the two discoverer cases and adds, over an
+    in-process gRPC server offering one empty stream: each remote engine's
+    streams join the catalog; each is watched for the given types; none is
+    watched with no types; a removed engine's streams leave; and every
+    engine's streams leave when the discoverer returns, and it is called
+    again. Two engines under one connector stand in for "two connectors
+    side by side".
 - [ ] **Step 16.** Un-skip `foreignevents_test.go`. The historical,
       contemporary, local-and-foreign and upstream-node-stops cases pass as
       they are. "Does not retry immediately" becomes: a projection handling

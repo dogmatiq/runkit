@@ -282,17 +282,21 @@ func (e *Engine) Run(ctx context.Context) error {
 		return e.node.Run(ctx)
 	})
 
+	eventTypeIDs := e.projectionEventTypeIDs()
+
 	// The catalog is consumed only by projections, so it has no need of the
 	// application's own streams if no projection handles any events.
-	if types := e.projectionEventTypeIDs(); !types.IsEmpty() {
+	if !eventTypeIDs.IsEmpty() {
 		e.group.Go(func() error {
-			return e.eventStreams.Watch(ctx, localEventStreams, types)
+			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs)
 		})
 	}
 
 	for _, d := range e.remoteEngineDiscoverers {
 		connector := &remoteengine.Connector{
-			Discover: d,
+			Discover:     d,
+			EventStreams: e.eventStreams,
+			EventTypeIDs: eventTypeIDs,
 			Logger: e.logger.With(
 				slog.String("component", "remoteengine.connector"),
 			),

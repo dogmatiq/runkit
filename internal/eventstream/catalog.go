@@ -67,8 +67,8 @@ func (c *Catalog) StreamIDs() xsync.ObservableR[*uuidcollection.Set] {
 // recent events, and one that falls behind is served by reading from the
 // source until it catches up again.
 //
-// types must not be empty, and every type must be one that the stream's
-// source is watched for.
+// types must not be empty, and every type must be one that [Catalog.Watch]
+// was given for the stream's source.
 func (c *Catalog) Consume(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -120,8 +120,8 @@ func (c *Catalog) Consume(
 // The streams that the source delivers are added to the catalog, and are
 // removed again when Watch returns.
 //
-// types is the set of message types that the source is watched for, or nil to
-// watch it for every type.
+// types is the set of message types to deliver from the source, or nil to
+// deliver every type.
 func (c *Catalog) Watch(
 	ctx context.Context,
 	src source.Source,
