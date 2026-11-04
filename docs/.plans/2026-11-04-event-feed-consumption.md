@@ -282,19 +282,23 @@ Every step is green under `make test` unless marked otherwise.
       another source takes over. That the consumer stops a stream consumer
       when its stream leaves is not observable through the catalog, which
       can deliver nothing for a stream it does not have, so it has no test.
-- [ ] **Step 9a.** The projection consumer reconciles in one place. Before
+- [x] **Step 9a.** `cluster.Node` publishes its view of the cluster as one
+      observable, `Node.Membership() xsync.ObservableR[*cluster.Membership]`,
+      replacing `Node.Peers`. A `Membership` is an immutable snapshot of the
+      live nodes. `LocalNodeIsResponsibleFor(workload)` is the rendezvous
+      hash over them, moved from the node, and is false for every workload
+      while the local node can not hear its own heartbeats. A nil `Membership` has no live nodes, and a stopped node
+      publishes an empty one. `Peers()` replaces `Node.Peers`.
+      `ObserveResponsibility` stays, computing responsibility from the
+      membership, until step 9b. `node_test.go` and `xtesting`'s
+      cluster convergence move onto `Membership`, with a new case for a
+      stopped node being responsible for nothing.
+- [ ] **Step 9b.** The projection consumer reconciles in one place. Before
       this, three layers react to overlapping changes: the `Consumer` starts
       and stops a stream consumer as streams join and leave the catalog; each
       stream consumer starts and stops consumption as the node's
       responsibility for its workload changes; and a stream consumer whose
       stream leaves waits for it to return while the `Consumer` stops it.
-  - `cluster.Node` publishes its view of the cluster as one observable,
-    `Node.Membership() xsync.ObservableR[*cluster.Membership]`, replacing
-    `ObserveResponsibility`, its observers, and `Node.Peers`. A `Membership`
-    is an immutable snapshot of the live nodes. `IsResponsibleFor(workload)`
-    is the rendezvous hash over them, and is false for every workload while
-    the node can not hear its own heartbeats or once it has stopped.
-    `Peers()` replaces `Node.Peers`.
   - `projection.Consumer.Run` is one loop. It waits for the catalog's stream
     IDs or the membership to change, works out the streams this node is
     responsible for, and starts or cancels a stream consumer for each
@@ -305,9 +309,9 @@ Every step is green under `make test` unless marked otherwise.
     supervisor until it is canceled. `ErrStreamNotFound`, which it can see
     only in the moment before the loop cancels it, is retried like any other
     failure.
-  - `node_test.go` and `xtesting`'s cluster convergence move onto
-    `Membership`. `consumer_test.go` gains a case for responsibility moving
-    to another node and back.
+  - `ObserveResponsibility` and its observers are deleted, and its tests in
+    `node_test.go` move onto `Membership`. `consumer_test.go` gains a case
+    for responsibility moving to another node and back.
 - [ ] **Step 10.** `ConsumerAPI.ConsumeEvents` rewritten over `Consume` on the
       old protocol, deleting the shim; `grpc_test.go` passes unchanged. This
       shrinks step 11 to the wire mapping.

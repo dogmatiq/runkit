@@ -297,6 +297,31 @@ func TestNode(t *testing.T) {
 		}
 	})
 
+	t.Run("it is responsible for nothing once it stops", func(t *testing.T) {
+		signals := setup(t)
+
+		n := newNode(t, signals, interval, timeout)
+		other := newNode(t, signals, interval, timeout)
+
+		stop := start(t, n)
+		start(t, other)
+
+		workload := workloadFor(t, n, other)
+		expectNodeResponsibleFor(t, n, workload, true)
+
+		stop()
+
+		m, _ := n.Membership().Load()
+
+		if m.LocalNodeIsResponsibleFor(workload) {
+			t.Fatal("stopped node is responsible for a workload")
+		}
+
+		if !m.Peers().IsEmpty() {
+			t.Fatalf("stopped node has peers: %s", m.Peers())
+		}
+	})
+
 	t.Run("it learns about existing nodes without waiting for their next heartbeat", func(t *testing.T) {
 		signals := setup(t)
 
@@ -331,7 +356,8 @@ func expectPeers(
 	timeout := time.After(xtesting.WaitTimeout)
 
 	for {
-		got, changed := n.Peers()
+		m, changed := n.Membership().Load()
+		got := m.Peers()
 
 		if got.IsEqual(expected) {
 			return
@@ -340,6 +366,32 @@ func expectPeers(
 		select {
 		case <-timeout:
 			t.Fatalf("unexpected peers: got %s, want %s", got, expected)
+		case <-changed:
+		}
+	}
+}
+
+func expectNodeResponsibleFor(
+	t testing.TB,
+	n *Node,
+	workload *uuidpb.UUID,
+	want bool,
+) {
+	t.Helper()
+
+	timeout := time.After(xtesting.WaitTimeout)
+
+	for {
+		m, changed := n.Membership().Load()
+		got := m.LocalNodeIsResponsibleFor(workload)
+
+		if got == want {
+			return
+		}
+
+		select {
+		case <-timeout:
+			t.Fatalf("unexpected responsibility: got %t, want %t", got, want)
 		case <-changed:
 		}
 	}

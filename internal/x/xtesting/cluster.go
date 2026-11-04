@@ -230,7 +230,9 @@ func (c *Cluster) converge(t testing.TB) {
 		}
 
 		for {
-			peers, changed := node.Peers()
+			membership, changed := node.Membership().Load()
+			peers := membership.Peers()
+
 			if peers.Len() == peerCount {
 				break
 			}
