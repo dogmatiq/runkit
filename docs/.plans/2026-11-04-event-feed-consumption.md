@@ -527,6 +527,26 @@ Every step is green under `make test` unless marked otherwise.
     return the read-only `xsync.ObservableR`. dogmatiq/protobuf#8 was
     already closed. Before this step, the changelog was reviewed for users
     upgrading from v0.1.2.
+- [x] **Step 22.** Address runkit#63 (shared test helpers) and #68 (tests that
+      time out under load) on this branch, as most of the code they touch is
+      new in PR 64. Close both once it merges.
+  - As done for #63: `xtesting` gains `WaitFor`, `WaitForObservable`,
+    `DialGRPC` and `DialGRPCAddr`, which replace the hand-rolled polling
+    loops, the four copies of the catalog stream ID wait and the inline gRPC
+    client setup. `ExpectLatchesSetEventually` is renamed `WaitForLatches`,
+    as `WaitFor` helpers wait for a condition and `Expect` helpers check one
+    immediately. Each package keeps its catalog wait as a thin wrapper over
+    `WaitForObservable`, and `xtesting` stays one package. `waitForBus`
+    re-sends a probe, the gRPC server tests' `request` opens a connection per
+    poll, and `ExpectHandledEventually` takes its own timeout, so they stay
+    local.
+  - As done for #68: outside CI, `WaitTimeout` is now 10 seconds and the
+    per-test timeout in `RunEngines` 30 seconds. `GO_TEST_ARGS='-count=3'
+    make test` passes with them, and failed in three to five tests without.
+    A configurable heartbeat interval was tried and dropped. At 200ms, nodes
+    under load expired their peers and added them back, which runkit#72 now
+    tracks. No connection errors were seen, so the test database's connection
+    limits are unchanged.
 
 ---
 
