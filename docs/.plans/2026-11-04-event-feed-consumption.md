@@ -378,9 +378,10 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 6: Remote source (new protobuf)
 
-- [ ] **Step 12.** `validatesegment.go` with a test per rule, each error
-      naming the stream and offsets.
-- [ ] **Step 13.** `source.Remote` with deterministic tests over the client
+- [x] **Step 12.** Folded into step 13. Validation has no caller until
+      `source.Remote` exists, and an unexported function is tested through
+      the public API that uses it.
+- [x] **Step 13.** `source.Remote` with deterministic tests over the client
       stub or an in-process stub server: `Watch` delivers each segment as it
       arrives; the call ending → `Watch` returns an error, and the next call's
       first segment per stream restarts it at its new offset;
@@ -389,6 +390,27 @@ Every step is green under `make test` unless marked otherwise.
       catch-up through a `Catalog` — the first call delivers `[0, 1)` then
       fails, the second delivers from `[3, 3)`, `ReadEvents` is called from
       1, and the consumer sees offsets 0, 1 and 2 once each, in order.
+  - As built: `source.Remote` has only a `Client`. `Watch` is one
+    `WatchEvents` call, and `Read` one `ReadEvents` call; the catalog's
+    supervisor retries the watch, and the stream consumer's retries a read.
+    Each ends its call when it returns.
+  - Every segment goes through `parseSegment`, which unpacks each
+    multi-envelope into envelopes and checks the rules from step 12: the
+    stream ID validates; the segment does not end before it begins; each
+    multi-envelope validates; each event has an `EventStreamPosition` for
+    the segment's stream, at an offset after the previous event's and before
+    the segment's end; and each type was requested. `Watch` also checks that
+    a stream's segments follow on, and `Read` that every segment is of the
+    requested stream and follows on from the begin offset. Each error names
+    the segment's range and stream.
+  - Invalid segments, `UNIMPLEMENTED` from `WatchEvents`, and `NOT_FOUND`
+    and `OUT_OF_RANGE` from `ReadEvents` are `supervisor.Persistent`. That
+    only raises the supervisor's backoff ceiling, from 15 seconds to five
+    minutes, which the tests can not observe, so they check the errors'
+    messages and not their persistence.
+  - The catch-up case runs a `Catalog` over the remote source in
+    `remote_test.go`, rather than in the catalog's tests, so the step adds
+    new files only.
 - [ ] **Step 14.** Tests for `source.Remote` against a real cluster: streams
       appear in the catalog; the range via `ReadEvents` then the tail via
       `WatchEvents`; a stopped node → reconnect → consumers continue. Tests
