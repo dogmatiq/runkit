@@ -42,43 +42,6 @@ type subscriber struct {
 	Subtopic chan<- string
 }
 
-// Subscribe registers ch to receive each signal on the given topic, or on any
-// topic beneath it.
-//
-// Topics are hierarchical, with levels separated by dots. A subscriber to
-// "a.b" receives signals on "a.b" and "a.b.c", but not on "a.bc".
-//
-// The value sent on ch is the part of the signal's topic beneath the subscribed
-// topic: "c" for a signal on "a.b.c", or "" for a signal on "a.b" itself.
-//
-// ch should be buffered. If it is full when a signal is received, that signal
-// is not delivered to ch.
-//
-// It returns a function that unsubscribes.
-func (b *Bus) Subscribe(topic string, ch chan<- string) func() {
-	sub := &subscriber{
-		Topic:    topic,
-		Subtopic: ch,
-	}
-
-	b.m.Lock()
-	if b.subscribers == nil {
-		b.subscribers = map[*subscriber]struct{}{}
-	}
-	b.subscribers[sub] = struct{}{}
-	b.m.Unlock()
-
-	var once sync.Once
-
-	return func() {
-		once.Do(func() {
-			b.m.Lock()
-			delete(b.subscribers, sub)
-			b.m.Unlock()
-		})
-	}
-}
-
 // Watch returns a channel that receives each signal on the given topic, or on
 // any topic beneath it, until ctx is canceled, at which point the channel is
 // closed.
@@ -146,7 +109,7 @@ func (b *Bus) Send(ctx context.Context, topic string) error {
 
 // Run executes the bus until ctx is canceled.
 //
-// It must be called at most once. Subscribe may be called before Run.
+// It must be called at most once. Watch may be called before Run.
 func (b *Bus) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, b.Logger, b.run)
 }

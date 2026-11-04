@@ -31,13 +31,15 @@ func TestNode(t *testing.T) {
 			Logger: spruce.NewTestLogger(t),
 		}
 
-		// Once the bus is listening it signals every subscriber, whatever its
-		// topic.
-		listening := make(chan string, 1)
-		defer signals.Subscribe("test", listening)()
+		// Once the bus is listening it signals every watcher, whatever its
+		// topic. The first signal is delivered as soon as watching begins.
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		listening := signals.Watch(ctx, "test", 2)
 
 		xtesting.GoE(t, signals.Run)
-		xtesting.ExpectToReceiveN(t, "signal bus to start listening", listening, "")
+		xtesting.ExpectToReceiveN(t, "signal bus to start listening", listening, "", "")
 
 		return signals
 	}
@@ -59,14 +61,14 @@ func TestNode(t *testing.T) {
 	t.Run("it sends heartbeats on a topic named after the node", func(t *testing.T) {
 		signals := setup(t)
 
-		heartbeats := make(chan string, 10)
-		defer signals.Subscribe("heartbeat", heartbeats)()
+		heartbeats := signals.Watch(t.Context(), "heartbeat", 10)
 
 		n := newNode(t, signals, interval, timeout)
 		xtesting.GoE(t, n.Run)
 
-		// The first signal may be the bus starting, which carries no
-		// node ID; after that, every signal is a heartbeat from this node.
+		// The first signals carry no node ID, as they are delivered when
+		// watching begins and when the bus starts; after that, every signal
+		// is a heartbeat from this node.
 		want := n.ID.AsString()
 
 		for i := 0; i < 3; {
@@ -117,8 +119,8 @@ func TestNode(t *testing.T) {
 	t.Run("it replies to a node that joins", func(t *testing.T) {
 		signals := setup(t)
 
-		heartbeats := make(chan string, 10)
-		defer signals.Subscribe("heartbeat", heartbeats)()
+		heartbeats := signals.Watch(t.Context(), "heartbeat", 10)
+		xtesting.ExpectToReceiveN(t, "initial signal", heartbeats, "")
 
 		// The interval is long enough that any heartbeat after the first is
 		// sent in reply to a joining node.

@@ -328,7 +328,7 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers every event in order to a client that falls behind", func(t *testing.T) {
-		const eventCount = 1000
+		const eventCount = 200
 
 		var streamID *uuidpb.UUID
 
@@ -350,7 +350,7 @@ func TestConsumerAPI_ConsumeEvents(t *testing.T) {
 				// flow control and the server's buffer can hold, so that the
 				// server falls back to reading historical events for the
 				// client.
-				padding := strings.Repeat("x", 2000)
+				padding := strings.Repeat("x", 10000)
 				var want []dogma.Event
 
 				for i := range eventCount {

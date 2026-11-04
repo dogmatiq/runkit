@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -193,4 +194,69 @@ func appendToMemory(
 	src.Append(seg)
 
 	return streamID, seg.Envelopes
+}
+
+// expectStreamIDs waits for the catalog to report exactly the given stream
+// IDs.
+func expectStreamIDs(
+	t testing.TB,
+	catalog interface {
+		StreamIDs() (*uuidcollection.Set, <-chan struct{})
+	},
+	want ...*uuidpb.UUID,
+) {
+	t.Helper()
+
+	expected := uuidcollection.NewSet(want...)
+	timeout := time.After(xtesting.WaitTimeout)
+
+	for {
+		got, changed := catalog.StreamIDs()
+
+		if got.IsEqual(expected) {
+			return
+		}
+
+		select {
+		case <-timeout:
+			t.Fatalf("unexpected stream IDs: got %s, want %s", got, expected)
+		case <-changed:
+		}
+	}
+}
+
+// expectToReceiveEnvelopes asserts that the given envelopes are received, in
+// order, across one or more batches. It returns the checkpoint of the last
+// batch received.
+//
+// It fails if any batch's checkpoint is lower than that of the batch before it.
+func expectToReceiveEnvelopes(
+	t testing.TB,
+	batches <-chan Batch,
+	want ...*envelopepb.Envelope,
+) uint64 {
+	t.Helper()
+
+	var (
+		got        []*envelopepb.Envelope
+		checkpoint uint64
+	)
+
+	for len(got) < len(want) {
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatalf("timeout waiting for envelopes: got %d of %d", len(got), len(want))
+		case batch := <-batches:
+			if batch.Checkpoint < checkpoint {
+				t.Fatalf("checkpoint moved backwards: got %d, previously %d", batch.Checkpoint, checkpoint)
+			}
+
+			checkpoint = batch.Checkpoint
+			got = append(got, batch.Envelopes...)
+		}
+	}
+
+	xtesting.Expect(t, "envelopes", got, want)
+
+	return checkpoint
 }

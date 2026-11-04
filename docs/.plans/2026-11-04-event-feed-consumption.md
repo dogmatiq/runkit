@@ -252,12 +252,20 @@ Every step is green under `make test` unless marked otherwise.
       a clean stop. `fn` is now always given the consumer's own context, so
       that a segment it has been given is handled to completion even if the
       feed closes. `LocalCatalog` is still wired.
-- [ ] **Step 8.** Switch over: `engine.go` builds the `Catalog` and adds a
-      `source.Local`; `ConsumerAPI` and `projection.Consumer` take the shim,
-      with the catalog giving `ConsumerAPI` a way to consume only streams
-      watched via the local source; delete `localcatalog.go`, `legacy.go`, the
-      `scanner` package and `internal/ringbuffer`. The existing suite passes
-      unchanged.
+- [x] **Step 8.** Switch over: `engine.go` builds the `Catalog`, watches a
+      `source.Local` with it for the life of the engine, and gives `ConsumerAPI`
+      and `projection.Consumer` the adapter. The engine runs its components in
+      an errgroup it holds, including each handler's; `runComponent` and the
+      `component` interface are gone. `ConsumerAPI` takes the
+      `LegacyCatalog` interface; with only the local source in the catalog until
+      step 15, nothing can be relayed yet, so the never-relay rule is settled at
+      step 11. The adapter waits for a stream the catalog has not discovered
+      yet, as the server may be asked for one that is already in the database.
+      `eventStreamBatchSize` becomes `eventStreamSegmentSize`.
+      `localcatalog.go`, the `scanner` package, `internal/ringbuffer` and
+      `signal.Bus.Subscribe` are deleted, and the node tests watch signals
+      instead. The existing suite passes; under three concurrent runs of every
+      package it shows the same timing failures as before the switch.
 
 ### Phase 4: Projection on `Consume` (old protobuf)
 
@@ -286,7 +294,16 @@ Every step is green under `make test` unless marked otherwise.
       stream created mid-call appearing on the feed, per-stream contiguity, an
       empty filter delivering every type.
       `grpcserver/server_test.go` and `engine_test.go` swap `ListEventStreams`
-      for `WatchEvents`.
+      for `WatchEvents`. The server must not relay a remote source's feed of
+      a local stream, and must not answer `Unavailable` for a stream that is
+      in the database but not yet discovered; reading straight from the
+      `source.Local` for `ReadEvents`, and watching it for `WatchEvents`,
+      would settle both. Once the server no longer goes through the catalog,
+      the engine watches the local source for the union of its projections'
+      event types instead of every type, and not at all if there are none.
+      Until then, every node reads every event appended to every local stream,
+      which made the slow-client test five times slower; it was cut to 200
+      larger events to stay within its time limit.
 
 ### Phase 6: Remote source (new protobuf)
 

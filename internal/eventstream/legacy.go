@@ -6,8 +6,8 @@ import (
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/scanner"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 )
 
@@ -38,7 +38,17 @@ type LegacyCatalog interface {
 //
 // A batch may contain no events, indicating only that the checkpoint has
 // advanced past events that are not of a subscribed type.
-type Batch = scanner.Batch
+type Batch struct {
+	// StreamID is the ID of the event stream from which the events were read.
+	StreamID *uuidpb.UUID
+
+	// Envelopes are the delivered events, in offset order.
+	Envelopes []*envelopepb.Envelope
+
+	// Checkpoint is the offset immediately after the range of the stream that
+	// the batch covers.
+	Checkpoint uint64
+}
 
 // Legacy returns the catalog as a [LegacyCatalog].
 func (c *Catalog) Legacy() LegacyCatalog {
@@ -57,9 +67,11 @@ func (c legacyCatalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
 // Subscribe consumes the stream on a new goroutine, sending each segment to
 // ch as a batch.
 //
-// A failed read from the stream's source is retried, from the end of the last
-// batch sent. The returned lost channel is closed once the catalog no longer
-// has the stream.
+// If the catalog does not have the stream yet, it waits for it to before
+// consuming it, as the stream may exist before the catalog discovers it. If
+// the catalog has the stream, it is consumed at once. A failed read from the
+// stream's source is retried, from the end of the last batch sent. The
+// returned lost channel is closed once the catalog no longer has the stream.
 func (c legacyCatalog) Subscribe(
 	streamID *uuidpb.UUID,
 	checkpoint uint64,
@@ -71,8 +83,15 @@ func (c legacyCatalog) Subscribe(
 
 	var gone xsync.Latch
 
+	streamIDs, _ := c.Catalog.StreamIDs().Load()
+	discovered := streamIDs.Has(streamID)
+
 	go func() {
 		defer close(done)
+
+		if !discovered && !c.waitForStream(ctx, streamID) {
+			return
+		}
 
 		err := supervisor.Run(
 			ctx,
@@ -114,5 +133,23 @@ func (c legacyCatalog) Subscribe(
 	return gone.Chan(), func() {
 		cancel()
 		<-done
+	}
+}
+
+// waitForStream blocks until the catalog has the given stream, or ctx is
+// canceled. It returns false if ctx is canceled first.
+func (c legacyCatalog) waitForStream(ctx context.Context, streamID *uuidpb.UUID) bool {
+	for {
+		streamIDs, changed := c.Catalog.StreamIDs().Load()
+
+		if streamIDs.Has(streamID) {
+			return true
+		}
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-changed:
+		}
 	}
 }
