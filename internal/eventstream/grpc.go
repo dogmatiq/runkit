@@ -24,19 +24,13 @@ type ConsumerAPI struct {
 	DB *sql.DB
 
 	// EventStreams is the catalog of event streams served to clients.
-	EventStreams LegacyCatalog
+	EventStreams *Catalog
 
 	// RecordableEventTypes is the set of message type IDs of every event type
 	// that the application can record. A client that requests only event types
 	// outside this set is sent any existing events, after which its stream is
 	// closed, as no further events can ever be produced for it.
 	RecordableEventTypes *uuidcollection.Set
-
-	// BufferSize is the number of batches of events buffered for each client
-	// of [ConsumerAPI.ConsumeEvents]. When the buffer is full the client is
-	// returned to reading historical events, which blocks until the client
-	// catches up. It must be positive.
-	BufferSize int
 
 	// Logger is the target for log messages produced by the server.
 	Logger *slog.Logger
@@ -51,7 +45,7 @@ func (s *ConsumerAPI) ListEventStreams(
 	var sent uuidcollection.Set
 
 	for {
-		streamIDs, changed := s.EventStreams.StreamIDs()
+		streamIDs, changed := s.EventStreams.StreamIDs().Load()
 
 		for id := range streamIDs.Diff(&sent).All() {
 			stream, err := s.loadEventStream(ctx, id)
@@ -92,10 +86,6 @@ func (s *ConsumerAPI) ConsumeEvents(
 	req *messaginggrpc.ConsumeEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.ConsumeEventsResponse],
 ) error {
-	if s.BufferSize <= 0 {
-		panic("buffer size must be positive")
-	}
-
 	ctx := res.Context()
 	streamID := req.GetEventStreamId()
 	checkpoint := req.GetCheckpointOffset()
@@ -119,7 +109,7 @@ func (s *ConsumerAPI) ConsumeEvents(
 	}
 
 	// Events of types that the application no longer records may still exist
-	// on the stream, so the consumer always subscribes to every requested type.
+	// on the stream, so every requested type is consumed.
 	// The recordable types are only used to decide whether to wait for new
 	// events once the existing ones have been delivered.
 	types := uuidcollection.NewSet(req.GetMessageTypeIds()...)
@@ -138,29 +128,58 @@ func (s *ConsumerAPI) ConsumeEvents(
 		return nil
 	}
 
-	batches := make(chan Batch, s.BufferSize)
-	lost, unsubscribe := s.EventStreams.Subscribe(
-		streamID,
-		checkpoint,
-		types,
-		batches,
-	)
-	defer unsubscribe()
+	// The stream exists, but the catalog may not have discovered it yet.
+	if err := s.waitForStream(ctx, streamID); err != nil {
+		return err
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-lost:
-			return status.Error(codes.Unavailable, "the server is shutting down")
-		case batch := <-batches:
-			if err := sendBatch(res, batch); err != nil {
+	err = s.EventStreams.Consume(
+		ctx,
+		streamID,
+		types,
+		checkpoint,
+		func(seg Segment) error {
+			if err := sendSegment(res, seg); err != nil {
 				return err
 			}
 
-			if closeAtHead && batch.Checkpoint >= nextOffset {
-				return nil
+			if closeAtHead && seg.End >= nextOffset {
+				return errAtHead
 			}
+
+			return nil
+		},
+	)
+
+	switch {
+	case errors.Is(err, errAtHead):
+		return nil
+	case errors.Is(err, ErrStreamNotFound):
+		return status.Error(codes.Unavailable, "the server is shutting down")
+	default:
+		return err
+	}
+}
+
+// errAtHead is returned by the function given to [Catalog.Consume] to stop
+// consuming once the client has been sent every event up to the head of the
+// stream.
+var errAtHead = errors.New("consumed up to the head of the stream")
+
+// waitForStream blocks until the catalog has the stream with the given ID, or
+// ctx is canceled.
+func (s *ConsumerAPI) waitForStream(ctx context.Context, id *uuidpb.UUID) error {
+	for {
+		streamIDs, changed := s.EventStreams.StreamIDs().Load()
+
+		if streamIDs.Has(id) {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
 		}
 	}
 }
@@ -177,22 +196,23 @@ func (s *ConsumerAPI) canRecordAny(types *uuidcollection.Set) bool {
 	return false
 }
 
-// sendBatch sends a single response containing the events in the batch.
+// sendSegment sends a single response containing the events in a segment,
+// with the end of the segment as the client's checkpoint offset.
 //
-// A batch with no events is still sent, as it advances the client's checkpoint
-// past events that are not of a type it is interested in.
-func sendBatch(
+// A segment with no events is still sent, as it advances the client's
+// checkpoint past events that are not of a type it is interested in.
+func sendSegment(
 	res grpc.ServerStreamingServer[messaginggrpc.ConsumeEventsResponse],
-	batch Batch,
+	seg Segment,
 ) error {
-	envelopes := make([]*envelopepb.MultiEnvelope, 0, len(batch.Envelopes))
+	envelopes := make([]*envelopepb.MultiEnvelope, 0, len(seg.Envelopes))
 
-	for _, env := range batch.Envelopes {
+	for _, env := range seg.Envelopes {
 		envelopes = append(envelopes, env.AsMultiEnvelope())
 	}
 
 	response := messaginggrpc.NewConsumeEventsResponseBuilder().
-		WithCheckpointOffset(batch.Checkpoint).
+		WithCheckpointOffset(seg.End).
 		WithEnvelopes(envelopes).
 		Build()
 

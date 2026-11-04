@@ -66,12 +66,6 @@ const (
 	// eventStreamSegmentSize is the maximum number of events in one segment
 	// read from the database.
 	eventStreamSegmentSize = 100
-
-	// eventStreamBufferSize is the number of batches of events buffered for
-	// each subscription to an event stream. It absorbs short bursts of appends;
-	// a subscription that falls further behind is served historical events
-	// instead.
-	eventStreamBufferSize = 4
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -256,9 +250,8 @@ func (e *Engine) Run(ctx context.Context) error {
 			Address: e.listenAddress,
 			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
 				DB:                   e.db,
-				EventStreams:         e.eventStreams.Legacy(),
+				EventStreams:         e.eventStreams,
 				RecordableEventTypes: e.recordableEventTypes(),
-				BufferSize:           eventStreamBufferSize,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
 				),

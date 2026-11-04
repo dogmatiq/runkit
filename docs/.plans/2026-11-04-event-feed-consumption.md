@@ -318,9 +318,15 @@ Every step is green under `make test` unless marked otherwise.
     has not yet noticed may still handle an event appended after the test
     sees the new membership, so the test would be racy. The distribution
     tests cover it end to end.
-- [ ] **Step 10.** `ConsumerAPI.ConsumeEvents` rewritten over `Consume` on the
+- [x] **Step 10.** `ConsumerAPI.ConsumeEvents` rewritten over `Consume` on the
       old protocol, deleting the shim; `grpc_test.go` passes unchanged. This
-      shrinks step 11 to the wire mapping.
+      shrinks step 11 to the wire mapping. Each segment is sent from `fn`, so
+      a slow client holds up only its own `Consume` call, which falls behind
+      the cache and reads from the source; `BufferSize` and
+      `eventStreamBufferSize` go. The server still waits for a stream the
+      catalog has not discovered yet, until step 11 serves the local source
+      directly. A failed read from the source ends the client's call instead
+      of being retried by the adapter; the client reconnects.
 
 ### Phase 5: Protocol switch (new protobuf; one red-window commit)
 
