@@ -411,10 +411,20 @@ Every step is green under `make test` unless marked otherwise.
   - The catch-up case runs a `Catalog` over the remote source in
     `remote_test.go`, rather than in the catalog's tests, so the step adds
     new files only.
-- [ ] **Step 14.** Tests for `source.Remote` against a real cluster: streams
+- [x] **Step 14.** Tests for `source.Remote` against a real cluster: streams
       appear in the catalog; the range via `ReadEvents` then the tail via
       `WatchEvents`; a stopped node → reconnect → consumers continue. Tests
       only.
+  - As built: the cases sit in `TestRemote` under "with a running engine",
+    each a `Catalog` watching a `source.Remote` dialed to the cluster. Streams
+    already in the database, including an empty one, and a stream created
+    later all join the catalog. A consumer from offset 0 of a 150-event
+    stream, which the server's watch begins 100 events before its end, gets
+    every event in order through at least one `ReadEvents` call, and then
+    an appended event with no further reads. A connection to two nodes
+    survives the first stopping: the catalog's watch fails with
+    `UNAVAILABLE`, is retried against the second node, and the consumer gets
+    the events appended after the stop, once each.
 
 ### Phase 7: Wire it up end to end (new protobuf)
 

@@ -2,13 +2,17 @@ package source_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -1005,6 +1009,174 @@ func TestRemote(t *testing.T) {
 		xtesting.ExpectToReceiveN(t, "read from offset", reads, 1)
 		xtesting.ExpectToReceiveN(t, "handled offset", handled, 1, 2)
 		xtesting.ExpectNoReceive(t, "handled offset", handled)
+	})
+
+	t.Run("with a running engine", func(t *testing.T) {
+		typesA := uuidcollection.NewSet(
+			stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+		)
+
+		// eventA returns an event of type A whose content is its offset.
+		eventA := func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+			return &stubs.EventStub[stubs.TypeA]{
+				Content: stubs.TypeA(fmt.Sprint(offset)),
+			}
+		}
+
+		// watch returns a catalog that watches the engine at the other end of
+		// the given connection for events of type A until the test ends, and
+		// the number of times the source has called ReadEvents.
+		watch := func(t testing.TB, conn grpc.ClientConnInterface) (*eventstream.Catalog, *atomic.Int32) {
+			t.Helper()
+
+			client := messaginggrpc.NewEventStreamConsumerAPIClient(conn)
+			reads := &atomic.Int32{}
+
+			src := &Remote{
+				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
+					WatchEventsFunc: client.WatchEvents,
+					ReadEventsFunc: func(
+						ctx context.Context,
+						req *messaginggrpc.ReadEventsRequest,
+						options ...grpc.CallOption,
+					) (messaginggrpc.EventStreamConsumerAPI_ReadEventsClient, error) {
+						reads.Add(1)
+						return client.ReadEvents(ctx, req, options...)
+					},
+				},
+			}
+
+			catalog := &eventstream.Catalog{
+				CacheSize: 10,
+				Logger:    spruce.NewTestLogger(t),
+			}
+
+			xtesting.GoE(
+				t,
+				func(ctx context.Context) error {
+					return catalog.Watch(ctx, src, typesA)
+				},
+			)
+
+			return catalog, reads
+		}
+
+		// consume consumes events of type A from a stream in the catalog,
+		// beginning at the given offset, until the test ends. It delivers the
+		// offset of each event to the returned channel.
+		consume := func(
+			t testing.TB,
+			catalog *eventstream.Catalog,
+			streamID *uuidpb.UUID,
+			begin uint64,
+		) <-chan uint64 {
+			t.Helper()
+
+			handled := make(chan uint64, 1000)
+
+			xtesting.GoE(
+				t,
+				func(ctx context.Context) error {
+					return catalog.Consume(
+						ctx,
+						streamID,
+						typesA,
+						begin,
+						func(seg Segment) error {
+							for _, offset := range offsets(seg) {
+								handled <- offset
+							}
+							return nil
+						},
+					)
+				},
+			)
+
+			return handled
+		}
+
+		t.Run("it delivers the engine's streams to a catalog", func(t *testing.T) {
+			var existing []*uuidpb.UUID
+
+			xtesting.SetupThenRunEngines(
+				t,
+				func(t testing.TB, db *sql.DB) {
+					existing = xtesting.PopulateEventStreams(t, db, eventA, 3, 0)
+				},
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+					catalog, _ := watch(t, xtesting.Dial(t, cluster.Nodes()[0]))
+
+					expectCatalogToHave(t, catalog, existing...)
+
+					created := xtesting.CreateEventStream(t, db)
+
+					expectCatalogToHave(t, catalog, append(existing, created)...)
+				},
+			)
+		})
+
+		t.Run("it reads a stream's earlier events, then watches for new ones", func(t *testing.T) {
+			var streamID *uuidpb.UUID
+
+			xtesting.SetupThenRunEngines(
+				t,
+				func(t testing.TB, db *sql.DB) {
+					streamID = xtesting.PopulateEventStreams(t, db, eventA, 150)[0]
+				},
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+					catalog, reads := watch(t, xtesting.Dial(t, cluster.Nodes()[0]))
+
+					expectCatalogToHave(t, catalog, streamID)
+
+					handled := consume(t, catalog, streamID, 0)
+
+					var earlier []uint64
+					for offset := range uint64(150) {
+						earlier = append(earlier, offset)
+					}
+
+					xtesting.ExpectToReceiveN(t, "handled offset", handled, earlier...)
+
+					readsBefore := reads.Load()
+					if readsBefore == 0 {
+						t.Fatal("expected the earlier events to be read")
+					}
+
+					xtesting.AppendToEventStream(t, db, streamID, eventA(streamID, 150))
+
+					xtesting.ExpectToReceiveN(t, "handled offset", handled, 150)
+
+					if got := reads.Load(); got != readsBefore {
+						t.Fatalf("unexpected reads after the new event: got %d, want none", got-readsBefore)
+					}
+				},
+			)
+		})
+
+		t.Run("it continues when the node it is connected to stops", func(t *testing.T) {
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+					nodes := cluster.Nodes()
+					streamID := xtesting.CreateEventStream(t, db)
+
+					catalog, _ := watch(t, xtesting.Dial(t, nodes[0], nodes[1]))
+
+					expectCatalogToHave(t, catalog, streamID)
+
+					handled := consume(t, catalog, streamID, 0)
+
+					xtesting.AppendToEventStream(t, db, streamID, eventA(streamID, 0))
+					xtesting.ExpectToReceiveN(t, "handled offset", handled, 0)
+
+					cluster.StopNode(nodes[0])
+
+					xtesting.AppendToEventStream(t, db, streamID, eventA(streamID, 1), eventA(streamID, 2))
+					xtesting.ExpectToReceiveN(t, "handled offset", handled, 1, 2)
+					xtesting.ExpectNoReceive(t, "handled offset", handled)
+				},
+			)
+		})
 	})
 }
 
