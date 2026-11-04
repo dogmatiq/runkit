@@ -39,7 +39,7 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 				eventCount,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()
@@ -125,7 +125,7 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 				eventCount,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 
 			checkpointMutex.Lock()
 			defer checkpointMutex.Unlock()

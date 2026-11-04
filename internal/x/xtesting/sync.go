@@ -24,9 +24,9 @@ func init() {
 	}
 }
 
-// ExpectLatchesSetEventually waits for all of the given latches to be set. It
-// fails the test if all latches are not set within [WaitTimeout].
-func ExpectLatchesSetEventually(
+// WaitForLatches waits for all of the given latches to be set. It fails the
+// test if all latches are not set within [WaitTimeout].
+func WaitForLatches(
 	t testing.TB,
 	latches ...*xsync.Latch,
 ) {

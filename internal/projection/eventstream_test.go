@@ -40,7 +40,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 				eventCount,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -125,7 +125,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 				eventCount,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -211,7 +211,7 @@ func TestEventStream_checkpointOffsetIsUnchangedBySkippedEvents(t *testing.T) {
 				4,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 
 			m.Lock()
 			defer m.Unlock()
@@ -297,7 +297,7 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 				eventCount,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

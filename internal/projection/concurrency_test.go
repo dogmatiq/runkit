@@ -90,7 +90,7 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 				eventCount/2, eventCount/2, // 2 streams
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

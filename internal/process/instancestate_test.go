@@ -36,7 +36,7 @@ func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 				2,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -105,7 +105,7 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 				3, // one stream, three events
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -185,7 +185,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 				4,
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&instanceAChecked,
 				&instanceBChecked,

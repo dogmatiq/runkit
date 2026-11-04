@@ -180,7 +180,7 @@ func TestConsumer(t *testing.T) {
 		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 
 		watch(t, catalog, second)
-		xtesting.ExpectLatchesSetEventually(t, &second.Delivered)
+		xtesting.WaitForLatches(t, &second.Delivered)
 
 		stop()
 

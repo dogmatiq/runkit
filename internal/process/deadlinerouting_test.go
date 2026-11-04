@@ -32,7 +32,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 				1, // one stream with one event
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -95,7 +95,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 				1,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -161,7 +161,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 				2,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &ended)
+			xtesting.WaitForLatches(t, &ended)
 			xtesting.WaitForNoPendingDeadlines(t, db)
 		},
 		dogma.ViaProcess(
@@ -290,7 +290,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 					1,
 				)
 
-				xtesting.ExpectLatchesSetEventually(t, &ended)
+				xtesting.WaitForLatches(t, &ended)
 				xtesting.WaitForNoPendingDeadlines(t, db)
 			},
 			dogma.ViaProcess(
@@ -433,7 +433,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 		t,
 		db,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &delivered)
+			xtesting.WaitForLatches(t, &delivered)
 
 			// The TypeA deadline was skipped rather than delivered, so it
 			// should still be pending in the database.

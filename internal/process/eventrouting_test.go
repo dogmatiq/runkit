@@ -36,7 +36,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 				2, // one stream, two events of different types
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -141,7 +141,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 				1, // one stream with one TypeB event
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -234,7 +234,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 				1, // one stream with one TypeA event
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerCalled,
 			)
@@ -299,7 +299,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 				2, // one stream with two events
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerCalled,
 			)
@@ -376,7 +376,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 				3,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -459,7 +459,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 			// caught up.
 			xtesting.AppendToEventStream(t, db, streamID, stubs.EventA2)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -592,7 +592,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 			// Wait for the additional event to be delivered, confirming the
 			// handler is routed events that are appended after the route is
 			// added.
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{

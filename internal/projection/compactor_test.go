@@ -27,7 +27,7 @@ func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &called)
+			xtesting.WaitForLatches(t, &called)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -85,7 +85,7 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 			xtesting.RunEngines(
 				t,
 				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-					xtesting.ExpectLatchesSetEventually(t, &compacted)
+					xtesting.WaitForLatches(t, &compacted)
 
 					xtesting.PopulateEventStreams(
 						t,
@@ -96,7 +96,7 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 						eventCount,
 					)
 
-					xtesting.ExpectLatchesSetEventually(t, &consumed)
+					xtesting.WaitForLatches(t, &consumed)
 				},
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
@@ -145,7 +145,7 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &called)
+			xtesting.WaitForLatches(t, &called)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -194,7 +194,7 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

@@ -36,7 +36,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 				2, // one stream, two events of different types
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -125,7 +125,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 				1, // one stream with one TypeB event
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -205,7 +205,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 			)
 		},
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -282,7 +282,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 				1,
 			)[0]
 
-			xtesting.ExpectLatchesSetEventually(t, &handledA)
+			xtesting.WaitForLatches(t, &handledA)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -318,7 +318,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 		t,
 		db,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &handledB1, &handledB2)
+			xtesting.WaitForLatches(t, &handledB1, &handledB2)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

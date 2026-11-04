@@ -27,7 +27,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 			xtesting.ExecuteCommand(t, cluster, stubs.CommandB1)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
