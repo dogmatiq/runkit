@@ -117,8 +117,9 @@ func (c *Catalog) Consume(
 
 // Watch watches a source until ctx is canceled.
 //
-// The streams that the source delivers are added to the catalog, and are
-// removed again when Watch returns.
+// It adds the streams that the source delivers to the catalog, and removes
+// them again before returning. Once it returns, no call to the source that the
+// catalog made is in progress, and the catalog makes no more.
 //
 // types is the set of message types to deliver from the source, or nil to
 // deliver every type.
@@ -155,6 +156,11 @@ func (c *Catalog) Watch(
 	defer func() {
 		for f := range feeds.Values() {
 			c.remove(f)
+		}
+
+		// Reads on behalf of consumers may still be calling the source.
+		for f := range feeds.Values() {
+			f.Wait()
 		}
 	}()
 

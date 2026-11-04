@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
@@ -33,10 +34,25 @@ type feed struct {
 	// carries every type.
 	Types *uuidcollection.Set
 
-	cache  *cache.Cache
-	closed xsync.Latch
-	ctx    context.Context
+	// cache holds the stream's most recent events.
+	cache *cache.Cache
+
+	// ctx is canceled when the feed is closed, which cancels any read from
+	// the source that is in progress.
+	ctx context.Context
+
+	// cancel cancels ctx.
 	cancel context.CancelFunc
+
+	// m guards closed and reads, so that a read from the source can not begin
+	// while the feed is being closed, nor once it is closed.
+	m sync.Mutex
+
+	// closed is set when the feed is closed.
+	closed xsync.Latch
+
+	// reads counts the reads from the source that are in progress.
+	reads sync.WaitGroup
 }
 
 var (
@@ -74,9 +90,20 @@ func (f *feed) Append(seg Segment) {
 //
 // Closing a feed more than once has no effect.
 func (f *feed) Close() {
+	f.m.Lock()
+	defer f.m.Unlock()
+
 	if f.closed.Set() {
 		f.cancel()
 	}
+}
+
+// Wait blocks until every read from the source has returned.
+//
+// If the feed is closed, no other read begins, so no call to the source is in
+// progress once it returns.
+func (f *feed) Wait() {
+	f.reads.Wait()
 }
 
 // consume delivers events to fn, beginning at the given offset.
@@ -147,6 +174,11 @@ func (f *feed) read(
 	cp uint64,
 	fn func(Segment) error,
 ) (uint64, error) {
+	if !f.startRead() {
+		return cp, errFeedClosed
+	}
+	defer f.reads.Done()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -201,4 +233,18 @@ func (f *feed) read(
 	default:
 		return cp, nil
 	}
+}
+
+// startRead records that a read from the source is beginning and returns
+// true. If the feed is closed, it returns false instead.
+func (f *feed) startRead() bool {
+	f.m.Lock()
+	defer f.m.Unlock()
+
+	if f.closed.IsSet() {
+		return false
+	}
+
+	f.reads.Add(1)
+	return true
 }

@@ -325,6 +325,49 @@ func TestCatalog(t *testing.T) {
 				t.Fatal("expected Watch to return only once the source is no longer watched")
 			}
 		})
+		t.Run("it returns only once no read from the source is in progress", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 10))
+
+			reading := make(chan struct{})
+			stopped := make(chan struct{})
+
+			remove := watch(
+				t,
+				c,
+				&sourceHook{
+					Source: src,
+					ReadFunc: func(ctx context.Context) error {
+						close(reading)
+						<-ctx.Done()
+						time.Sleep(50 * time.Millisecond)
+						close(stopped)
+						return ctx.Err()
+					},
+				},
+				nil,
+			)
+
+			expectCatalogToHave(t, c, streamID)
+
+			consume(t, c, typesA, 0)
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the read to begin")
+			case <-reading:
+			}
+
+			remove()
+
+			select {
+			case <-stopped:
+			default:
+				t.Fatal("expected Watch to return only once the read had returned")
+			}
+		})
 	})
 
 	t.Run("Consume", func(t *testing.T) {

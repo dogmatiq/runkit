@@ -453,6 +453,17 @@ Every step is green under `make test` unless marked otherwise.
     engine's streams leave when the discoverer returns, and it is called
     again. Two engines under one connector stand in for "two connectors
     side by side".
+- [x] **Step 15a.** Keep the `RemoteEngineDiscoverer` promise that the
+      connection may be closed once `remove` returns. The catalog's `Watch`
+      returns only once no read from the source is in progress. Each feed
+      counts its reads from the source, under a mutex that `Close` also
+      takes, so no read begins once the feed is closed, and `Watch` waits for
+      the count to reach zero after closing the source's feeds. A read runs
+      the consumer's `fn` for each segment, so `Watch` may wait for a
+      consumer to finish handling one segment. That is bounded: the stream
+      consumer handles a segment's events in turn and returns the first
+      failure, retrying outside `Consume`. Test: `Watch` returns only once a
+      read in progress has returned.
 - [ ] **Step 16.** Un-skip `foreignevents_test.go`. The historical,
       contemporary, local-and-foreign and upstream-node-stops cases pass as
       they are. "Does not retry immediately" becomes: a projection handling
