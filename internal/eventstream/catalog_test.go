@@ -427,6 +427,70 @@ func TestCatalog(t *testing.T) {
 			expectSegment(t, segments, 5, 6, 5)
 		})
 
+		t.Run("it delivers every event to many consumers of one stream at once", func(t *testing.T) {
+			// A small cache means that consumers that fall behind it while it
+			// is appended to read from the source, at different times.
+			c := setup(t, 2)
+
+			src := &source.Memory{
+				SegmentSize: 3,
+			}
+			src.Append(segment(0, 0))
+
+			remove := watch(t, c, src, nil)
+			defer remove()
+
+			expectCatalogToHave(t, c, streamID)
+
+			// Each consumer blocks until the test receives, so they all fall
+			// behind as events are appended.
+			const consumers = 5
+			var all [consumers]<-chan Segment
+
+			for i := range all {
+				segments, cancel, _ := consume(t, c, typesA, 0)
+				defer cancel()
+
+				all[i] = segments
+			}
+
+			const events = 20
+			var want []uint64
+
+			for offset := range uint64(events) {
+				src.Append(segment(offset, offset+1, event(offset, typeA)))
+				want = append(want, offset)
+			}
+
+			for _, segments := range all {
+				var (
+					begin uint64
+					got   []uint64
+				)
+
+				for begin < events {
+					select {
+					case <-time.After(xtesting.WaitTimeout):
+						t.Fatalf("timeout waiting for segments: got %d of %d events", len(got), events)
+					case seg := <-segments:
+						if seg.Begin != begin {
+							t.Fatalf("unexpected segment begin: got %d, want %d", seg.Begin, begin)
+						}
+
+						for _, env := range seg.Envelopes {
+							got = append(got, envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env).GetOffset())
+						}
+
+						begin = seg.End
+					}
+				}
+
+				if !slices.Equal(got, want) {
+					t.Fatalf("unexpected offsets: got %v, want %v", got, want)
+				}
+			}
+		})
+
 		t.Run("it keeps reading from the source while the cached segment moves on ahead of the checkpoint", func(t *testing.T) {
 			// A cache of one event means that each event appended evicts the
 			// one before it.
