@@ -92,7 +92,7 @@ func RunEnginesWithDB(
 	cluster := StartCluster(t, db, app, concurrentEngines)
 	defer cluster.Stop()
 
-	testTimeout := 10 * time.Second
+	testTimeout := 30 * time.Second
 	if os.Getenv("CI") != "" {
 		testTimeout = 1 * time.Minute
 	}

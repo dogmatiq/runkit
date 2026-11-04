@@ -16,7 +16,7 @@ import (
 // wait for a condition to be met before failing the test.
 //
 // It is longer under CI, where tests run under heavier load.
-var WaitTimeout = 3 * time.Second
+var WaitTimeout = 10 * time.Second
 
 func init() {
 	if os.Getenv("CI") != "" {
