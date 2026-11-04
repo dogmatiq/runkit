@@ -37,8 +37,8 @@ github.com/dogmatiq/enginekit v0.30.0 h1:Hp8akIXeH2FOAEe7lhGXDWiG6/2TRRwJ9Z/Nw1D
 github.com/dogmatiq/enginekit v0.30.0/go.mod h1:dQrqLUtFTSD6qFgpz1yTfeG5+dMCtjTaVGVZdPBbzME=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
-github.com/dogmatiq/protobuf v0.2.0 h1:HMbG3Ur30fglm1Q+4EenIxNxAuiyJhqMWaLmtdxyO/k=
-github.com/dogmatiq/protobuf v0.2.0/go.mod h1:wRsDs0xjHx0Hhfvh7n4xzSngeAl3YGZFOgtxyalDzQE=
+github.com/dogmatiq/protobuf v0.4.0 h1:rNwhYWZTwZzWS5K7trOOdyYLGyIiPFR3D4TOOtozwEY=
+github.com/dogmatiq/protobuf v0.4.0/go.mod h1:wRsDs0xjHx0Hhfvh7n4xzSngeAl3YGZFOgtxyalDzQE=
 github.com/dogmatiq/spruce v0.2.4 h1:32HqvqvlINlvMKzQ4eWO97+MdI+1CfLfr9RmsTvDphk=
 github.com/dogmatiq/spruce v0.2.4/go.mod h1:za5ZdNvh+FRWg4B3DCn8jfNB2LVR/9Dk3fkuHVDJLrk=
 github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/qyY=

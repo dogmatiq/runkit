@@ -2,6 +2,7 @@ package source_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -226,10 +227,12 @@ func TestMemory(t *testing.T) {
 				src.Watch(
 					ctx,
 					types,
-					func(seg Segment) {
+					func(seg Segment) error {
 						select {
 						case <-ctx.Done():
+							return ctx.Err()
 						case segments <- seg:
+							return nil
 						}
 					},
 				)
@@ -255,6 +258,29 @@ func TestMemory(t *testing.T) {
 				return seg
 			}
 		}
+
+		t.Run("it returns fn's error unchanged", func(t *testing.T) {
+			src := &Memory{}
+			src.Append(Segment{
+				StreamID: streamA,
+				Begin:    0,
+				End:      1,
+			})
+
+			errRejected := errors.New("<rejected>")
+
+			err := src.Watch(
+				t.Context(),
+				nil,
+				func(Segment) error {
+					return errRejected
+				},
+			)
+
+			if err != errRejected {
+				t.Fatalf("unexpected error: got %v, want %v", err, errRejected)
+			}
+		})
 
 		t.Run("it begins each stream at its end as it stands", func(t *testing.T) {
 			src := &Memory{}

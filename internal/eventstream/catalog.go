@@ -165,8 +165,9 @@ func (c *Catalog) Watch(
 			err := src.Watch(
 				ctx,
 				types,
-				func(seg Segment) {
+				func(seg Segment) error {
 					feedFor(seg.StreamID, seg.Begin).Append(seg)
+					return nil
 				},
 			)
 

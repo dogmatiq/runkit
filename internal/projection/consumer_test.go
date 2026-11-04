@@ -204,14 +204,19 @@ type deliveringSource struct {
 func (s *deliveringSource) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(source.Segment),
+	fn func(source.Segment) error,
 ) error {
 	return s.Source.Watch(
 		ctx,
 		types,
-		func(seg source.Segment) {
-			fn(seg)
+		func(seg source.Segment) error {
+			if err := fn(seg); err != nil {
+				return err
+			}
+
 			s.Delivered.Set()
+
+			return nil
 		},
 	)
 }

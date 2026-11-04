@@ -45,7 +45,7 @@ type Local struct {
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(Segment),
+	fn func(Segment) error,
 ) error {
 	if s.SegmentSize <= 0 {
 		panic("segment size must be positive")
@@ -190,7 +190,7 @@ func (s *Local) watchStream(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
-	fn func(Segment),
+	fn func(Segment) error,
 ) error {
 	query := s.buildSegmentQuery(streamID, types)
 
@@ -220,7 +220,13 @@ func (s *Local) watchStream(
 			}
 
 			first = false
-			fn(seg)
+
+			// The error is fatal so that it ends the watch of every stream,
+			// rather than restarting the watch of this one.
+			if err := fn(seg); err != nil {
+				return supervisor.Fatal(err)
+			}
+
 			next = seg.End
 
 			if exhausted {

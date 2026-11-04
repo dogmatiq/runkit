@@ -109,7 +109,7 @@ func TestEngine(t *testing.T) {
 
 		stream, err := messaginggrpc.
 			NewEventStreamConsumerAPIClient(conn).
-			ListEventStreams(ctx, &messaginggrpc.ListEventStreamsRequest{})
+			WatchEvents(ctx, &messaginggrpc.WatchEventsRequest{})
 		if err == nil {
 			_, err = stream.Recv()
 		}

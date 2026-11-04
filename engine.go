@@ -24,6 +24,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/eventstream/consumerapi"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
@@ -248,10 +249,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
 			Address: e.listenAddress,
-			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
-				DB:                   e.db,
-				EventStreams:         e.eventStreams,
-				RecordableEventTypes: e.recordableEventTypes(),
+			EventStreamConsumerAPI: &consumerapi.Server{
+				DB:           e.db,
+				EventStreams: localEventStreams,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
 				),
@@ -282,9 +282,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		return e.node.Run(ctx)
 	})
 
-	e.group.Go(func() error {
-		return e.eventStreams.Watch(ctx, localEventStreams, nil)
-	})
+	// The catalog is consumed only by projections, so it has no need of the
+	// application's own streams if no projection handles any events.
+	if types := e.projectionEventTypeIDs(); !types.IsEmpty() {
+		e.group.Go(func() error {
+			return e.eventStreams.Watch(ctx, localEventStreams, types)
+		})
+	}
 
 	for _, d := range e.remoteEngineDiscoverers {
 		connector := &remoteengine.Connector{
@@ -570,6 +574,27 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	return 10 * runtime.GOMAXPROCS(0)
 }
 
+// projectionEventTypeIDs returns the message type IDs of every event type that
+// is routed to a (non-disabled) projection within the application.
+func (e *Engine) projectionEventTypeIDs() *uuidcollection.Set {
+	messageTypeIDs := uuidcollection.NewSet()
+
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		projection, ok := handlerConfig.(*config.Projection)
+		if !ok || projection.IsDisabled() {
+			continue
+		}
+
+		eventTypeIDs := e.inboundMessageTypeIDsForHandler(projection, message.EventKind)
+
+		for id := range eventTypeIDs.All() {
+			messageTypeIDs.Add(id)
+		}
+	}
+
+	return messageTypeIDs
+}
+
 // inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
@@ -588,27 +613,6 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 	for route := range inboundRoutes {
 		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
 		messageTypeIDs.Add(messageTypeID)
-	}
-
-	return messageTypeIDs
-}
-
-// recordableEventTypes returns the message type IDs of all event types that
-// may be recorded by any (non-disabled) handler within the application.
-func (e *Engine) recordableEventTypes() *uuidcollection.Set {
-	outboundEventRoutes := e.appConfig.
-		RouteSet().
-		Filter(config.FilterByMessageKind(message.EventKind)).
-		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
-		Routes()
-
-	messageTypeIDs := &uuidcollection.Set{}
-
-	for route, handlerConfig := range outboundEventRoutes {
-		if !handlerConfig.IsDisabled() {
-			messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
-			messageTypeIDs.Add(messageTypeID)
-		}
 	}
 
 	return messageTypeIDs

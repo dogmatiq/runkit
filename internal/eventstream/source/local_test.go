@@ -58,10 +58,12 @@ func TestLocal(t *testing.T) {
 				return src.Watch(
 					ctx,
 					types,
-					func(seg Segment) {
+					func(seg Segment) error {
 						select {
 						case <-ctx.Done():
+							return ctx.Err()
 						case segments <- seg:
+							return nil
 						}
 					},
 				)
@@ -272,6 +274,28 @@ func TestLocal(t *testing.T) {
 			)
 
 			expectEnvelopes(t, segments, streamID, 0, 3, all[0], all[2])
+		})
+
+		t.Run("it returns fn's error unchanged, and stops watching every stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			xtesting.CreateEventStreams(t, db, 2)
+
+			errRejected := errors.New("<rejected>")
+
+			ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+			defer cancel()
+
+			err := src.Watch(
+				ctx,
+				nil,
+				func(Segment) error {
+					return errRejected
+				},
+			)
+
+			if err != errRejected {
+				t.Fatalf("unexpected error: got %v, want %v", err, errRejected)
+			}
 		})
 
 		t.Run("it delivers an empty segment for an empty stream", func(t *testing.T) {

@@ -65,7 +65,7 @@ func (s *Memory) Append(seg Segment) {
 func (s *Memory) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(Segment),
+	fn func(Segment) error,
 ) error {
 	var delivered uuidcollection.Map[uint64]
 
@@ -73,7 +73,9 @@ func (s *Memory) Watch(
 		segments, changed := s.undelivered(types, &delivered)
 
 		for _, seg := range segments {
-			fn(seg)
+			if err := fn(seg); err != nil {
+				return err
+			}
 		}
 
 		select {

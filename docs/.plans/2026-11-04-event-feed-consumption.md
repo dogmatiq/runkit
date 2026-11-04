@@ -24,10 +24,10 @@ this engine consumes events from is a "foreign application", and the engine it
 is consumed from is a "remote engine". A "source" is where a stream's events
 come from: this application's database, or a remote engine.
 
-**Depends on:** `github.com/dogmatiq/protobuf` v0.3.0, which implements
+**Depends on:** `github.com/dogmatiq/protobuf` v0.4.0. v0.3.0 implements
 [dogmatiq/protobuf#11], replacing `ListEventStreams` and `ConsumeEvents` with
-`WatchEvents` and `ReadEvents`, both returning `EventStreamSegment`, plus the
-follow-up that makes an empty `message_type_ids` match every event. Steps 0–10
+`WatchEvents` and `ReadEvents`, both returning `EventStreamSegment`, and v0.4.0
+makes an empty `message_type_ids` match every event. Steps 0–10
 do not need it; step 11 onward does.
 
 ---
@@ -330,7 +330,7 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 5: Protocol switch (new protobuf; one red-window commit)
 
-- [ ] **Step 11.** Bump `github.com/dogmatiq/protobuf`. `grpc.go` gains
+- [x] **Step 11.** Bump `github.com/dogmatiq/protobuf` to v0.4.0. `grpc.go` gains
       `WatchEvents` and `ReadEvents` and loses `ListEventStreams`,
       `ConsumeEvents`, `RecordableEventTypes`, `BufferSize`, `canRecordAny`
       and `loadEventStream`; `engine.go` loses `recordableEventTypes()` and
@@ -352,6 +352,29 @@ Every step is green under `make test` unless marked otherwise.
       Until then, every node reads every event appended to every local stream,
       which made the slow-client test five times slower; it was cut to 200
       larger events to stay within its time limit.
+  - As built: the server moves to `internal/eventstream/consumerapi` as
+    `consumerapi.Server`, as it no longer uses the catalog; `eventstream` is left with the catalog, its feeds and
+    the cache. `Server.EventStreams` is the `*source.Local`, so the server
+    can not relay by construction, and `DB` remains only for
+    `ReadEvents`' `NOT_FOUND` and `OUT_OF_RANGE` checks. `WatchEvents`
+    watches the local source with the client's types and sends each
+    segment under a mutex, as the source delivers streams concurrently. It
+    tracks where each stream's last segment ended, and ends the call with
+    `UNAVAILABLE` rather than send a segment that does not follow on, which
+    a restarted per-stream watch can produce. That path has no test, as it
+    can not be provoked through the engine. Each stream's first segment
+    begins `SegmentSize` events before its end, as the local source does.
+    `ReadEvents` reads the local source from the begin offset.
+  - `Source.Watch`'s `fn` returns an error, as `Read`'s does, and `Watch`
+    returns it unchanged; the server's send is the first `fn` that can fail.
+    `source.Local` makes it fatal to the supervisor, so that it ends the
+    watch of every stream rather than restarting one.
+  - The engine watches the local source with the catalog for the union of
+    its enabled projections' event types, and not at all if there are none.
+    The slow-client test is back to a thousand larger events, taking two to
+    three seconds.
+  - `foreignevents_test.go` still names `ConsumeEvents` in its skipped test;
+    step 16 rewrites it.
 
 ### Phase 6: Remote source (new protobuf)
 

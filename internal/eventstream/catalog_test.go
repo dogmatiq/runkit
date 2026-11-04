@@ -274,7 +274,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 						if calls.Add(1) == 1 {
 							return errors.New("<error>")
 						}
@@ -300,7 +300,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: &source.Memory{},
-					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 						close(watching)
 						<-ctx.Done()
 						time.Sleep(50 * time.Millisecond)
@@ -507,13 +507,18 @@ func TestCatalog(t *testing.T) {
 
 			hook := &sourceHook{
 				Source: src,
-				WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 					return src.Watch(
 						ctx,
 						nil,
-						func(seg Segment) {
-							fn(seg)
+						func(seg Segment) error {
+							if err := fn(seg); err != nil {
+								return err
+							}
+
 							delivered <- seg.End
+
+							return nil
 						},
 					)
 				},
@@ -569,7 +574,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 						fn(segment(2, 2))
 
 						select {
@@ -617,7 +622,7 @@ func TestCatalog(t *testing.T) {
 
 			hook := &sourceHook{
 				Source: src,
-				WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 					fn(segment(4, 4))
 
 					for {
@@ -738,7 +743,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 						fn(segment(2, 2))
 						<-ctx.Done()
 						return ctx.Err()
@@ -866,7 +871,7 @@ type sourceHook struct {
 	source.Source
 
 	// WatchFunc, if non-nil, is called in place of the source's Watch.
-	WatchFunc func(ctx context.Context, fn func(Segment)) error
+	WatchFunc func(ctx context.Context, fn func(Segment) error) error
 
 	// ReadFunc, if non-nil, is called in place of the source's Read.
 	ReadFunc func(ctx context.Context) error
@@ -878,7 +883,7 @@ type sourceHook struct {
 func (s *sourceHook) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(Segment),
+	fn func(Segment) error,
 ) error {
 	if s.WatchFunc != nil {
 		return s.WatchFunc(ctx, fn)

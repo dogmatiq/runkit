@@ -16,7 +16,7 @@ type Source interface {
 	// Only events of the given types are delivered, in contiguous segments. A
 	// nil set of types means events of every type. It blocks until ctx is
 	// canceled or it is unable to continue, and may be called again if it
-	// fails.
+	// fails. It returns fn's error, unchanged, if fn returns one.
 	//
 	// fn may be called concurrently for different streams, but a stream's
 	// segments are delivered one at a time, in order.
@@ -27,7 +27,7 @@ type Source interface {
 	Watch(
 		ctx context.Context,
 		types *uuidcollection.Set,
-		fn func(Segment),
+		fn func(Segment) error,
 	) error
 
 	// Read delivers events from a stream to fn, beginning at the given
