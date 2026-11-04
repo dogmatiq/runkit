@@ -489,10 +489,17 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 8: Takeover between sources
 
-- [ ] **Step 18.** `Catalog`: a second source delivering a stream is queued
+- [x] **Step 18.** `Catalog`: a second source delivering a stream is queued
       behind the current one, its cache appended to, and ignored until the
       first source is removed, then becomes current and in-flight `Consume`
       calls continue from their checkpoint. Unit tests without a database.
+  - As built: the catalog has done this since step 5, so the step is tests
+    only. Until now takeover was tested only through the projection
+    consumer. Two `Consume` cases with memory sources: a consumer behind the
+    cache reads from the first source to deliver the stream, not from a
+    second that also delivers it; and once the first source is removed, a
+    consumer continues from its checkpoint on the second, reading what it
+    missed from the second source up to that source's cached segment.
 - [ ] **Step 19.** End to end: two connections to one upstream cluster; remove
       the one serving a stream; events keep arriving, each handled once.
       Tests only.

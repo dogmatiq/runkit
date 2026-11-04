@@ -860,6 +860,119 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
+		t.Run("it serves a stream from the first source to deliver it while another source also delivers it", func(t *testing.T) {
+			c := setup(t, 10)
+
+			firstSource := &source.Memory{}
+			firstSource.Append(segment(0, 1, event(0, typeA)))
+
+			secondSource := &source.Memory{}
+			secondSource.Append(segment(0, 1, event(0, typeA)))
+
+			secondDelivered := make(chan struct{})
+
+			first := &sourceHook{
+				Source: firstSource,
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+					fn(segment(1, 1))
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			}
+
+			second := &sourceHook{
+				Source: secondSource,
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+					fn(segment(1, 1))
+					close(secondDelivered)
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			}
+
+			defer watch(t, c, first, nil)()
+			expectCatalogToHave(t, c, streamID)
+
+			defer watch(t, c, second, nil)()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the second source to deliver the stream")
+			case <-secondDelivered:
+			}
+
+			segments, cancel, _ := consume(t, c, typesA, 0)
+			defer cancel()
+
+			expectSegment(t, segments, 0, 1, 0)
+
+			if n := first.Reads.Load(); n != 1 {
+				t.Fatalf("unexpected number of reads from the first source: got %d, want 1", n)
+			}
+
+			if n := second.Reads.Load(); n != 0 {
+				t.Fatalf("unexpected number of reads from the second source: got %d, want 0", n)
+			}
+		})
+
+		t.Run("it continues a consumer from its checkpoint on another source when the source serving it is removed", func(t *testing.T) {
+			c := setup(t, 10)
+
+			firstSource := &source.Memory{}
+			firstSource.Append(segment(0, 1, event(0, typeA)))
+
+			secondSource := &source.Memory{}
+			secondSource.Append(segment(0, 3, event(0, typeA), event(1, typeA), event(2, typeA)))
+
+			secondDelivered := make(chan struct{})
+
+			first := &sourceHook{
+				Source: firstSource,
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+					fn(segment(1, 1))
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			}
+
+			second := &sourceHook{
+				Source: secondSource,
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+					fn(segment(3, 3))
+					close(secondDelivered)
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			}
+
+			removeFirst := watch(t, c, first, nil)
+			expectCatalogToHave(t, c, streamID)
+
+			segments, cancel, _ := consume(t, c, typesA, 0)
+			defer cancel()
+
+			expectSegment(t, segments, 0, 1, 0)
+
+			defer watch(t, c, second, nil)()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the second source to deliver the stream")
+			case <-secondDelivered:
+			}
+
+			removeFirst()
+
+			// The second source's cached segment begins at 3, so the events
+			// from the consumer's checkpoint at 1 are read from that source.
+			expectSegment(t, segments, 1, 3, 1, 2)
+			expectCatalogToHave(t, c, streamID)
+
+			if n := second.Reads.Load(); n != 1 {
+				t.Fatalf("unexpected number of reads from the second source: got %d, want 1", n)
+			}
+		})
+
 		t.Run("it returns ErrStreamNotFound at once for a stream the catalog does not have", func(t *testing.T) {
 			c := setup(t, 10)
 
