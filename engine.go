@@ -522,12 +522,11 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 	case *config.Projection:
 		consumer := &projection.Consumer{
 			Node:         e.node,
-			EventStreams: e.eventStreams.Legacy(),
+			EventStreams: e.eventStreams,
 			Handler:      handlerConfig.Interface(),
 			Identity:     handlerConfig.Identity(),
 			Concurrency:  handlerConfig.ConcurrencyPreference(),
 			EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-			BufferSize:   eventStreamBufferSize,
 			Logger:       logger.With(slog.String("component", "projection.consumer")),
 		}
 

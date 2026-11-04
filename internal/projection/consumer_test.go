@@ -1,25 +1,33 @@
 package projection_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/dogma"
+	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	. "github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestConsumer(t *testing.T) {
-	setup := func(t *testing.T) *catalogStub {
+	// setup starts a consumer of a new catalog, and returns the catalog and a
+	// channel that receives the offset of each event that the consumer's
+	// handler handles.
+	setup := func(t *testing.T) (*eventstream.Catalog, <-chan uint64) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -38,124 +46,243 @@ func TestConsumer(t *testing.T) {
 		}
 		xtesting.GoE(t, node.Run)
 
-		catalog := &catalogStub{
-			Subscribed:   make(chan *uuidpb.UUID, 10),
-			Unsubscribed: make(chan *uuidpb.UUID, 10),
+		catalog := &eventstream.Catalog{
+			CacheSize: 10,
+			Logger:    logger,
+		}
+
+		handled := make(chan uint64, 10)
+
+		var (
+			m          sync.Mutex
+			checkpoint uint64
+		)
+
+		handler := &ProjectionMessageHandlerStub{
+			HandleEventFunc: func(
+				_ context.Context,
+				s dogma.ProjectionEventScope,
+				_ dogma.Event,
+			) (uint64, error) {
+				m.Lock()
+				defer m.Unlock()
+
+				if s.CheckpointOffset() != checkpoint {
+					return checkpoint, nil
+				}
+
+				checkpoint = s.Offset() + 1
+				handled <- s.Offset()
+
+				return checkpoint, nil
+			},
+			CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				m.Lock()
+				defer m.Unlock()
+
+				return checkpoint, nil
+			},
 		}
 
 		consumer := &Consumer{
 			Node:         node,
 			EventStreams: catalog,
-			Handler:      &stubs.ProjectionMessageHandlerStub{},
+			Handler:      handler,
 			Identity:     identitypb.New("<handler>", uuidpb.Generate()),
-			EventTypeIDs: uuidcollection.NewSet(uuidpb.Generate()),
-			BufferSize:   1,
+			EventTypeIDs: uuidcollection.NewSet(MessageTypeUUID[*EventStub[TypeA]]()),
 			Logger:       logger,
 		}
 		xtesting.GoE(t, consumer.Run)
 
-		return catalog
+		return catalog, handled
 	}
 
-	t.Run("it stops consuming a stream that leaves the catalog", func(t *testing.T) {
-		catalog := setup(t)
-		streamID := uuidpb.Generate()
+	// watch watches the given source with the catalog until the returned
+	// function is called.
+	watch := func(
+		t *testing.T,
+		catalog *eventstream.Catalog,
+		src source.Source,
+	) func() {
+		return xtesting.GoE(
+			t,
+			func(ctx context.Context) error {
+				return catalog.Watch(ctx, src, nil)
+			},
+		)
+	}
 
-		catalog.Offer(streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+	t.Run("it consumes a stream that joins the catalog", func(t *testing.T) {
+		catalog, handled := setup(t)
 
-		catalog.Offer()
-		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
-		xtesting.ExpectNoReceive(t, "subscription", catalog.Subscribed)
+		src := &source.Memory{}
+		watch(t, catalog, src)
+
+		src.Append(newSegment(t, uuidpb.Generate(), 0, EventA1))
+
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 	})
 
 	t.Run("it consumes a stream again when it returns to the catalog", func(t *testing.T) {
-		catalog := setup(t)
+		catalog, handled := setup(t)
+
+		src := &source.Memory{}
+		stop := watch(t, catalog, src)
+
 		streamID := uuidpb.Generate()
+		src.Append(newSegment(t, streamID, 0, EventA1))
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 
-		catalog.Offer(streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+		stop()
+		expectStreamIDs(t, catalog)
 
-		catalog.Offer()
-		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
+		src.Append(newSegment(t, streamID, 1, EventA2))
 
-		catalog.Offer(streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+		watch(t, catalog, src)
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 1)
+		xtesting.ExpectNoReceive(t, "handled event", handled)
 	})
 
-	t.Run("it subscribes again when a subscription is lost while the stream is offered", func(t *testing.T) {
-		catalog := setup(t)
+	t.Run("it continues consuming a stream when another source takes over", func(t *testing.T) {
+		catalog, handled := setup(t)
+
+		first := &source.Memory{}
+		second := &deliveringSource{
+			Source: &source.Memory{},
+		}
+
 		streamID := uuidpb.Generate()
+		seg := newSegment(t, streamID, 0, EventA1)
+		first.Append(seg)
+		second.Source.Append(seg)
 
-		catalog.Offer(streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
+		stop := watch(t, catalog, first)
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 
-		catalog.LoseSubscriptions()
-		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
-	})
+		watch(t, catalog, second)
+		xtesting.ExpectLatchesSetEventually(t, &second.Delivered)
 
-	t.Run("it stops consuming when a subscription is lost after the stream leaves the catalog", func(t *testing.T) {
-		catalog := setup(t)
-		streamID := uuidpb.Generate()
+		stop()
 
-		catalog.Offer(streamID)
-		xtesting.ExpectToReceiveN(t, "subscription", catalog.Subscribed, streamID)
-
-		catalog.Offer()
-		catalog.LoseSubscriptions()
-		xtesting.ExpectToReceiveN(t, "unsubscription", catalog.Unsubscribed, streamID)
-		xtesting.ExpectNoReceive(t, "subscription", catalog.Subscribed)
+		seg = newSegment(t, streamID, 1, EventA2)
+		first.Append(seg)
+		second.Source.Append(seg)
+		xtesting.ExpectToReceiveN(t, "handled event", handled, 1)
+		xtesting.ExpectNoReceive(t, "handled event", handled)
 	})
 }
 
-// catalogStub is an [eventstream.LegacyCatalog] that offers the streams given to it
-// by the test, and records subscriptions to them.
-type catalogStub struct {
-	streamIDs    xsync.Observable[*uuidcollection.Set]
-	Subscribed   chan *uuidpb.UUID
-	Unsubscribed chan *uuidpb.UUID
+// deliveringSource is a [source.Memory] that reports when it has delivered a
+// segment to a watcher.
+type deliveringSource struct {
+	Source *source.Memory
 
-	m    sync.Mutex
-	lost []chan struct{}
+	// Delivered is set once a segment delivered by Watch has been handled.
+	Delivered xsync.Latch
 }
 
-func (s *catalogStub) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
-	return s.streamIDs.Load()
+func (s *deliveringSource) Watch(
+	ctx context.Context,
+	types *uuidcollection.Set,
+	fn func(source.Segment),
+) error {
+	return s.Source.Watch(
+		ctx,
+		types,
+		func(seg source.Segment) {
+			fn(seg)
+			s.Delivered.Set()
+		},
+	)
 }
 
-func (s *catalogStub) Subscribe(
+func (s *deliveringSource) Read(
+	ctx context.Context,
 	streamID *uuidpb.UUID,
-	_ uint64,
-	_ *uuidcollection.Set,
-	_ chan<- eventstream.Batch,
-) (<-chan struct{}, func()) {
-	lost := make(chan struct{})
-
-	s.m.Lock()
-	s.lost = append(s.lost, lost)
-	s.m.Unlock()
-
-	s.Subscribed <- streamID
-
-	return lost, func() {
-		s.Unsubscribed <- streamID
-	}
+	types *uuidcollection.Set,
+	begin uint64,
+	fn func(source.Segment) error,
+) error {
+	return s.Source.Read(ctx, streamID, types, begin, fn)
 }
 
-// LoseSubscriptions reports every subscription made so far as lost.
-func (s *catalogStub) LoseSubscriptions() {
-	s.m.Lock()
-	defer s.m.Unlock()
+// newSegment returns a segment of a stream holding the given events, beginning
+// at the given offset.
+func newSegment(
+	t *testing.T,
+	streamID *uuidpb.UUID,
+	begin uint64,
+	events ...dogma.Event,
+) source.Segment {
+	t.Helper()
 
-	for _, lost := range s.lost {
-		close(lost)
+	seg := source.Segment{
+		StreamID: streamID,
+		Begin:    begin,
+		End:      begin + uint64(len(events)),
 	}
 
-	s.lost = nil
+	for i, event := range events {
+		mt, ok := dogma.RegisteredMessageTypeOf(event)
+		if !ok {
+			t.Fatalf("%T is not a registered message type", event)
+		}
+
+		data, err := event.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		env := envelopepb.NewEnvelopeBuilder().
+			WithBody(
+				envelopepb.NewBodyBuilder().
+					WithCreatedAt(timestamppb.Now()).
+					WithMessage(
+						envelopepb.NewMessageBuilder().
+							WithTypeId(uuidpb.MustParse(mt.ID())).
+							WithDescription(event.MessageDescription()).
+							WithData(data).
+							Build(),
+					).
+					Build(),
+			).
+			Build()
+
+		envelopepb.SetExtension(
+			env.GetBody(),
+			envelopepb.NewEventStreamPositionBuilder().
+				WithStreamId(streamID).
+				WithOffset(begin+uint64(i)).
+				Build(),
+		)
+
+		seg.Envelopes = append(seg.Envelopes, env)
+	}
+
+	return seg
 }
 
-// Offer replaces the set of streams that the catalog offers.
-func (s *catalogStub) Offer(streamIDs ...*uuidpb.UUID) {
-	s.streamIDs.Store(uuidcollection.NewSet(streamIDs...))
+// expectStreamIDs waits until the catalog has exactly the given streams.
+func expectStreamIDs(
+	t *testing.T,
+	catalog *eventstream.Catalog,
+	want ...*uuidpb.UUID,
+) {
+	t.Helper()
+
+	timeout := time.After(xtesting.WaitTimeout)
+
+	for {
+		got, changed := catalog.StreamIDs().Load()
+
+		if got.IsEqual(uuidcollection.NewSet(want...)) {
+			return
+		}
+
+		select {
+		case <-timeout:
+			t.Fatalf("timeout waiting for the catalog to have streams %v", want)
+		case <-changed:
+		}
+	}
 }

@@ -269,13 +269,45 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 4: Projection on `Consume` (old protobuf)
 
-- [ ] **Step 9.** `streamConsumer.consume` becomes one `Consume` call whose
+- [x] **Step 9.** `streamConsumer.consume` becomes one `Consume` call whose
       `fn` holds today's dispatch loop. The handler's checkpoint is advanced
       only by handled events (dogma#221), never by a segment's end. On
       `ErrStreamNotFound` it waits until the catalog has the stream again and
-      consumes from the handler's checkpoint; any other error returns to the
-      supervisor. `consumeSubscription` and `BufferSize` go; `consumer_test.go`
-      is rewritten over a real `Catalog` with a stub source.
+      consumes from the handler's checkpoint; any other error, including a
+      failed read, returns to the supervisor, which resumes from the handler's
+      checkpoint. `consumeSubscription` and `BufferSize` go. `consumer_test.go`
+      is rewritten over a real `Catalog` with memory sources: a stream that
+      joins the catalog is consumed; a stream that leaves and returns is
+      consumed from where the handler left off; a stream continues when
+      another source takes over. That the consumer stops a stream consumer
+      when its stream leaves is not observable through the catalog, which
+      can deliver nothing for a stream it does not have, so it has no test.
+- [ ] **Step 9a.** The projection consumer reconciles in one place. Before
+      this, three layers react to overlapping changes: the `Consumer` starts
+      and stops a stream consumer as streams join and leave the catalog; each
+      stream consumer starts and stops consumption as the node's
+      responsibility for its workload changes; and a stream consumer whose
+      stream leaves waits for it to return while the `Consumer` stops it.
+  - `cluster.Node` publishes its view of the cluster as one observable,
+    `Node.Membership() xsync.ObservableR[*cluster.Membership]`, replacing
+    `ObserveResponsibility`, its observers, and `Node.Peers`. A `Membership`
+    is an immutable snapshot of the live nodes. `IsResponsibleFor(workload)`
+    is the rendezvous hash over them, and is false for every workload while
+    the node can not hear its own heartbeats or once it has stopped.
+    `Peers()` replaces `Node.Peers`.
+  - `projection.Consumer.Run` is one loop. It waits for the catalog's stream
+    IDs or the membership to change, works out the streams this node is
+    responsible for, and starts or cancels a stream consumer for each
+    difference. A canceled stream consumer is waited for before the same
+    stream can be consumed again on this node.
+  - `streamConsumer` loses `Node`, `Workload`, `step` and `waitForStream`.
+    It loads the handler's checkpoint and calls `Consume` under the
+    supervisor until it is canceled. `ErrStreamNotFound`, which it can see
+    only in the moment before the loop cancels it, is retried like any other
+    failure.
+  - `node_test.go` and `xtesting`'s cluster convergence move onto
+    `Membership`. `consumer_test.go` gains a case for responsibility moving
+    to another node and back.
 - [ ] **Step 10.** `ConsumerAPI.ConsumeEvents` rewritten over `Consume` on the
       old protocol, deleting the shim; `grpc_test.go` passes unchanged. This
       shrinks step 11 to the wire mapping.

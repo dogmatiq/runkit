@@ -2,6 +2,7 @@ package projection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -32,8 +33,8 @@ type streamConsumer struct {
 	// the stream.
 	Workload *uuidpb.UUID
 
-	// EventStreams is the catalog that offers the stream.
-	EventStreams eventstream.LegacyCatalog
+	// EventStreams is the catalog from which the stream is consumed.
+	EventStreams *eventstream.Catalog
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.
@@ -47,10 +48,6 @@ type streamConsumer struct {
 	// held while handling each event, so that stream consumers sharing it
 	// handle events one at a time.
 	HandlerLock *semaphore.Weighted
-
-	// BufferSize is the number of batches of events that are buffered while
-	// waiting to be dispatched.
-	BufferSize int
 
 	// Logger is the target for log messages produced by the stream consumer
 	// and the handler.
@@ -112,8 +109,9 @@ func (sc *streamConsumer) step(
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled, an event can not be dispatched, or
-// the handler reports an optimistic concurrency conflict.
+// checkpoint offset, until ctx is canceled, a read from the stream fails, an
+// event can not be dispatched, or the handler reports an optimistic
+// concurrency conflict.
 //
 // A conflict is returned as an error so that consumption resumes from the
 // handler's checkpoint offset after a delay, rather than immediately.
@@ -131,86 +129,37 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 	}
 
 	for {
-		checkpoint, err = sc.consumeSubscription(ctx, checkpoint)
-		if err != nil {
+		err := sc.EventStreams.Consume(
+			ctx,
+			sc.StreamID,
+			sc.EventTypeIDs,
+			checkpoint,
+			func(seg eventstream.Segment) error {
+				var err error
+				checkpoint, err = sc.dispatchSegment(ctx, checkpoint, seg)
+				return err
+			},
+		)
+
+		if !errors.Is(err, eventstream.ErrStreamNotFound) {
 			return err
 		}
 
-		if err := sc.waitUntilOffered(ctx); err != nil {
+		sc.Logger.DebugContext(ctx, "event stream left the catalog")
+
+		if err := sc.waitForStream(ctx); err != nil {
 			return err
 		}
 	}
 }
 
-// consumeSubscription subscribes to the stream from the given checkpoint
-// offset and dispatches its events until the subscription is lost, ctx is
-// canceled, an event can not be dispatched, or the handler reports an
-// optimistic concurrency conflict.
+// waitForStream blocks until the catalog has the stream, or ctx is canceled.
 //
-// It returns the checkpoint offset from which to resume.
-func (sc *streamConsumer) consumeSubscription(
-	ctx context.Context,
-	checkpoint uint64,
-) (uint64, error) {
-	batches := make(chan eventstream.Batch, sc.BufferSize)
-	lost, unsubscribe := sc.EventStreams.Subscribe(
-		sc.StreamID,
-		checkpoint,
-		sc.EventTypeIDs,
-		batches,
-	)
-	defer unsubscribe()
-
+// The [Consumer] stops the stream consumer once the stream has left the
+// catalog, unless the stream returns first.
+func (sc *streamConsumer) waitForStream(ctx context.Context) error {
 	for {
-		var batch eventstream.Batch
-
-		select {
-		case <-ctx.Done():
-			return checkpoint, ctx.Err()
-		case <-lost:
-			sc.Logger.DebugContext(ctx, "subscription to event stream lost")
-			return checkpoint, nil
-		case batch = <-batches:
-		}
-
-		// The batch's own checkpoint advances past events that the handler
-		// does not consume, but the handler's checkpoint advances only when
-		// it handles an event, so the batch's checkpoint is not used.
-		//
-		// See https://github.com/dogmatiq/dogma/issues/221.
-		for _, env := range batch.Envelopes {
-			pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
-			offset := pos.GetOffset()
-
-			next, err := sc.dispatch(ctx, offset, checkpoint, env)
-			if err != nil {
-				return checkpoint, err
-			}
-
-			if next != offset+1 {
-				return checkpoint, fmt.Errorf(
-					"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
-					offset,
-					offset+1,
-					next,
-				)
-			}
-
-			checkpoint = next
-		}
-	}
-}
-
-// waitUntilOffered blocks until the catalog offers the stream, or ctx is
-// canceled.
-//
-// A subscription is lost only once the stream is no longer offered by the
-// catalog that served it. If the stream is still offered, another catalog
-// serves it. Otherwise, the [Consumer] stops the stream consumer, unless the
-// stream is offered again first.
-func (sc *streamConsumer) waitUntilOffered(ctx context.Context) error {
-	for {
-		streamIDs, changed := sc.EventStreams.StreamIDs()
+		streamIDs, changed := sc.EventStreams.StreamIDs().Load()
 
 		if streamIDs.Has(sc.StreamID) {
 			return nil
@@ -222,6 +171,45 @@ func (sc *streamConsumer) waitUntilOffered(ctx context.Context) error {
 		case <-changed:
 		}
 	}
+}
+
+// dispatchSegment dispatches the events in a segment, and returns the
+// handler's new checkpoint offset for the stream.
+//
+// checkpoint is the offset from which the handler last said it would resume
+// handling events from the stream.
+func (sc *streamConsumer) dispatchSegment(
+	ctx context.Context,
+	checkpoint uint64,
+	seg eventstream.Segment,
+) (uint64, error) {
+	// The segment's end is past events that the handler does not consume, but
+	// the handler's checkpoint advances only when it handles an event, so the
+	// segment's end is not used.
+	//
+	// See https://github.com/dogmatiq/dogma/issues/221.
+	for _, env := range seg.Envelopes {
+		pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
+		offset := pos.GetOffset()
+
+		next, err := sc.dispatch(ctx, offset, checkpoint, env)
+		if err != nil {
+			return checkpoint, err
+		}
+
+		if next != offset+1 {
+			return checkpoint, fmt.Errorf(
+				"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
+				offset,
+				offset+1,
+				next,
+			)
+		}
+
+		checkpoint = next
+	}
+
+	return checkpoint, nil
 }
 
 // dispatch passes the event at the given offset to the handler, and returns

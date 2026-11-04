@@ -31,7 +31,7 @@ type Consumer struct {
 	Node *cluster.Node
 
 	// EventStreams is the catalog of event streams to consume.
-	EventStreams eventstream.LegacyCatalog
+	EventStreams *eventstream.Catalog
 
 	// Handler is the projection message handler to which events are
 	// dispatched.
@@ -47,10 +47,6 @@ type Consumer struct {
 	// consumes. It must not be empty.
 	EventTypeIDs *uuidcollection.Set
 
-	// BufferSize is the number of batches of events that each stream consumer
-	// buffers while waiting to dispatch them. It must be positive.
-	BufferSize int
-
 	// Logger is the target for log messages produced by the consumer and its
 	// stream consumers.
 	Logger *slog.Logger
@@ -64,10 +60,6 @@ type Consumer struct {
 //
 // It must be called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
-	if c.BufferSize <= 0 {
-		panic("buffer size must be positive")
-	}
-
 	if c.Concurrency == dogma.MinimizeConcurrency {
 		c.handlerLock = semaphore.NewWeighted(1)
 	}
@@ -75,7 +67,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	c.group, ctx = errgroup.WithContext(ctx)
 
 	for {
-		streamIDs, changed := c.EventStreams.StreamIDs()
+		streamIDs, changed := c.EventStreams.StreamIDs().Load()
 
 		// Stopping a stream consumer waits for it to return, so a stream that
 		// leaves the catalog and comes back is never consumed twice at once on
@@ -139,7 +131,6 @@ func (c *Consumer) ensureStreamConsumer(
 		EventTypeIDs: c.EventTypeIDs,
 		Handler:      c.Handler,
 		HandlerLock:  c.handlerLock,
-		BufferSize:   c.BufferSize,
 		Logger: c.Logger.With(
 			xslog.UUID("stream_id", streamID),
 		),
