@@ -2,6 +2,7 @@ package projection_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -295,19 +296,12 @@ func expectStreamIDs(
 ) {
 	t.Helper()
 
-	timeout := time.After(xtesting.WaitTimeout)
+	expected := uuidcollection.NewSet(want...)
 
-	for {
-		got, changed := catalog.StreamIDs().Load()
-
-		if got.IsEqual(uuidcollection.NewSet(want...)) {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("timeout waiting for the catalog to have streams %v", want)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the catalog to have streams %s", expected),
+		catalog.StreamIDs(),
+		expected.IsEqual,
+	)
 }

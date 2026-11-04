@@ -343,7 +343,7 @@ stop engines during a test. Phase B needs:
       `*Cluster` (one logical engine) with `Nodes()`, `Stop()` and
       `Failed()`; `RunEnginesWithDB` is built on it. A `Cluster` is used only
       from the test's goroutine, so it needs no locking.
-      `xtesting.Dial(t, engines...)` returns one connection to the given
+      `xtesting.DialGRPC(t, engines...)` returns one connection to the given
       engines (a manual resolver over their listen addresses, `pick_first`),
       using the first and failing over to the others in the order given, for
       `StaticRemoteEngines`.

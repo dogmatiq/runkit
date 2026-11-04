@@ -3,6 +3,7 @@ package eventstream_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -1073,19 +1074,11 @@ func expectCatalogToHave(
 	t.Helper()
 
 	expected := uuidcollection.NewSet(want...)
-	timeout := time.After(xtesting.WaitTimeout)
 
-	for {
-		got, changed := c.StreamIDs().Load()
-
-		if got.IsEqual(expected) {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("unexpected stream IDs: got %s, want %s", got, expected)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the catalog to have streams %s", expected),
+		c.StreamIDs(),
+		expected.IsEqual,
+	)
 }

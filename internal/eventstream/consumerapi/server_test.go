@@ -261,7 +261,7 @@ func TestServer_WatchEvents(t *testing.T) {
 				streamID = xtesting.CreateEventStream(t, db)
 			},
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-				client := messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.Dial(t, cluster.Nodes()[0]))
+				client := messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.DialGRPC(t, cluster.Nodes()[0]))
 				segments := watch(t, t.Context(), client, typeA)
 
 				segments.ExpectSegment(streamID, 0, 0)
@@ -458,7 +458,7 @@ func newConsumerClient(
 	ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 	t.Cleanup(cancel)
 
-	return messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.Dial(t, cluster.Nodes()[0])), ctx
+	return messaginggrpc.NewEventStreamConsumerAPIClient(xtesting.DialGRPC(t, cluster.Nodes()[0])), ctx
 }
 
 // watch begins watching events of the given types.

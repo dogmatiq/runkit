@@ -1104,7 +1104,7 @@ func TestRemote(t *testing.T) {
 					existing = xtesting.PopulateEventStreams(t, db, eventA, 3, 0)
 				},
 				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-					catalog, _ := watch(t, xtesting.Dial(t, cluster.Nodes()[0]))
+					catalog, _ := watch(t, xtesting.DialGRPC(t, cluster.Nodes()[0]))
 
 					expectCatalogToHave(t, catalog, existing...)
 
@@ -1124,7 +1124,7 @@ func TestRemote(t *testing.T) {
 					streamID = xtesting.PopulateEventStreams(t, db, eventA, 150)[0]
 				},
 				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-					catalog, reads := watch(t, xtesting.Dial(t, cluster.Nodes()[0]))
+					catalog, reads := watch(t, xtesting.DialGRPC(t, cluster.Nodes()[0]))
 
 					expectCatalogToHave(t, catalog, streamID)
 
@@ -1160,7 +1160,7 @@ func TestRemote(t *testing.T) {
 					nodes := cluster.Nodes()
 					streamID := xtesting.CreateEventStream(t, db)
 
-					catalog, _ := watch(t, xtesting.Dial(t, nodes[0], nodes[1]))
+					catalog, _ := watch(t, xtesting.DialGRPC(t, nodes[0], nodes[1]))
 
 					expectCatalogToHave(t, catalog, streamID)
 
@@ -1244,19 +1244,11 @@ func expectCatalogToHave(
 	t.Helper()
 
 	expected := uuidcollection.NewSet(want...)
-	timeout := time.After(xtesting.WaitTimeout)
 
-	for {
-		got, changed := c.StreamIDs().Load()
-
-		if got.IsEqual(expected) {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("unexpected stream IDs: got %s, want %s", got, expected)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the catalog to have streams %s", expected),
+		c.StreamIDs(),
+		expected.IsEqual,
+	)
 }

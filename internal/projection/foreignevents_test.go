@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestForeignEvents_eventsAreHandled verifies that a projection handles the
@@ -46,7 +45,7 @@ func TestForeignEvents_eventsAreHandled(t *testing.T) {
 		),
 		3,
 		runkit.WithRemoteEngineDiscoverer(
-			runkit.StaticRemoteEngines(xtesting.Dial(t, upstream.Nodes()[0])),
+			runkit.StaticRemoteEngines(xtesting.DialGRPC(t, upstream.Nodes()[0])),
 		),
 	)
 
@@ -210,9 +209,9 @@ func dialCountingWatches(t *testing.T, e *runkit.Engine) (*grpc.ClientConn, *ato
 
 	watches := &atomic.Int32{}
 
-	conn, err := grpc.NewClient(
+	conn := xtesting.DialGRPCAddr(
+		t,
 		addr.String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStreamInterceptor(
 			func(
 				ctx context.Context,
@@ -229,10 +228,6 @@ func dialCountingWatches(t *testing.T, e *runkit.Engine) (*grpc.ClientConn, *ato
 			},
 		),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
 
 	return conn, watches
 }

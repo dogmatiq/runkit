@@ -8,13 +8,12 @@ import (
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestStaticRemoteEngines(t *testing.T) {
 	t.Run("it adds each connection", func(t *testing.T) {
-		a := newClientConn(t)
-		b := newClientConn(t)
+		a := xtesting.DialGRPCAddr(t, "127.0.0.1:0")
+		b := xtesting.DialGRPCAddr(t, "127.0.0.1:0")
 
 		reported := make(chan grpc.ClientConnInterface, 10)
 		discover := runkit.StaticRemoteEngines(a, b)
@@ -48,7 +47,7 @@ func TestStaticRemoteEngines(t *testing.T) {
 			}
 		}()
 
-		runkit.StaticRemoteEngines(newClientConn(t), nil)
+		runkit.StaticRemoteEngines(xtesting.DialGRPCAddr(t, "127.0.0.1:0"), nil)
 	})
 }
 
@@ -62,20 +61,4 @@ func TestWithRemoteEngineDiscoverer(t *testing.T) {
 
 		runkit.WithRemoteEngineDiscoverer(nil)
 	})
-}
-
-// newClientConn returns a gRPC client connection that is never used.
-func newClientConn(t testing.TB) *grpc.ClientConn {
-	t.Helper()
-
-	conn, err := grpc.NewClient(
-		"127.0.0.1:0",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
-
-	return conn
 }

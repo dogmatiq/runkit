@@ -57,6 +57,56 @@ func WaitForLatches(
 	}
 }
 
+// WaitFor polls cond until it returns true. It fails the test if that does not
+// occur within [WaitTimeout].
+func WaitFor(
+	t testing.TB,
+	description string,
+	cond func() bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
+	defer cancel()
+
+	for !cond() {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %s", description)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// WaitForObservable waits until the value of o satisfies ok. It fails the test
+// if that does not occur within [WaitTimeout], and reports the most recent
+// value.
+func WaitForObservable[T any](
+	t testing.TB,
+	description string,
+	o xsync.ObservableR[T],
+	ok func(T) bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
+	defer cancel()
+
+	for {
+		v, changed := o.Load()
+
+		if ok(v) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %s: got %v", description, v)
+		case <-changed:
+		}
+	}
+}
+
 // Go runs the given function in a goroutine until the test ends.
 //
 // It returns a function that can be called to stop the goroutine early, which

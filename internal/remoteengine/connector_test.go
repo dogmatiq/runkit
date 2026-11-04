@@ -3,6 +3,7 @@ package remoteengine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -16,7 +17,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestConnector(t *testing.T) {
@@ -50,14 +50,11 @@ func TestConnector(t *testing.T) {
 	expectCalls := func(t *testing.T, calls *atomic.Int32, want int32) {
 		t.Helper()
 
-		deadline := time.After(xtesting.WaitTimeout)
-		for calls.Load() < want {
-			select {
-			case <-deadline:
-				t.Fatalf("timeout waiting for %d calls: got %d", want, calls.Load())
-			case <-time.After(10 * time.Millisecond):
-			}
-		}
+		xtesting.WaitFor(
+			t,
+			fmt.Sprintf("%d calls", want),
+			func() bool { return calls.Load() >= want },
+		)
 	}
 
 	t.Run("it calls the discoverer again if it fails", func(t *testing.T) {
@@ -311,16 +308,7 @@ func serve(t *testing.T, api messaginggrpc.EventStreamConsumerAPIServer) *grpc.C
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 
-	conn, err := grpc.NewClient(
-		listener.Addr().String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
-
-	return conn
+	return xtesting.DialGRPCAddr(t, listener.Addr().String())
 }
 
 // expectCatalogToHave waits for the catalog to have exactly the given streams.
@@ -332,19 +320,11 @@ func expectCatalogToHave(
 	t.Helper()
 
 	expected := uuidcollection.NewSet(want...)
-	timeout := time.After(xtesting.WaitTimeout)
 
-	for {
-		got, changed := c.StreamIDs().Load()
-
-		if got.IsEqual(expected) {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("unexpected stream IDs: got %s, want %s", got, expected)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the catalog to have streams %s", expected),
+		c.StreamIDs(),
+		expected.IsEqual,
+	)
 }

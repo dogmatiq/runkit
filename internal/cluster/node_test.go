@@ -3,6 +3,7 @@ package cluster_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -288,22 +289,15 @@ func expectPeers(
 	t.Helper()
 
 	expected := uuidcollection.NewSet(want...)
-	timeout := time.After(xtesting.WaitTimeout)
 
-	for {
-		m, changed := n.Membership().Load()
-		got := m.Peers()
-
-		if got.IsEqual(expected) {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("unexpected peers: got %s, want %s", got, expected)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the node to have peers %s", expected),
+		n.Membership(),
+		func(m *Membership) bool {
+			return m.Peers().IsEqual(expected)
+		},
+	)
 }
 
 func expectNodeResponsibleFor(
@@ -314,22 +308,14 @@ func expectNodeResponsibleFor(
 ) {
 	t.Helper()
 
-	timeout := time.After(xtesting.WaitTimeout)
-
-	for {
-		m, changed := n.Membership().Load()
-		got := m.LocalNodeIsResponsibleFor(workload)
-
-		if got == want {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("unexpected responsibility: got %t, want %t", got, want)
-		case <-changed:
-		}
-	}
+	xtesting.WaitForObservable(
+		t,
+		fmt.Sprintf("the node's responsibility for workload %s to be %t", workload, want),
+		n.Membership(),
+		func(m *Membership) bool {
+			return m.LocalNodeIsResponsibleFor(workload) == want
+		},
+	)
 }
 
 func expectExactlyOneResponsible(
@@ -339,21 +325,13 @@ func expectExactlyOneResponsible(
 ) {
 	t.Helper()
 
-	timeout := time.After(xtesting.WaitTimeout)
-
-	for {
-		responsible := responsibleNodes(workload, nodes)
-
-		if len(responsible) == 1 {
-			return
-		}
-
-		select {
-		case <-timeout:
-			t.Fatalf("expected exactly one node to be responsible for workload %s, got %d", workload, len(responsible))
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	xtesting.WaitFor(
+		t,
+		fmt.Sprintf("exactly one node to be responsible for workload %s", workload),
+		func() bool {
+			return len(responsibleNodes(workload, nodes)) == 1
+		},
+	)
 }
 
 // responsibleNodes returns the nodes that are responsible for the given

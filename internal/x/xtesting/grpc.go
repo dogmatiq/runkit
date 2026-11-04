@@ -11,13 +11,13 @@ import (
 	"google.golang.org/grpc/resolver/manual"
 )
 
-// Dial returns an insecure gRPC client connection to the given engines, which
-// must be listening for gRPC requests.
+// DialGRPC returns an insecure gRPC client connection to the given engines,
+// which must be listening for gRPC requests.
 //
 // The connection sends requests to the first of the engines, and moves to the
 // next, in the order given, if that engine stops. It is closed when the test
 // ends.
-func Dial(t testing.TB, engines ...*runkit.Engine) *grpc.ClientConn {
+func DialGRPC(t testing.TB, engines ...*runkit.Engine) *grpc.ClientConn {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
@@ -42,10 +42,33 @@ func Dial(t testing.TB, engines ...*runkit.Engine) *grpc.ClientConn {
 	r := manual.NewBuilderWithScheme("xtesting")
 	r.InitialState(state)
 
-	conn, err := grpc.NewClient(
+	return DialGRPCAddr(
+		t,
 		r.Scheme()+":///engines",
 		grpc.WithResolvers(r),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+}
+
+// DialGRPCAddr returns an insecure gRPC client connection to the given target,
+// which is usually the address of a gRPC server. The options are applied after
+// the defaults, so they may override them.
+//
+// It is closed when the test ends.
+func DialGRPCAddr(
+	t testing.TB,
+	target string,
+	options ...grpc.DialOption,
+) *grpc.ClientConn {
+	t.Helper()
+
+	conn, err := grpc.NewClient(
+		target,
+		append(
+			[]grpc.DialOption{
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			},
+			options...,
+		)...,
 	)
 	if err != nil {
 		t.Fatalf("unable to create gRPC client: %v", err)

@@ -20,7 +20,6 @@ import (
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -93,19 +92,7 @@ func TestEngine(t *testing.T) {
 			<-done
 		}()
 
-		addr, err := engine.ListenAddr(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		conn, err := grpc.NewClient(
-			addr.String(),
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer conn.Close()
+		conn := xtesting.DialGRPC(t, engine)
 
 		stream, err := messaginggrpc.
 			NewEventStreamConsumerAPIClient(conn).
