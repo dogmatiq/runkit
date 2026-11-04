@@ -36,12 +36,13 @@ do not need it; step 11 onward does.
 - `WatchEvents(message_type_ids) returns (stream EventStreamSegment)` is held
   open for as long as the client uses the engine. It delivers events of the
   requested types as they are appended to any stream. There is no stream
-  listing — the first segment for a stream positions it at the tail, and every
-  later segment for that stream begins where the previous one ended. A server
-  that can no longer deliver a stream contiguously ends the call; a client that
-  reconnects expects to have missed events and treats the new call's first
-  segment per stream as a fresh position. A server may position every stream
-  or only streams with a matching event. Runkit's server positions every
+  listing — a stream appears on the feed with its first segment, which begins
+  at the stream's tail, and every later segment for that stream begins where
+  the previous one ended. A server that can no longer deliver a stream
+  contiguously ends the call; a client that reconnects expects to have missed
+  events and takes the new call's first segment per stream as the offset from
+  which that stream is delivered. A server may include every stream on the
+  feed or only streams with a matching event. Runkit's server includes every
   stream.
 - `ReadEvents(event_stream_id, begin_offset, message_type_ids) returns (stream
   EventStreamSegment)` delivers events from `begin_offset` to the end of the
@@ -61,17 +62,18 @@ do not need it; step 11 onward does.
   contemporary source: locally, a scanner per stream; remotely, one
   `WatchEvents` feed per engine, filtered to the union of every projection's
   event types, which is known when the engine is built and never changes. A
-  consumer whose checkpoint is below the cache window reads history on its own
-  goroutine: locally with the historical SQL, remotely with one `ReadEvents`
-  call that is canceled once the consumer reaches the window.
-- **The cache is sparse.** The remote feed is type-filtered, so the cache holds
-  `(offset, envelope)` pairs with gaps and tracks its window separately. The
-  window's end advances with every segment, empty or not. Its beginning is the
-  smallest offset for which the cache is complete: when the oldest event at
-  offset `o` is evicted, the beginning becomes `o+1`. A consumer at checkpoint
-  `cp` is servable if the window contains `cp`, and receives every cached event
-  at or after `cp` of a type it wants. The local scanner's output is the dense
-  special case, so one cache type serves both sources.
+  consumer whose checkpoint is before the cached segment reads history on its
+  own goroutine: locally with the historical SQL, remotely with one
+  `ReadEvents` call that is canceled once the consumer reaches the segment.
+- **The cache holds a sparse segment.** The remote feed is type-filtered, so
+  the segment a cache holds has gaps between the events it holds, but it is
+  complete for the types delivered. Its end advances with every segment
+  appended, empty or not. Its beginning is the smallest offset for which the
+  cache is complete: when the oldest event at offset `o` is evicted, the
+  beginning becomes `o+1`. A consumer at checkpoint `cp` is servable if the
+  cached segment contains `cp`, and receives every cached event at or after
+  `cp` of a type it wants. The local scanner's output is the dense special
+  case, so one cache type serves both sources.
 - **A synchronous callback, on the consumer's goroutine.**
   `Consume(ctx, streamID, types, begin, fn func(ctx, Segment) error) error`
   blocks until `ctx` is canceled, `fn` returns an error, or the stream is no
@@ -92,14 +94,15 @@ do not need it; step 11 onward does.
   reads go to the stream's current source. Projections see only which streams
   are offered, and start or stop a stream consumer per stream as they do today.
 - **A stream stays offered across a feed reconnect.** A new `WatchEvents` call
-  repositions the source's existing offer of each stream, the same path as a
-  local scanner restarting, rather than withdrawing and re-offering it, so a
+  resets the source's existing offer of each stream to the offset at which the
+  new call delivers it, the same path as a local scanner restarting, rather
+  than withdrawing and re-offering it, so a
   blip does not stop and restart every stream consumer. Offers are withdrawn
   only when their source is removed or stops.
 - **The server never relays.** `ConsumerAPI` consumes from the local source
   directly, never from the catalog, so a local stream whose current offer
   happens to be remote (this engine dialed as a remote engine) is not served
-  on from here. `WatchEvents` positions each local stream at its `next_offset`
+  on from here. `WatchEvents` delivers each local stream from its `next_offset`
   and runs a tail consumer per stream with the client's filter, serializing
   sends onto the one gRPC stream; if the client is slow, each per-stream
   consumer reads history inline, so the feed stays contiguous. `ReadEvents`
@@ -117,8 +120,8 @@ do not need it; step 11 onward does.
   failures of that read. The feed ending for any reason, `io.EOF` included, is
   a failure, since it must never end.
 - **An application with no projection event types** still opens a feed per
-  remote engine, with an empty filter. Streams are positioned and nothing is
-  delivered. One idle call per engine, and no special case.
+  remote engine, with an empty filter. Every stream appears on the feed and no
+  events are delivered. One idle call per engine, and no special case.
 - **The `scanner` subpackage is folded into `eventstream`**, and
   `internal/ringbuffer` is deleted; the cache is copy-on-write.
 
@@ -131,8 +134,8 @@ Names are proposals; confirm or rename as each step lands.
 | Type | Role |
 | --- | --- |
 | `Segment` | `{StreamID, Begin, End uint64, Envelopes}` — a contiguous piece `[Begin, End)` of one stream with the matching events. Replaces `scanner.Batch`. |
-| `cache` | Bounded, sparse, copy-on-write snapshot of one stream's recent events in an `xsync.Observable`. `append(seg)` (single writer; evicts from the front), `reset(begin)`, `read(cp, types)` returning the segment from `cp`, a status (behind, within, caught up, ahead) and the snapshot's change channel. |
-| `Offer` | One source's offer of one stream — a `cache`, the `Source` for history, a withdrawn latch and a context canceled on withdrawal. `Append`, `Reset` and `Withdraw` for sources; `consume` runs the loop. |
+| `cache.Cache` | In `internal/eventstream/internal/cache`. Holds a bounded, sparse, copy-on-write `cache.Segment` of one stream's recent events in an `xsync.Observable`. Writers call `Append(begin, end, envelopes)` (evicts from the front) and `Reset(begin)`; readers take `Segment()`, an `xsync.ObservableR[cache.Segment]`, and call `Read(cp, types)` on a snapshot, which returns the matching envelopes from `cp` and a `Relation` (`Before`, `Within`, `After`, valued like `cmp.Compare`). The snapshot carries `Begin` and `End`. The package knows nothing of `eventstream.Segment`; the offer assembles those from what it reads. |
+| `Offer` | One source's offer of one stream — a `cache.Cache`, the `Source` for history, a withdrawn latch and a context canceled on withdrawal. `Append`, `Reset` and `Withdraw` for sources; `consume` runs the loop. |
 | `Source` | The one cross-source interface: `ReadHistory(ctx, streamID, types, begin, fn) error` delivers contiguous segments from `begin` to the end of the stream as it stands, then returns nil. There is no contemporary-side abstraction; local reads the tail per stream and remote per engine, so what they share is what they produce, pushed through `Catalog.Offer`, `Offer.Append` and `Offer.Reset`. |
 | `Catalog` | Maps each stream to its offers under one mutex, with the current offer in an `xsync.Observable` per stream; publishes `StreamIDs()`; `Consume()` runs the current offer's loop and moves to the next offer when the current one is withdrawn. No `Run`. `Withdraw` republishes the stream set before setting the offer's latch, so a consumer never spins on a stale set. |
 | `LocalSource` | Discovers streams as `LocalCatalog` does, runs a supervised contemporary scanner per discovered stream into an `Offer`, implements `ReadHistory` with the historical SQL, and exposes `StreamIDs()` and `Consume()` over its own offers for the server. |
@@ -147,8 +150,8 @@ loop:
   seg, status, changed := cache.read(cp, types)
   within:            fn(seg); cp = seg.End
   behind:            cp = source.ReadHistory(cp) into fn, stopping once cp
-                     reaches the window (re-read after every segment); nil
-                     means the window moved, so loop
+                     reaches the cached segment (re-read after every segment
+                     delivered); nil means the cached segment moved, so loop
   caught up, ahead:  wait on ctx, changed, or withdrawn
 withdrawn → the catalog reloads the current offer and continues from cp, or
 returns ErrStreamNotOffered
@@ -181,17 +184,17 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 2: New building blocks, no callers yet (old protobuf)
 
-- [ ] **Step 3.** `segment.go` and `cache.go` with tests: append, evict and
-      window arithmetic on dense and sparse input; `read` status at every
-      boundary; type filtering; reset; the change channel closes on append and
-      reset; a `rapid` property — for random segment sequences and random `cp`
-      within the window, `read` yields exactly the matching events at or after
-      `cp`.
+- [x] **Step 3.** `segment.go`, and the `cache` package with tests: append,
+      evict and bounds arithmetic on dense and sparse input; `Read` status at
+      every boundary; type filtering; reset; the change channel closes on
+      append and reset; a `rapid` property — for random ranges and random `cp`
+      within the cached segment, `Read` yields exactly the matching events at
+      or after `cp`.
 - [ ] **Step 4.** `source.go` and `offer.go` with tests over a slice-backed
       stub source: behind → history then cache, no duplicates, contiguous
-      segments into `fn`; the window moving during a read triggers a second
-      read; `fn`'s error propagates unwrapped; withdrawal during a wait and
-      during a read; ahead and caught up wait; empty segments delivered.
+      segments into `fn`; the cached segment moving during a read triggers a
+      second read; `fn`'s error propagates unwrapped; withdrawal during a wait
+      and during a read; ahead and caught up wait; empty segments delivered.
 - [ ] **Step 5.** `catalog.go` with tests: the stream set is published on the
       first offer and the last withdrawal, before a consumer observes
       `ErrStreamNotOffered`; `Consume` on an unoffered stream returns at once;
@@ -240,20 +243,22 @@ Every step is green under `make test` unless marked otherwise.
       reported, events appended after connecting, empty segments advancing
       past irrelevant types, a slow client receiving a thousand events in
       order, `ReadEvents` closing at the end as of the start of the call, a
-      stream created mid-call positioned, per-stream contiguity, an empty
-      filter positioning only. `grpcserver/server_test.go` and
-      `engine_test.go` swap `ListEventStreams` for `WatchEvents`.
+      stream created mid-call appearing on the feed, per-stream contiguity, an
+      empty filter delivering streams but no events.
+      `grpcserver/server_test.go` and `engine_test.go` swap `ListEventStreams`
+      for `WatchEvents`.
 
 ### Phase 6: Remote source (new protobuf)
 
 - [ ] **Step 12.** `validatesegment.go` with a test per rule, each error
       naming the stream and offsets.
 - [ ] **Step 13.** `remotesource.go` with deterministic tests over the client
-      stub or an in-process stub server: positioning and appending; the feed
-      ending → retried with the existing offer repositioned; a validation
-      failure, `UNIMPLEMENTED`, `NOT_FOUND` and `OUT_OF_RANGE` → persistent;
+      stub or an in-process stub server: a stream's first segment offers it,
+      later segments extend it; the feed ending → retried with the existing
+      offer reset to the new call's offset; a validation failure,
+      `UNIMPLEMENTED`, `NOT_FOUND` and `OUT_OF_RANGE` → persistent;
       `ReadHistory` cancels its call when `fn` stops it; reconnect catch-up —
-      the first call delivers `[0, 1)` then fails, the second positions at
+      the first call delivers `[0, 1)` then fails, the second delivers from
       `[3, 3)`, `ReadEvents` is called from 1, and the consumer sees offsets 0,
       1 and 2 once each, in order.
 - [ ] **Step 14.** Tests for `RemoteSource` against a real cluster: streams
@@ -302,8 +307,9 @@ Every step is green under `make test` unless marked otherwise.
 
 ## Out of scope (explicitly deferred)
 
-- **Positioning only streams with a matching event** on the server. The
-  protocol allows it; runkit's server positions every stream for now.
+- **Delivering only streams with a matching event** on the server. The
+  protocol allows it; runkit's server includes every stream on the feed for
+  now.
 - **Discoverers other than `StaticRemoteEngines`**, process handlers consuming
   foreign events, hot-spot mitigation, heterogeneous connectivity and relay
   topologies, as in [the previous plan].

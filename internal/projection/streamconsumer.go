@@ -91,7 +91,7 @@ func (sc *streamConsumer) step(
 
 		var cancel context.CancelFunc
 		consumerResult, cancel = supervisor.Go(ctx, sc.Logger, sc.consume)
-		consumerStopped = consumerResult.Ready()
+		consumerStopped = consumerResult.Chan()
 
 		defer func() {
 			cancel()
