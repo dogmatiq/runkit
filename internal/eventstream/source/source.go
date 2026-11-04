@@ -27,7 +27,7 @@ type Source interface {
 	Watch(
 		ctx context.Context,
 		types *uuidcollection.Set,
-		fn func(context.Context, Segment),
+		fn func(Segment),
 	) error
 
 	// Read delivers events from a stream to fn, beginning at the given
@@ -41,6 +41,6 @@ type Source interface {
 		streamID *uuidpb.UUID,
 		types *uuidcollection.Set,
 		begin uint64,
-		fn func(context.Context, Segment) error,
+		fn func(Segment) error,
 	) error
 }

@@ -74,7 +74,7 @@ func (c *Catalog) Consume(
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
 	begin uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) error {
 	if types.IsEmpty() {
 		panic("message types must not be empty")
@@ -165,7 +165,7 @@ func (c *Catalog) Watch(
 			err := src.Watch(
 				ctx,
 				types,
-				func(_ context.Context, seg Segment) {
+				func(seg Segment) {
 					feedFor(seg.StreamID, seg.Begin).Append(seg)
 				},
 			)

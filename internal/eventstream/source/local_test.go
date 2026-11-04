@@ -58,7 +58,7 @@ func TestLocal(t *testing.T) {
 				return src.Watch(
 					ctx,
 					types,
-					func(ctx context.Context, seg Segment) {
+					func(seg Segment) {
 						select {
 						case <-ctx.Done():
 						case segments <- seg:
@@ -82,7 +82,7 @@ func TestLocal(t *testing.T) {
 			streamID,
 			types,
 			begin,
-			func(_ context.Context, seg Segment) error {
+			func(seg Segment) error {
 				segments = append(segments, seg)
 				return nil
 			},
@@ -512,7 +512,7 @@ func TestLocal(t *testing.T) {
 				streamID,
 				typesE,
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return errRejected
 				},
 			)
@@ -530,7 +530,7 @@ func TestLocal(t *testing.T) {
 				uuidpb.Generate(),
 				typesE,
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return nil
 				},
 			)

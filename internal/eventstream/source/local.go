@@ -45,7 +45,7 @@ type Local struct {
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(context.Context, Segment),
+	fn func(Segment),
 ) error {
 	if s.SegmentSize <= 0 {
 		panic("segment size must be positive")
@@ -85,7 +85,7 @@ func (s *Local) Read(
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
 	begin uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) error {
 	if s.SegmentSize <= 0 {
 		panic("segment size must be positive")
@@ -102,7 +102,7 @@ func (s *Local) Read(
 		// A segment that does not advance the offset tells the consumer
 		// nothing, so it is not delivered.
 		if seg.End > seg.Begin {
-			if err := fn(ctx, seg); err != nil {
+			if err := fn(seg); err != nil {
 				return err
 			}
 
@@ -190,7 +190,7 @@ func (s *Local) watchStream(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
-	fn func(context.Context, Segment),
+	fn func(Segment),
 ) error {
 	query := s.buildSegmentQuery(streamID, types)
 
@@ -220,7 +220,7 @@ func (s *Local) watchStream(
 			}
 
 			first = false
-			fn(ctx, seg)
+			fn(seg)
 			next = seg.End
 
 			if exhausted {

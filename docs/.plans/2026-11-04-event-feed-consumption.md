@@ -241,13 +241,17 @@ Every step is green under `make test` unless marked otherwise.
       runs, so that a watcher neither subscribes before reading nor keeps a
       buffer; `Subscribe` remains for the heartbeat loop, which needs each
       signal's topic.
-- [ ] **Step 7.** A temporary `Subscribe` shim over `Catalog.Consume`, so
-      that `ConsumerAPI` and `projection` can take a `Catalog` through the
-      `LegacyCatalog` interface, tested with `localcatalog_test.go`'s intent
-      against a catalog watching a `source.Local`: historical then
-      contemporary in order; filtering across both; many slow consumers each
-      receive every event; a clean stop with consumers in both phases.
-      `LocalCatalog` is still wired.
+- [x] **Step 7.** `Catalog.Legacy()`, a temporary adapter that presents the
+      catalog as a `LegacyCatalog`, so that `ConsumerAPI` and `projection` can
+      take it unchanged. Each `Subscribe` consumes the stream on its own
+      goroutine, retrying failed reads, and reports the subscription lost
+      once the catalog no longer has the stream. Tests for the adapter, and
+      `localcatalog_test.go`'s intent against a catalog watching a
+      `source.Local`: from the database then as appended, in order;
+      filtering across both; streams independently; many slow consumers;
+      a clean stop. `fn` is now always given the consumer's own context, so
+      that a segment it has been given is handled to completion even if the
+      feed closes. `LocalCatalog` is still wired.
 - [ ] **Step 8.** Switch over: `engine.go` builds the `Catalog` and adds a
       `source.Local`; `ConsumerAPI` and `projection.Consumer` take the shim,
       with the catalog giving `ConsumerAPI` a way to consume only streams

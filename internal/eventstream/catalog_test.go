@@ -124,7 +124,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				types,
 				begin,
-				func(ctx context.Context, seg Segment) error {
+				func(seg Segment) error {
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
@@ -243,7 +243,7 @@ func TestCatalog(t *testing.T) {
 					streamID,
 					typesA,
 					1,
-					func(context.Context, Segment) error {
+					func(Segment) error {
 						return nil
 					},
 				)
@@ -274,7 +274,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
 						if calls.Add(1) == 1 {
 							return errors.New("<error>")
 						}
@@ -300,7 +300,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: &source.Memory{},
-					WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
+					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
 						close(watching)
 						<-ctx.Done()
 						time.Sleep(50 * time.Millisecond)
@@ -443,12 +443,12 @@ func TestCatalog(t *testing.T) {
 
 			hook := &sourceHook{
 				Source: src,
-				WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
+				WatchFunc: func(ctx context.Context, fn func(Segment)) error {
 					return src.Watch(
 						ctx,
 						nil,
-						func(ctx context.Context, seg Segment) {
-							fn(ctx, seg)
+						func(seg Segment) {
+							fn(seg)
 							delivered <- seg.End
 						},
 					)
@@ -505,14 +505,14 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
-						fn(ctx, segment(2, 2))
+					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+						fn(segment(2, 2))
 
 						select {
 						case <-ctx.Done():
 							return ctx.Err()
 						case seg := <-restart:
-							fn(ctx, seg)
+							fn(seg)
 						}
 
 						<-ctx.Done()
@@ -553,15 +553,15 @@ func TestCatalog(t *testing.T) {
 
 			hook := &sourceHook{
 				Source: src,
-				WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
-					fn(ctx, segment(4, 4))
+				WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+					fn(segment(4, 4))
 
 					for {
 						select {
 						case <-ctx.Done():
 							return ctx.Err()
 						case seg := <-restart:
-							fn(ctx, seg)
+							fn(seg)
 							restarted <- struct{}{}
 						}
 					}
@@ -615,7 +615,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				typesA,
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return errRejected
 				},
 			)
@@ -653,7 +653,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				typesA,
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return nil
 				},
 			)
@@ -674,8 +674,8 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					WatchFunc: func(ctx context.Context, fn func(context.Context, Segment)) error {
-						fn(ctx, segment(2, 2))
+					WatchFunc: func(ctx context.Context, fn func(Segment)) error {
+						fn(segment(2, 2))
 						<-ctx.Done()
 						return ctx.Err()
 					},
@@ -691,7 +691,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				typesA,
 				1,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return nil
 				},
 			)
@@ -756,7 +756,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				typesA,
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return nil
 				},
 			)
@@ -788,7 +788,7 @@ func TestCatalog(t *testing.T) {
 				streamID,
 				uuidcollection.NewSet(typeB),
 				0,
-				func(context.Context, Segment) error {
+				func(Segment) error {
 					return nil
 				},
 			)
@@ -802,7 +802,7 @@ type sourceHook struct {
 	source.Source
 
 	// WatchFunc, if non-nil, is called in place of the source's Watch.
-	WatchFunc func(ctx context.Context, fn func(context.Context, Segment)) error
+	WatchFunc func(ctx context.Context, fn func(Segment)) error
 
 	// ReadFunc, if non-nil, is called in place of the source's Read.
 	ReadFunc func(ctx context.Context) error
@@ -814,7 +814,7 @@ type sourceHook struct {
 func (s *sourceHook) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(context.Context, Segment),
+	fn func(Segment),
 ) error {
 	if s.WatchFunc != nil {
 		return s.WatchFunc(ctx, fn)
@@ -828,7 +828,7 @@ func (s *sourceHook) Read(
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
 	begin uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) error {
 	s.Reads.Add(1)
 

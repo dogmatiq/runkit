@@ -65,7 +65,7 @@ func (s *Memory) Append(seg Segment) {
 func (s *Memory) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
-	fn func(context.Context, Segment),
+	fn func(Segment),
 ) error {
 	var delivered uuidcollection.Map[uint64]
 
@@ -73,7 +73,7 @@ func (s *Memory) Watch(
 		segments, changed := s.undelivered(types, &delivered)
 
 		for _, seg := range segments {
-			fn(ctx, seg)
+			fn(seg)
 		}
 
 		select {
@@ -90,7 +90,7 @@ func (s *Memory) Read(
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
 	begin uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) error {
 	for {
 		seg, ok, err := s.unread(streamID, types, begin)
@@ -102,7 +102,7 @@ func (s *Memory) Read(
 			return nil
 		}
 
-		if err := fn(ctx, seg); err != nil {
+		if err := fn(seg); err != nil {
 			return err
 		}
 

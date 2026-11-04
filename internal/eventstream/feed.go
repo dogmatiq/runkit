@@ -91,7 +91,7 @@ func (f *feed) consume(
 	ctx context.Context,
 	types *uuidcollection.Set,
 	begin uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) (uint64, error) {
 	cp := begin
 
@@ -101,7 +101,7 @@ func (f *feed) consume(
 
 		switch rel {
 		case cache.Within:
-			err := fn(ctx, Segment{
+			err := fn(Segment{
 				StreamID:  f.ID,
 				Begin:     cp,
 				End:       seg.End,
@@ -145,7 +145,7 @@ func (f *feed) read(
 	ctx context.Context,
 	types *uuidcollection.Set,
 	cp uint64,
-	fn func(context.Context, Segment) error,
+	fn func(Segment) error,
 ) (uint64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -162,8 +162,8 @@ func (f *feed) read(
 		f.ID,
 		types,
 		cp,
-		func(ctx context.Context, seg Segment) error {
-			if err := fn(ctx, seg); err != nil {
+		func(seg Segment) error {
+			if err := fn(seg); err != nil {
 				return err
 			}
 
