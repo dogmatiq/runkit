@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/source"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 )
 
@@ -131,7 +131,26 @@ func (c *Catalog) Watch(
 		panic("cache size must be positive")
 	}
 
-	var feeds uuidcollection.Map[*feed]
+	var (
+		m     sync.Mutex
+		feeds uuidcollection.Map[*feed]
+	)
+
+	// feedFor returns the feed of the given stream from the source, creating
+	// it from the given offset if the source has not delivered the stream
+	// before.
+	feedFor := func(streamID *uuidpb.UUID, begin uint64) *feed {
+		m.Lock()
+		defer m.Unlock()
+
+		f, ok := feeds.Get(streamID)
+		if !ok {
+			f = c.add(streamID, src, types, begin)
+			feeds.Set(streamID, f)
+		}
+
+		return f
+	}
 
 	defer func() {
 		for f := range feeds.Values() {
@@ -147,13 +166,7 @@ func (c *Catalog) Watch(
 				ctx,
 				types,
 				func(_ context.Context, seg Segment) {
-					f, ok := feeds.Get(seg.StreamID)
-					if !ok {
-						f = c.add(seg.StreamID, src, types, seg.Begin)
-						feeds.Set(seg.StreamID, f)
-					}
-
-					f.Append(seg)
+					feedFor(seg.StreamID, seg.Begin).Append(seg)
 				},
 			)
 

@@ -13,9 +13,9 @@ import (
 
 // Memory is a [Source] that holds its streams in memory.
 type Memory struct {
-	// BatchSize is the maximum number of matching events per segment that
-	// Read delivers. Zero means no limit.
-	BatchSize int
+	// SegmentSize is the maximum number of events delivered in one segment by
+	// Read. Zero means no limit.
+	SegmentSize int
 
 	m       sync.Mutex
 	streams uuidcollection.Map[*memoryStream]
@@ -59,8 +59,7 @@ func (s *Memory) Append(seg Segment) {
 	s.changed.Store(struct{}{})
 }
 
-// Watch delivers events to fn as they are appended to the source's streams,
-// as described by [Source].
+// Watch delivers events to fn as they are appended to the source's streams.
 //
 // Each stream is delivered from its end as it stands when Watch is called.
 func (s *Memory) Watch(
@@ -85,8 +84,7 @@ func (s *Memory) Watch(
 	}
 }
 
-// Read delivers events from a stream to fn, beginning at the given offset, as
-// described by [Source].
+// Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Memory) Read(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -148,7 +146,7 @@ func (s *Memory) undelivered(
 }
 
 // unread returns the next segment of the given stream from the given offset,
-// filtered to the given types and limited to BatchSize events.
+// filtered to the given types and limited to SegmentSize events.
 //
 // ok is false if the offset is at the end of the stream.
 func (s *Memory) unread(
@@ -170,9 +168,9 @@ func (s *Memory) unread(
 
 	seg = s.segment(streamID, ms, types, begin, ms.End)
 
-	if s.BatchSize > 0 && len(seg.Envelopes) > s.BatchSize {
-		seg.Envelopes = seg.Envelopes[:s.BatchSize]
-		seg.End = offsetOf(seg.Envelopes[s.BatchSize-1]) + 1
+	if s.SegmentSize > 0 && len(seg.Envelopes) > s.SegmentSize {
+		seg.Envelopes = seg.Envelopes[:s.SegmentSize]
+		seg.End = offsetOf(seg.Envelopes[s.SegmentSize-1]) + 1
 	}
 
 	return seg, true, nil

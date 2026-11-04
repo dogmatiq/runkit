@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	. "github.com/dogmatiq/runkit/internal/eventstream/internal/source"
+	. "github.com/dogmatiq/runkit/internal/eventstream/source"
 )
 
 func TestMemory(t *testing.T) {
@@ -155,7 +155,7 @@ func TestMemory(t *testing.T) {
 
 		t.Run("it delivers in batches of the given size", func(t *testing.T) {
 			src := &Memory{
-				BatchSize: 2,
+				SegmentSize: 2,
 			}
 			src.Append(Segment{
 				StreamID: streamA,

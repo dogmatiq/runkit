@@ -12,7 +12,7 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/source"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -405,7 +405,7 @@ func TestCatalog(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{
-				BatchSize: 2,
+				SegmentSize: 2,
 			}
 			src.Append(segment(0, 5, event(0, typeA), event(1, typeB), event(2, typeA), event(3, typeA), event(4, typeA)))
 
@@ -433,7 +433,7 @@ func TestCatalog(t *testing.T) {
 			c := setup(t, 1)
 
 			src := &source.Memory{
-				BatchSize: 2,
+				SegmentSize: 2,
 			}
 			src.Append(segment(0, 2, event(0, typeA), event(1, typeA)))
 
@@ -494,7 +494,7 @@ func TestCatalog(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{
-				BatchSize: 3,
+				SegmentSize: 3,
 			}
 			src.Append(segment(0, 2, event(0, typeA), event(1, typeA)))
 
@@ -544,7 +544,7 @@ func TestCatalog(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{
-				BatchSize: 1,
+				SegmentSize: 1,
 			}
 			src.Append(segment(0, 4, event(0, typeA), event(1, typeA), event(2, typeA), event(3, typeA)))
 

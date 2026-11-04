@@ -9,7 +9,7 @@ import (
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
-	"github.com/dogmatiq/runkit/internal/eventstream/internal/source"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 )
 
 // feed serves consumers of one event stream from one [source.Source], whether

@@ -148,7 +148,7 @@ Names are proposals; confirm or rename as each step lands.
 
 | Type | Role |
 | --- | --- |
-| `source.Segment` | In `internal/eventstream/internal/source`; `eventstream.Segment` is an alias. `{StreamID, Begin, End uint64, Envelopes}` — a contiguous piece `[Begin, End)` of one stream with the matching events. Replaces `scanner.Batch`. |
+| `source.Segment` | In `internal/eventstream/source`; `eventstream.Segment` is an alias. `{StreamID, Begin, End uint64, Envelopes}` — a contiguous piece `[Begin, End)` of one stream with the matching events. Replaces `scanner.Batch`. |
 | `source.Source` | The whole source contract. `Watch(ctx, types, fn func(ctx, Segment)) error` delivers each of the source's streams' events of the given types (nil: every type) to `fn` in contiguous segments as they are appended, until `ctx` is canceled or it fails, in which case it is called again; a stream's first segment, or a non-contiguous one, begins a new delivery of the stream from its begin offset. `Read(ctx, streamID, types, begin, fn) error` delivers contiguous segments from `begin` to the end of the stream as it stands, then returns nil, returning `fn`'s error unchanged. |
 | `source.Local`, `source.Remote` | The two sources (Steps 7 and 13). Neither knows about the catalog or caches. `source.Memory` is a third, holding its streams in memory, for tests. |
 | `cache.Cache` | In `internal/eventstream/internal/cache`. Holds a bounded, sparse, copy-on-write `cache.Segment` of one stream's recent events in an `xsync.Observable`. Writers call `Append(begin, end, envelopes)` (evicts from the front) and `Reset(begin)`; readers take `Segment()`, an `xsync.ObservableR[cache.Segment]`, and call `Read(cp, types)` on a snapshot, which returns the matching envelopes from `cp` and a `Relation` (`Before`, `Within`, `After`, valued like `cmp.Compare`). The snapshot carries `Begin` and `End`. The package knows nothing of `source.Segment`; the stream assembles those from what it reads. |
@@ -225,17 +225,29 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 3: Local source (old protobuf)
 
-- [ ] **Step 6.** New local readers inside `eventstream`, copied from the
-      `scanner` package without touching it: a contemporary reader delivering
-      segments through a `Deliver func(Segment)` field, and a history-read
-      function with the historical SQL. Tests ported from `scanner`.
-- [ ] **Step 7.** `source.Local` with tests ported from
-      `localcatalog_test.go`'s intent, through a `Catalog` it is added to:
-      historical then contemporary in order; filtering across both; many slow
-      consumers each receive every event; a clean stop with consumers in both
-      phases; discovery. A temporary `Subscribe` shim over `Catalog.Consume`
-      keeps `ConsumerAPI` and `projection` compiling. `LocalCatalog` is still
-      wired.
+- [x] **Step 6.** `source.Local` with tests through its own `Watch` and
+      `Read`, ported from the `scanner` tests: `Watch` delivers each stream
+      from its most recent events, from the beginning if it is short, events
+      appended later, in several segments, streams created later, only the
+      given types, and an empty segment for an empty stream; `Read` delivers
+      one segment to the end, several when over the segment size, from the
+      given offset, past events of other types, every type if none given, an
+      empty segment when only other types exist, nothing from an empty stream
+      or from beyond its end, `fn`'s error unchanged, and fails for a missing
+      stream. The `scanner` package is left in place for `LocalCatalog`.
+      `Local` discovers and watches streams through `signal.Bus.Watch`, an
+      iterator that yields once when iteration begins and then after each
+      signal on a topic, coalescing signals that arrive while the loop body
+      runs, so that a watcher neither subscribes before reading nor keeps a
+      buffer; `Subscribe` remains for the heartbeat loop, which needs each
+      signal's topic.
+- [ ] **Step 7.** A temporary `Subscribe` shim over `Catalog.Consume`, so
+      that `ConsumerAPI` and `projection` can take a `Catalog` through the
+      `LegacyCatalog` interface, tested with `localcatalog_test.go`'s intent
+      against a catalog watching a `source.Local`: historical then
+      contemporary in order; filtering across both; many slow consumers each
+      receive every event; a clean stop with consumers in both phases.
+      `LocalCatalog` is still wired.
 - [ ] **Step 8.** Switch over: `engine.go` builds the `Catalog` and adds a
       `source.Local`; `ConsumerAPI` and `projection.Consumer` take the shim,
       with the catalog giving `ConsumerAPI` a way to consume only streams

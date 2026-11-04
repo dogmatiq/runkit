@@ -18,6 +18,9 @@ type Source interface {
 	// canceled or it is unable to continue, and may be called again if it
 	// fails.
 	//
+	// fn may be called concurrently for different streams, but a stream's
+	// segments are delivered one at a time, in order.
+	//
 	// A stream's first segment, or one that does not begin where the previous
 	// segment of that stream ended, begins a new delivery of the stream from
 	// the segment's begin offset.
