@@ -500,16 +500,22 @@ Every step is green under `make test` unless marked otherwise.
     second that also delivers it; and once the first source is removed, a
     consumer continues from its checkpoint on the second, reading what it
     missed from the second source up to that source's cached segment.
-- [ ] **Step 19.** End to end: two connections to one upstream cluster; remove
+- [x] **Step 19.** End to end: two connections to one upstream cluster; remove
       the one serving a stream; events keep arriving, each handled once.
       Tests only.
+  - Not written, as it is covered: step 18's catalog tests cover the
+    takeover, `connector_test.go` covers removing a connection, and
+    `TestForeignEvents_eventsAreHandled` covers the wiring between them.
 
 ### Phase 9: Docs and housekeeping
 
-- [ ] **Step 20.** CHANGELOG check (the existing entries stay true; nothing
+- [x] **Step 20.** CHANGELOG check (the existing entries stay true; nothing
       shipped with the old protocol, so no `[BC]`); fix the
       `providesutilities` typo in `eventstream/doc.go`; `make precommit`
       green.
+  - As built: the CHANGELOG needs no change. The package doc now describes
+    what the package holds, a catalog of the event streams the engine
+    consumes, rather than "utilities for reading event streams".
 - [ ] **Step 21.** Rewrite the PR 64 body. Close runkit#65 (one feed per
       engine) and #61 (the catalogs it compares no longer exist); close #67
       with step 12; edit #60 to drop the `Subscribe`/`lost` bullet.

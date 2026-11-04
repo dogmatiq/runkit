@@ -1,2 +1,3 @@
-// Package eventstream providesutilities for reading event streams.
+// Package eventstream provides a catalog of the event streams that the engine
+// consumes, both this application's own and those of remote engines.
 package eventstream
