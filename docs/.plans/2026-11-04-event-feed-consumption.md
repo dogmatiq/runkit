@@ -516,9 +516,17 @@ Every step is green under `make test` unless marked otherwise.
   - As built: the CHANGELOG needs no change. The package doc now describes
     what the package holds, a catalog of the event streams the engine
     consumes, rather than "utilities for reading event streams".
-- [ ] **Step 21.** Rewrite the PR 64 body. Close runkit#65 (one feed per
+- [x] **Step 21.** Rewrite the PR 64 body. Close runkit#65 (one feed per
       engine) and #61 (the catalogs it compares no longer exist); close #67
       with step 12; edit #60 to drop the `Subscribe`/`lost` bullet.
+  - As done: the PR body is rewritten to lead with clustering and partial
+    support for consuming events across applications, as the changelog
+    does. #65, #67 and #60 are closed as completed and #61 as not planned,
+    each with a comment. #60 is closed rather than edited, as every example
+    it gave is gone, and `Catalog.StreamIDs()` and `Node.Membership()`
+    return the read-only `xsync.ObservableR`. dogmatiq/protobuf#8 was
+    already closed. Before this step, the changelog was reviewed for users
+    upgrading from v0.1.2.
 
 ---
 
