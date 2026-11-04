@@ -109,7 +109,7 @@ func TestConsumer(t *testing.T) {
 	})
 }
 
-// catalogStub is an [eventstream.Catalog] that offers the streams given to it
+// catalogStub is an [eventstream.LegacyCatalog] that offers the streams given to it
 // by the test, and records subscriptions to them.
 type catalogStub struct {
 	streamIDs    xsync.Observable[*uuidcollection.Set]

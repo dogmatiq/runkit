@@ -33,7 +33,7 @@ type streamConsumer struct {
 	Workload *uuidpb.UUID
 
 	// EventStreams is the catalog that offers the stream.
-	EventStreams eventstream.Catalog
+	EventStreams eventstream.LegacyCatalog
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.

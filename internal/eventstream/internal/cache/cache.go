@@ -54,10 +54,12 @@ func (c *Cache) Reset(begin uint64) {
 	})
 }
 
-// Append adds the events in the range [begin, end) of the stream to the cache,
-// extending its segment to the given end offset. The range must be contiguous
-// with the cache's segment, so the given begin offset must be the offset at
-// which that segment currently ends.
+// Append adds the events in the range [begin, end) of the stream to the
+// cache.
+//
+// The range must be contiguous with the cache's segment, so the given begin
+// offset must be the offset at which that segment currently ends. The segment
+// then extends to the given end offset.
 //
 // If the cache is then over capacity, it evicts its oldest events, and its
 // segment begins after the last of them.

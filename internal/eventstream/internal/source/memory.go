@@ -59,37 +59,19 @@ func (s *Memory) Append(seg Segment) {
 	s.changed.Store(struct{}{})
 }
 
-// Watch delivers the events of the given types from each of the source's
-// streams to fn, beginning at the end of each stream as it stands, as
-// described by [Source].
+// Watch delivers events to fn as they are appended to the source's streams,
+// as described by [Source].
+//
+// Each stream is delivered from its end as it stands when Watch is called.
 func (s *Memory) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
 	fn func(context.Context, Segment),
 ) error {
-	delivered := uuidcollection.Map[uint64]{}
+	var delivered uuidcollection.Map[uint64]
 
 	for {
-		s.m.Lock()
-		_, changed := s.changed.Load()
-
-		var segments []Segment
-
-		for streamID, ms := range s.streams.All() {
-			begin, ok := delivered.Get(streamID)
-			if !ok {
-				begin = ms.End
-			}
-
-			if ok && begin == ms.End {
-				continue
-			}
-
-			segments = append(segments, s.segment(streamID, ms, types, begin, ms.End))
-			delivered.Set(streamID, ms.End)
-		}
-
-		s.m.Unlock()
+		segments, changed := s.undelivered(types, &delivered)
 
 		for _, seg := range segments {
 			fn(ctx, seg)
@@ -103,8 +85,8 @@ func (s *Memory) Watch(
 	}
 }
 
-// Read delivers the events of the given types from the given stream to fn, in
-// contiguous segments beginning at the given offset, as described by [Source].
+// Read delivers events from a stream to fn, beginning at the given offset, as
+// described by [Source].
 func (s *Memory) Read(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -112,20 +94,14 @@ func (s *Memory) Read(
 	begin uint64,
 	fn func(context.Context, Segment) error,
 ) error {
-	s.m.Lock()
-	ms, ok := s.streams.Get(streamID)
-	s.m.Unlock()
+	for {
+		seg, ok, err := s.unread(streamID, types, begin)
+		if err != nil {
+			return err
+		}
 
-	if !ok {
-		return fmt.Errorf("event stream %s not found", streamID)
-	}
-
-	for begin < ms.End {
-		seg := s.segment(streamID, ms, types, begin, ms.End)
-
-		if s.BatchSize > 0 && len(seg.Envelopes) > s.BatchSize {
-			seg.Envelopes = seg.Envelopes[:s.BatchSize]
-			seg.End = offsetOf(seg.Envelopes[s.BatchSize-1]) + 1
+		if !ok {
+			return nil
 		}
 
 		if err := fn(ctx, seg); err != nil {
@@ -134,12 +110,76 @@ func (s *Memory) Read(
 
 		begin = seg.End
 	}
-
-	return nil
 }
 
-// segment returns the segment [begin, end) of the given stream, holding its
-// events of the given types.
+// undelivered returns a segment of each stream that has grown since it was
+// last delivered, filtered to the given types, and a channel that is closed
+// when the source next changes.
+//
+// delivered holds the offset up to which each stream has been delivered, and
+// is updated with the end of each segment returned. A stream that has not been
+// delivered before is delivered from its end.
+func (s *Memory) undelivered(
+	types *uuidcollection.Set,
+	delivered *uuidcollection.Map[uint64],
+) ([]Segment, <-chan struct{}) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	_, changed := s.changed.Load()
+
+	var segments []Segment
+
+	for streamID, ms := range s.streams.All() {
+		begin, ok := delivered.Get(streamID)
+		if !ok {
+			begin = ms.End
+		}
+
+		if ok && begin == ms.End {
+			continue
+		}
+
+		segments = append(segments, s.segment(streamID, ms, types, begin, ms.End))
+		delivered.Set(streamID, ms.End)
+	}
+
+	return segments, changed
+}
+
+// unread returns the next segment of the given stream from the given offset,
+// filtered to the given types and limited to BatchSize events.
+//
+// ok is false if the offset is at the end of the stream.
+func (s *Memory) unread(
+	streamID *uuidpb.UUID,
+	types *uuidcollection.Set,
+	begin uint64,
+) (seg Segment, ok bool, err error) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	ms, ok := s.streams.Get(streamID)
+	if !ok {
+		return Segment{}, false, fmt.Errorf("event stream %s not found", streamID)
+	}
+
+	if begin >= ms.End {
+		return Segment{}, false, nil
+	}
+
+	seg = s.segment(streamID, ms, types, begin, ms.End)
+
+	if s.BatchSize > 0 && len(seg.Envelopes) > s.BatchSize {
+		seg.Envelopes = seg.Envelopes[:s.BatchSize]
+		seg.End = offsetOf(seg.Envelopes[s.BatchSize-1]) + 1
+	}
+
+	return seg, true, nil
+}
+
+// segment returns the segment [begin, end) of the given stream, filtered to
+// the given types.
 func (s *Memory) segment(
 	streamID *uuidpb.UUID,
 	ms *memoryStream,

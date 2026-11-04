@@ -39,10 +39,11 @@ const (
 	After Relation = +1
 )
 
-// Read returns the events in the segment from the given checkpoint that are of
-// the given types, and where the checkpoint lies in relation to the segment.
+// Read returns the events in the segment from the given checkpoint.
 //
-// The events are meaningful only if the checkpoint is [Within] the segment.
+// Only events of the given types are returned. It also returns where the
+// checkpoint lies in relation to the segment, and the events are meaningful
+// only if the checkpoint is [Within] it.
 func (s Segment) Read(
 	cp uint64,
 	types *uuidcollection.Set,

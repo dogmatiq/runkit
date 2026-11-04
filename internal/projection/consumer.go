@@ -31,7 +31,7 @@ type Consumer struct {
 	Node *cluster.Node
 
 	// EventStreams is the catalog of event streams to consume.
-	EventStreams eventstream.Catalog
+	EventStreams eventstream.LegacyCatalog
 
 	// Handler is the projection message handler to which events are
 	// dispatched.

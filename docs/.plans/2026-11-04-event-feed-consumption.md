@@ -26,7 +26,8 @@ come from: this application's database, or a remote engine.
 
 **Depends on:** `github.com/dogmatiq/protobuf` v0.3.0, which implements
 [dogmatiq/protobuf#11], replacing `ListEventStreams` and `ConsumeEvents` with
-`WatchEvents` and `ReadEvents`, both returning `EventStreamSegment`. Steps 0–10
+`WatchEvents` and `ReadEvents`, both returning `EventStreamSegment`, plus the
+follow-up that makes an empty `message_type_ids` match every event. Steps 0–10
 do not need it; step 11 onward does.
 
 ---
@@ -76,8 +77,8 @@ do not need it; step 11 onward does.
   case, so one cache type serves both sources.
 - **A synchronous callback, on the consumer's goroutine.**
   `Consume(ctx, streamID, types, begin, fn func(ctx, Segment) error) error`
-  blocks until `ctx` is canceled, `fn` returns an error, or the stream is no
-  longer offered, in which case it returns `ErrStreamNotOffered`; it never
+  blocks until `ctx` is canceled, `fn` returns an error, or the catalog no
+  longer has the stream, in which case it returns `ErrStreamNotFound`; it never
   returns nil. `fn` receives contiguous segments starting at `begin`, across
   cache, history, resets and source changes, empty segments included. The
   eventstream side owns the loop; `fn` owns what happens per segment. There is
@@ -86,26 +87,38 @@ do not need it; step 11 onward does.
   the reason for ending is the return value, and back-pressure is the time `fn`
   takes. History-read failures surface to the caller; nothing is retried inside
   `Consume`.
-- **Projections never see sources.** Each stream has one current source — the
-  source that offered it and is still running. A second source offering a
-  stream that already has a live offer is appended behind it; its cache is fed
-  but consumers ignore it until the first offer is withdrawn, then it becomes
-  current and in-flight `Consume` calls continue from their checkpoint. History
-  reads go to the stream's current source. Projections see only which streams
-  are offered, and start or stop a stream consumer per stream as they do today.
-- **A stream stays offered across a feed reconnect.** A new `WatchEvents` call
-  resets the source's existing offer of each stream to the offset at which the
-  new call delivers it, the same path as a local scanner restarting, rather
-  than withdrawing and re-offering it, so a
-  blip does not stop and restart every stream consumer. Offers are withdrawn
-  only when their source is removed or stops.
-- **The server never relays.** `ConsumerAPI` consumes from the local source
-  directly, never from the catalog, so a local stream whose current offer
-  happens to be remote (this engine dialed as a remote engine) is not served
-  on from here. `WatchEvents` delivers each local stream from its `next_offset`
-  and runs a tail consumer per stream with the client's filter, serializing
-  sends onto the one gRPC stream; if the client is slow, each per-stream
-  consumer reads history inline, so the feed stays contiguous. `ReadEvents`
+- **Projections never see sources.** Each stream is consumed via one of its
+  feeds, which changes only when that feed's source stops being watched. A
+  second source delivering a stream that already has a current feed is queued
+  behind it; its feed is appended to but consumers ignore it until the current
+  feed is closed, then it becomes current and in-flight `Consume` calls
+  continue from their checkpoint. Reads go to the current feed's source.
+  Projections see only which streams the catalog has, and start or stop a
+  stream consumer per stream as they do today.
+- **The whole source contract is one interface, mirroring the protocol.** A
+  source implements `Watch(ctx, types, fn)`, which delivers each of its
+  streams' events of the given types to `fn` in contiguous segments as they
+  are appended (nil meaning every type, as an empty filter does on the wire,
+  which is how the local source is watched so that the server can serve any
+  filter), and `Read(ctx, streamID, types, begin, fn)`, which delivers a
+  range. The catalog passes the types to `Watch`, so it knows what each
+  source delivers and `Consume` rejects a request for any other type. As on
+  the wire, there is no "open": a stream's first segment adds it to the
+  catalog from its begin offset, and a segment that does not begin where the
+  previous one ended restarts the feed from its begin offset (a scanner
+  restarting, or a `WatchEvents` call reconnecting; a reconnect that happens
+  to be contiguous keeps the cache). The catalog's own `Watch` runs the
+  source's under the supervisor until its context is canceled, then removes
+  the source's feeds, so a source never manages a lifetime, and a stream stays
+  in the catalog across a failed and retried `Source.Watch`, so a blip does
+  not stop and restart every stream consumer.
+- **The server never relays.** `ConsumerAPI` consumes only streams watched via
+  the local source, never a remote engine's watch of a local stream (this
+  engine dialed as a remote engine), so nothing is served on from here.
+  `WatchEvents` delivers each local stream from its `next_offset` and runs a
+  tail consumer per stream with the client's filter, serializing sends onto
+  the one gRPC stream; if the client is slow, each per-stream consumer reads
+  from the source inline, so the call stays contiguous. `ReadEvents`
   consumes from `begin_offset` until the stream's `next_offset` as loaded at
   the start of the call.
 - **Remote segments are validated** before they touch a cache: the stream ID
@@ -119,9 +132,11 @@ do not need it; step 11 onward does.
   the same way. `NOT_FOUND` and `OUT_OF_RANGE` from `ReadEvents` are persistent
   failures of that read. The feed ending for any reason, `io.EOF` included, is
   a failure, since it must never end.
-- **An application with no projection event types** still opens a feed per
-  remote engine, with an empty filter. Every stream appears on the feed and no
-  events are delivered. One idle call per engine, and no special case.
+- **An application with no projection event types** adds no remote sources:
+  since an empty filter means every type, a `WatchEvents` call with the empty
+  union would deliver every event of every stream to a node that consumes
+  none of them. The connector still runs its discoverer, so the engine's
+  behavior is unchanged in every other respect.
 - **The `scanner` subpackage is folded into `eventstream`**, and
   `internal/ringbuffer` is deleted; the cache is copy-on-write.
 
@@ -133,28 +148,27 @@ Names are proposals; confirm or rename as each step lands.
 
 | Type | Role |
 | --- | --- |
-| `Segment` | `{StreamID, Begin, End uint64, Envelopes}` — a contiguous piece `[Begin, End)` of one stream with the matching events. Replaces `scanner.Batch`. |
-| `cache.Cache` | In `internal/eventstream/internal/cache`. Holds a bounded, sparse, copy-on-write `cache.Segment` of one stream's recent events in an `xsync.Observable`. Writers call `Append(begin, end, envelopes)` (evicts from the front) and `Reset(begin)`; readers take `Segment()`, an `xsync.ObservableR[cache.Segment]`, and call `Read(cp, types)` on a snapshot, which returns the matching envelopes from `cp` and a `Relation` (`Before`, `Within`, `After`, valued like `cmp.Compare`). The snapshot carries `Begin` and `End`. The package knows nothing of `eventstream.Segment`; the offer assembles those from what it reads. |
-| `Offer` | One source's offer of one stream — a `cache.Cache`, the `Source` for history, a withdrawn latch and a context canceled on withdrawal. `Append`, `Reset` and `Withdraw` for sources; `consume` runs the loop. |
-| `Source` | The one cross-source interface: `ReadHistory(ctx, streamID, types, begin, fn) error` delivers contiguous segments from `begin` to the end of the stream as it stands, then returns nil. There is no contemporary-side abstraction; local reads the tail per stream and remote per engine, so what they share is what they produce, pushed through `Catalog.Offer`, `Offer.Append` and `Offer.Reset`. |
-| `Catalog` | Maps each stream to its offers under one mutex, with the current offer in an `xsync.Observable` per stream; publishes `StreamIDs()`; `Consume()` runs the current offer's loop and moves to the next offer when the current one is withdrawn. No `Run`. `Withdraw` republishes the stream set before setting the offer's latch, so a consumer never spins on a stale set. |
-| `LocalSource` | Discovers streams as `LocalCatalog` does, runs a supervised contemporary scanner per discovered stream into an `Offer`, implements `ReadHistory` with the historical SQL, and exposes `StreamIDs()` and `Consume()` over its own offers for the server. |
-| `RemoteSource` | One per remote engine. Runs one `WatchEvents` call under the supervisor, offering or resetting a stream on its first segment and appending after; implements `ReadHistory` with one `ReadEvents` call. |
-| `ConsumerAPI` | `WatchEvents` and `ReadEvents` over `*LocalSource`. |
+| `source.Segment` | In `internal/eventstream/internal/source`; `eventstream.Segment` is an alias. `{StreamID, Begin, End uint64, Envelopes}` — a contiguous piece `[Begin, End)` of one stream with the matching events. Replaces `scanner.Batch`. |
+| `source.Source` | The whole source contract. `Watch(ctx, types, fn func(ctx, Segment)) error` delivers each of the source's streams' events of the given types (nil: every type) to `fn` in contiguous segments as they are appended, until `ctx` is canceled or it fails, in which case it is called again; a stream's first segment, or a non-contiguous one, begins a new delivery of the stream from its begin offset. `Read(ctx, streamID, types, begin, fn) error` delivers contiguous segments from `begin` to the end of the stream as it stands, then returns nil, returning `fn`'s error unchanged. |
+| `source.Local`, `source.Remote` | The two sources (Steps 7 and 13). Neither knows about the catalog or caches. `source.Memory` is a third, holding its streams in memory, for tests. |
+| `cache.Cache` | In `internal/eventstream/internal/cache`. Holds a bounded, sparse, copy-on-write `cache.Segment` of one stream's recent events in an `xsync.Observable`. Writers call `Append(begin, end, envelopes)` (evicts from the front) and `Reset(begin)`; readers take `Segment()`, an `xsync.ObservableR[cache.Segment]`, and call `Read(cp, types)` on a snapshot, which returns the matching envelopes from `cp` and a `Relation` (`Before`, `Within`, `After`, valued like `cmp.Compare`). The snapshot carries `Begin` and `End`. The package knows nothing of `source.Segment`; the stream assembles those from what it reads. |
+| `feed` | In `eventstream`. The catalog's feed of one event stream from one source — a `cache.Cache`, the `source.Source` to read from, a closed latch and a context canceled on closing. `Append` (a non-contiguous segment restarts the feed) and `Close` for the catalog; `consume` runs the loop. |
+| `Catalog` | In `eventstream`. `Watch(ctx, src, types) error` runs `src.Watch` with the given types under the supervisor, with an `fn` bound to the source that adds, appends to, or restarts the segment's feed, until `ctx` is canceled, then removes the source's feeds and returns. Maps each stream ID to its feeds under one mutex, one of them current, published through an `xsync.Observable` per ID; publishes `StreamIDs()` as an `xsync.ObservableR`; `Consume()` runs the current feed's loop and moves to the next when it is closed. Removal republishes the stream set before closing the feed, so a consumer never spins on a stale set. Carries `CacheSize` and `Logger`. |
+| `ConsumerAPI` | `WatchEvents` and `ReadEvents`, consuming only streams watched via `source.Local` (how the catalog exposes that is settled at Step 8). |
 
-The consume loop, per offer:
+The consume loop, per stream:
 
 ```
 cp := begin
 loop:
-  seg, status, changed := cache.read(cp, types)
-  within:            fn(seg); cp = seg.End
-  behind:            cp = source.ReadHistory(cp) into fn, stopping once cp
-                     reaches the cached segment (re-read after every segment
-                     delivered); nil means the cached segment moved, so loop
-  caught up, ahead:  wait on ctx, changed, or withdrawn
-withdrawn → the catalog reloads the current offer and continues from cp, or
-returns ErrStreamNotOffered
+  seg, changed := cache.Segment().Load(); envelopes, rel := seg.Read(cp, types)
+  Within:  fn(segment [cp, seg.End) of envelopes); cp = seg.End
+  Before:  cp = source.Read(cp) into fn, stopping once cp reaches the cached
+           segment (compared after every segment delivered); nil means the
+           cached segment moved on, so loop
+  After:   wait on ctx, changed, or closed
+closed → the catalog reloads the current feed and continues from cp, or
+returns ErrStreamNotFound
 ```
 
 ---
@@ -190,17 +204,24 @@ Every step is green under `make test` unless marked otherwise.
       append and reset; a `rapid` property — for random ranges and random `cp`
       within the cached segment, `Read` yields exactly the matching events at
       or after `cp`.
-- [ ] **Step 4.** `source.go` and `offer.go` with tests over a slice-backed
-      stub source: behind → history then cache, no duplicates, contiguous
-      segments into `fn`; the cached segment moving during a read triggers a
-      second read; `fn`'s error propagates unwrapped; withdrawal during a wait
-      and during a read; ahead and caught up wait; empty segments delivered.
-- [ ] **Step 5.** `catalog.go` with tests: the stream set is published on the
-      first offer and the last withdrawal, before a consumer observes
-      `ErrStreamNotOffered`; `Consume` on an unoffered stream returns at once;
-      a stream offered again after withdrawal serves a new `Consume`. The old
-      `Catalog` interface is renamed out of the way (its file becomes
-      `legacy.go` until step 8) so the new type can take the name.
+- [x] **Step 4.** The `source` package (`Segment`, `Source`, and `Memory`, an
+      in-memory source for tests) and `feed.go`, tested through the
+      catalog in step 5 over a memory
+      source: before → read from the source then cache, no duplicates,
+      contiguous segments into `fn`; the cached segment moving on triggers a
+      second read; the read stops as soon as the checkpoint reaches the cached
+      segment; `fn`'s error propagates unwrapped; closure during a wait and
+      during a read; after waits; empty segments delivered.
+- [x] **Step 5.** `catalog.go` with tests over the memory source: `Watch` runs
+      `Watch` and retries it; a stream's first segment adds it, a contiguous
+      one extends it, a non-contiguous one restarts it; the stream set is
+      published when a source first delivers a stream and when the last source
+      that delivered it is removed,
+      before a consumer observes `ErrStreamNotFound`; `Consume` on a stream
+      the catalog does not have returns at once; canceling `Watch` closes the
+      source's feeds before it returns. The old `Catalog`
+      interface is renamed out of the way (its file becomes `legacy.go` until
+      step 8) so the new type can take the name.
 
 ### Phase 3: Local source (old protobuf)
 
@@ -208,23 +229,26 @@ Every step is green under `make test` unless marked otherwise.
       `scanner` package without touching it: a contemporary reader delivering
       segments through a `Deliver func(Segment)` field, and a history-read
       function with the historical SQL. Tests ported from `scanner`.
-- [ ] **Step 7.** `localsource.go` with tests ported from
-      `localcatalog_test.go`'s intent against `Consume`: historical then
-      contemporary in order; filtering across both; many slow consumers each
-      receive every event; a clean stop with consumers in both phases;
-      discovery. A temporary `Subscribe` shim over `Consume` keeps
-      `ConsumerAPI` and `projection` compiling. `LocalCatalog` is still wired.
-- [ ] **Step 8.** Switch over: `engine.go` builds `Catalog` and `LocalSource`;
-      `ConsumerAPI` and `projection.Consumer` take the shim; delete
-      `localcatalog.go`, `legacy.go`, the `scanner` package and
-      `internal/ringbuffer`. The existing suite passes unchanged.
+- [ ] **Step 7.** `source.Local` with tests ported from
+      `localcatalog_test.go`'s intent, through a `Catalog` it is added to:
+      historical then contemporary in order; filtering across both; many slow
+      consumers each receive every event; a clean stop with consumers in both
+      phases; discovery. A temporary `Subscribe` shim over `Catalog.Consume`
+      keeps `ConsumerAPI` and `projection` compiling. `LocalCatalog` is still
+      wired.
+- [ ] **Step 8.** Switch over: `engine.go` builds the `Catalog` and adds a
+      `source.Local`; `ConsumerAPI` and `projection.Consumer` take the shim,
+      with the catalog giving `ConsumerAPI` a way to consume only streams
+      watched via the local source; delete `localcatalog.go`, `legacy.go`, the
+      `scanner` package and `internal/ringbuffer`. The existing suite passes
+      unchanged.
 
 ### Phase 4: Projection on `Consume` (old protobuf)
 
 - [ ] **Step 9.** `streamConsumer.consume` becomes one `Consume` call whose
       `fn` holds today's dispatch loop. The handler's checkpoint is advanced
       only by handled events (dogma#221), never by a segment's end. On
-      `ErrStreamNotOffered` it waits until the stream is offered again and
+      `ErrStreamNotFound` it waits until the catalog has the stream again and
       consumes from the handler's checkpoint; any other error returns to the
       supervisor. `consumeSubscription` and `BufferSize` go; `consumer_test.go`
       is rewritten over a real `Catalog` with a stub source.
@@ -244,7 +268,7 @@ Every step is green under `make test` unless marked otherwise.
       past irrelevant types, a slow client receiving a thousand events in
       order, `ReadEvents` closing at the end as of the start of the call, a
       stream created mid-call appearing on the feed, per-stream contiguity, an
-      empty filter delivering streams but no events.
+      empty filter delivering every type.
       `grpcserver/server_test.go` and `engine_test.go` swap `ListEventStreams`
       for `WatchEvents`.
 
@@ -252,26 +276,28 @@ Every step is green under `make test` unless marked otherwise.
 
 - [ ] **Step 12.** `validatesegment.go` with a test per rule, each error
       naming the stream and offsets.
-- [ ] **Step 13.** `remotesource.go` with deterministic tests over the client
-      stub or an in-process stub server: a stream's first segment offers it,
-      later segments extend it; the feed ending → retried with the existing
-      offer reset to the new call's offset; a validation failure,
-      `UNIMPLEMENTED`, `NOT_FOUND` and `OUT_OF_RANGE` → persistent;
-      `ReadHistory` cancels its call when `fn` stops it; reconnect catch-up —
-      the first call delivers `[0, 1)` then fails, the second delivers from
-      `[3, 3)`, `ReadEvents` is called from 1, and the consumer sees offsets 0,
-      1 and 2 once each, in order.
-- [ ] **Step 14.** Tests for `RemoteSource` against a real cluster: streams
-      appear in the catalog; history via `ReadEvents` then the tail via the
-      feed; a stopped node → reconnect → consumers continue. Tests only.
+- [ ] **Step 13.** `source.Remote` with deterministic tests over the client
+      stub or an in-process stub server: `Watch` delivers each segment as it
+      arrives; the call ending → `Watch` returns an error, and the next call's
+      first segment per stream restarts it at its new offset;
+      a validation failure, `UNIMPLEMENTED`, `NOT_FOUND` and `OUT_OF_RANGE`
+      → persistent; `Read` cancels its call when `fn` stops it; reconnect
+      catch-up through a `Catalog` — the first call delivers `[0, 1)` then
+      fails, the second delivers from `[3, 3)`, `ReadEvents` is called from
+      1, and the consumer sees offsets 0, 1 and 2 once each, in order.
+- [ ] **Step 14.** Tests for `source.Remote` against a real cluster: streams
+      appear in the catalog; the range via `ReadEvents` then the tail via
+      `WatchEvents`; a stopped node → reconnect → consumers continue. Tests
+      only.
 
 ### Phase 7: Wire it up end to end (new protobuf)
 
-- [ ] **Step 15.** `Connector` builds a `RemoteSource` per connection and
-      runs it; `remove` cancels and waits. `engine.go` adds
-      `consumedEventTypeIDs()` — the union of inbound event types of enabled
-      projections — and passes it with the cache size. `connector_test.go` is
-      rebuilt over a `WatchEvents` stub server.
+- [ ] **Step 15.** `Connector` adds a `source.Remote` per connection to the
+      catalog with the projection event-type union, and removes it on
+      removal. `engine.go` adds `consumedEventTypeIDs()` — the union of
+      inbound event types of enabled projections — and passes it to the
+      connectors; the local source is added with no limit.
+      `connector_test.go` is rebuilt over a `WatchEvents` stub server.
 - [ ] **Step 16.** Un-skip `foreignevents_test.go`. The historical,
       contemporary, local-and-foreign and upstream-node-stops cases pass as
       they are. "Does not retry immediately" becomes: a projection handling
@@ -285,10 +311,10 @@ Every step is green under `make test` unless marked otherwise.
 
 ### Phase 8: Takeover between sources
 
-- [ ] **Step 18.** `Catalog`: a second offer for a stream is appended, its
-      cache fed, and ignored until the first is withdrawn, then becomes
-      current and in-flight `Consume` calls continue from their checkpoint.
-      Unit tests without a database.
+- [ ] **Step 18.** `Catalog`: a second source delivering a stream is queued
+      behind the current one, its cache appended to, and ignored until the
+      first source is removed, then becomes current and in-flight `Consume`
+      calls continue from their checkpoint. Unit tests without a database.
 - [ ] **Step 19.** End to end: two connections to one upstream cluster; remove
       the one serving a stream; events keep arriving, each handled once.
       Tests only.
