@@ -71,11 +71,6 @@ const (
 	// a subscription that falls further behind is served historical events
 	// instead.
 	eventStreamBufferSize = 4
-
-	// eventStreamRecheckInterval is how long the engine waits before asking a
-	// remote engine again after it reports having no events or event streams to
-	// offer.
-	eventStreamRecheckInterval = 3 * time.Minute
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -136,11 +131,6 @@ type Engine struct {
 	// localEventStreams is the catalog of event streams recorded by this
 	// application.
 	localEventStreams *eventstream.LocalCatalog
-
-	// allEventStreams is the catalog of all event streams known to this engine,
-	// including local event streams, and those provided by foreign
-	// applications.
-	allEventStreams *eventstream.CompositeCatalog
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
@@ -251,8 +241,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		HistoricalBatchSize:   eventStreamBatchSize,
 	}
 
-	e.allEventStreams = &eventstream.CompositeCatalog{}
-
 	var server *grpcserver.Server
 
 	if e.listenAddress != "" {
@@ -305,16 +293,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	runComponent(e.signals)
 	runComponent(e.node)
 	runComponent(e.localEventStreams)
-	runComponent(e.allEventStreams)
-
-	e.allEventStreams.Add(e.localEventStreams)
 
 	for _, d := range e.remoteEngineDiscoverers {
 		runComponent(
 			&remoteengine.Connector{
-				Discover:                   d,
-				EventStreams:               e.allEventStreams,
-				EventStreamRecheckInterval: eventStreamRecheckInterval,
+				Discover: d,
 				Logger: e.logger.With(
 					slog.String("component", "remoteengine.connector"),
 				),
@@ -530,7 +513,7 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 		return []component{
 			&projection.Consumer{
 				Node:         e.node,
-				EventStreams: e.allEventStreams,
+				EventStreams: e.localEventStreams,
 				Handler:      handlerConfig.Interface(),
 				Identity:     handlerConfig.Identity(),
 				Concurrency:  handlerConfig.ConcurrencyPreference(),

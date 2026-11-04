@@ -19,6 +19,7 @@ import (
 // handles events that a foreign application recorded before this engine
 // started.
 func TestForeignEvents_historicalEventsAreHandled(t *testing.T) {
+	t.Skip("remote consumption is being rebuilt; see docs/.plans/2026-11-04-event-feed-consumption.md")
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(
@@ -51,6 +52,7 @@ func TestForeignEvents_historicalEventsAreHandled(t *testing.T) {
 // handles events that a foreign application records while this engine is
 // running.
 func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
+	t.Skip("remote consumption is being rebuilt; see docs/.plans/2026-11-04-event-feed-consumption.md")
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(
@@ -83,6 +85,7 @@ func TestForeignEvents_contemporaryEventsAreHandled(t *testing.T) {
 // handles events recorded by this application and by a foreign application at
 // the same time.
 func TestForeignEvents_localAndForeignEventsAreHandled(t *testing.T) {
+	t.Skip("remote consumption is being rebuilt; see docs/.plans/2026-11-04-event-feed-consumption.md")
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(
@@ -143,6 +146,7 @@ func TestForeignEvents_localAndForeignEventsAreHandled(t *testing.T) {
 // foreign application records does not re-subscribe to its streams as soon as
 // the application closes them, but waits for the recheck interval.
 func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetryImmediately(t *testing.T) {
+	t.Skip("remote consumption is being rebuilt; see docs/.plans/2026-11-04-event-feed-consumption.md")
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(
@@ -223,6 +227,7 @@ func TestForeignEvents_projectionWithoutForeignEventTypesDoesNotRetryImmediately
 // projection keeps handling a foreign application's events when the node of
 // the remote engine that it is connected to stops.
 func TestForeignEvents_consumptionContinuesWhenAnUpstreamNodeStops(t *testing.T) {
+	t.Skip("remote consumption is being rebuilt; see docs/.plans/2026-11-04-event-feed-consumption.md")
 	t.Parallel()
 
 	upstream := xtesting.StartCluster(

@@ -164,12 +164,12 @@ Every step is green under `make test` unless marked otherwise.
 
 - [x] **Step 0.** Discard the uncommitted Task A.6 work (kept on
       `remote-engines-a6-wip`); `make test` green at HEAD.
-- [ ] **Step 1.** Add this plan; mark [the previous plan] superseded from Task
+- [x] **Step 1.** Add this plan; mark [the previous plan] superseded from Task
       A.6. Commit.
 
 ### Phase 1: Detach remote consumption (old protobuf)
 
-- [ ] **Step 2.** Delete `compositecatalog.go`, `remotecatalog.go` and their
+- [x] **Step 2.** Delete `compositecatalog.go`, `remotecatalog.go` and their
       tests. `engine.go` drops `allEventStreams`, its wiring and
       `eventStreamRecheckInterval`, and gives projections
       `e.localEventStreams`. `remoteengine/connector.go`'s `add` returns a
