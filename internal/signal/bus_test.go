@@ -1,6 +1,7 @@
 package signal_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -11,22 +12,32 @@ import (
 )
 
 func TestBus(t *testing.T) {
-	t.Run("it delivers signals to subscribers of the topic", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
+	setup := func(t *testing.T) *Bus {
 		bus := &Bus{
-			DB:     db,
-			Logger: logger,
+			DB:     xtesting.NewDatabase(t),
+			Logger: spruce.NewTestLogger(t),
 		}
 
 		xtesting.GoE(t, bus.Run)
 		waitForBus(t, bus)
 
-		a := make(chan string, 10)
-		b := make(chan string, 10)
+		return bus
+	}
 
-		defer bus.Subscribe("topic-a", a)()
-		defer bus.Subscribe("topic-b", b)()
+	t.Run("it delivers an empty signal as soon as watching begins", func(t *testing.T) {
+		bus := setup(t)
+
+		ch := bus.Watch(t.Context(), "topic", 10)
+
+		xtesting.ExpectToReceiveN(t, "signals", ch, "")
+		xtesting.ExpectNoReceive(t, "signal", ch)
+	})
+
+	t.Run("it delivers signals to watchers of the topic", func(t *testing.T) {
+		bus := setup(t)
+
+		a := watch(t, bus, "topic-a", 10)
+		b := watch(t, bus, "topic-b", 10)
 
 		send(t, bus, "topic-a")
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
@@ -37,41 +48,21 @@ func TestBus(t *testing.T) {
 		xtesting.ExpectNoReceive(t, "signal on a", a)
 	})
 
-	t.Run("it delivers signals to every subscriber of the topic", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		bus := &Bus{
-			DB:     db,
-			Logger: logger,
-		}
+	t.Run("it delivers signals to every watcher of the topic", func(t *testing.T) {
+		bus := setup(t)
 
-		xtesting.GoE(t, bus.Run)
-		waitForBus(t, bus)
-
-		a := make(chan string, 10)
-		b := make(chan string, 10)
-
-		defer bus.Subscribe("topic", a)()
-		defer bus.Subscribe("topic", b)()
+		a := watch(t, bus, "topic", 10)
+		b := watch(t, bus, "topic", 10)
 
 		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
 		xtesting.ExpectToReceiveN(t, "signals on b", b, "")
 	})
 
-	t.Run("it delivers signals on topics beneath the subscribed topic", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		bus := &Bus{
-			DB:     db,
-			Logger: logger,
-		}
+	t.Run("it delivers signals on topics beneath the watched topic", func(t *testing.T) {
+		bus := setup(t)
 
-		xtesting.GoE(t, bus.Run)
-		waitForBus(t, bus)
-
-		ch := make(chan string, 10)
-		defer bus.Subscribe("a.b", ch)()
+		ch := watch(t, bus, "a.b", 10)
 
 		send(t, bus, "a.b.c")
 		send(t, bus, "a.bc")
@@ -80,57 +71,43 @@ func TestBus(t *testing.T) {
 		send(t, bus, "a.b")
 		send(t, bus, "a.b.c.d")
 
-		// The value received is the part of the topic beneath the subscribed
+		// The value received is the part of the topic beneath the watched
 		// topic.
 		xtesting.ExpectToReceiveN(t, "signals", ch, "c", "", "c.d")
 		xtesting.ExpectNoReceive(t, "signal", ch)
 	})
 
-	t.Run("it stops delivering signals after unsubscribing", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		bus := &Bus{
-			DB:     db,
-			Logger: logger,
-		}
+	t.Run("it closes the channel when the context is canceled, and delivers nothing more", func(t *testing.T) {
+		bus := setup(t)
 
-		xtesting.GoE(t, bus.Run)
-		waitForBus(t, bus)
+		ctx, cancel := context.WithCancel(t.Context())
+		ch := bus.Watch(ctx, "topic", 10)
+		witness := watch(t, bus, "topic", 10)
 
-		ch := make(chan string, 10)
-		witness := make(chan string, 10)
-
-		unsubscribe := bus.Subscribe("topic", ch)
-		defer bus.Subscribe("topic", witness)()
-
-		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals", ch, "")
 
-		unsubscribe()
+		cancel()
 
-		// The witness receiving the signal proves that it was dispatched after
-		// the subscription was removed.
-		send(t, bus, "topic")
-		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "", "")
-		xtesting.ExpectNoReceive(t, "signal", ch)
-	})
-
-	t.Run("it drops signals when the subscriber's channel is full", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		bus := &Bus{
-			DB:     db,
-			Logger: logger,
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatal("timeout waiting for the channel to be closed")
+		case _, ok := <-ch:
+			if ok {
+				t.Fatal("expected the channel to be closed")
+			}
 		}
 
-		xtesting.GoE(t, bus.Run)
-		waitForBus(t, bus)
+		// The witness receiving the signal proves that it was dispatched after
+		// the channel was closed, without a send on the closed channel.
+		send(t, bus, "topic")
+		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "")
+	})
 
-		ch := make(chan string, 1)
-		witness := make(chan string, 10)
+	t.Run("it drops signals when the watcher's channel is full", func(t *testing.T) {
+		bus := setup(t)
 
-		defer bus.Subscribe("topic", ch)()
-		defer bus.Subscribe("topic", witness)()
+		ch := watch(t, bus, "topic", 1)
+		witness := watch(t, bus, "topic", 10)
 
 		send(t, bus, "topic")
 		send(t, bus, "topic")
@@ -140,68 +117,72 @@ func TestBus(t *testing.T) {
 		// not hold up dispatching.
 		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "", "", "")
 
-		// Only the first signal fit in the subscriber's buffer.
+		// Only the first signal fit in the watcher's channel.
 		xtesting.ExpectToReceiveN(t, "signals", ch, "")
 		xtesting.ExpectNoReceive(t, "signal", ch)
 	})
 
 	t.Run("it sends signals to every bus", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
-		bus := &Bus{
-			DB:     db,
-			Logger: logger,
-		}
+		bus := setup(t)
 		other := &Bus{
-			DB:     db,
-			Logger: logger,
+			DB:     bus.DB,
+			Logger: bus.Logger,
 		}
 
-		xtesting.GoE(t, bus.Run)
 		xtesting.GoE(t, other.Run)
-		waitForBus(t, bus)
 		waitForBus(t, other)
 
-		own := make(chan string, 10)
-		received := make(chan string, 10)
+		own := watch(t, bus, "topic", 10)
+		received := watch(t, other, "topic", 10)
 
-		defer bus.Subscribe("topic", own)()
-		defer other.Subscribe("topic", received)()
-
-		if err := bus.Send(t.Context(), "topic.a"); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := bus.Send(t.Context(), "topic.b"); err != nil {
-			t.Fatal(err)
-		}
+		send(t, bus, "topic.a")
+		send(t, bus, "topic.b")
 
 		xtesting.ExpectToReceiveN(t, "signals on the sending bus", own, "a", "b")
 		xtesting.ExpectToReceiveN(t, "signals on the other bus", received, "a", "b")
 	})
 
-	t.Run("it signals every subscriber when it starts listening", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
-		logger := spruce.NewTestLogger(t)
+	t.Run("it signals every watcher when it starts listening", func(t *testing.T) {
 		bus := &Bus{
-			DB:     db,
-			Logger: logger,
+			DB:     xtesting.NewDatabase(t),
+			Logger: spruce.NewTestLogger(t),
 		}
 
-		a := make(chan string, 10)
-		b := make(chan string, 10)
-
-		defer bus.Subscribe("a", a)()
-		defer bus.Subscribe("a.b", b)()
+		a := watch(t, bus, "a", 10)
+		b := watch(t, bus, "a.b", 10)
 
 		xtesting.GoE(t, bus.Run)
 
-		// Nothing is sent; the signal comes from the bus itself, as
-		// though it were on the subscribed topic, so that a subscriber that
-		// read state before the bus was listening can read it again.
+		// Nothing is sent; the signal comes from the bus itself, as though it
+		// were on the watched topic, so that a watcher that read state before
+		// the bus was listening can read it again.
 		xtesting.ExpectToReceiveN(t, "signals on a", a, "")
 		xtesting.ExpectToReceiveN(t, "signals on b", b, "")
 	})
+
+	t.Run("it panics if the capacity is not positive", func(t *testing.T) {
+		bus := &Bus{}
+
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected a panic")
+			}
+		}()
+
+		bus.Watch(t.Context(), "topic", 0)
+	})
+}
+
+// watch watches the given topic until the test ends, and returns the channel
+// after receiving the empty signal that is delivered as soon as watching
+// begins.
+func watch(t testing.TB, bus *Bus, topic string, capacity int) <-chan string {
+	t.Helper()
+
+	ch := bus.Watch(t.Context(), topic, capacity)
+	xtesting.ExpectToReceiveN(t, "initial signal", ch, "")
+
+	return ch
 }
 
 // send sends a signal on the given topic.
@@ -220,9 +201,12 @@ func send(t testing.TB, bus *Bus, topic string) {
 func waitForBus(t testing.TB, bus *Bus) {
 	t.Helper()
 
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
 	topic := "probe." + uuidpb.Generate().AsString()
-	probes := make(chan string, 1)
-	defer bus.Subscribe(topic, probes)()
+	probes := bus.Watch(ctx, topic, 1)
+	<-probes
 
 	deadline := time.After(xtesting.WaitTimeout)
 

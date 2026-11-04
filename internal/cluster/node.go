@@ -146,9 +146,7 @@ func (n *Node) Run(ctx context.Context) error {
 		}
 	}()
 
-	heartbeats := make(chan string, heartbeatBufferSize)
-	unsubscribe := n.Signals.Subscribe(heartbeatTopic, heartbeats)
-	defer unsubscribe()
+	heartbeats := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
 
 	ticker := time.NewTicker(n.Interval)
 	defer ticker.Stop()
@@ -166,7 +164,11 @@ func (n *Node) Run(ctx context.Context) error {
 		case o := <-n.unobserve:
 			n.removeObserver(o)
 
-		case nodeID := <-heartbeats:
+		case nodeID, ok := <-heartbeats:
+			if !ok {
+				return ctx.Err()
+			}
+
 			// A signal on the heartbeat topic itself carries no node ID, and
 			// so is not a heartbeat.
 			if nodeID == "" {

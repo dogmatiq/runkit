@@ -18,13 +18,13 @@ import (
 const channel = "signal"
 
 // Bus sends and receives signals using a PostgreSQL database, and delivers the
-// signals it receives to subscribers.
+// signals it receives to watchers.
 //
 // A signal indicates that something about a topic has changed. It carries no
-// information other than the topic itself. Delivery is lossy: a subscriber
-// whose channel is full does not receive the signal. Subscribers must read the
-// state they are interested in from the database, and must not rely on
-// receiving every signal.
+// information other than the topic itself. Delivery is lossy: a watcher whose
+// channel is full does not receive the signal. Watchers must read the state
+// they are interested in from the database, and must not rely on receiving
+// every signal.
 type Bus struct {
 	// DB is the database used to send and receive signals.
 	DB *sql.DB
@@ -77,6 +77,57 @@ func (b *Bus) Subscribe(topic string, ch chan<- string) func() {
 			b.m.Unlock()
 		})
 	}
+}
+
+// Watch returns a channel that receives each signal on the given topic, or on
+// any topic beneath it, until ctx is canceled, at which point the channel is
+// closed.
+//
+// Topics are hierarchical, with levels separated by dots. A watcher of "a.b"
+// receives signals on "a.b" and "a.b.c", but not on "a.bc". The value received
+// is the part of the signal's topic beneath the watched topic: "c" for a
+// signal on "a.b.c", or "" for a signal on "a.b" itself.
+//
+// The channel receives "" straight away, so that a watcher reads its state
+// before it waits for the first signal, without missing any signal sent in
+// between.
+//
+// The channel has the given capacity. A signal that arrives while it is full
+// is dropped.
+func (b *Bus) Watch(ctx context.Context, topic string, capacity int) <-chan string {
+	if capacity <= 0 {
+		panic("capacity must be positive")
+	}
+
+	ch := make(chan string, capacity)
+	ch <- ""
+
+	sub := &subscriber{
+		Topic:    topic,
+		Subtopic: ch,
+	}
+
+	b.m.Lock()
+	if b.subscribers == nil {
+		b.subscribers = map[*subscriber]struct{}{}
+	}
+	b.subscribers[sub] = struct{}{}
+	b.m.Unlock()
+
+	// Signals are only ever sent to a subscriber while the mutex is held, so
+	// once it is removed under the mutex, its channel can be closed.
+	context.AfterFunc(
+		ctx,
+		func() {
+			b.m.Lock()
+			delete(b.subscribers, sub)
+			b.m.Unlock()
+
+			close(ch)
+		},
+	)
+
+	return ch
 }
 
 // Send sends a signal on the given topic.
