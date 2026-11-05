@@ -13,9 +13,9 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
-	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
+	"golang.org/x/sync/errgroup"
 )
 
 // Local is a [Source] of the event streams in this application's database.
@@ -40,12 +40,15 @@ type Local struct {
 // streams.
 //
 // Each stream is delivered from its end, as it stands when the stream is
-// discovered.
+// discovered. It returns an error if any stream can not be delivered any
+// further.
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	if s.SegmentSize <= 0 {
 		panic("segment size must be positive")
 	}
@@ -53,19 +56,19 @@ func (s *Local) Watch(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	group, ctx := supervisor.WithContext(ctx)
+	// The first stream that can not be delivered any further ends the call,
+	// since its delivery can not continue contiguously.
+	group, ctx := errgroup.WithContext(ctx)
 
 	err := s.discover(
 		ctx,
 		func(streamID *uuidpb.UUID) {
-			group.Go(
-				s.Logger.With(
-					xslog.UUID("stream_id", streamID),
-				),
-				func(ctx context.Context) error {
-					return s.watchStream(ctx, streamID, types, fn)
-				},
-			)
+			group.Go(func() error {
+				if err := s.watchStream(ctx, streamID, types, fn); ctx.Err() == nil {
+					return err
+				}
+				return nil
+			})
 		},
 	)
 
@@ -86,6 +89,8 @@ func (s *Local) Read(
 	begin uint64,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	if s.SegmentSize <= 0 {
 		panic("segment size must be positive")
 	}
@@ -180,22 +185,15 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 
 // watchStream delivers segments of a stream to fn as events are appended to it.
 //
-// It returns when ctx is canceled or it is unable to continue. It holds no
-// state between calls; each call begins at the end of the stream at that time,
-// so the first segment it delivers is not necessarily contiguous with the last
-// segment delivered by the previous call.
+// It begins at the end of the stream. It returns when ctx is canceled, when fn
+// returns an error, which it returns unchanged, or when it is unable to
+// deliver the stream any further.
 func (s *Local) watchStream(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	types *uuidcollection.Set,
 	fn func(Segment) error,
 ) error {
-	// Signals are watched until ctx is canceled, and after a failure the
-	// supervisor calls watchStream again with the same ctx, so each call
-	// watches with its own.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	query := s.buildSegmentQuery(streamID, types)
 
 	var (
@@ -207,14 +205,14 @@ func (s *Local) watchStream(
 	for range s.Signals.Watch(ctx, "eventstream.append."+streamID.AsString(), 1) {
 		if first {
 			if next, err = s.loadWatchOffset(ctx, streamID); err != nil {
-				return err
+				return fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
 			}
 		}
 
 		for {
 			seg, exhausted, err := s.loadSegment(ctx, query, streamID, next)
 			if err != nil {
-				return err
+				return fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
 			}
 
 			// The first segment is delivered even if it is empty, so that the
@@ -225,10 +223,8 @@ func (s *Local) watchStream(
 
 			first = false
 
-			// The error is fatal so that it ends the watch of every stream,
-			// rather than restarting the watch of this one.
 			if err := fn(seg); err != nil {
-				return supervisor.Fatal(err)
+				return err
 			}
 
 			next = seg.End

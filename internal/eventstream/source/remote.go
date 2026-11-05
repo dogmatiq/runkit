@@ -41,6 +41,8 @@ func (s *Remote) Watch(
 	types *uuidcollection.Set,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -91,6 +93,8 @@ func (s *Remote) Read(
 	begin uint64,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

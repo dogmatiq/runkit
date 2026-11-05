@@ -67,6 +67,8 @@ func (s *Memory) Watch(
 	types *uuidcollection.Set,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	var delivered uuidcollection.Map[uint64]
 
 	for {
@@ -94,6 +96,8 @@ func (s *Memory) Read(
 	begin uint64,
 	fn func(Segment) error,
 ) error {
+	panicIfEmpty(types)
+
 	for {
 		seg, ok, err := s.unread(streamID, types, begin)
 		if err != nil {

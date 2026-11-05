@@ -512,6 +512,27 @@ func TestRemote(t *testing.T) {
 				),
 			)
 		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Remote{}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Watch(
+				ctx,
+				uuidcollection.NewSet(),
+				func(Segment) error {
+					return nil
+				},
+			)
+		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
@@ -918,6 +939,29 @@ func TestRemote(t *testing.T) {
 					}
 				})
 			}
+		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Remote{}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Read(
+				ctx,
+				streamA,
+				uuidcollection.NewSet(),
+				0,
+				func(Segment) error {
+					return nil
+				},
+			)
 		})
 	})
 

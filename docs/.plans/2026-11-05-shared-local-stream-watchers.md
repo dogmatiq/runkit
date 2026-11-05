@@ -87,8 +87,8 @@ dogmatiq/protobuf#18. Only Step 5 needs it.
 - **A watcher that fails ends every call.** A stream's watcher begins again at
   the stream's end after a failure, so it can't continue any call
   contiguously. `Run` removes every caller and closes its channel, recording
-  an error that names the stream, and each `Watch` returns that error. The
-  catalog backs off and watches again, as it does after any failure.
+  the failure, and each `Watch` returns it as an error. The catalog backs off
+  and watches again, as it does after any failure.
 - **Registering takes a snapshot.** Under that mutex, registering records each
   stream's position and adds the caller, so the segments sent to the caller
   afterwards begin at those positions. `Watch` delivers an empty first segment
@@ -180,7 +180,7 @@ Every step is green under `make test` unless marked otherwise.
       `TestServer_contemporaryEvents`, `TestServer_historicalEvents`, "it
       begins each existing stream with the events already on it" and "it
       delivers events of every type when no types are requested".
-- [ ] **Step 2.** The `Watch` contract, as decided above. `ConsumerTooSlowError`
+- [x] **Step 2.** The `Watch` contract, as decided above. `ConsumerTooSlowError`
       is added, and the catalog watches again at once when a source returns
       it. `Local.Watch` ends when a stream's watcher fails, instead of
       restarting the watcher in the middle of the call, so it never begins a
@@ -206,7 +206,7 @@ Every step is green under `make test` unless marked otherwise.
       the stream it couldn't be sent; a stream created while a caller's
       channel is full; `fn`'s error ending only its own call; `Watch` called
       before `Run`; a failed discovery query leaving every call running; and a
-      watcher that fails ending every call with an error naming its stream.
+      watcher that fails ending every call with an error.
 - [ ] **Step 5.** Take protobuf v0.6.0, with dogmatiq/protobuf#18.
       `source.Remote` builds the filter from the types, and turns
       `RESOURCE_EXHAUSTED` with the `EventStreamConsumerTooSlow` detail into

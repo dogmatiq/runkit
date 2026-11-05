@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
 // ErrStreamNotFound is returned by [Catalog.Consume] when the requested stream
@@ -123,6 +124,9 @@ func (c *Catalog) Consume(
 
 // Watch watches a source until ctx is canceled.
 //
+// If the source reports that the catalog can not keep up with it, by returning
+// a [source.ConsumerTooSlowError], it watches the source again at once.
+//
 // It adds the streams that the source delivers to the catalog, and removes
 // them again before returning. Once it returns, no call to the source that the
 // catalog made is in progress, and the catalog makes no more.
@@ -174,20 +178,34 @@ func (c *Catalog) Watch(
 		ctx,
 		c.Logger,
 		func(ctx context.Context) error {
-			err := src.Watch(
-				ctx,
-				types,
-				func(seg Segment) error {
-					feedFor(seg.StreamID, seg.Begin).Append(seg)
-					return nil
-				},
-			)
+			for {
+				err := src.Watch(
+					ctx,
+					types,
+					func(seg Segment) error {
+						feedFor(seg.StreamID, seg.Begin).Append(seg)
+						return nil
+					},
+				)
 
-			if err == nil && ctx.Err() == nil {
-				return errors.New("source stopped watching before the context was canceled")
+				// Falling behind is expected under load, and a new watch begins
+				// each stream where it stands, so the source is watched again
+				// at once rather than as though it had failed.
+				if tooSlow, ok := errors.AsType[*source.ConsumerTooSlowError](err); ok {
+					c.Logger.InfoContext(
+						ctx,
+						"unable to keep up with the source, watching it again",
+						xslog.UUID("stream_id", tooSlow.StreamID),
+					)
+					continue
+				}
+
+				if err == nil && ctx.Err() == nil {
+					return errors.New("source stopped watching before the context was canceled")
+				}
+
+				return err
 			}
-
-			return err
 		},
 	)
 }

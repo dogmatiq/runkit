@@ -209,6 +209,29 @@ func TestMemory(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Memory{}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Read(
+				ctx,
+				streamA,
+				uuidcollection.NewSet(),
+				0,
+				func(Segment) error {
+					return nil
+				},
+			)
+		})
 	})
 
 	t.Run("Watch", func(t *testing.T) {
@@ -349,6 +372,27 @@ func TestMemory(t *testing.T) {
 			})
 
 			expectSegment(t, expect(t, segments), streamB, 2, 3, 2)
+		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Memory{}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Watch(
+				ctx,
+				uuidcollection.NewSet(),
+				func(Segment) error {
+					return nil
+				},
+			)
 		})
 	})
 }

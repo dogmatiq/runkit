@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -288,6 +289,43 @@ func TestCatalog(t *testing.T) {
 			defer remove()
 
 			expectCatalogToHave(t, c, streamID)
+		})
+
+		t.Run("it watches the source again at once when it is too slow for the source", func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := setup(t, 10)
+
+				src := &source.Memory{}
+				src.Append(segment(0, 1))
+
+				var calls atomic.Int32
+				delay := make(chan time.Duration, 1)
+				began := time.Now()
+
+				remove := watch(
+					t,
+					c,
+					&sourceHook{
+						Source: src,
+						WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+							if calls.Add(1) == 1 {
+								return &source.ConsumerTooSlowError{StreamID: streamID}
+							}
+
+							delay <- time.Since(began)
+							return src.Watch(ctx, nil, fn)
+						},
+					},
+					nil,
+				)
+				defer remove()
+
+				if d := <-delay; d != 0 {
+					t.Fatalf("unexpected delay before watching the source again: got %s, want none", d)
+				}
+
+				expectCatalogToHave(t, c, streamID)
+			})
 		})
 
 		t.Run("it returns only once the source is no longer watched", func(t *testing.T) {
@@ -603,7 +641,7 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
-		t.Run("it restarts a stream when the source delivers a segment that does not follow the previous one", func(t *testing.T) {
+		t.Run("it restarts a stream when a new watch of the source begins it after the previous segment ended", func(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{
@@ -611,7 +649,8 @@ func TestCatalog(t *testing.T) {
 			}
 			src.Append(segment(0, 2, event(0, typeA), event(1, typeA)))
 
-			restart := make(chan Segment)
+			var calls atomic.Int32
+			restart := make(chan struct{})
 
 			remove := watch(
 				t,
@@ -619,14 +658,18 @@ func TestCatalog(t *testing.T) {
 				&sourceHook{
 					Source: src,
 					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
-						fn(segment(2, 2))
+						if calls.Add(1) == 1 {
+							fn(segment(2, 2))
 
-						select {
-						case <-ctx.Done():
-							return ctx.Err()
-						case seg := <-restart:
-							fn(seg)
+							select {
+							case <-ctx.Done():
+								return ctx.Err()
+							case <-restart:
+								return &source.ConsumerTooSlowError{StreamID: streamID}
+							}
 						}
+
+						fn(segment(5, 6, event(5, typeA)))
 
 						<-ctx.Done()
 						return ctx.Err()
@@ -643,11 +686,12 @@ func TestCatalog(t *testing.T) {
 
 			expectSegment(t, segments, 0, 2, 0, 1)
 
-			// The source has grown to 6 events, but delivers a segment
-			// beginning at 5, so the events from 2 are read from the source, in
-			// a batch that ends at 5, and the one at 5 comes from the cache.
+			// The source has grown to 6 events, but the new watch delivers a
+			// segment beginning at 5, so the events from 2 are read from the
+			// source, in a batch that ends at 5, and the one at 5 comes from
+			// the cache.
 			src.Append(segment(2, 6, event(2, typeA), event(3, typeA), event(4, typeA), event(5, typeA)))
-			restart <- segment(5, 6, event(5, typeA))
+			restart <- struct{}{}
 
 			expectSegment(t, segments, 2, 5, 2, 3, 4)
 			expectSegment(t, segments, 5, 6, 5)
@@ -661,13 +705,32 @@ func TestCatalog(t *testing.T) {
 			}
 			src.Append(segment(0, 4, event(0, typeA), event(1, typeA), event(2, typeA), event(3, typeA)))
 
+			var (
+				calls atomic.Int32
+				first Segment
+			)
+
 			restart := make(chan Segment)
 			restarted := make(chan struct{})
 
 			hook := &sourceHook{
 				Source: src,
 				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
-					fn(segment(4, 4))
+					// The first watch ends once it is given the segment that
+					// begins the next watch.
+					if calls.Add(1) == 1 {
+						fn(segment(4, 4))
+
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case first = <-restart:
+							return &source.ConsumerTooSlowError{StreamID: streamID}
+						}
+					}
+
+					fn(first)
+					restarted <- struct{}{}
 
 					for {
 						select {
@@ -691,7 +754,7 @@ func TestCatalog(t *testing.T) {
 
 			expectSegment(t, segments, 0, 1, 0)
 
-			// The source restarts the stream at 2, so once the read reaches 2
+			// A new watch begins the stream at 2, so once the read reaches 2
 			// the checkpoint is within the cached segment, and the read stops
 			// even though the source has more to deliver.
 			restart <- segment(2, 2)

@@ -13,17 +13,21 @@ type Source interface {
 	// Watch delivers events to fn as they are appended to the source's
 	// streams.
 	//
-	// Only events of the given types are delivered, in contiguous segments. A
-	// nil set of types means events of every type. It blocks until ctx is
-	// canceled or it is unable to continue, and may be called again if it
-	// fails. It returns fn's error, unchanged, if fn returns one.
+	// Only events of the given types are delivered. A nil set of types means
+	// events of every type. It panics if the set is empty.
+	//
+	// Each stream's delivery begins at the stream's end, with a first segment
+	// that may be empty. Every later segment of the stream begins where the
+	// previous one ended, for as long as the call lasts. A later call may begin
+	// a stream after events that this call never delivered; a caller that needs
+	// them reads them with [Source.Read].
 	//
 	// fn may be called concurrently for different streams, but a stream's
 	// segments are delivered one at a time, in order.
 	//
-	// A stream's first segment, or one that does not begin where the previous
-	// segment of that stream ended, begins a new delivery of the stream from
-	// the segment's begin offset.
+	// It blocks until ctx is canceled or it is unable to continue, and may be
+	// called again once it returns. It returns fn's error, unchanged, if fn
+	// returns one, and a [ConsumerTooSlowError] if the caller can not keep up.
 	Watch(
 		ctx context.Context,
 		types *uuidcollection.Set,
@@ -35,7 +39,8 @@ type Source interface {
 	//
 	// Only events of the given types are delivered, in contiguous segments,
 	// until the end of the stream as it stands, at which point it returns
-	// nil. It returns fn's error, unchanged, if fn returns one.
+	// nil. A nil set of types means events of every type. It panics if the
+	// set is empty. It returns fn's error, unchanged, if fn returns one.
 	Read(
 		ctx context.Context,
 		streamID *uuidpb.UUID,
@@ -43,4 +48,12 @@ type Source interface {
 		begin uint64,
 		fn func(Segment) error,
 	) error
+}
+
+// panicIfEmpty panics if types is an empty set. A nil set means every type, but
+// an empty set matches none, and an empty filter is invalid on the wire.
+func panicIfEmpty(types *uuidcollection.Set) {
+	if types != nil && types.IsEmpty() {
+		panic("message types must not be empty")
+	}
 }

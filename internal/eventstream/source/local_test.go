@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,6 +285,86 @@ func TestLocal(t *testing.T) {
 			}
 		})
 
+		t.Run("it returns an error when it can not continue delivering a stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			began := make(chan struct{})
+			result := make(chan error, 1)
+
+			go func() {
+				var once sync.Once
+
+				result <- src.Watch(
+					t.Context(),
+					nil,
+					func(Segment) error {
+						once.Do(func() { close(began) })
+						return nil
+					},
+				)
+			}()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the stream's first segment")
+			case <-began:
+			}
+
+			// An event whose envelope can not be decoded stops the stream from
+			// being delivered any further.
+			tx, err := db.BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+
+			xtesting.AppendToEventStream(t, tx, streamID, EventE1)
+
+			if _, err := tx.ExecContext(
+				t.Context(),
+				`UPDATE eventstream.events
+				SET envelope = '\xff'
+				WHERE stream_id = $1`,
+				streamID.AsString(),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for Watch to return")
+			case err := <-result:
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+			}
+		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Local{
+				SegmentSize: 10,
+			}
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Watch(
+				t.Context(),
+				uuidcollection.NewSet(),
+				func(Segment) error {
+					return nil
+				},
+			)
+		})
+
 		t.Run("it delivers an empty segment for an empty stream", func(t *testing.T) {
 			src, db := setup(t, 10)
 			streamID := xtesting.CreateEventStream(t, db)
@@ -530,6 +611,28 @@ func TestLocal(t *testing.T) {
 			if err != errRejected {
 				t.Fatalf("unexpected error: got %v, want %v", err, errRejected)
 			}
+		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src := &Local{
+				SegmentSize: 10,
+			}
+
+			defer func() {
+				if got := recover(); got != "message types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				}
+			}()
+
+			src.Read(
+				t.Context(),
+				uuidpb.Generate(),
+				uuidcollection.NewSet(),
+				0,
+				func(Segment) error {
+					return nil
+				},
+			)
 		})
 
 		t.Run("it fails if the stream does not exist", func(t *testing.T) {
