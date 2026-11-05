@@ -112,6 +112,12 @@ func (c *Catalog) Consume(
 		if !errors.Is(err, errFeedClosed) {
 			return err
 		}
+
+		// The feed's closure may be reported instead of ctx's error when both
+		// happen at once, but a consumer whose ctx is canceled is stopping.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
 }
 

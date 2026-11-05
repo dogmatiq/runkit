@@ -340,7 +340,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					ReadFunc: func(ctx context.Context) error {
+					ReadFunc: func(ctx context.Context, _ func(Segment) error) error {
 						close(reading)
 						<-ctx.Done()
 						time.Sleep(50 * time.Millisecond)
@@ -738,6 +738,66 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
+		t.Run("it returns fn's error unchanged when fn fails as the source serving it is removed", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 10))
+
+			reading := make(chan struct{})
+
+			remove := watch(
+				t,
+				c,
+				&sourceHook{
+					Source: src,
+					ReadFunc: func(ctx context.Context, fn func(Segment) error) error {
+						close(reading)
+
+						// The segment is delivered only once removing the source
+						// has canceled the read, so fn fails after the removal.
+						<-ctx.Done()
+						return fn(segment(0, 1, event(0, typeA)))
+					},
+				},
+				nil,
+			)
+
+			expectCatalogToHave(t, c, streamID)
+
+			errRejected := errors.New("<rejected>")
+			result := make(chan error, 1)
+
+			go func() {
+				result <- c.Consume(
+					t.Context(),
+					streamID,
+					typesA,
+					0,
+					func(Segment) error {
+						return errRejected
+					},
+				)
+			}()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the read to begin")
+			case <-reading:
+			}
+
+			remove()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for Consume to return")
+			case err := <-result:
+				if err != errRejected {
+					t.Fatalf("unexpected error: got %v, want %v", err, errRejected)
+				}
+			}
+		})
+
 		t.Run("it returns the source's error unchanged", func(t *testing.T) {
 			c := setup(t, 10)
 
@@ -751,7 +811,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					ReadFunc: func(context.Context) error {
+					ReadFunc: func(context.Context, func(Segment) error) error {
 						return errRead
 					},
 				},
@@ -828,7 +888,7 @@ func TestCatalog(t *testing.T) {
 				c,
 				&sourceHook{
 					Source: src,
-					ReadFunc: func(ctx context.Context) error {
+					ReadFunc: func(ctx context.Context, _ func(Segment) error) error {
 						close(reading)
 						<-ctx.Done()
 						close(canceled)
@@ -858,6 +918,70 @@ func TestCatalog(t *testing.T) {
 
 			if err := wait(); !errors.Is(err, ErrStreamNotFound) {
 				t.Fatalf("unexpected error: got %v, want %v", err, ErrStreamNotFound)
+			}
+		})
+
+		t.Run("it returns the context's error when the context is canceled as the source serving it is removed", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 10))
+
+			consumeCtx, cancelConsume := context.WithCancel(t.Context())
+			defer cancelConsume()
+
+			reading := make(chan struct{})
+
+			remove := watch(
+				t,
+				c,
+				&sourceHook{
+					Source: src,
+					ReadFunc: func(ctx context.Context, _ func(Segment) error) error {
+						close(reading)
+
+						// The consumer's context is canceled only once removing the
+						// source has canceled the read.
+						<-ctx.Done()
+						cancelConsume()
+
+						return ctx.Err()
+					},
+				},
+				nil,
+			)
+
+			expectCatalogToHave(t, c, streamID)
+
+			result := make(chan error, 1)
+
+			go func() {
+				result <- c.Consume(
+					consumeCtx,
+					streamID,
+					typesA,
+					0,
+					func(Segment) error {
+						return nil
+					},
+				)
+			}()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the read to begin")
+			case <-reading:
+			}
+
+			remove()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for Consume to return")
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("unexpected error: got %v, want %v", err, context.Canceled)
+				}
 			}
 		})
 
@@ -1031,7 +1155,7 @@ type sourceHook struct {
 	WatchFunc func(ctx context.Context, fn func(Segment) error) error
 
 	// ReadFunc, if non-nil, is called in place of the source's Read.
-	ReadFunc func(ctx context.Context) error
+	ReadFunc func(ctx context.Context, fn func(Segment) error) error
 
 	// Reads is the number of times Read has been called.
 	Reads atomic.Int32
@@ -1059,7 +1183,7 @@ func (s *sourceHook) Read(
 	s.Reads.Add(1)
 
 	if s.ReadFunc != nil {
-		return s.ReadFunc(ctx)
+		return s.ReadFunc(ctx, fn)
 	}
 
 	return s.Source.Read(ctx, streamID, types, begin, fn)

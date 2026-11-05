@@ -189,6 +189,8 @@ func (f *feed) read(
 
 	begin := cp
 
+	var fnErr error
+
 	err := f.Source.Read(
 		ctx,
 		f.ID,
@@ -196,6 +198,7 @@ func (f *feed) read(
 		cp,
 		func(seg Segment) error {
 			if err := fn(seg); err != nil {
+				fnErr = err
 				return err
 			}
 
@@ -212,6 +215,13 @@ func (f *feed) read(
 	)
 
 	switch {
+	case fnErr != nil:
+		// fn's error is returned even if the feed was closed during the read.
+		// Otherwise, the consumer would continue on another feed from the
+		// beginning of the segment, delivering again the events that fn had
+		// processed before it failed.
+		return cp, fnErr
+
 	case errors.Is(err, errCaughtUp):
 		return cp, nil
 
