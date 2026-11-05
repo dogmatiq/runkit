@@ -15,9 +15,8 @@ import (
 )
 
 // TestDistribution_eachEventIsHandledOnceAfterTheClusterConverges verifies
-// that, once the nodes in a cluster have converged, each event is passed to the
-// handler exactly once, even though the streams are consumed by different
-// nodes.
+// that, once the nodes in a cluster have converged, each event is handled
+// exactly once, even though the streams are consumed by different nodes.
 func TestDistribution_eachEventIsHandledOnceAfterTheClusterConverges(t *testing.T) {
 	t.Parallel()
 
@@ -125,13 +124,14 @@ func appendToEachStream(
 	}
 }
 
-// countingProjection is a projection that records how many times each event is
-// passed to it.
+// countingProjection is a projection that records how many times it handles
+// each event. A duplicate delivery that its optimistic concurrency control
+// rejects is not handled, so it is not counted.
 type countingProjection struct {
 	checkpoints checkpointStore
 
-	m     sync.Mutex
-	calls map[string]int
+	m       sync.Mutex
+	handled map[string]int
 }
 
 // App returns an application that consists only of the projection, which
@@ -165,21 +165,26 @@ func (p *countingProjection) handleEvent(
 	s dogma.ProjectionEventScope,
 	_ dogma.Event,
 ) (uint64, error) {
-	p.m.Lock()
-	defer p.m.Unlock()
+	return p.checkpoints.HandleEvent(
+		s,
+		func() error {
+			p.m.Lock()
+			defer p.m.Unlock()
 
-	if p.calls == nil {
-		p.calls = map[string]int{}
-	}
+			if p.handled == nil {
+				p.handled = map[string]int{}
+			}
 
-	key := fmt.Sprintf("%s@%d", s.StreamID(), s.Offset())
-	p.calls[key]++
+			key := fmt.Sprintf("%s@%d", s.StreamID(), s.Offset())
+			p.handled[key]++
 
-	return p.checkpoints.HandleEvent(s, nil)
+			return nil
+		},
+	)
 }
 
-// ExpectHandledEventually waits for n distinct events to have been passed to
-// the projection, and fails the test if that takes longer than timeout.
+// ExpectHandledEventually waits for the projection to have handled n distinct
+// events, and fails the test if that takes longer than timeout.
 func (p *countingProjection) ExpectHandledEventually(
 	t testing.TB,
 	n int,
@@ -191,7 +196,7 @@ func (p *countingProjection) ExpectHandledEventually(
 
 	for {
 		p.m.Lock()
-		handled := len(p.calls)
+		handled := len(p.handled)
 		p.m.Unlock()
 
 		if handled >= n {
@@ -206,9 +211,8 @@ func (p *countingProjection) ExpectHandledEventually(
 	}
 }
 
-// ExpectEachEventHandledOnce asserts that no event was passed to the
-// projection more than once, after allowing a short time for any duplicate
-// delivery to occur.
+// ExpectEachEventHandledOnce asserts that the projection handled no event more
+// than once, after allowing a short time for any duplicate handling to occur.
 func (p *countingProjection) ExpectEachEventHandledOnce(t testing.TB) {
 	t.Helper()
 
@@ -217,9 +221,9 @@ func (p *countingProjection) ExpectEachEventHandledOnce(t testing.TB) {
 	p.m.Lock()
 	defer p.m.Unlock()
 
-	for key, n := range p.calls {
+	for key, n := range p.handled {
 		if n != 1 {
-			t.Errorf("event %s was passed to the handler %d times", key, n)
+			t.Errorf("event %s was handled %d times", key, n)
 		}
 	}
 }
