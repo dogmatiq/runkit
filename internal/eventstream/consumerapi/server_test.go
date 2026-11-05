@@ -275,7 +275,7 @@ func TestServer_WatchEvents(t *testing.T) {
 				segments.ExpectSegment(streamID, 0, 0)
 
 				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1, stubs.EventA1)
-				segments.ExpectSegment(streamID, 0, 2, stubs.EventX1, stubs.EventA1)
+				segments.ExpectEventsUntil(streamID, 2, stubs.EventX1, stubs.EventA1)
 			},
 			consumerAPIApp(),
 		)
@@ -618,6 +618,35 @@ func (r *segmentReceiver) ExpectEmptySegmentsUntil(streamID *uuidpb.UUID, end ui
 			r.T.Fatalf("unexpected end offset: got %d, want %d", got, end)
 		}
 	}
+}
+
+// ExpectEventsUntil asserts that segments of the given stream are received
+// until one ends at the given offset, and that together they hold exactly the
+// given events.
+func (r *segmentReceiver) ExpectEventsUntil(
+	streamID *uuidpb.UUID,
+	end uint64,
+	want ...dogma.Event,
+) {
+	r.T.Helper()
+
+	var got []dogma.Event
+
+	for {
+		got = append(got, r.Next(streamID)...)
+
+		reached, _ := r.ends.Get(streamID)
+
+		if reached == end {
+			break
+		}
+
+		if reached > end {
+			r.T.Fatalf("unexpected end offset: got %d, want %d", reached, end)
+		}
+	}
+
+	xtesting.Expect(r.T, "events", got, want)
 }
 
 // ExpectEOF asserts that the server closes the call without sending any

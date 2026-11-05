@@ -358,7 +358,7 @@ func (s *Local) loadSegment(
 			return Segment{}, false, fmt.Errorf("unable to advance to first row: %w", err)
 		}
 
-		return Segment{}, false, fmt.Errorf("event stream %s not found", streamID)
+		return Segment{}, false, fmt.Errorf("unable to read event stream %s: %w", streamID, ErrUnrecognizedStream)
 	}
 
 	var next uint64
@@ -367,6 +367,16 @@ func (s *Local) loadSegment(
 		new(any),
 	); err != nil {
 		return Segment{}, false, fmt.Errorf("unable to scan next offset: %w", err)
+	}
+
+	if begin > next {
+		return Segment{}, false, fmt.Errorf(
+			"unable to load event stream %s from offset %d, as it ends at offset %d: %w",
+			streamID,
+			begin,
+			next,
+			ErrOffsetOutOfRange,
+		)
 	}
 
 	seg := Segment{

@@ -125,7 +125,8 @@ func (c *Catalog) Consume(
 // Watch watches a source until ctx is canceled.
 //
 // If the source reports that the catalog can not keep up with it, by returning
-// a [source.ConsumerTooSlowError], it watches the source again at once.
+// an error that wraps [source.ErrConsumerTooSlow], it watches the source again
+// at once.
 //
 // It adds the streams that the source delivers to the catalog, and removes
 // them again before returning. Once it returns, no call to the source that the
@@ -191,13 +192,19 @@ func (c *Catalog) Watch(
 				// Falling behind is expected under load, and a new watch begins
 				// each stream where it stands, so the source is watched again
 				// at once rather than as though it had failed.
-				if tooSlow, ok := errors.AsType[*source.ConsumerTooSlowError](err); ok {
+				if errors.Is(err, source.ErrConsumerTooSlow) {
 					c.Logger.InfoContext(
 						ctx,
 						"unable to keep up with the source, watching it again",
-						xslog.UUID("stream_id", tooSlow.StreamID),
+						xslog.Error(err),
 					)
 					continue
+				}
+
+				// A source that does not offer event streams, or that delivers
+				// an invalid segment, is unlikely to do otherwise soon.
+				if errors.Is(err, errors.ErrUnsupported) || errors.Is(err, source.ErrInvalidSegment) {
+					return supervisor.Persistent(err)
 				}
 
 				if err == nil && ctx.Err() == nil {

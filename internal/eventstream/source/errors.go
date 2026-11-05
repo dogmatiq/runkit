@@ -1,26 +1,24 @@
 package source
 
-import (
-	"fmt"
+import "errors"
 
-	"github.com/dogmatiq/protobuf/uuidpb"
-)
-
-// ConsumerTooSlowError is the error that [Source.Watch] returns when its caller
-// can not keep up, so that a stream can no longer be delivered contiguously.
-//
-// It corresponds to the RESOURCE_EXHAUSTED status, with an attached
-// [messaginggrpc.EventStreamConsumerTooSlow] value, that ends a WatchEvents
-// call.
-type ConsumerTooSlowError struct {
-	// StreamID is the ID of the stream that could no longer be delivered
+var (
+	// ErrConsumerTooSlow is the error that [Source.Watch] returns when its
+	// caller can not keep up, so that a stream can no longer be delivered
 	// contiguously.
-	StreamID *uuidpb.UUID
-}
+	ErrConsumerTooSlow = errors.New("consumer is too slow")
 
-func (e *ConsumerTooSlowError) Error() string {
-	return fmt.Sprintf(
-		"event stream %s can no longer be delivered contiguously, as the consumer is too slow",
-		e.StreamID,
-	)
-}
+	// ErrUnrecognizedStream is the error that [Source.Read] returns for a
+	// stream that the source does not have.
+	ErrUnrecognizedStream = errors.New("event stream is not recognized")
+
+	// ErrOffsetOutOfRange is the error that [Source.Read] returns when the
+	// given offset is beyond the end of the stream.
+	ErrOffsetOutOfRange = errors.New("offset is beyond the end of the event stream")
+
+	// ErrInvalidSegment is the error that [Remote] returns when the remote
+	// engine sends a segment that is malformed, that holds events of types
+	// that were not requested, or that does not begin where the previous
+	// segment of its stream ended.
+	ErrInvalidSegment = errors.New("invalid segment")
+)

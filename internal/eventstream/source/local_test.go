@@ -568,7 +568,7 @@ func TestLocal(t *testing.T) {
 			}
 		})
 
-		t.Run("it delivers nothing from an offset at or beyond the end of the stream", func(t *testing.T) {
+		t.Run("it delivers nothing from the end of the stream", func(t *testing.T) {
 			src, db := setup(t, 10)
 			streamID := xtesting.CreateEventStream(t, db)
 
@@ -580,8 +580,35 @@ func TestLocal(t *testing.T) {
 				EventE2,
 			)
 
-			if segments := read(t, src, streamID, typesE, 5); len(segments) != 0 {
+			if segments := read(t, src, streamID, typesE, 2); len(segments) != 0 {
 				t.Fatalf("unexpected number of segments: got %d, want 0", len(segments))
+			}
+		})
+
+		t.Run("it returns ErrOffsetOutOfRange for an offset beyond the end of the stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(
+				t,
+				db,
+				streamID,
+				EventE1,
+				EventE2,
+			)
+
+			err := src.Read(
+				t.Context(),
+				streamID,
+				typesE,
+				3,
+				func(Segment) error {
+					return nil
+				},
+			)
+
+			if !errors.Is(err, ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrOffsetOutOfRange)
 			}
 		})
 
@@ -635,12 +662,13 @@ func TestLocal(t *testing.T) {
 			)
 		})
 
-		t.Run("it fails if the stream does not exist", func(t *testing.T) {
+		t.Run("it returns ErrUnrecognizedStream for a stream that does not exist", func(t *testing.T) {
 			src, _ := setup(t, 10)
+			streamID := uuidpb.Generate()
 
 			err := src.Read(
 				t.Context(),
-				uuidpb.Generate(),
+				streamID,
 				typesE,
 				0,
 				func(Segment) error {
@@ -648,8 +676,8 @@ func TestLocal(t *testing.T) {
 				},
 			)
 
-			if err == nil {
-				t.Fatal("expected an error")
+			if !errors.Is(err, ErrUnrecognizedStream) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrUnrecognizedStream)
 			}
 		})
 

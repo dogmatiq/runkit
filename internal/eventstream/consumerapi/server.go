@@ -1,8 +1,6 @@
 package consumerapi
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,7 +11,6 @@ import (
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,10 +22,6 @@ import (
 // It serves the application's own event streams, never those of a remote
 // engine, so that it only delivers events that the application recorded.
 type Server struct {
-	// DB is the database connection used to check that a stream exists before
-	// reading from it.
-	DB *sql.DB
-
 	// EventStreams is the source of the application's event streams.
 	EventStreams *source.Local
 
@@ -91,65 +84,32 @@ func (s *Server) ReadEvents(
 	req *messaginggrpc.ReadEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
 ) error {
-	ctx := res.Context()
 	streamID := req.GetEventStreamId()
-	begin := req.GetBeginOffset()
 
-	end, ok, err := s.loadNextOffset(ctx, streamID)
-	if err != nil {
-		return err
-	}
-
-	if !ok {
-		return messaginggrpc.UnrecognizedEventStreamError(streamID)
-	}
-
-	if begin > end {
-		return status.Errorf(
-			codes.OutOfRange,
-			"begin offset %d is beyond the end of the stream, which is at offset %d",
-			begin,
-			end,
-		)
-	}
-
-	return s.EventStreams.Read(
-		ctx,
+	err := s.EventStreams.Read(
+		res.Context(),
 		streamID,
 		requestedTypes(req.GetMessageTypeIds()),
-		begin,
+		req.GetBeginOffset(),
 		func(seg source.Segment) error {
 			return sendSegment(res, seg)
 		},
 	)
+
+	if errors.Is(err, source.ErrUnrecognizedStream) {
+		return messaginggrpc.UnrecognizedEventStreamError(streamID)
+	}
+
+	if errors.Is(err, source.ErrOffsetOutOfRange) {
+		return status.Error(codes.OutOfRange, err.Error())
+	}
+
+	return err
 }
 
 // loadNextOffset returns the next offset of the event stream with the given ID.
 //
 // ok is false if the stream does not exist.
-func (s *Server) loadNextOffset(
-	ctx context.Context,
-	id *uuidpb.UUID,
-) (nextOffset uint64, ok bool, err error) {
-	row := s.DB.QueryRowContext(
-		ctx,
-		`SELECT next_offset
-		FROM eventstream.streams
-		WHERE id = $1`,
-		xsql.UUID(id),
-	)
-
-	if err := row.Scan(&nextOffset); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
-
-		return 0, false, fmt.Errorf("unable to scan event stream: %w", err)
-	}
-
-	return nextOffset, true, nil
-}
-
 // requestedTypes returns the set of message types requested by a client, or
 // nil, meaning every type, if the client requested none.
 func requestedTypes(ids []*uuidpb.UUID) *uuidcollection.Set {

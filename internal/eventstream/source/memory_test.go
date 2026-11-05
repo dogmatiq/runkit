@@ -192,7 +192,30 @@ func TestMemory(t *testing.T) {
 			}
 		})
 
-		t.Run("it fails if the stream does not exist", func(t *testing.T) {
+		t.Run("it returns ErrOffsetOutOfRange for an offset beyond the end of the stream", func(t *testing.T) {
+			src := &Memory{}
+			src.Append(Segment{
+				StreamID: streamA,
+				Begin:    0,
+				End:      3,
+			})
+
+			err := src.Read(
+				t.Context(),
+				streamA,
+				nil,
+				4,
+				func(Segment) error {
+					return nil
+				},
+			)
+
+			if !errors.Is(err, ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrOffsetOutOfRange)
+			}
+		})
+
+		t.Run("it returns ErrUnrecognizedStream for a stream that does not exist", func(t *testing.T) {
 			src := &Memory{}
 
 			err := src.Read(
@@ -205,8 +228,8 @@ func TestMemory(t *testing.T) {
 				},
 			)
 
-			if err == nil {
-				t.Fatal("expected an error")
+			if !errors.Is(err, ErrUnrecognizedStream) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrUnrecognizedStream)
 			}
 		})
 

@@ -29,8 +29,10 @@ This came out of the review of PR 64. It changes the local source built in
 Phase 3 of [the event feed plan], the catalog's handling of source failures,
 and the server and remote source built in its Phases 5 and 6.
 
-**Depends on:** `github.com/dogmatiq/protobuf` v0.6.0, which includes
-dogmatiq/protobuf#18. Only Step 5 needs it.
+**Depends on:** `github.com/dogmatiq/protobuf` v0.7.0, which keeps the filters
+from dogmatiq/protobuf#18, removes every error detail, and ends a
+`WatchEvents` call with `ABORTED` when the client can't keep up. Only Step 5
+needs it.
 
 ---
 
@@ -42,21 +44,19 @@ dogmatiq/protobuf#18. Only Step 5 needs it.
     begins. Every later segment of the stream begins where the previous one
     ended, for the whole call. A new call may begin after events that the
     caller missed, and a caller that needs them reads them with `Read`. When
-    the caller can't keep up, `Watch` returns a `ConsumerTooSlowError` naming
-    the stream, which is `RESOURCE_EXHAUSTED` with an
-    `EventStreamConsumerTooSlow` detail on the wire. When a stream can't be
-    delivered contiguously for any other reason, it returns another error.
+    the caller can't keep up, `Watch` returns an error that wraps
+    `ErrConsumerTooSlow`, which is `ABORTED` on the wire. When a stream can't
+    be delivered contiguously for any other reason, it returns another error.
   - `Read(ctx, streamID, types, begin, fn)` is `ReadEvents`. It delivers from
-    `begin` to the end of the stream as it stood when the call began. An
+    `begin` until it reaches the end of the stream, as the protocol says. An
     offset equal to the end delivers nothing. An offset past the end returns
     `ErrOffsetOutOfRange`, which is `OUT_OF_RANGE` on the wire, and an unknown
-    stream returns an `UnrecognizedStreamError` naming it, which is
-    `NOT_FOUND` with an `UnrecognizedEventStream` detail.
+    stream returns `ErrUnrecognizedStream`, which is `NOT_FOUND`.
   - A nil set of types is the filter that matches every type, and any other
     set is a filter of specific types. An empty set is invalid, as an empty
     filter is on the wire.
 - **The catalog owns every policy.** It watches a source again at once when the
-  source returns `ConsumerTooSlowError`, without logging an error or backing
+  source returns `ErrConsumerTooSlow`, without logging an error or backing
   off. It decides which failures are persistent, as `source.Remote` decides
   today: a source that doesn't offer event streams at all, such as a remote
   engine that answers with `UNIMPLEMENTED`; a read of an unrecognized stream or
@@ -82,8 +82,8 @@ dogmatiq/protobuf#18. Only Step 5 needs it.
   each caller's channel without blocking. When a send would block, `Run`
   removes the caller and closes its channel, recording the stream it couldn't
   send, under the same mutex that guards sends, as the signal bus does with its
-  subscribers. `Watch` delivers what's left in the channel, then returns
-  `ConsumerTooSlowError` for that stream.
+  subscribers. `Watch` delivers what's left in the channel, then returns an
+  error that wraps `ErrConsumerTooSlow` and names that stream.
 - **A watcher that fails ends every call.** A stream's watcher begins again at
   the stream's end after a failure, so it can't continue any call
   contiguously. `Run` removes every caller and closes its channel, recording
@@ -116,21 +116,24 @@ Calls made in writing this plan, to check while reading it:
 - An empty set of types is a programming error, so every source panics on it,
   as `Catalog.Consume` does. The server validates the wire filter before
   `Local` sees it.
-- The new errors are in `source`. `ConsumerTooSlowError` and
-  `UnrecognizedStreamError` are named after the protocol's details and carry
-  the stream ID. `ErrOffsetOutOfRange` and `ErrInvalidSegment` are sentinels,
-  wrapped in an error that says what was wrong. A source that doesn't offer
-  event streams returns an error that wraps `errors.ErrUnsupported`.
-- The catalog logs a `ConsumerTooSlowError` at INFO before watching again.
-- `Read` ends at the end of the stream as it stood when the call began, which
-  is the end it checks the offset against. That matches `ReadEvents` today.
+- The new errors are sentinels in `source` — `ErrConsumerTooSlow`,
+  `ErrUnrecognizedStream`, `ErrOffsetOutOfRange` and `ErrInvalidSegment` —
+  each wrapped in an error that says what was wrong, including the stream
+  where there is one. None needs to carry a stream ID, as the protocol has no
+  details. A source that doesn't offer event streams returns an error that
+  wraps `errors.ErrUnsupported`.
+- The catalog logs `ErrConsumerTooSlow` at INFO before watching again.
+- `Read` reads until it reaches the end of the stream, as `ReadEvents` does
+  today, rather than stopping at the end as it stood when the call began. The
+  offset is checked against the end as of the first query.
 - The server drops its own contiguity check, since every source now
   guarantees contiguity within a call, and `source.Remote` validates it
   anyway.
-- `source.Remote` turns `RESOURCE_EXHAUSTED` into `ConsumerTooSlowError` only
-  when the `EventStreamConsumerTooSlow` detail is attached. gRPC's own receive
-  limit also ends a call with `RESOURCE_EXHAUSTED` (runkit#74), and watching
-  again at once would loop on the same oversized segment.
+- `source.Remote` recognizes each documented status by its code alone:
+  `NOT_FOUND` and `OUT_OF_RANGE` from `ReadEvents`, and `ABORTED` from
+  `WatchEvents`. gRPC's own receive limit ends a call with
+  `RESOURCE_EXHAUSTED` (runkit#74), which stays an ordinary failure, so
+  watching again at once can't loop on the same oversized segment.
 
 ---
 
@@ -141,8 +144,8 @@ Names are proposals; confirm or rename as each step lands.
 | Name | Role |
 | --- | --- |
 | `source.Source` | `Watch` and `Read`, documented to mean exactly what `WatchEvents` and `ReadEvents` mean, with the errors above. |
-| `source.ConsumerTooSlowError` | Returned by `Watch` when the caller can't keep up. Carries the ID of the stream that could no longer be delivered contiguously. |
-| `source.UnrecognizedStreamError` | Returned by `Read` for an unknown stream. Carries its ID. |
+| `source.ErrConsumerTooSlow` | Wrapped by the error that `Watch` returns when the caller can't keep up. |
+| `source.ErrUnrecognizedStream` | Returned by `Read` for an unknown stream. |
 | `source.ErrInvalidSegment` | Wrapped by `source.Remote`'s error for a segment that fails validation, from `Watch` or `Read`. |
 | `source.ErrOffsetOutOfRange` | Returned by `Read` for an offset past the end of the stream. |
 | `Local.Run` | Runs until `ctx` is canceled, and is called at most once. Discovers streams on each `eventstream.create` signal under its own supervisor, and starts a stream watcher for each new stream. Holds the registered callers and each stream's position under one mutex. |
@@ -150,9 +153,9 @@ Names are proposals; confirm or rename as each step lands.
 | caller | Unexported, one per `Watch` call — its types, a channel of `BufferSize` segments, and the error that ended it. |
 | `Local.Watch` | Registers a caller, delivers the snapshot's first segments, then delivers each segment from the channel, filtered to its types. When `Run` closes the channel, returns the error it recorded. Unregisters and returns `ctx`'s error or `fn`'s error, unchanged. |
 | `Local.BufferSize` | Required. The number of segments buffered for each `Watch` call. |
-| `Catalog.Watch` | Watches the source again at once on `ConsumerTooSlowError`, and treats `ErrInvalidSegment` and an error that wraps `errors.ErrUnsupported` as persistent. Other failures back off as now. |
-| `feed.read` | Treats `UnrecognizedStreamError`, `ErrOffsetOutOfRange` and `ErrInvalidSegment` from `Source.Read` as persistent. |
-| `consumerapi.Server` | A mapping over `source.Local`. Validates the filter, returning `INVALID_ARGUMENT` for an invalid one, and turns it into types. Turns `ConsumerTooSlowError`, `UnrecognizedStreamError` and `ErrOffsetOutOfRange` into their statuses. Loses `loadNextOffset`, its `DB` field and its contiguity check. Becomes `source.Server` at Step 6. |
+| `Catalog.Watch` | Watches the source again at once on `ErrConsumerTooSlow`, and treats `ErrInvalidSegment` and an error that wraps `errors.ErrUnsupported` as persistent. Other failures back off as now. |
+| `feed.read` | Treats `ErrUnrecognizedStream`, `ErrOffsetOutOfRange` and `ErrInvalidSegment` from `Source.Read` as persistent. |
+| `consumerapi.Server` | A mapping over `source.Local`. Validates the filter, returning `INVALID_ARGUMENT` for an invalid one, and turns it into types. Turns `ErrConsumerTooSlow`, `ErrUnrecognizedStream` and `ErrOffsetOutOfRange` into their statuses. Loses `loadNextOffset`, its `DB` field and its contiguity check. Becomes `source.Server` at Step 6. |
 | `source.Remote` | A mapping over the client. Builds the filter from the types, and turns each documented status back into the matching error. Wraps nothing with `supervisor.Persistent`. |
 
 `Local.Watch`, per call:
@@ -188,35 +191,37 @@ Every step is green under `make test` unless marked otherwise.
       set of types. Catalog tests that deliver a segment that doesn't follow
       the previous one in the middle of a call deliver it on a new call
       instead.
-- [ ] **Step 3.** The `Read` contract and the error policy. `Local.Read` and
-      `Memory.Read` return `UnrecognizedStreamError` for an unknown stream and
-      `ErrOffsetOutOfRange` for an offset past the end, and stop at the end as
-      it stood when the call began. `ReadEvents` becomes a mapping over
-      `Local.Read`, losing `loadNextOffset` and the server's `DB` field.
-      `source.Remote` turns `NOT_FOUND` and `OUT_OF_RANGE` into those errors,
-      and `UNIMPLEMENTED` into an error that wraps `errors.ErrUnsupported`, and
-      its errors for invalid segments wrap `ErrInvalidSegment`. The catalog, not
-      the remote source, treats all of them as persistent.
+- [x] **Step 3.** The `Read` contract and the error policy. `Local.Read` and
+      `Memory.Read` return `ErrUnrecognizedStream` for an unknown stream and
+      `ErrOffsetOutOfRange` for an offset past the end. `ReadEvents` becomes a
+      mapping over `Local.Read`, losing `loadNextOffset` and the server's `DB`
+      field. `source.Remote` turns `NOT_FOUND` and `OUT_OF_RANGE` into those
+      errors, and `UNIMPLEMENTED` into an error that wraps
+      `errors.ErrUnsupported`, and its errors for invalid segments wrap
+      `ErrInvalidSegment`. The catalog, not the remote source, treats all of
+      them as persistent. `ConsumerTooSlowError` from Step 2 becomes the
+      `ErrConsumerTooSlow` sentinel, as the protocol drops error details.
 - [ ] **Step 4.** `Local.Run` shares one watcher per stream between every
       `Watch` call, with `BufferSize` and the engine's constant, as described
       above. The engine runs `Local.Run` alongside the bus when the catalog
       watches the local source or the gRPC server is enabled. Tests cover two
       `Watch` calls served by one watcher; a caller that falls behind getting
-      the segments already buffered for it, then `ConsumerTooSlowError` for
-      the stream it couldn't be sent; a stream created while a caller's
+      the segments already buffered for it, then `ErrConsumerTooSlow` for the
+      stream it couldn't be sent; a stream created while a caller's
       channel is full; `fn`'s error ending only its own call; `Watch` called
       before `Run`; a failed discovery query leaving every call running; and a
       watcher that fails ending every call with an error.
-- [ ] **Step 5.** Take protobuf v0.6.0, with dogmatiq/protobuf#18.
-      `source.Remote` builds the filter from the types, and turns
-      `RESOURCE_EXHAUSTED` with the `EventStreamConsumerTooSlow` detail into
-      `ConsumerTooSlowError`. The server validates the filter, returning
-      `INVALID_ARGUMENT` for an invalid one, turns it into types, returns
-      `EventStreamConsumerTooSlowError` for `ConsumerTooSlowError`, and drops
-      its own contiguity check. The server test "it delivers every event in
-      order to a client that falls behind" now sees `RESOURCE_EXHAUSTED`,
-      which makes it the server's test of that path. A remote test covers
-      `RESOURCE_EXHAUSTED` without the detail being an ordinary failure.
+- [ ] **Step 5.** Take protobuf v0.7.0. `source.Remote` builds the filter from
+      the types, and turns `ABORTED` from `WatchEvents` into an error that
+      wraps `ErrConsumerTooSlow`. The server validates the filter, returning
+      `INVALID_ARGUMENT` for an invalid one, and turns it into types. It
+      returns `ABORTED` for `ErrConsumerTooSlow`, and a plain `NOT_FOUND` for
+      `ErrUnrecognizedStream` in place of
+      `messaginggrpc.UnrecognizedEventStreamError`, which v0.7.0 removes. It
+      also drops its own contiguity check. The server test "it delivers every
+      event in order to a client that falls behind" now sees `ABORTED`, which
+      makes it the server's test of that path. A remote test covers
+      `RESOURCE_EXHAUSTED` being an ordinary failure.
 - [ ] **Step 6.** `consumerapi.Server` moves into `source` as `source.Server`,
       taking the `Source` interface rather than `*Local`, so that it mirrors
       `source.Remote`: one turns a client into a `Source`, and the other turns

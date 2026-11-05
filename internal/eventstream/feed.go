@@ -11,6 +11,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 )
 
 // feed serves consumers of one event stream from one [source.Source], whether
@@ -229,6 +230,15 @@ func (f *feed) read(
 		return cp, errFeedClosed
 
 	case err != nil:
+		// A stream that the source does not recognize or that ends before the
+		// offset, or a segment that is invalid, is unlikely to be read
+		// successfully soon.
+		if errors.Is(err, source.ErrUnrecognizedStream) ||
+			errors.Is(err, source.ErrOffsetOutOfRange) ||
+			errors.Is(err, source.ErrInvalidSegment) {
+			return cp, supervisor.Persistent(err)
+		}
+
 		return cp, err
 
 	case cp == begin:

@@ -165,10 +165,20 @@ func (s *Memory) unread(
 
 	ms, ok := s.streams.Get(streamID)
 	if !ok {
-		return Segment{}, false, fmt.Errorf("event stream %s not found", streamID)
+		return Segment{}, false, fmt.Errorf("unable to read event stream %s: %w", streamID, ErrUnrecognizedStream)
 	}
 
-	if begin >= ms.End {
+	if begin > ms.End {
+		return Segment{}, false, fmt.Errorf(
+			"unable to read event stream %s from offset %d, as it ends at offset %d: %w",
+			streamID,
+			begin,
+			ms.End,
+			ErrOffsetOutOfRange,
+		)
+	}
+
+	if begin == ms.End {
 		return Segment{}, false, nil
 	}
 

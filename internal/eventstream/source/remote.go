@@ -11,7 +11,6 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/supervisor"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -170,10 +169,8 @@ func watchError(ctx context.Context, err error) error {
 		return errors.New("remote engine stopped watching events")
 	}
 
-	// An engine that does not offer event streams is unlikely to start doing
-	// so soon.
 	if status.Code(err) == codes.Unimplemented {
-		return supervisor.Persistentf("unable to watch events: %w", err)
+		return fmt.Errorf("unable to watch events: %w (%w)", err, errors.ErrUnsupported)
 	}
 
 	return fmt.Errorf("unable to watch events: %w", err)
@@ -186,11 +183,11 @@ func readError(ctx context.Context, streamID *uuidpb.UUID, err error) error {
 		return ctx.Err()
 	}
 
-	// The remote engine's stream does not match what it has delivered, which
-	// is unlikely to change soon.
 	switch status.Code(err) {
-	case codes.NotFound, codes.OutOfRange:
-		return supervisor.Persistentf("unable to read event stream %s: %w", streamID, err)
+	case codes.NotFound:
+		return fmt.Errorf("unable to read event stream %s: %w (%w)", streamID, err, ErrUnrecognizedStream)
+	case codes.OutOfRange:
+		return fmt.Errorf("unable to read event stream %s: %w (%w)", streamID, err, ErrOffsetOutOfRange)
 	}
 
 	return fmt.Errorf("unable to read event stream %s: %w", streamID, err)
@@ -263,18 +260,16 @@ func parseSegment(
 	return seg, nil
 }
 
-// invalidSegment returns an error describing why the segment that the remote
-// engine sent in res is invalid.
-//
-// The error is persistent, as the remote engine is likely to send the same
-// segment again.
+// invalidSegment returns an [ErrInvalidSegment] describing why the segment that
+// the remote engine sent in res is invalid.
 func invalidSegment(
 	res *messaginggrpc.EventStreamSegment,
 	format string,
 	args ...any,
 ) error {
-	return supervisor.Persistentf(
-		"invalid segment [%d, %d) of event stream %s: %w",
+	return fmt.Errorf(
+		"%w [%d, %d) of event stream %s: %w",
+		ErrInvalidSegment,
 		res.GetBeginOffset(),
 		res.GetEndOffset(),
 		res.GetEventStreamId(),

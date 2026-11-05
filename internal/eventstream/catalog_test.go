@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -193,6 +194,28 @@ func TestCatalog(t *testing.T) {
 		}
 	}
 
+	// expectRetriedAsPersistent waits for attempts to be timed on the given
+	// channel, and fails the test unless two of them are eventually more than
+	// 15 seconds apart, the longest that [supervisor.Run] waits after a failure
+	// that is not persistent. It must be called from within a synctest bubble.
+	expectRetriedAsPersistent := func(t *testing.T, attempts <-chan time.Time) {
+		t.Helper()
+
+		prev := <-attempts
+
+		for range 12 {
+			next := <-attempts
+
+			if next.Sub(prev) > 15*time.Second {
+				return
+			}
+
+			prev = next
+		}
+
+		t.Fatal("expected the attempts to back off as after a persistent failure")
+	}
+
 	t.Run("Watch", func(t *testing.T) {
 		t.Run("it adds a stream when the source first delivers it", func(t *testing.T) {
 			c := setup(t, 10)
@@ -309,7 +332,7 @@ func TestCatalog(t *testing.T) {
 						Source: src,
 						WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 							if calls.Add(1) == 1 {
-								return &source.ConsumerTooSlowError{StreamID: streamID}
+								return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
 							}
 
 							delay <- time.Since(began)
@@ -326,6 +349,51 @@ func TestCatalog(t *testing.T) {
 
 				expectCatalogToHave(t, c, streamID)
 			})
+		})
+
+		t.Run("it retries a source that can never be watched as after a persistent failure", func(t *testing.T) {
+			cases := []struct {
+				Name string
+				Err  error
+			}{
+				{
+					"the source does not offer event streams",
+					fmt.Errorf("<unsupported>: %w", errors.ErrUnsupported),
+				},
+				{
+					"the source delivers an invalid segment",
+					fmt.Errorf("%w: <invalid>", source.ErrInvalidSegment),
+				},
+			}
+
+			for _, tc := range cases {
+				t.Run(tc.Name, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						c := setup(t, 10)
+						attempts := make(chan time.Time)
+
+						remove := watch(
+							t,
+							c,
+							&sourceHook{
+								Source: &source.Memory{},
+								WatchFunc: func(ctx context.Context, _ func(Segment) error) error {
+									select {
+									case <-ctx.Done():
+										return ctx.Err()
+									case attempts <- time.Now():
+										return tc.Err
+									}
+								},
+							},
+							nil,
+						)
+						defer remove()
+
+						expectRetriedAsPersistent(t, attempts)
+					})
+				})
+			}
 		})
 
 		t.Run("it returns only once the source is no longer watched", func(t *testing.T) {
@@ -665,7 +733,7 @@ func TestCatalog(t *testing.T) {
 							case <-ctx.Done():
 								return ctx.Err()
 							case <-restart:
-								return &source.ConsumerTooSlowError{StreamID: streamID}
+								return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
 							}
 						}
 
@@ -725,7 +793,7 @@ func TestCatalog(t *testing.T) {
 						case <-ctx.Done():
 							return ctx.Err()
 						case first = <-restart:
-							return &source.ConsumerTooSlowError{StreamID: streamID}
+							return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
 						}
 					}
 
@@ -896,6 +964,89 @@ func TestCatalog(t *testing.T) {
 
 			if err != errRead {
 				t.Fatalf("unexpected error: got %v, want %v", err, errRead)
+			}
+		})
+
+		t.Run("it fails a read that the source can never serve as a persistent failure", func(t *testing.T) {
+			cases := []struct {
+				Name string
+				Err  error
+			}{
+				{
+					"the source does not recognize the stream",
+					fmt.Errorf("<unrecognized>: %w", source.ErrUnrecognizedStream),
+				},
+				{
+					"the offset is beyond the end of the source's stream",
+					fmt.Errorf("<out of range>: %w", source.ErrOffsetOutOfRange),
+				},
+				{
+					"the source delivers an invalid segment",
+					fmt.Errorf("%w: <invalid>", source.ErrInvalidSegment),
+				},
+			}
+
+			for _, tc := range cases {
+				t.Run(tc.Name, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						c := setup(t, 10)
+
+						src := &source.Memory{}
+						src.Append(segment(0, 10))
+
+						attempts := make(chan time.Time)
+
+						remove := watch(
+							t,
+							c,
+							&sourceHook{
+								Source: src,
+								ReadFunc: func(ctx context.Context, _ func(Segment) error) error {
+									select {
+									case <-ctx.Done():
+										return ctx.Err()
+									case attempts <- time.Now():
+										return tc.Err
+									}
+								},
+							},
+							nil,
+						)
+						defer remove()
+
+						expectCatalogToHave(t, c, streamID)
+
+						// Consumers retry under the supervisor, as stream
+						// consumers do.
+						ctx, cancel := context.WithCancel(t.Context())
+						done := make(chan struct{})
+
+						go func() {
+							defer close(done)
+
+							supervisor.Run(
+								ctx,
+								spruce.NewTestLogger(t),
+								func(ctx context.Context) error {
+									return c.Consume(
+										ctx,
+										streamID,
+										typesA,
+										0,
+										func(Segment) error {
+											return nil
+										},
+									)
+								},
+							)
+						}()
+
+						expectRetriedAsPersistent(t, attempts)
+
+						cancel()
+						<-done
+					})
+				})
 			}
 		})
 

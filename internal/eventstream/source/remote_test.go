@@ -151,6 +151,18 @@ func TestRemote(t *testing.T) {
 		}
 	}
 
+	// expectInvalidSegment asserts that err is an [ErrInvalidSegment] with the
+	// given message.
+	expectInvalidSegment := func(t *testing.T, err error, want string) {
+		t.Helper()
+
+		expectError(t, err, want)
+
+		if !errors.Is(err, ErrInvalidSegment) {
+			t.Fatalf("unexpected error: got %v, want %v", err, ErrInvalidSegment)
+		}
+	}
+
 	// expectEnded asserts that the call made with the given context has ended.
 	expectEnded := func(t *testing.T, ctx context.Context) {
 		t.Helper()
@@ -451,7 +463,9 @@ func TestRemote(t *testing.T) {
 
 			_, err := watchUntilError(t, src, nil)
 
-			expectError(t, err, "unable to watch events: rpc error: code = Unimplemented desc = method WatchEvents not implemented")
+			if !errors.Is(err, errors.ErrUnsupported) {
+				t.Fatalf("unexpected error: got %v, want %v", err, errors.ErrUnsupported)
+			}
 		})
 
 		t.Run("it returns an error when a segment does not begin where the previous segment of its stream ended", func(t *testing.T) {
@@ -474,7 +488,7 @@ func TestRemote(t *testing.T) {
 
 			segments, err := watchUntilError(t, src, nil)
 
-			expectError(
+			expectInvalidSegment(
 				t,
 				err,
 				fmt.Sprintf(
@@ -503,7 +517,7 @@ func TestRemote(t *testing.T) {
 
 			_, err := watchUntilError(t, src, nil)
 
-			expectError(
+			expectInvalidSegment(
 				t,
 				err,
 				fmt.Sprintf(
@@ -701,7 +715,7 @@ func TestRemote(t *testing.T) {
 						_ *messaginggrpc.ReadEventsRequest,
 						_ ...grpc.CallOption,
 					) (messaginggrpc.EventStreamConsumerAPI_ReadEventsClient, error) {
-						return endedCall(ctx, messaginggrpc.UnrecognizedEventStreamError(streamA)), nil
+						return endedCall(ctx, status.Error(codes.Unavailable, "<unavailable>")), nil
 					},
 				},
 			}
@@ -712,10 +726,50 @@ func TestRemote(t *testing.T) {
 				t,
 				err,
 				fmt.Sprintf(
-					"unable to read event stream %s: rpc error: code = NotFound desc = unrecognized event stream",
+					"unable to read event stream %s: rpc error: code = Unavailable desc = <unavailable>",
 					streamA,
 				),
 			)
+		})
+
+		t.Run("it returns ErrUnrecognizedStream when the remote engine does not recognize the stream", func(t *testing.T) {
+			src := &Remote{
+				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
+					ReadEventsFunc: func(
+						ctx context.Context,
+						_ *messaginggrpc.ReadEventsRequest,
+						_ ...grpc.CallOption,
+					) (messaginggrpc.EventStreamConsumerAPI_ReadEventsClient, error) {
+						return endedCall(ctx, messaginggrpc.UnrecognizedEventStreamError(streamA)), nil
+					},
+				},
+			}
+
+			_, err := read(t, src, streamA, nil, 0)
+
+			if !errors.Is(err, ErrUnrecognizedStream) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrUnrecognizedStream)
+			}
+		})
+
+		t.Run("it returns ErrOffsetOutOfRange when the offset is beyond the end of the remote engine's stream", func(t *testing.T) {
+			src := &Remote{
+				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
+					ReadEventsFunc: func(
+						ctx context.Context,
+						_ *messaginggrpc.ReadEventsRequest,
+						_ ...grpc.CallOption,
+					) (messaginggrpc.EventStreamConsumerAPI_ReadEventsClient, error) {
+						return endedCall(ctx, status.Error(codes.OutOfRange, "<out of range>")), nil
+					},
+				},
+			}
+
+			_, err := read(t, src, streamA, nil, 5)
+
+			if !errors.Is(err, ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrOffsetOutOfRange)
+			}
 		})
 
 		t.Run("it returns an error when a segment is of another stream", func(t *testing.T) {
@@ -723,7 +777,7 @@ func TestRemote(t *testing.T) {
 
 			_, err := read(t, src, streamA, nil, 0)
 
-			expectError(
+			expectInvalidSegment(
 				t,
 				err,
 				fmt.Sprintf(
@@ -739,7 +793,7 @@ func TestRemote(t *testing.T) {
 
 			_, err := read(t, src, streamA, nil, 1)
 
-			expectError(
+			expectInvalidSegment(
 				t,
 				err,
 				fmt.Sprintf(
@@ -757,7 +811,7 @@ func TestRemote(t *testing.T) {
 
 			segments, err := read(t, src, streamA, nil, 0)
 
-			expectError(
+			expectInvalidSegment(
 				t,
 				err,
 				fmt.Sprintf(
@@ -932,7 +986,7 @@ func TestRemote(t *testing.T) {
 
 					segments, err := read(t, src, streamA, uuidcollection.NewSet(typeA), seg.GetBeginOffset())
 
-					expectError(t, err, want)
+					expectInvalidSegment(t, err, want)
 
 					if len(segments) != 0 {
 						t.Fatalf("unexpected number of segments: got %d, want 0", len(segments))

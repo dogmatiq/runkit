@@ -250,7 +250,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		server = &grpcserver.Server{
 			Address: e.listenAddress,
 			EventStreamConsumerAPI: &consumerapi.Server{
-				DB:           e.db,
 				EventStreams: localEventStreams,
 				Logger: e.logger.With(
 					slog.String("component", "eventstream.consumer-api"),
