@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -205,15 +206,18 @@ func (c *Cluster) start() *runkit.Engine {
 	return e
 }
 
-// converge waits for every running node to be ready and to see all of the
-// others.
+// converge waits for every running node to be ready and to see exactly the
+// other running nodes as its peers.
 func (c *Cluster) converge(t testing.TB) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
 	defer cancel()
 
-	peerCount := len(c.members) - 1
+	var (
+		nodes   []*cluster.Node
+		nodeIDs = uuidcollection.NewSet()
+	)
 
 	for e, m := range c.members {
 		select {
@@ -229,11 +233,19 @@ func (c *Cluster) converge(t testing.TB) {
 			t.Fatal("timeout waiting for nodes to join the cluster")
 		}
 
+		nodes = append(nodes, node)
+		nodeIDs.Add(node.ID)
+	}
+
+	for _, node := range nodes {
+		want := nodeIDs.Clone()
+		want.Delete(node.ID)
+
 		for {
 			membership, changed := node.Membership().Load()
 			peers := membership.Peers()
 
-			if peers.Len() == peerCount {
+			if want.IsEqual(peers) {
 				break
 			}
 
@@ -241,7 +253,7 @@ func (c *Cluster) converge(t testing.TB) {
 			case <-c.failed.Chan():
 				return
 			case <-ctx.Done():
-				t.Fatalf("timeout waiting for nodes to see each other: %d of %d peers", peers.Len(), peerCount)
+				t.Fatalf("timeout waiting for nodes to see each other: node %s sees peers %s, want %s", node.ID, peers, want)
 			case <-changed:
 			}
 		}
