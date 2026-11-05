@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dogmatiq/dogma"
@@ -339,4 +340,62 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 			},
 		),
 	)
+}
+
+// TestEventStream_consumptionIsRetriedWhenDecodingAnEventPanics verifies that
+// a panic while decoding an event, as a foreign application's version of an
+// event type can cause, fails consumption of the event's stream so that it is
+// retried, rather than crashing the engine.
+func TestEventStream_consumptionIsRetriedWhenDecodingAnEventPanics(t *testing.T) {
+	var attempts atomic.Int32
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.PopulateEventStreams(
+				t,
+				db,
+				func(*uuidpb.UUID, uint64) dogma.Event {
+					return &stubs.EventStub[panicsWhenDecoded]{}
+				},
+				1,
+			)
+
+			// Each attempt to consume the stream begins by loading the
+			// handler's checkpoint offset.
+			xtesting.WaitFor(
+				t,
+				"consumption of the stream to be retried",
+				func() bool {
+					return attempts.Load() >= 2
+				},
+			)
+		},
+		dogma.ViaProjection(
+			&stubs.ProjectionMessageHandlerStub{
+				ConfigureFunc: func(c dogma.ProjectionConfigurer) {
+					c.Identity("<handler>", "f2b6b4cd-8e5a-472a-bbf3-457a953fd5da")
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[panicsWhenDecoded]](),
+					)
+				},
+				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+					attempts.Add(1)
+					return 0, nil
+				},
+			},
+		),
+	)
+}
+
+// panicsWhenDecoded is the content of an event that panics when it is decoded.
+type panicsWhenDecoded struct{}
+
+func init() {
+	dogma.RegisterEvent[*stubs.EventStub[panicsWhenDecoded]]("3557f719-6910-4017-8944-6679973a2f9e")
+}
+
+// UnmarshalJSON panics.
+func (*panicsWhenDecoded) UnmarshalJSON([]byte) error {
+	panic("<decode panic>")
 }
