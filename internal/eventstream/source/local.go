@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -192,6 +193,12 @@ func (s *Local) watchStream(
 	types *uuidcollection.Set,
 	fn func(Segment) error,
 ) error {
+	// Signals are watched until ctx is canceled, and after a failure the
+	// supervisor calls watchStream again with the same ctx, so each call
+	// watches with its own.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	query := s.buildSegmentQuery(streamID, types)
 
 	var (
@@ -292,6 +299,10 @@ func (s *Local) buildSegmentQuery(
 		for id := range types.All() {
 			typeIDs = append(typeIDs, id.AsString())
 		}
+
+		// The IDs are sorted so that the same types always produce the same
+		// query, which is then prepared only once per connection.
+		slices.Sort(typeIDs)
 
 		filter = fmt.Sprintf(
 			"AND message_type_id IN ('%s')",

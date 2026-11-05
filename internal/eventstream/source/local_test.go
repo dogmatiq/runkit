@@ -563,5 +563,47 @@ func TestLocal(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+
+		t.Run("it uses one prepared statement for repeated reads of the same types", func(t *testing.T) {
+			db := xtesting.NewDatabase(t)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			// Every query runs on the same connection, so that the statements
+			// prepared on it can be counted.
+			db.SetMaxOpenConns(1)
+
+			src := &Local{
+				DB:          db,
+				Logger:      spruce.NewTestLogger(t),
+				SegmentSize: 10,
+			}
+
+			types := uuidcollection.NewSet(
+				uuidpb.Generate(),
+				uuidpb.Generate(),
+				uuidpb.Generate(),
+				uuidpb.Generate(),
+				uuidpb.Generate(),
+			)
+
+			for range 20 {
+				read(t, src, streamID, types, 0)
+			}
+
+			var n int
+			if err := db.QueryRowContext(
+				t.Context(),
+				`SELECT COUNT(*)
+				FROM pg_prepared_statements
+				WHERE statement LIKE '%FROM eventstream.events%'
+					AND statement NOT LIKE '%pg_prepared_statements%'`,
+			).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+
+			if n != 1 {
+				t.Fatalf("unexpected number of prepared statements: got %d, want 1", n)
+			}
+		})
 	})
 }
