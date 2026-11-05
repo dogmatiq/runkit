@@ -68,19 +68,39 @@ func TestServer_contemporaryEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
-			xtesting.ExecuteCommand(t, cluster, stubs.CommandB1)
-			xtesting.ExecuteCommand(t, cluster, stubs.CommandC1)
+			// Recording an event creates the stream, so that the watch is
+			// delivering it before the events under test are recorded.
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandB1)
 
-			messageTypeIDs := []*uuidpb.UUID{
+			client, ctx := newConsumerClient(t, cluster)
+			segments := watch(
+				t,
+				ctx,
+				client,
 				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
 				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]](),
+			)
+
+			if first := segments.receive(); first.GetBeginOffset() != 1 || first.GetEndOffset() != 1 {
+				t.Fatalf(
+					"unexpected first segment: got [%d, %d), want [1, 1)",
+					first.GetBeginOffset(),
+					first.GetEndOffset(),
+				)
 			}
+
+			xtesting.ExecuteCommandsSequentially(
+				t,
+				cluster,
+				db,
+				stubs.CommandA1,
+				stubs.CommandB1,
+				stubs.CommandC1,
+			)
 
 			expectEvents(
 				t,
-				cluster,
-				messageTypeIDs,
+				segments,
 				[]dogma.Event{stubs.EventA1},
 				[]dogma.Event{stubs.EventC1},
 			)
@@ -102,18 +122,27 @@ func TestServer_historicalEvents(t *testing.T) {
 				stubs.CommandC1,
 			)
 
-			messageTypeIDs := []*uuidpb.UUID{
-				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
-				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]](),
+			typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
+			typeC := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]]()
+
+			client, ctx := newConsumerClient(t, cluster)
+
+			// The watch begins after the events already on the stream, so they
+			// are read instead.
+			first := watch(t, ctx, client, typeA, typeC).receive()
+			streamID := first.GetEventStreamId()
+
+			if first.GetBeginOffset() != 3 || first.GetEndOffset() != 3 {
+				t.Fatalf(
+					"unexpected first segment: got [%d, %d), want [3, 3)",
+					first.GetBeginOffset(),
+					first.GetEndOffset(),
+				)
 			}
 
-			expectEvents(
-				t,
-				cluster,
-				messageTypeIDs,
-				[]dogma.Event{stubs.EventA1},
-				[]dogma.Event{stubs.EventC1},
-			)
+			segments := read(t, ctx, client, streamID, 0, typeA, typeC)
+			segments.ExpectSegment(streamID, 0, 3, stubs.EventA1, stubs.EventC1)
+			segments.ExpectEOF()
 		},
 		consumerAPIApp(),
 	)
@@ -122,7 +151,7 @@ func TestServer_historicalEvents(t *testing.T) {
 func TestServer_WatchEvents(t *testing.T) {
 	typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
 
-	t.Run("it begins each existing stream with the events already on it", func(t *testing.T) {
+	t.Run("it begins each existing stream at its end", func(t *testing.T) {
 		var streamID *uuidpb.UUID
 
 		xtesting.SetupThenRunEngines(
@@ -135,7 +164,7 @@ func TestServer_WatchEvents(t *testing.T) {
 				client, ctx := newConsumerClient(t, cluster)
 				segments := watch(t, ctx, client, typeA)
 
-				segments.ExpectSegment(streamID, 0, 2, stubs.EventA1, stubs.EventA2)
+				segments.ExpectSegment(streamID, 2, 2)
 			},
 			consumerAPIApp(),
 		)
@@ -238,12 +267,14 @@ func TestServer_WatchEvents(t *testing.T) {
 			t,
 			func(t testing.TB, db *sql.DB) {
 				streamID = xtesting.CreateEventStream(t, db)
-				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1, stubs.EventA1)
 			},
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				client, ctx := newConsumerClient(t, cluster)
 				segments := watch(t, ctx, client)
 
+				segments.ExpectSegment(streamID, 0, 0)
+
+				xtesting.AppendToEventStream(t, db, streamID, stubs.EventX1, stubs.EventA1)
 				segments.ExpectSegment(streamID, 0, 2, stubs.EventX1, stubs.EventA1)
 			},
 			consumerAPIApp(),
@@ -685,35 +716,17 @@ func eventsIn(t testing.TB, seg *messaginggrpc.EventStreamSegment) []dogma.Event
 	return events
 }
 
-// expectEvents watches the cluster's event streams for events of the given
-// types, and fails the test unless each of the given sequences of events is
-// received, in order.
-//
-// The streams must be shorter than the server's segment size, so that each is
-// watched from its beginning.
+// expectEvents fails the test unless each of the given sequences of events is
+// received from the given segments, in order.
 func expectEvents(
 	t testing.TB,
-	cluster *xtesting.Cluster,
-	messageTypeIDs []*uuidpb.UUID,
+	segments *segmentReceiver,
 	want ...[]dogma.Event,
 ) {
 	t.Helper()
 
-	client, ctx := newConsumerClient(t, cluster)
-	segments := watch(t, ctx, client, messageTypeIDs...)
-
-	var started uuidcollection.Set
-
 	for len(want) != 0 {
 		seg := segments.receive()
-
-		if !started.Has(seg.GetEventStreamId()) {
-			if seg.GetBeginOffset() != 0 {
-				t.Fatalf("stream %s is not watched from its beginning", seg.GetEventStreamId())
-			}
-
-			started.Add(seg.GetEventStreamId())
-		}
 
 	next:
 		for _, got := range eventsIn(t, seg) {

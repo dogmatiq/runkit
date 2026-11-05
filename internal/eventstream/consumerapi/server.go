@@ -39,9 +39,9 @@ type Server struct {
 // WatchEvents delivers events of the requested types as they are appended to
 // any of the application's event streams, until the client disconnects.
 //
-// Every stream is delivered, from shortly before its end. If a stream can no
-// longer be delivered contiguously, it returns an UNAVAILABLE error, after
-// which the client is expected to reconnect.
+// Every stream is delivered from its end. If a stream can no longer be
+// delivered contiguously, it returns an UNAVAILABLE error, after which the
+// client is expected to reconnect.
 func (s *Server) WatchEvents(
 	req *messaginggrpc.WatchEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],

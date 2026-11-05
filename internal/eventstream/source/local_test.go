@@ -152,33 +152,11 @@ func TestLocal(t *testing.T) {
 	}
 
 	t.Run("Watch", func(t *testing.T) {
-		t.Run("it delivers each stream from its most recent events", func(t *testing.T) {
-			src, db := setup(t, 2)
-			streamID := xtesting.CreateEventStream(t, db)
-
-			want := xtesting.AppendToEventStream(
-				t,
-				db,
-				streamID,
-				EventE1,
-				EventE2,
-				EventE3,
-				EventE1,
-				EventE2,
-			)
-
-			segments, _ := watch(t, src, nil)
-
-			// Delivery begins two events before the end of the stream.
-			expectEnvelopes(t, segments, streamID, 3, 5, want[3:]...)
-			expectNoSegment(t, segments)
-		})
-
-		t.Run("it delivers a stream from its beginning if it is shorter than the batch size", func(t *testing.T) {
+		t.Run("it delivers each stream from its end", func(t *testing.T) {
 			src, db := setup(t, 10)
 			streamID := xtesting.CreateEventStream(t, db)
 
-			want := xtesting.AppendToEventStream(
+			xtesting.AppendToEventStream(
 				t,
 				db,
 				streamID,
@@ -189,8 +167,16 @@ func TestLocal(t *testing.T) {
 
 			segments, _ := watch(t, src, nil)
 
-			expectEnvelopes(t, segments, streamID, 0, 3, want...)
-			expectNoSegment(t, segments)
+			expectEnvelopes(t, segments, streamID, 3, 3)
+
+			want := xtesting.AppendToEventStream(
+				t,
+				db,
+				streamID,
+				EventE1,
+			)
+
+			expectEnvelopes(t, segments, streamID, 3, 4, want...)
 		})
 
 		t.Run("it delivers events appended after it begins", func(t *testing.T) {

@@ -33,16 +33,14 @@ type Local struct {
 
 	// SegmentSize is the maximum number of events delivered in one segment,
 	// which is also the number of events read per query. It must be positive.
-	//
-	// Watch begins delivering each stream SegmentSize events before its end.
 	SegmentSize int
 }
 
 // Watch delivers events to fn as they are appended to the application's
 // streams.
 //
-// Each stream is delivered from SegmentSize events before its end, as it
-// stands when the stream is discovered.
+// Each stream is delivered from its end, as it stands when the stream is
+// discovered.
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
@@ -183,10 +181,9 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 // watchStream delivers segments of a stream to fn as events are appended to it.
 //
 // It returns when ctx is canceled or it is unable to continue. It holds no
-// state between calls; each call begins SegmentSize events before the end of
-// the stream at that time, so the first segment it delivers is not
-// necessarily contiguous with the last segment delivered by the previous
-// call.
+// state between calls; each call begins at the end of the stream at that time,
+// so the first segment it delivers is not necessarily contiguous with the last
+// segment delivered by the previous call.
 func (s *Local) watchStream(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -245,10 +242,8 @@ func (s *Local) watchStream(
 	return ctx.Err()
 }
 
-// loadWatchOffset returns the offset from which watching a stream begins.
-//
-// That is SegmentSize events before the end of the stream, or the beginning
-// of the stream if it is shorter than that.
+// loadWatchOffset returns the offset from which watching a stream begins,
+// which is the end of the stream.
 func (s *Local) loadWatchOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -270,11 +265,7 @@ func (s *Local) loadWatchOffset(
 		return 0, fmt.Errorf("unable to scan next stream offset: %w", err)
 	}
 
-	if next > uint64(s.SegmentSize) {
-		return next - uint64(s.SegmentSize), nil
-	}
-
-	return 0, nil
+	return next, nil
 }
 
 // buildSegmentQuery returns the SQL used to load a segment of a stream.
