@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,10 +25,9 @@ func TestLocal(t *testing.T) {
 		MessageTypeUUID[*EventStub[TypeE]](),
 	)
 
-	// newSource returns a local source over a new database, with the given
-	// segment and buffer sizes, and the database. It does not run the source.
-	newSource := func(t *testing.T, segmentSize, bufferSize int) (*Local, *sql.DB) {
-		db := xtesting.NewDatabase(t)
+	// newSource returns a local source over the given database, with the
+	// given segment and buffer sizes. It does not run the source.
+	newSource := func(t *testing.T, db *sql.DB, segmentSize, bufferSize int) *Local {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
@@ -44,13 +45,14 @@ func TestLocal(t *testing.T) {
 			BufferSize:  bufferSize,
 		}
 
-		return src, db
+		return src
 	}
 
 	// setup returns a running local source over a new database, with the given
 	// batch size, and the database.
 	setup := func(t *testing.T, batchSize int) (*Local, *sql.DB) {
-		src, db := newSource(t, batchSize, 100)
+		db := xtesting.NewDatabase(t)
+		src := newSource(t, db, batchSize, 100)
 		xtesting.GoE(t, src.Run)
 		return src, db
 	}
@@ -230,7 +232,8 @@ func TestLocal(t *testing.T) {
 
 	t.Run("Watch", func(t *testing.T) {
 		t.Run("it delivers each stream from its end", func(t *testing.T) {
-			src, db := newSource(t, 10, 100)
+			db := xtesting.NewDatabase(t)
+			src := newSource(t, db, 10, 100)
 			streamID := xtesting.CreateEventStream(t, db)
 
 			xtesting.AppendToEventStream(
@@ -461,7 +464,8 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it ends the call of a watcher that falls behind, after delivering the segments buffered for it", func(t *testing.T) {
-			src, db := newSource(t, 10, 1)
+			db := xtesting.NewDatabase(t)
+			src := newSource(t, db, 10, 1)
 			xtesting.GoE(t, src.Run)
 			streamID := xtesting.CreateEventStream(t, db)
 
@@ -490,7 +494,8 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it delivers a stream created while a watcher's buffer is full to that watcher's next call", func(t *testing.T) {
-			src, db := newSource(t, 10, 1)
+			db := xtesting.NewDatabase(t)
+			src := newSource(t, db, 10, 1)
 			xtesting.GoE(t, src.Run)
 			existing := xtesting.CreateEventStream(t, db)
 
@@ -565,7 +570,8 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it serves a call made before the source runs once it runs", func(t *testing.T) {
-			src, db := newSource(t, 10, 100)
+			db := xtesting.NewDatabase(t)
+			src := newSource(t, db, 10, 100)
 			streamID := xtesting.CreateEventStream(t, db)
 
 			segments, _ := watch(t, src, nil)
@@ -575,36 +581,50 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it keeps delivering every stream when discovering streams fails", func(t *testing.T) {
-			src, db := setup(t, 10)
+			var (
+				failing  atomic.Bool
+				failures atomic.Int32
+			)
+
+			// Discovery is the only query that reads the IDs of every stream.
+			db := xtesting.NewDatabaseWithFailingQueries(
+				t,
+				func(query string, _ []any) bool {
+					if !failing.Load() {
+						return false
+					}
+
+					if strings.Join(strings.Fields(query), " ") != "SELECT id FROM eventstream.streams" {
+						return false
+					}
+
+					failures.Add(1)
+					return true
+				},
+			)
+
+			src := newSource(t, db, 10, 100)
+			xtesting.GoE(t, src.Run)
 			streamID := xtesting.CreateEventStream(t, db)
 
 			// The watch fails the test if it returns an error.
 			segments, _ := watch(t, src, nil)
 			expectEnvelopes(t, segments, streamID, 0, 0)
 
-			// The stream's watcher queries nothing more after delivering a
-			// segment that reaches the end of the stream, until the next
-			// append, so it is idle while the table is hidden.
-			before := xtesting.AppendToEventStream(t, db, streamID, EventE1)
-			expectEnvelopes(t, segments, streamID, 0, 1, before...)
+			// Discovery reads the IDs of every stream when a stream is created.
+			failing.Store(true)
+			xtesting.CreateEventStream(t, db)
 
-			exec := func(query string) {
-				t.Helper()
+			xtesting.WaitFor(
+				t,
+				"discovery to fail",
+				func() bool {
+					return failures.Load() > 0
+				},
+			)
 
-				if _, err := db.ExecContext(t.Context(), query); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			// Discovery reads eventstream.streams when a stream is created, so
-			// hiding the table makes it fail.
-			exec(`ALTER TABLE eventstream.streams RENAME TO streams_hidden`)
-			exec(`SELECT pg_notify('signal', 'eventstream.create')`)
-			expectNoSegment(t, segments)
-			exec(`ALTER TABLE eventstream.streams_hidden RENAME TO streams`)
-
-			after := xtesting.AppendToEventStream(t, db, streamID, EventE2)
-			expectEnvelopes(t, segments, streamID, 1, 2, after...)
+			events := xtesting.AppendToEventStream(t, db, streamID, EventE1)
+			expectEnvelopes(t, segments, streamID, 0, 1, events...)
 		})
 
 		t.Run("it delivers an empty segment for an empty stream", func(t *testing.T) {

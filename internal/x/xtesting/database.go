@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // register the "pgx" driver with database/sql
-
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/schema"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -24,7 +24,31 @@ import (
 //
 // The database is removed when the test ends.
 func NewDatabase(t testing.TB) *sql.DB {
-	db := NewDatabaseWithoutSchema(t)
+	db := openDatabase(t, nil)
+
+	if err := schema.Create(t.Context(), db); err != nil {
+		t.Fatalf("unable to apply database schema: %s", err)
+	}
+
+	return db
+}
+
+// NewDatabaseWithFailingQueries returns a database pool like [NewDatabase],
+// except that each query for which the given function returns true fails
+// without being sent to the database.
+//
+// The function is called with the SQL and arguments of every query, including
+// those that apply the schema.
+func NewDatabaseWithFailingQueries(
+	t testing.TB,
+	fail func(query string, args []any) bool,
+) *sql.DB {
+	db := openDatabase(
+		t,
+		&queryFailer{
+			fail: fail,
+		},
+	)
 
 	if err := schema.Create(t.Context(), db); err != nil {
 		t.Fatalf("unable to apply database schema: %s", err)
@@ -39,6 +63,15 @@ func NewDatabase(t testing.TB) *sql.DB {
 // The database is removed when the test ends.
 func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	t.Helper()
+	return openDatabase(t, nil)
+}
+
+// openDatabase returns a database pool that connects to a new isolated test
+// database, and reports each query to the given tracer, if it is not nil.
+//
+// The database is removed when the test ends.
+func openDatabase(t testing.TB, tracer pgx.QueryTracer) *sql.DB {
+	t.Helper()
 
 	container := getContainer(t)
 
@@ -50,11 +83,14 @@ func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	dbName := createTestDatabase(t, mainDSN)
 	testDSN := replaceDatabaseNameInDSN(t, mainDSN, dbName)
 
-	db, err := sql.Open("pgx", testDSN)
+	config, err := pgx.ParseConfig(testDSN)
 	if err != nil {
-		t.Fatalf("unable to open PostgreSQL connection pool: %s", err)
+		t.Fatalf("unable to parse PostgreSQL connection string: %s", err)
 	}
 
+	config.Tracer = tracer
+
+	db := stdlib.OpenDB(*config)
 	db.SetMaxOpenConns(100)
 
 	t.Cleanup(func() {
@@ -62,6 +98,36 @@ func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	})
 
 	return db
+}
+
+// queryFailer is a [pgx.QueryTracer] that fails each query for which its fail
+// function returns true.
+type queryFailer struct {
+	fail func(query string, args []any) bool
+}
+
+func (f *queryFailer) TraceQueryStart(
+	ctx context.Context,
+	conn *pgx.Conn,
+	data pgx.TraceQueryStartData,
+) context.Context {
+	if !f.fail(data.SQL, data.Args) {
+		return ctx
+	}
+
+	// pgx runs the query with the returned context, so a canceled context
+	// fails it before it is sent.
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	return ctx
+}
+
+func (f *queryFailer) TraceQueryEnd(
+	ctx context.Context,
+	conn *pgx.Conn,
+	data pgx.TraceQueryEndData,
+) {
 }
 
 // replaceDatabaseNameInDSN replaces the database name in the given PostgreSQL
