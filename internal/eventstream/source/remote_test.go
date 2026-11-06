@@ -267,7 +267,7 @@ func TestRemote(t *testing.T) {
 
 			req := receive(t, "request", requests)
 
-			if got := uuidcollection.NewSet(req.GetMessageTypeIds()...); !got.IsEqual(want) {
+			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(want) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, want)
 			}
 		})
@@ -292,8 +292,8 @@ func TestRemote(t *testing.T) {
 
 			req := receive(t, "request", requests)
 
-			if got := req.GetMessageTypeIds(); len(got) != 0 {
-				t.Fatalf("unexpected message types: got %s, want none", got)
+			if req.GetFilter().GetAll() == nil {
+				t.Fatalf("unexpected filter: got %v, want every type", req.GetFilter())
 			}
 		})
 
@@ -454,6 +454,46 @@ func TestRemote(t *testing.T) {
 			_, err := watchUntilError(t, src, nil)
 
 			expectError(t, err, "unable to watch events: rpc error: code = Unavailable desc = <unavailable>")
+		})
+
+		t.Run("it returns ErrConsumerTooSlow when the remote engine aborts the call", func(t *testing.T) {
+			src := &Remote{
+				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
+					WatchEventsFunc: func(
+						ctx context.Context,
+						_ *messaginggrpc.WatchEventsRequest,
+						_ ...grpc.CallOption,
+					) (messaginggrpc.EventStreamConsumerAPI_WatchEventsClient, error) {
+						return endedCall(ctx, status.Error(codes.Aborted, "<too slow>")), nil
+					},
+				},
+			}
+
+			_, err := watchUntilError(t, src, nil)
+
+			if !errors.Is(err, ErrConsumerTooSlow) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			}
+		})
+
+		t.Run("it returns an ordinary error when a message is too large to receive", func(t *testing.T) {
+			src := &Remote{
+				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
+					WatchEventsFunc: func(
+						ctx context.Context,
+						_ *messaginggrpc.WatchEventsRequest,
+						_ ...grpc.CallOption,
+					) (messaginggrpc.EventStreamConsumerAPI_WatchEventsClient, error) {
+						return endedCall(ctx, status.Error(codes.ResourceExhausted, "<message too large>")), nil
+					},
+				},
+			}
+
+			_, err := watchUntilError(t, src, nil)
+
+			if err == nil || errors.Is(err, ErrConsumerTooSlow) {
+				t.Fatalf("unexpected error: got %v, want an error other than %v", err, ErrConsumerTooSlow)
+			}
 		})
 
 		t.Run("it returns an error when the remote engine does not offer event streams", func(t *testing.T) {
@@ -623,7 +663,7 @@ func TestRemote(t *testing.T) {
 				t.Fatalf("unexpected begin offset: got %d, want 3", got)
 			}
 
-			if got := uuidcollection.NewSet(req.GetMessageTypeIds()...); !got.IsEqual(types) {
+			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(types) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, types)
 			}
 		})
@@ -648,8 +688,8 @@ func TestRemote(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := req.GetMessageTypeIds(); len(got) != 0 {
-				t.Fatalf("unexpected message types: got %s, want none", got)
+			if req.GetFilter().GetAll() == nil {
+				t.Fatalf("unexpected filter: got %v, want every type", req.GetFilter())
 			}
 		})
 
@@ -740,7 +780,7 @@ func TestRemote(t *testing.T) {
 						_ *messaginggrpc.ReadEventsRequest,
 						_ ...grpc.CallOption,
 					) (messaginggrpc.EventStreamConsumerAPI_ReadEventsClient, error) {
-						return endedCall(ctx, messaginggrpc.UnrecognizedEventStreamError(streamA)), nil
+						return endedCall(ctx, status.Error(codes.NotFound, "<not found>")), nil
 					},
 				},
 			}

@@ -156,7 +156,7 @@ func TestConnector(t *testing.T) {
 		case <-time.After(xtesting.WaitTimeout):
 			t.Fatal("timeout waiting for the remote engine to be watched")
 		case req := <-engine.Requests:
-			if got := uuidcollection.NewSet(req.GetMessageTypeIds()...); !got.IsEqual(typesA) {
+			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(typesA) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, typesA)
 			}
 		}

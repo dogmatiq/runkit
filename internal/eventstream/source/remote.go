@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Remote is a [Source] of the event streams of an application hosted by a
@@ -22,7 +23,8 @@ import (
 // Each segment that the remote engine sends is checked before it is
 // delivered. If a segment is malformed, holds events of types that were not
 // requested, or does not begin where the previous segment of its stream ended,
-// [Remote.Watch] or [Remote.Read] returns an error instead of delivering it.
+// [Remote.Watch] or [Remote.Read] returns an error that wraps
+// [ErrInvalidSegment] instead of delivering it.
 type Remote struct {
 	// Client is the client used to call the remote engine's event stream
 	// consumer API.
@@ -48,7 +50,7 @@ func (s *Remote) Watch(
 	segments, err := s.Client.WatchEvents(
 		ctx,
 		messaginggrpc.NewWatchEventsRequestBuilder().
-			WithMessageTypeIds(slices.Collect(types.All())).
+			WithFilter(messageFilter(types)).
 			Build(),
 	)
 	if err != nil {
@@ -102,7 +104,7 @@ func (s *Remote) Read(
 		messaginggrpc.NewReadEventsRequestBuilder().
 			WithEventStreamId(streamID).
 			WithBeginOffset(begin).
-			WithMessageTypeIds(slices.Collect(types.All())).
+			WithFilter(messageFilter(types)).
 			Build(),
 	)
 	if err != nil {
@@ -169,11 +171,32 @@ func watchError(ctx context.Context, err error) error {
 		return errors.New("remote engine stopped watching events")
 	}
 
-	if status.Code(err) == codes.Unimplemented {
+	switch status.Code(err) {
+	case codes.Aborted:
+		return fmt.Errorf("unable to watch events: %w (%w)", err, ErrConsumerTooSlow)
+	case codes.Unimplemented:
 		return fmt.Errorf("unable to watch events: %w (%w)", err, errors.ErrUnsupported)
 	}
 
 	return fmt.Errorf("unable to watch events: %w", err)
+}
+
+// messageFilter returns the filter that matches events of the given types, or
+// of every type if types is nil.
+func messageFilter(types *uuidcollection.Set) *messaginggrpc.MessageFilter {
+	if types == nil {
+		return messaginggrpc.NewMessageFilterBuilder().
+			WithAll(&emptypb.Empty{}).
+			Build()
+	}
+
+	return messaginggrpc.NewMessageFilterBuilder().
+		WithSpecific(
+			messaginggrpc.NewMessageFilter_MessageTypesBuilder().
+				WithIds(slices.Collect(types.All())).
+				Build(),
+		).
+		Build()
 }
 
 // readError returns the error that [Remote.Read] returns when its call to the

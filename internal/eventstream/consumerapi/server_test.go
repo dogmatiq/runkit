@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // consumerAPIApp returns the handler route used by the server tests. The
@@ -101,6 +102,76 @@ func TestServer_contemporaryEvents(t *testing.T) {
 			)
 		},
 		consumerAPIApp(),
+	)
+}
+
+func TestServer_eventsRecordedTogetherShareAHeader(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			// Recording an event creates the stream, so that the watch is
+			// delivering it before the events under test are recorded.
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandB1)
+
+			client, ctx := newConsumerClient(t, cluster)
+			segments := watch(t, ctx, client, stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]())
+
+			// The stream's opening segment shows that the watch has begun.
+			segments.receive()
+
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
+
+			for {
+				seg := segments.receive()
+
+				if len(seg.GetEnvelopes()) == 0 {
+					continue
+				}
+
+				if n := len(seg.GetEnvelopes()); n != 1 {
+					t.Fatalf("unexpected number of multi-envelopes: got %d, want 1", n)
+				}
+
+				xtesting.Expect(
+					t,
+					"events",
+					eventsIn(t, seg),
+					[]dogma.Event{stubs.EventA1, stubs.EventA2},
+				)
+
+				return
+			}
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "e32bfa75-a4c7-4868-a3b6-271ad55877de")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeB]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					m dogma.Command,
+				) error {
+					switch m.(type) {
+					case *stubs.CommandStub[stubs.TypeA]:
+						s.RecordEvent(stubs.EventA1)
+						s.RecordEvent(stubs.EventA2)
+					case *stubs.CommandStub[stubs.TypeB]:
+						s.RecordEvent(stubs.EventB1)
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+
+					return nil
+				},
+			},
+		),
 	)
 }
 
@@ -267,6 +338,33 @@ func TestServer_WatchEvents(t *testing.T) {
 		)
 	})
 
+	t.Run("it returns INVALID_ARGUMENT for a request without a filter", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
+
+				responses, err := client.WatchEvents(
+					ctx,
+					messaginggrpc.NewWatchEventsRequestBuilder().Build(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				segments := &segmentReceiver{
+					T:         t,
+					Responses: responses,
+				}
+
+				if err := segments.ExpectError(); status.Code(err) != codes.InvalidArgument {
+					t.Fatalf("unexpected error: got %v, want INVALID_ARGUMENT", err)
+				}
+			},
+			consumerAPIApp(),
+		)
+	})
+
 	t.Run("it ends the call of a client that falls behind", func(t *testing.T) {
 		const eventCount = 1000
 
@@ -297,11 +395,11 @@ func TestServer_WatchEvents(t *testing.T) {
 				}
 
 				// The client receives what was buffered for it, and then the
-				// call ends with an error.
+				// call ends with ABORTED.
 				for {
 					if _, err := segments.Responses.Recv(); err != nil {
-						if errors.Is(err, io.EOF) {
-							t.Fatal("expected the call to end with an error, but the server closed it")
+						if status.Code(err) != codes.Aborted {
+							t.Fatalf("unexpected error: got %v, want ABORTED", err)
 						}
 						return
 					}
@@ -325,21 +423,38 @@ func TestServer_ReadEvents(t *testing.T) {
 
 				segments := read(t, ctx, client, streamID, 0, typeA)
 
-				err := segments.ExpectError()
-				if status.Code(err) != codes.NotFound {
+				if err := segments.ExpectError(); status.Code(err) != codes.NotFound {
 					t.Fatalf("unexpected error: got %v, want NOT_FOUND", err)
 				}
+			},
+			consumerAPIApp(),
+		)
+	})
 
-				for _, detail := range status.Convert(err).Details() {
-					if d, ok := detail.(*messaginggrpc.UnrecognizedEventStream); ok {
-						if !d.GetEventStreamId().Equal(streamID) {
-							t.Fatalf("unexpected stream ID in error details: got %s, want %s", d.GetEventStreamId(), streamID)
-						}
-						return
-					}
+	t.Run("it returns INVALID_ARGUMENT for a request without a filter", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
+
+				responses, err := client.ReadEvents(
+					ctx,
+					messaginggrpc.NewReadEventsRequestBuilder().
+						WithEventStreamId(uuidpb.Generate()).
+						Build(),
+				)
+				if err != nil {
+					t.Fatal(err)
 				}
 
-				t.Fatal("expected error details to contain an UnrecognizedEventStream")
+				segments := &segmentReceiver{
+					T:         t,
+					Responses: responses,
+				}
+
+				if err := segments.ExpectError(); status.Code(err) != codes.InvalidArgument {
+					t.Fatalf("unexpected error: got %v, want INVALID_ARGUMENT", err)
+				}
 			},
 			consumerAPIApp(),
 		)
@@ -492,7 +607,7 @@ func watch(
 	responses, err := client.WatchEvents(
 		ctx,
 		messaginggrpc.NewWatchEventsRequestBuilder().
-			WithMessageTypeIds(messageTypeIDs).
+			WithFilter(filterOf(messageTypeIDs)).
 			Build(),
 	)
 	if err != nil {
@@ -503,6 +618,24 @@ func watch(
 		T:         t,
 		Responses: responses,
 	}
+}
+
+// filterOf returns a filter that matches the given message types, or every
+// type if none are given.
+func filterOf(messageTypeIDs []*uuidpb.UUID) *messaginggrpc.MessageFilter {
+	if len(messageTypeIDs) == 0 {
+		return messaginggrpc.NewMessageFilterBuilder().
+			WithAll(&emptypb.Empty{}).
+			Build()
+	}
+
+	return messaginggrpc.NewMessageFilterBuilder().
+		WithSpecific(
+			messaginggrpc.NewMessageFilter_MessageTypesBuilder().
+				WithIds(messageTypeIDs).
+				Build(),
+		).
+		Build()
 }
 
 // read begins reading events of the given types from the given stream.
@@ -521,7 +654,7 @@ func read(
 		messaginggrpc.NewReadEventsRequestBuilder().
 			WithEventStreamId(streamID).
 			WithBeginOffset(begin).
-			WithMessageTypeIds(messageTypeIDs).
+			WithFilter(filterOf(messageTypeIDs)).
 			Build(),
 	)
 	if err != nil {

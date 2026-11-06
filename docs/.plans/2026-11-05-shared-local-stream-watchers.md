@@ -213,7 +213,7 @@ Every step is green under `make test` unless marked otherwise.
       is full; `fn`'s error ending only its own call; `Watch` called before
       `Run`; a failed discovery query leaving every call running; and failing
       to follow a stream ending every call with an error.
-- [ ] **Step 5.** Take protobuf v0.7.0. `source.Remote` builds the filter from
+- [x] **Step 5.** Take protobuf v0.7.0. `source.Remote` builds the filter from
       the types, and turns `ABORTED` from `WatchEvents` into an error that
       wraps `ErrConsumerTooSlow`. The server validates the filter, returning
       `INVALID_ARGUMENT` for an invalid one, and turns it into types. It
