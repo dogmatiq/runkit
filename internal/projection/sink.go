@@ -9,7 +9,6 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -46,8 +45,9 @@ func (sc *sink) CheckpointOffset(
 		},
 	)
 	if err != nil {
-		return 0, supervisor.Persistentf(
-			"unable to load checkpoint offset: %w",
+		return 0, fmt.Errorf(
+			"%w: unable to load checkpoint offset: %w",
+			eventstream.ErrPersistentFailure,
 			err,
 		)
 	}
@@ -107,8 +107,9 @@ func (sc *sink) dispatch(
 ) (uint64, error) {
 	var event dogma.Event
 	if err := xmessage.UnpackMessage(env, &event); err != nil {
-		return 0, supervisor.Persistentf(
-			"unable to unmarshal event at offset %d: %w",
+		return 0, fmt.Errorf(
+			"%w: unable to unmarshal event at offset %d: %w",
+			eventstream.ErrPersistentFailure,
 			offset,
 			err,
 		)
@@ -141,8 +142,9 @@ func (sc *sink) dispatch(
 		},
 	)
 	if err != nil {
-		return 0, supervisor.Persistentf(
-			"unable to handle event at offset %d: %w",
+		return 0, fmt.Errorf(
+			"%w: unable to handle event at offset %d: %w",
+			eventstream.ErrPersistentFailure,
 			offset,
 			err,
 		)

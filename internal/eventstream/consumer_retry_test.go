@@ -1,4 +1,4 @@
-package eventstream
+package eventstream_test
 
 import (
 	"context"
@@ -9,16 +9,20 @@ import (
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster"
+	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
-	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
-	"golang.org/x/sync/errgroup"
 )
 
 // TestConsumer_partialSuccessReloadsDurableCheckpoint verifies that a failed
 // segment is retried from the sink's stored checkpoint rather than the beginning
 // of the segment or the offset returned with the error.
 func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
+	node := newConsumerNode(t)
+
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
@@ -86,7 +90,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 				// Earlier event transactions committed before the later failure.
 				durable = 4
 
-				return 4, errors.New("later event failed")
+				return 0, errors.New("later event failed")
 			}
 
 			if cp != 4 || seg.Begin != 4 {
@@ -107,8 +111,14 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 		Logger:       logger,
 	}
 
-	c.group, ctx = errgroup.WithContext(ctx)
-	c.startStreamConsumer(ctx, id)
+	c.Node = node
+	c.Workload = func(id *uuidpb.UUID) *uuidpb.UUID {
+		return id
+	}
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- c.Run(ctx)
+	}()
 
 	select {
 	case <-done:
@@ -117,7 +127,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 	}
 
 	cancel()
-	if err := c.group.Wait(); err != nil {
+	if err := <-stopped; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 
@@ -136,7 +146,7 @@ func TestConsumer_fatalSinkErrorPropagates(t *testing.T) {
 	defer cancel()
 
 	cause := errors.New("stop")
-	fatal := supervisor.Fatal(cause)
+	fatal := errors.Join(ErrFatalFailure, cause)
 
 	c := &Consumer{
 		Logger: spruce.NewTestLogger(t),
@@ -147,10 +157,25 @@ func TestConsumer_fatalSinkErrorPropagates(t *testing.T) {
 		},
 	}
 
-	c.group, ctx = errgroup.WithContext(ctx)
-	c.startStreamConsumer(ctx, uuidpb.Generate())
+	c.Node = newConsumerNode(t)
+	c.Workload = func(id *uuidpb.UUID) *uuidpb.UUID {
+		return id
+	}
+	c.EventTypeIDs = uuidcollection.NewSet(uuidpb.Generate())
+	c.EventStreams = &Catalog{
+		CacheSize: 10,
+		Logger:    spruce.NewTestLogger(t),
+	}
+	src := &source.Memory{}
+	src.Append(Segment{
+		StreamID: uuidpb.Generate(),
+		End:      1,
+	})
+	xtesting.GoE(t, func(ctx context.Context) error {
+		return c.EventStreams.Watch(ctx, src, nil)
+	})
 
-	if err := c.group.Wait(); !errors.Is(err, cause) {
+	if err := c.Run(ctx); !errors.Is(err, cause) {
 		t.Fatalf("got %v, want %v", err, fatal)
 	}
 }
@@ -174,4 +199,26 @@ func (s *recordingSink) ConsumeSegment(
 	seg Segment,
 ) (uint64, error) {
 	return s.consume(ctx, cp, seg)
+}
+
+// newConsumerNode starts a single-node cluster for the consumer tests.
+func newConsumerNode(t *testing.T) *cluster.Node {
+	t.Helper()
+
+	logger := spruce.NewTestLogger(t)
+	signals := &signal.Bus{
+		DB:     xtesting.NewDatabase(t),
+		Logger: logger,
+	}
+	xtesting.GoE(t, signals.Run)
+	node := &cluster.Node{
+		ID:       uuidpb.Generate(),
+		Signals:  signals,
+		Interval: 20 * time.Millisecond,
+		Timeout:  100 * time.Millisecond,
+		Logger:   logger,
+	}
+	xtesting.GoE(t, node.Run)
+
+	return node
 }

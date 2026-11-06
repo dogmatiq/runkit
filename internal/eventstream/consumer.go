@@ -144,7 +144,7 @@ func (c *Consumer) startStreamConsumer(
 			func(ctx context.Context) error {
 				checkpoint, err := c.Sink.CheckpointOffset(ctx, streamID)
 				if err != nil {
-					return err
+					return classifySinkError(err)
 				}
 
 				return c.EventStreams.Consume(
@@ -155,7 +155,7 @@ func (c *Consumer) startStreamConsumer(
 					func(seg Segment) error {
 						checkpoint, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
 
-						return err
+						return classifySinkError(err)
 					},
 				)
 			},
@@ -174,4 +174,16 @@ func (c *Consumer) startStreamConsumer(
 		cancel()
 		stopped.Wait()
 	})
+}
+
+// classifySinkError translates sink failures into the consumer's retry policy.
+func classifySinkError(err error) error {
+	switch {
+	case errors.Is(err, ErrFatalFailure):
+		return supervisor.Fatal(err)
+	case errors.Is(err, ErrPersistentFailure):
+		return supervisor.Persistent(err)
+	default:
+		return err
+	}
 }

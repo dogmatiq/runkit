@@ -2,6 +2,7 @@ package eventstream
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dogmatiq/protobuf/uuidpb"
 )
@@ -16,9 +17,9 @@ import (
 // updates with the effects of handling events so that concurrent consumption
 // does not apply an event more than once.
 //
-// Errors are returned to [github.com/dogmatiq/runkit/internal/supervisor.Run], which decides whether and when to
-// retry consumption. The sink may use [github.com/dogmatiq/runkit/internal/supervisor.Persistent] or
-// [github.com/dogmatiq/runkit/internal/supervisor.Fatal] to classify errors.
+// A sink may wrap [ErrPersistentFailure] for failures that need an external
+// change before retrying is likely to succeed, or [ErrFatalFailure] when
+// consumption must stop. Other errors are retried after a shorter delay.
 type Sink interface {
 	// CheckpointOffset returns the offset from which consumption of the stream
 	// with the given ID resumes. It returns zero for a stream that has not
@@ -53,3 +54,14 @@ type Sink interface {
 		segment Segment,
 	) (uint64, error)
 }
+
+var (
+	// ErrPersistentFailure indicates that consumption failed because of a
+	// condition that is unlikely to change soon, such as invalid event data.
+	// The consumer retries these failures with a longer backoff.
+	ErrPersistentFailure = errors.New("persistent consumption failure")
+
+	// ErrFatalFailure indicates that consumption cannot continue. The consumer
+	// stops consuming all of its streams and returns the error.
+	ErrFatalFailure = errors.New("fatal consumption failure")
+)
