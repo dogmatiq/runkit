@@ -231,7 +231,7 @@ Every step is green under `make test` unless marked otherwise.
       `consumerapi` package goes. The engine still gives it only the local
       source, so the server never relays a remote engine's streams. A move
       only, with no change in behavior.
-- [ ] **Step 7.** CHANGELOG check. Comment on runkit#74, #75 and #76 with what
+- [x] **Step 7.** CHANGELOG check. Comment on runkit#74, #75 and #76 with what
       this changed, and close #76. `make precommit` green.
 
 ---
