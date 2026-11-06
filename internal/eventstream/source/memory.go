@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 )
@@ -19,7 +19,7 @@ type Memory struct {
 
 	m       sync.Mutex
 	streams uuidcollection.Map[*memoryStream]
-	changed xsync.Observable[struct{}]
+	changed cosyne.Observable[struct{}]
 }
 
 // memoryStream is a stream held by a [Memory] source.

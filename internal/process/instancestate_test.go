@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -17,7 +17,7 @@ import (
 // process instance state is not persisted if the [dogma.ProcessScope].Mutate()
 // method is not called.
 func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -84,7 +84,7 @@ func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 // TestInstanceState_stateIsPersisted verifies that the process instance state
 // is correctly persisted across multiple events that target that instance.
 func TestInstanceState_stateIsPersisted(t *testing.T) {
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -160,8 +160,8 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 // instance is not affected by events handled by another instance.
 func TestInstanceState_instancesAreIsolated(t *testing.T) {
 	var (
-		instanceAChecked xsync.Latch
-		instanceBChecked xsync.Latch
+		instanceAChecked cosyne.Latch
+		instanceBChecked cosyne.Latch
 	)
 
 	xtesting.RunEngines(

@@ -11,13 +11,13 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/application"
@@ -109,10 +109,10 @@ type Engine struct {
 	// ready is a latch that is set when the engine is ready to accept commands
 	// for execution. It is used to block ExecuteCommand() from proceeding until
 	// the engine is ready.
-	ready xsync.Latch
+	ready cosyne.Latch
 
 	// stopped is a latch that is set when Run() returns.
-	stopped xsync.Latch
+	stopped cosyne.Latch
 
 	// listenAddr is the address the engine is listening on for gRPC requests
 	// from other engines. If the engine listens for gRPC requests, it is

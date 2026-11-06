@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"google.golang.org/grpc"
@@ -31,7 +31,7 @@ type Server struct {
 	// Listen opens a listener. If it is nil, [net.Listen] is used.
 	Listen func(network, address string) (net.Listener, error)
 
-	addr xsync.Future[net.Addr]
+	addr cosyne.Future[net.Addr]
 }
 
 // ListenAddr returns the address that the server is listening on, blocking

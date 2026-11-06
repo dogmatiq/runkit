@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -199,7 +199,7 @@ type deliveringSource struct {
 	Source *source.Memory
 
 	// Delivered is set once a segment delivered by Watch has been handled.
-	Delivered xsync.Latch
+	Delivered cosyne.Latch
 }
 
 func (s *deliveringSource) Watch(

@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -22,7 +22,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 	const eventCount = 5
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		handlerMutex     sync.Mutex
 		checkpointOffset uint64
 	)
@@ -106,7 +106,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 	)
 
 	var (
-		done        xsync.Latch
+		done        cosyne.Latch
 		checkpoints checkpointStore
 		failed      bool
 		handled     []uint64
@@ -187,7 +187,7 @@ func TestEventStream_checkpointOffsetIsUnchangedBySkippedEvents(t *testing.T) {
 	}
 
 	var (
-		done        xsync.Latch
+		done        cosyne.Latch
 		checkpoints checkpointStore
 		m           sync.Mutex
 		deliveries  []delivery
@@ -281,7 +281,7 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 	const eventCount = 4
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		m                sync.Mutex
 		checkpointOffset uint64 = 2
 	)

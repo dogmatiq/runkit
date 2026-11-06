@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -23,7 +23,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 	const eventCount = 5
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		handlerMutex     sync.Mutex
 		checkpointOffset uint64
 	)
@@ -101,7 +101,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 	const eventCount = 5
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		handlerMutex     sync.Mutex
 		seen             = map[stubs.TypeA]struct{}{}
 		checkpointOffset uint64
@@ -268,7 +268,7 @@ func TestEventStream_failureCounterIsResetOnSuccess(t *testing.T) {
 	const handlerKey = "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
 
 	var (
-		done      xsync.Latch
+		done      cosyne.Latch
 		hasFailed atomic.Bool
 	)
 

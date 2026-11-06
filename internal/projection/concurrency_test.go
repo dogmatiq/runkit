@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -75,7 +75,7 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 		concurrent  atomic.Int32
 		checkpoints checkpointStore
 		handled     atomic.Int32
-		done        xsync.Latch
+		done        cosyne.Latch
 	)
 
 	xtesting.RunEngines(

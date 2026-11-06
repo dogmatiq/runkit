@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -70,7 +70,7 @@ func (c *Connector) discover(ctx context.Context) error {
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
-		var stopped xsync.Latch
+		var stopped cosyne.Latch
 
 		// The catalog watches the source until ctx is canceled, retrying it
 		// whenever it fails, so it has no other error to report.

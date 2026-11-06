@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -46,7 +46,7 @@ type Node struct {
 	// Logger is the target for log messages produced by the node.
 	Logger *slog.Logger
 
-	membership xsync.Observable[*Membership]
+	membership cosyne.Observable[*Membership]
 	heartbeats uuidcollection.Map[time.Time]
 }
 
@@ -55,7 +55,7 @@ type Node struct {
 //
 // The membership is nil until this node first hears a heartbeat, and has no
 // live nodes once this node has stopped.
-func (n *Node) Membership() xsync.ObservableR[*Membership] {
+func (n *Node) Membership() cosyne.ObservableR[*Membership] {
 	return &n.membership
 }
 
