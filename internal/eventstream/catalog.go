@@ -66,7 +66,9 @@ func (c *Catalog) StreamIDs() xsync.ObservableR[*uuidcollection.Set] {
 //
 // A consumer that keeps up with the stream is served from a cache of its most
 // recent events, and one that falls behind is served by reading from the
-// source until it catches up again.
+// source until it catches up again. It returns an error that wraps
+// [source.ErrOffsetOutOfRange] if the offset is beyond the end of the
+// source's stream.
 //
 // types must not be empty, and every type must be one that [Catalog.Watch]
 // was given for the stream's source.
@@ -277,6 +279,7 @@ func (c *Catalog) remove(f *feed) {
 		cs.CurrentFeed.Store(next)
 
 		if next == nil {
+			c.streams.Delete(f.ID)
 			c.publish(f.ID, false)
 		}
 	}

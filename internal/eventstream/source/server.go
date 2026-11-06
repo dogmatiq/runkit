@@ -60,6 +60,10 @@ func (s *Server) ReadEvents(
 	req *messaginggrpc.ReadEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
 ) error {
+	if err := req.GetEventStreamId().Validate(); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid event stream ID: %s", err)
+	}
+
 	types, err := requestedTypes(req.GetFilter())
 	if err != nil {
 		return err

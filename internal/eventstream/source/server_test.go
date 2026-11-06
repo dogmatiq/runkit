@@ -460,6 +460,46 @@ func TestServer_ReadEvents(t *testing.T) {
 		)
 	})
 
+	t.Run("it returns INVALID_ARGUMENT for a request without a valid stream ID", func(t *testing.T) {
+		cases := []struct {
+			Name     string
+			StreamID *uuidpb.UUID
+		}{
+			{
+				Name:     "missing",
+				StreamID: nil,
+			},
+			{
+				Name:     "not version 4 or 5",
+				StreamID: uuidpb.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.Name, func(t *testing.T) {
+				xtesting.RunEngines(
+					t,
+					func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+						client, ctx := newConsumerClient(t, cluster)
+						segments := read(
+							t,
+							ctx,
+							client,
+							tc.StreamID,
+							0,
+							stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+						)
+
+						if err := segments.ExpectError(); status.Code(err) != codes.InvalidArgument {
+							t.Fatalf("unexpected error: got %v, want INVALID_ARGUMENT", err)
+						}
+					},
+					consumerAPIApp(),
+				)
+			})
+		}
+	})
+
 	t.Run("it returns OUT_OF_RANGE when the begin offset is beyond the end of the stream", func(t *testing.T) {
 		var streamID *uuidpb.UUID
 

@@ -60,8 +60,8 @@ var (
 	// errFeedClosed is returned by [feed.consume] when the feed is closed.
 	errFeedClosed = errors.New("feed closed")
 
-	// errCaughtUp stops a read from the source once the consumer's checkpoint is
-	// within the cached segment.
+	// errCaughtUp stops a read from the source once the consumer's checkpoint
+	// reaches the cached segment.
 	errCaughtUp = errors.New("caught up")
 )
 
@@ -116,6 +116,11 @@ func (f *feed) Wait() {
 //
 // It returns the offset at which delivery stopped, which is the end of the
 // last segment that fn accepted.
+//
+// If the given offset is beyond the end of the cached segment, it reads from
+// the source before waiting, in case the cache is behind the source. It returns
+// an error that wraps [source.ErrOffsetOutOfRange] if the offset is beyond the
+// end of the source's stream.
 func (f *feed) consume(
 	ctx context.Context,
 	types *uuidcollection.Set,
@@ -123,6 +128,12 @@ func (f *feed) consume(
 	fn func(Segment) error,
 ) (uint64, error) {
 	cp := begin
+
+	// confirmed is true once cp is known to be within the source's stream. It
+	// becomes true when anything is delivered, or when a read from cp
+	// succeeds. A stream never gets shorter, so it remains true even if the
+	// cached segment later ends before cp.
+	confirmed := false
 
 	for {
 		seg, changed := f.cache.Segment().Load()
@@ -141,8 +152,10 @@ func (f *feed) consume(
 			}
 
 			cp = seg.End
+			confirmed = true
 
 		case cache.Before:
+			from := cp
 			var err error
 
 			cp, err = f.read(ctx, types, cp, fn)
@@ -150,7 +163,31 @@ func (f *feed) consume(
 				return cp, err
 			}
 
+			// The source delivered nothing, so the stream is shorter than the
+			// cached segment claims, which can not be served.
+			if cp == from {
+				return cp, fmt.Errorf(
+					"event stream %s ends at offset %d, before the cached segment",
+					f.ID,
+					cp,
+				)
+			}
+
+			confirmed = true
+
 		case cache.After:
+			if cp > seg.End && !confirmed {
+				var err error
+
+				cp, err = f.read(ctx, types, cp, fn)
+				if err != nil {
+					return cp, err
+				}
+
+				confirmed = true
+				continue
+			}
+
 			select {
 			case <-ctx.Done():
 				return cp, ctx.Err()
@@ -188,8 +225,6 @@ func (f *feed) read(
 	// able to serve it.
 	stop := context.AfterFunc(f.ctx, cancel)
 	defer stop()
-
-	begin := cp
 
 	var fnErr error
 
@@ -241,15 +276,6 @@ func (f *feed) read(
 		}
 
 		return cp, err
-
-	case cp == begin:
-		// The source delivered nothing, so the stream is shorter than the
-		// cached segment claims, which can not be served.
-		return cp, fmt.Errorf(
-			"event stream %s ends at offset %d, before the cached segment",
-			f.ID,
-			cp,
-		)
 
 	default:
 		return cp, nil

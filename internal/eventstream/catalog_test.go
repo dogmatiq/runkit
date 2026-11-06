@@ -250,6 +250,30 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
+		t.Run("it adds a stream again when a source delivers it after it left the catalog", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 1))
+
+			remove := watch(t, c, src, nil)
+			expectCatalogToHave(t, c, streamID)
+
+			remove()
+			expectCatalogToHave(t, c)
+
+			remove = watch(t, c, src, nil)
+			defer remove()
+
+			expectCatalogToHave(t, c, streamID)
+
+			segments, cancel, _ := consume(t, c, typesA, 1)
+			defer cancel()
+
+			src.Append(segment(1, 2, event(1, typeA)))
+			expectSegment(t, segments, 1, 2, 1)
+		})
+
 		t.Run("it publishes the stream set before a consumer observes the stream's removal", func(t *testing.T) {
 			c := setup(t, 10)
 
@@ -505,21 +529,28 @@ func TestCatalog(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{}
-			src.Append(segment(0, 1))
+			src.Append(segment(0, 4, event(1, typeA), event(2, typeB), event(3, typeA)))
+
+			cached := make(chan struct{})
 
 			hook := &sourceHook{
 				Source: src,
+				WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+					fn(segment(1, 1))
+					fn(segment(1, 4, event(1, typeA), event(2, typeB), event(3, typeA)))
+					close(cached)
+					<-ctx.Done()
+					return ctx.Err()
+				},
 			}
 
 			remove := watch(t, c, hook, nil)
 			defer remove()
 
-			expectCatalogToHave(t, c, streamID)
-
 			// The events are delivered to the catalog before the consumer
 			// begins, so they are cached and the consumer is served from the
 			// cache.
-			src.Append(segment(1, 4, event(1, typeA), event(2, typeB), event(3, typeA)))
+			<-cached
 
 			segments, cancel, _ := consume(t, c, typesA, 2)
 			defer cancel()
@@ -531,7 +562,84 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
-		t.Run("it waits while the checkpoint is beyond the cached segment", func(t *testing.T) {
+		t.Run("it reads from the source when the checkpoint is beyond the cached segment", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 7, event(4, typeA), event(6, typeA)))
+
+			// The source's stream has events beyond the end of the cached
+			// segment, as it does when this node's watch of the stream trails
+			// the node that last advanced the checkpoint.
+			remove := watch(
+				t,
+				c,
+				&sourceHook{
+					Source: src,
+					WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
+						fn(segment(3, 3))
+						<-ctx.Done()
+						return ctx.Err()
+					},
+				},
+				nil,
+			)
+			defer remove()
+
+			expectCatalogToHave(t, c, streamID)
+
+			segments, cancel, _ := consume(t, c, typesA, 5)
+			defer cancel()
+
+			expectSegment(t, segments, 5, 7, 6)
+		})
+
+		t.Run("it waits while the checkpoint is at the end of the source's stream, beyond the cached segment", func(t *testing.T) {
+			c := setup(t, 10)
+
+			src := &source.Memory{}
+			src.Append(segment(0, 5))
+
+			hook := &sourceHook{
+				Source: src,
+			}
+
+			release := make(chan struct{})
+			hook.WatchFunc = func(ctx context.Context, fn func(Segment) error) error {
+				fn(segment(3, 3))
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-release:
+				}
+
+				fn(segment(3, 6, event(5, typeA)))
+				<-ctx.Done()
+				return ctx.Err()
+			}
+
+			remove := watch(t, c, hook, nil)
+			defer remove()
+
+			expectCatalogToHave(t, c, streamID)
+
+			segments, cancel, _ := consume(t, c, typesA, 5)
+			defer cancel()
+
+			expectNoSegment(t, segments)
+
+			close(release)
+			expectSegment(t, segments, 5, 6, 5)
+
+			// The source confirms the checkpoint once, rather than each time
+			// the cached segment changes.
+			if n := hook.Reads.Load(); n != 1 {
+				t.Fatalf("unexpected number of reads from the source: got %d, want 1", n)
+			}
+		})
+
+		t.Run("it fails if the checkpoint is beyond the end of the source's stream", func(t *testing.T) {
 			c := setup(t, 10)
 
 			src := &source.Memory{}
@@ -542,13 +650,12 @@ func TestCatalog(t *testing.T) {
 
 			expectCatalogToHave(t, c, streamID)
 
-			segments, cancel, _ := consume(t, c, typesA, 5)
+			_, cancel, wait := consume(t, c, typesA, 5)
 			defer cancel()
 
-			expectNoSegment(t, segments)
-
-			src.Append(segment(3, 7, event(4, typeA), event(6, typeA)))
-			expectSegment(t, segments, 5, 7, 6)
+			if err := wait(); !errors.Is(err, source.ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, source.ErrOffsetOutOfRange)
+			}
 		})
 
 		t.Run("it reads from the source when the checkpoint is before the cached segment, then continues from the cache", func(t *testing.T) {
