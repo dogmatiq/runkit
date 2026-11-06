@@ -32,8 +32,8 @@ type Remote struct {
 // Watch delivers events to fn as they are appended to the remote
 // application's streams.
 //
-// Each stream is delivered from wherever the remote engine begins it. The
-// remote engine never ends the watch of its own accord, so it ending is a
+// Each stream's opening segment begins wherever the remote engine begins it.
+// The remote engine never ends the watch of its own accord, so it ending is a
 // failure.
 func (s *Remote) Watch(
 	ctx context.Context,

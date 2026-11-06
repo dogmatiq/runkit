@@ -61,7 +61,8 @@ func (s *Memory) Append(seg Segment) {
 
 // Watch delivers events to fn as they are appended to the source's streams.
 //
-// Each stream is delivered from its end as it stands when Watch is called.
+// Each stream's opening segment begins at the stream's end as it stands when
+// Watch is called.
 func (s *Memory) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,

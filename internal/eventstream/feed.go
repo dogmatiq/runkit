@@ -67,9 +67,10 @@ var (
 
 // Append appends a segment of the stream.
 //
-// The segment is expected to begin where the previous one ended. If it does
-// not, the feed restarts from the segment's begin offset, discarding the
-// events it has cached.
+// The segment is expected to begin where the previous one ended. One that does
+// not is the opening segment of a new call to [source.Source.Watch], so the
+// feed restarts from the segment's begin offset, discarding the events it has
+// cached.
 //
 // It has no effect once the feed is closed.
 func (f *feed) Append(seg Segment) {

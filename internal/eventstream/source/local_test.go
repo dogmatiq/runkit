@@ -23,9 +23,9 @@ func TestLocal(t *testing.T) {
 		MessageTypeUUID[*EventStub[TypeE]](),
 	)
 
-	// setup returns a local source over a new database, with the given batch
-	// size, and the database.
-	setup := func(t *testing.T, batchSize int) (*Local, *sql.DB) {
+	// newSource returns a local source over a new database, with the given
+	// segment and buffer sizes, and the database. It does not run the source.
+	newSource := func(t *testing.T, segmentSize, bufferSize int) (*Local, *sql.DB) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -40,10 +40,86 @@ func TestLocal(t *testing.T) {
 			DB:          db,
 			Signals:     signals,
 			Logger:      logger,
-			SegmentSize: batchSize,
+			SegmentSize: segmentSize,
+			BufferSize:  bufferSize,
 		}
 
 		return src, db
+	}
+
+	// setup returns a running local source over a new database, with the given
+	// batch size, and the database.
+	setup := func(t *testing.T, batchSize int) (*Local, *sql.DB) {
+		src, db := newSource(t, batchSize, 100)
+		xtesting.GoE(t, src.Run)
+		return src, db
+	}
+
+	// watchBlocked runs src.Watch on another goroutine with an fn that sends
+	// each segment to the returned channel, then blocks until the returned
+	// function is called. It also returns a channel that receives Watch's
+	// error.
+	watchBlocked := func(t *testing.T, src *Local) (<-chan Segment, func(), <-chan error) {
+		t.Helper()
+
+		segments := make(chan Segment, 100)
+		release := make(chan struct{})
+		result := make(chan error, 1)
+
+		go func() {
+			result <- src.Watch(
+				t.Context(),
+				nil,
+				func(seg Segment) error {
+					segments <- seg
+					<-release
+					return nil
+				},
+			)
+		}()
+
+		return segments, sync.OnceFunc(func() { close(release) }), result
+	}
+
+	// expectSegment waits for a segment to be delivered to the given channel,
+	// and asserts that it is the given range of the given stream.
+	expectSegment := func(
+		t testing.TB,
+		segments <-chan Segment,
+		streamID *uuidpb.UUID,
+		begin, end uint64,
+	) {
+		t.Helper()
+
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatalf("timeout waiting for segment [%d, %d) of stream %s", begin, end, streamID)
+		case seg := <-segments:
+			if !seg.StreamID.Equal(streamID) || seg.Begin != begin || seg.End != end {
+				t.Fatalf(
+					"unexpected segment: got [%d, %d) of stream %s, want [%d, %d) of stream %s",
+					seg.Begin,
+					seg.End,
+					seg.StreamID,
+					begin,
+					end,
+					streamID,
+				)
+			}
+		}
+	}
+
+	// expectError waits for an error on the given channel and returns it.
+	expectError := func(t testing.TB, result <-chan error) error {
+		t.Helper()
+
+		select {
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatal("timeout waiting for Watch to return")
+			return nil
+		case err := <-result:
+			return err
+		}
 	}
 
 	// watch runs src.Watch on another goroutine, delivering each segment to
@@ -154,7 +230,7 @@ func TestLocal(t *testing.T) {
 
 	t.Run("Watch", func(t *testing.T) {
 		t.Run("it delivers each stream from its end", func(t *testing.T) {
-			src, db := setup(t, 10)
+			src, db := newSource(t, 10, 100)
 			streamID := xtesting.CreateEventStream(t, db)
 
 			xtesting.AppendToEventStream(
@@ -166,6 +242,9 @@ func TestLocal(t *testing.T) {
 				EventE3,
 			)
 
+			// The source runs after the events are appended, so that its
+			// watch of the stream begins after all of them.
+			xtesting.GoE(t, src.Run)
 			segments, _ := watch(t, src, nil)
 
 			expectEnvelopes(t, segments, streamID, 3, 3)
@@ -363,6 +442,169 @@ func TestLocal(t *testing.T) {
 					return nil
 				},
 			)
+		})
+
+		t.Run("it delivers each segment to every watcher", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			first, _ := watch(t, src, nil)
+			second, _ := watch(t, src, typesE)
+
+			expectEnvelopes(t, first, streamID, 0, 0)
+			expectEnvelopes(t, second, streamID, 0, 0)
+
+			all := xtesting.AppendToEventStream(t, db, streamID, EventE1, EventX1)
+
+			expectEnvelopes(t, first, streamID, 0, 2, all...)
+			expectEnvelopes(t, second, streamID, 0, 2, all[0])
+		})
+
+		t.Run("it ends the call of a watcher that falls behind, after delivering the segments buffered for it", func(t *testing.T) {
+			src, db := newSource(t, 10, 1)
+			xtesting.GoE(t, src.Run)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			// The fast watcher shows when each segment has been sent to every
+			// watcher.
+			fast, _ := watch(t, src, nil)
+			expectEnvelopes(t, fast, streamID, 0, 0)
+
+			slow, release, result := watchBlocked(t, src)
+			expectSegment(t, slow, streamID, 0, 0)
+
+			// The first segment fills the slow watcher's buffer, and the second
+			// does not fit.
+			e1 := xtesting.AppendToEventStream(t, db, streamID, EventE1)
+			expectEnvelopes(t, fast, streamID, 0, 1, e1...)
+			e2 := xtesting.AppendToEventStream(t, db, streamID, EventE2)
+			expectEnvelopes(t, fast, streamID, 1, 2, e2...)
+
+			release()
+
+			expectSegment(t, slow, streamID, 0, 1)
+
+			if err := expectError(t, result); !errors.Is(err, ErrConsumerTooSlow) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			}
+		})
+
+		t.Run("it delivers a stream created while a watcher's buffer is full to that watcher's next call", func(t *testing.T) {
+			src, db := newSource(t, 10, 1)
+			xtesting.GoE(t, src.Run)
+			existing := xtesting.CreateEventStream(t, db)
+
+			fast, _ := watch(t, src, nil)
+			expectEnvelopes(t, fast, existing, 0, 0)
+
+			slow, release, result := watchBlocked(t, src)
+			expectSegment(t, slow, existing, 0, 0)
+
+			// The first new stream fills the slow watcher's buffer, and the
+			// second does not fit.
+			first := xtesting.CreateEventStream(t, db)
+			expectEnvelopes(t, fast, first, 0, 0)
+			second := xtesting.CreateEventStream(t, db)
+			expectEnvelopes(t, fast, second, 0, 0)
+
+			release()
+
+			expectSegment(t, slow, first, 0, 0)
+
+			if err := expectError(t, result); !errors.Is(err, ErrConsumerTooSlow) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			}
+
+			// The next call begins with every stream, including the one that
+			// did not fit.
+			next, _ := watch(t, src, nil)
+
+			want := uuidcollection.NewSet(existing, first, second)
+			got := uuidcollection.NewSet()
+
+			for range 3 {
+				select {
+				case <-time.After(xtesting.WaitTimeout):
+					t.Fatal("timeout waiting for the next call's first segments")
+				case seg := <-next:
+					got.Add(seg.StreamID)
+				}
+			}
+
+			if !got.IsEqual(want) {
+				t.Fatalf("unexpected streams: got %s, want %s", got, want)
+			}
+		})
+
+		t.Run("it ends only the call whose fn returns an error", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			errRejected := errors.New("<rejected>")
+			result := make(chan error, 1)
+
+			go func() {
+				result <- src.Watch(
+					t.Context(),
+					nil,
+					func(Segment) error {
+						return errRejected
+					},
+				)
+			}()
+
+			if err := expectError(t, result); err != errRejected {
+				t.Fatalf("unexpected error: got %v, want %v", err, errRejected)
+			}
+
+			segments, _ := watch(t, src, nil)
+			expectEnvelopes(t, segments, streamID, 0, 0)
+
+			want := xtesting.AppendToEventStream(t, db, streamID, EventE1)
+			expectEnvelopes(t, segments, streamID, 0, 1, want...)
+		})
+
+		t.Run("it serves a call made before the source runs once it runs", func(t *testing.T) {
+			src, db := newSource(t, 10, 100)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			segments, _ := watch(t, src, nil)
+			xtesting.GoE(t, src.Run)
+
+			expectEnvelopes(t, segments, streamID, 0, 0)
+		})
+
+		t.Run("it keeps delivering every stream when discovering streams fails", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			// The watch fails the test if it returns an error.
+			segments, _ := watch(t, src, nil)
+			expectEnvelopes(t, segments, streamID, 0, 0)
+
+			// The stream's watcher queries nothing more after delivering a
+			// segment that reaches the end of the stream, until the next
+			// append, so it is idle while the table is hidden.
+			before := xtesting.AppendToEventStream(t, db, streamID, EventE1)
+			expectEnvelopes(t, segments, streamID, 0, 1, before...)
+
+			exec := func(query string) {
+				t.Helper()
+
+				if _, err := db.ExecContext(t.Context(), query); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Discovery reads eventstream.streams when a stream is created, so
+			// hiding the table makes it fail.
+			exec(`ALTER TABLE eventstream.streams RENAME TO streams_hidden`)
+			exec(`SELECT pg_notify('signal', 'eventstream.create')`)
+			expectNoSegment(t, segments)
+			exec(`ALTER TABLE eventstream.streams_hidden RENAME TO streams`)
+
+			after := xtesting.AppendToEventStream(t, db, streamID, EventE2)
+			expectEnvelopes(t, segments, streamID, 1, 2, after...)
 		})
 
 		t.Run("it delivers an empty segment for an empty stream", func(t *testing.T) {

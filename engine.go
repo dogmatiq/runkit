@@ -67,6 +67,11 @@ const (
 	// eventStreamSegmentSize is the maximum number of events in one segment
 	// read from the database.
 	eventStreamSegmentSize = 100
+
+	// eventStreamBufferSize is the number of segments that [source.Local]
+	// buffers for each call to [source.Local.Watch]. A call that falls further
+	// behind ends with [source.ErrConsumerTooSlow].
+	eventStreamBufferSize = 100
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -242,6 +247,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Signals:     e.signals,
 		Logger:      e.logger.With(slog.String("component", "eventstream.source.local")),
 		SegmentSize: eventStreamSegmentSize,
+		BufferSize:  eventStreamBufferSize,
 	}
 
 	var server *grpcserver.Server
@@ -282,6 +288,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	eventTypeIDs := e.projectionEventTypeIDs()
+
+	// The application's own streams are watched only if something consumes
+	// them: the catalog, for projections, or the gRPC server, for remote
+	// engines.
+	if !eventTypeIDs.IsEmpty() || server != nil {
+		e.group.Go(func() error {
+			return localEventStreams.Run(ctx)
+		})
+	}
 
 	// The catalog is consumed only by projections, so it has no need of the
 	// application's own streams if no projection handles any events.

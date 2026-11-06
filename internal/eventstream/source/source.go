@@ -16,11 +16,12 @@ type Source interface {
 	// Only events of the given types are delivered. A nil set of types means
 	// events of every type. It panics if the set is empty.
 	//
-	// Each stream's delivery begins at the stream's end, with a first segment
-	// that may be empty. Every later segment of the stream begins where the
-	// previous one ended, for as long as the call lasts. A later call may begin
-	// a stream after events that this call never delivered; a caller that needs
-	// them reads them with [Source.Read].
+	// The first segment of a stream that a call delivers is called the stream's
+	// opening segment. It begins at the stream's end, and may be empty. Every
+	// later segment of the stream begins where the previous one ended, for as
+	// long as the call lasts. The opening segment of a later call may begin
+	// after events that this call never delivered; a caller that needs them
+	// reads them with [Source.Read].
 	//
 	// fn may be called concurrently for different streams, but a stream's
 	// segments are delivered one at a time, in order.

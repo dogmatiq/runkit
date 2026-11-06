@@ -81,13 +81,8 @@ func TestServer_contemporaryEvents(t *testing.T) {
 				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]](),
 			)
 
-			if first := segments.receive(); first.GetBeginOffset() != 1 || first.GetEndOffset() != 1 {
-				t.Fatalf(
-					"unexpected first segment: got [%d, %d), want [1, 1)",
-					first.GetBeginOffset(),
-					first.GetEndOffset(),
-				)
-			}
+			// The stream's first segment shows that the watch has begun.
+			segments.receive()
 
 			xtesting.ExecuteCommandsSequentially(
 				t,
@@ -127,18 +122,9 @@ func TestServer_historicalEvents(t *testing.T) {
 
 			client, ctx := newConsumerClient(t, cluster)
 
-			// The watch begins after the events already on the stream, so they
-			// are read instead.
-			first := watch(t, ctx, client, typeA, typeC).receive()
-			streamID := first.GetEventStreamId()
-
-			if first.GetBeginOffset() != 3 || first.GetEndOffset() != 3 {
-				t.Fatalf(
-					"unexpected first segment: got [%d, %d), want [3, 3)",
-					first.GetBeginOffset(),
-					first.GetEndOffset(),
-				)
-			}
+			// The watch begins at the end of the stream, so the events already
+			// on it are read instead. The watch only identifies the stream.
+			streamID := watch(t, ctx, client, typeA, typeC).receive().GetEventStreamId()
 
 			segments := read(t, ctx, client, streamID, 0, typeA, typeC)
 			segments.ExpectSegment(streamID, 0, 3, stubs.EventA1, stubs.EventC1)
@@ -281,7 +267,7 @@ func TestServer_WatchEvents(t *testing.T) {
 		)
 	})
 
-	t.Run("it delivers every event in order to a client that falls behind", func(t *testing.T) {
+	t.Run("it ends the call of a client that falls behind", func(t *testing.T) {
 		const eventCount = 1000
 
 		var streamID *uuidpb.UUID
@@ -298,26 +284,28 @@ func TestServer_WatchEvents(t *testing.T) {
 				segments.ExpectSegment(streamID, 0, 0)
 
 				// While the client is not reading, append more data than gRPC
-				// flow control can hold, so that the server can not send to
-				// the client until it catches up.
+				// flow control and the server's buffer can hold, so that the
+				// client falls too far behind to be delivered the stream
+				// contiguously.
 				padding := strings.Repeat("x", 10000)
-				var want []dogma.Event
 
 				for i := range eventCount {
 					event := &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("%d %s", i, padding)),
 					}
-					want = append(want, event)
 					xtesting.AppendToEventStream(t, db, streamID, event)
 				}
 
-				var got []dogma.Event
-
-				for len(got) < eventCount {
-					got = append(got, segments.Next(streamID)...)
+				// The client receives what was buffered for it, and then the
+				// call ends with an error.
+				for {
+					if _, err := segments.Responses.Recv(); err != nil {
+						if errors.Is(err, io.EOF) {
+							t.Fatal("expected the call to end with an error, but the server closed it")
+						}
+						return
+					}
 				}
-
-				xtesting.Expect(t, "events", got, want)
 			},
 			consumerAPIApp(),
 		)

@@ -1,4 +1,4 @@
-# Sources That Mirror the gRPC API, and One Watcher per Local Stream
+# Sources That Mirror the gRPC API, and Each Local Stream Followed Once
 
 > **For agentic workers:** Implement this plan step-by-step. Every numbered
 > step is one commit and one review stop; do not batch steps. Build and test
@@ -40,13 +40,13 @@ needs it.
 
 - **`Source` mirrors the protocol.**
   - `Watch(ctx, types, fn)` is `WatchEvents`. Each stream's delivery begins at
-    its tail with a first segment, which may be empty and says where delivery
+    its tail with an opening segment, which may be empty and says where delivery
     begins. Every later segment of the stream begins where the previous one
-    ended, for the whole call. A new call may begin after events that the
-    caller missed, and a caller that needs them reads them with `Read`. When
-    the caller can't keep up, `Watch` returns an error that wraps
-    `ErrConsumerTooSlow`, which is `ABORTED` on the wire. When a stream can't
-    be delivered contiguously for any other reason, it returns another error.
+    ended, for the whole call. A new call may begin after events that the caller
+    missed, and a caller that needs them reads them with `Read`. When the caller
+    can't keep up, `Watch` returns an error that wraps `ErrConsumerTooSlow`,
+    which is `ABORTED` on the wire. When a stream can't be delivered
+    contiguously for any other reason, it returns another error.
   - `Read(ctx, streamID, types, begin, fn)` is `ReadEvents`. It delivers from
     `begin` until it reaches the end of the stream, as the protocol says. An
     offset equal to the end delivers nothing. An offset past the end returns
@@ -68,36 +68,38 @@ needs it.
   behind ends its call and watches again, and the catalog behind it reads what
   it missed with `Read`. A slow caller must never delay delivery to another
   caller.
-- **`Local.Run` owns one watcher per stream, shared by every `Watch` call.**
-  `Run` discovers streams and runs their watchers for the engine's lifetime, as
-  `signal.Bus.Run` does for the bus, and `Watch` only registers a caller with
-  them. No `Watch` call manages a goroutine that other calls share.
+- **`Local.Run` follows each stream once, for every `Watch` call.** `Run`
+  discovers streams and follows each of them for the engine's lifetime, as
+  `signal.Bus.Run` does for the bus. A call to `Watch` only registers a
+  watcher, which receives the segments that `Run` loads. No `Watch` call
+  manages a goroutine that other calls share.
 - **Every delivery begins at the stream's end** — for a stream when it's
   discovered, and for a caller when it starts watching. The head start of
   `SegmentSize` events before the end goes, as the protocol's feed starts at
   the tail. Every caller of `Watch` is a caching catalog that already reads
   history for a consumer that's behind. A new call that missed nothing begins
   where the previous call ended, so the receiver keeps its cache.
-- **Each caller has a buffered channel.** `Run`'s watchers send segments to
-  each caller's channel without blocking. When a send would block, `Run`
-  removes the caller and closes its channel, recording the stream it couldn't
+- **Each watcher has a buffered channel.** `Run` sends each segment to every
+  watcher's channel without blocking. When a send would block, `Run` removes
+  the watcher and closes its channel, recording the stream it couldn't
   send, under the same mutex that guards sends, as the signal bus does with its
   subscribers. `Watch` delivers what's left in the channel, then returns an
   error that wraps `ErrConsumerTooSlow` and names that stream.
-- **A watcher that fails ends every call.** A stream's watcher begins again at
-  the stream's end after a failure, so it can't continue any call
-  contiguously. `Run` removes every caller and closes its channel, recording
+- **Failing to follow a stream ends every call.** After a failure, `Run`
+  follows the stream again from its end, so it can't continue any call
+  contiguously. `Run` removes every watcher and closes its channel, recording
   the failure, and each `Watch` returns it as an error. The catalog backs off
   and watches again, as it does after any failure.
-- **Registering takes a snapshot.** Under that mutex, registering records each
-  stream's position and adds the caller, so the segments sent to the caller
-  afterwards begin at those positions. `Watch` delivers an empty first segment
-  for each stream at its recorded position itself, not through the channel, so
-  a first segment can't be dropped.
+- **Registering takes a snapshot.** Under that mutex, registering records the
+  offset at which each stream's next segment begins, and adds the watcher, so
+  the segments sent to the watcher afterwards begin at those offsets. `Watch`
+  delivers the opening segment of each stream, empty and at its recorded
+  offset, itself, not through the channel, so an opening segment can't be
+  dropped.
 
 Calls made in writing this plan, to check while reading it:
 
-- Discovery is supervised separately from the stream watchers, so a failed
+- Discovery is supervised separately from following each stream, so a failed
   discovery query only delays finding new streams, rather than ending every
   call. That fixes runkit#76.
 - `Watch` may be called before `Run`, as with the bus, and is served once `Run`
@@ -105,9 +107,9 @@ Calls made in writing this plan, to check while reading it:
 - Each `Watch` call has one goroutine, which calls `fn` for every stream in
   turn. The contract allows `fn` to be called concurrently for different
   streams, but doesn't require it.
-- The shared watchers load events of every type. Each caller's segments are
-  filtered to its types in memory and keep their begin and end offsets, so a
-  segment with no matching events still moves a caller past events of other
+- `Run` loads events of every type. Each watcher's segments are filtered to
+  its types in memory and keep their begin and end offsets, so a segment with
+  no matching events still moves a watcher past events of other
   types, as it does today.
 - `Local` gains a required `BufferSize`, the number of segments buffered for
   each `Watch` call. The engine passes a new constant of 100.
@@ -148,10 +150,10 @@ Names are proposals; confirm or rename as each step lands.
 | `source.ErrUnrecognizedStream` | Returned by `Read` for an unknown stream. |
 | `source.ErrInvalidSegment` | Wrapped by `source.Remote`'s error for a segment that fails validation, from `Watch` or `Read`. |
 | `source.ErrOffsetOutOfRange` | Returned by `Read` for an offset past the end of the stream. |
-| `Local.Run` | Runs until `ctx` is canceled, and is called at most once. Discovers streams on each `eventstream.create` signal under its own supervisor, and starts a stream watcher for each new stream. Holds the registered callers and each stream's position under one mutex. |
-| stream watcher | Unexported, one per stream, each under its own supervisor. Begins at the stream's end, sending `[end, end)` to every caller as the stream's first segment. On each append signal, loads segments of every type from its position and sends each one to every caller without blocking. After a failure it ends every caller's call and begins again at the end. Watches signals with a context scoped to each attempt, so a failed attempt leaves no subscriber behind. |
-| caller | Unexported, one per `Watch` call — its types, a channel of `BufferSize` segments, and the error that ended it. |
-| `Local.Watch` | Registers a caller, delivers the snapshot's first segments, then delivers each segment from the channel, filtered to its types. When `Run` closes the channel, returns the error it recorded. Unregisters and returns `ctx`'s error or `fn`'s error, unchanged. |
+| `Local.Run` | Runs until `ctx` is canceled, and is called at most once. Discovers streams on each `eventstream.create` signal under its own supervisor, and starts following each new stream. Holds the registered watchers and the offset at which each stream's next segment begins, under one mutex. |
+| `Local.watchStream` | Unexported. Follows one stream, under its own supervisor. Begins at the stream's end, sending `[end, end)` to every watcher as the stream's opening segment. On each append signal, loads segments of every type from the offset that it has reached and sends each one to every watcher without blocking. After a failure it ends every watcher's call and begins again at the end. Watches signals with a context scoped to each attempt, so a failed attempt leaves no subscriber behind. |
+| `watcher` | Unexported, one per `Watch` call — its types, a channel of `BufferSize` segments, and the error that ended it. |
+| `Local.Watch` | Registers a watcher, delivers the snapshot's opening segments, then delivers each segment from the channel, filtered to its types. When `Run` closes the channel, returns the error it recorded. Unregisters and returns `ctx`'s error or `fn`'s error, unchanged. |
 | `Local.BufferSize` | Required. The number of segments buffered for each `Watch` call. |
 | `Catalog.Watch` | Watches the source again at once on `ErrConsumerTooSlow`, and treats `ErrInvalidSegment` and an error that wraps `errors.ErrUnsupported` as persistent. Other failures back off as now. |
 | `feed.read` | Treats `ErrUnrecognizedStream`, `ErrOffsetOutOfRange` and `ErrInvalidSegment` from `Source.Read` as persistent. |
@@ -161,8 +163,8 @@ Names are proposals; confirm or rename as each step lands.
 `Local.Watch`, per call:
 
 ```
-register: under the mutex, record each stream's position and add the caller
-for each recorded stream: fn([pos, pos))
+register: under the mutex, record each stream's next offset and add the watcher
+for each recorded stream: fn([offset, offset))
 for each segment received from the channel: fn(segment filtered to types)
 channel closed by Run: return the error Run recorded
 ctx canceled, or fn returns an error → unregister and return that error
@@ -175,19 +177,19 @@ ctx canceled, or fn returns an error → unregister and return that error
 Every step is green under `make test` unless marked otherwise.
 
 - [x] **Step 1.** Every delivery begins at the stream's end. `loadWatchOffset`
-      returns the stream's `next_offset`, so `watchStream`'s first segment is
+      returns the stream's `next_offset`, so `watchStream`'s opening segment is
       `[end, end)`. The docs of `Local.Watch`, `SegmentSize` and `WatchEvents`
       change to match. The `local_test.go` tests of where a stream begins are
       rewritten, as are the `server_test.go` tests that expect `WatchEvents` to
       begin a stream with the events already on it —
-      `TestServer_contemporaryEvents`, `TestServer_historicalEvents`, "it
-      begins each existing stream with the events already on it" and "it
-      delivers events of every type when no types are requested".
+      `TestServer_contemporaryEvents`, `TestServer_historicalEvents`, "it begins
+      each existing stream with the events already on it" and "it delivers
+      events of every type when no types are requested".
 - [x] **Step 2.** The `Watch` contract, as decided above. `ConsumerTooSlowError`
       is added, and the catalog watches again at once when a source returns
-      it. `Local.Watch` ends when a stream's watcher fails, instead of
-      restarting the watcher in the middle of the call, so it never begins a
-      new delivery of a stream within a call. Every source panics on an empty
+      it. `Local.Watch` ends when it fails to follow a stream, instead of
+      following the stream again in the middle of the call, so it never begins
+      a new delivery of a stream within a call. Every source panics on an empty
       set of types. Catalog tests that deliver a segment that doesn't follow
       the previous one in the middle of a call deliver it on a new call
       instead.
@@ -201,16 +203,16 @@ Every step is green under `make test` unless marked otherwise.
       `ErrInvalidSegment`. The catalog, not the remote source, treats all of
       them as persistent. `ConsumerTooSlowError` from Step 2 becomes the
       `ErrConsumerTooSlow` sentinel, as the protocol drops error details.
-- [ ] **Step 4.** `Local.Run` shares one watcher per stream between every
-      `Watch` call, with `BufferSize` and the engine's constant, as described
-      above. The engine runs `Local.Run` alongside the bus when the catalog
-      watches the local source or the gRPC server is enabled. Tests cover two
-      `Watch` calls served by one watcher; a caller that falls behind getting
-      the segments already buffered for it, then `ErrConsumerTooSlow` for the
-      stream it couldn't be sent; a stream created while a caller's
-      channel is full; `fn`'s error ending only its own call; `Watch` called
-      before `Run`; a failed discovery query leaving every call running; and a
-      watcher that fails ending every call with an error.
+- [x] **Step 4.** `Local.Run` follows each stream once for every `Watch` call,
+      with `BufferSize` and the engine's constant, as described above. The
+      engine runs `Local.Run` alongside the bus when the catalog watches the
+      local source or the gRPC server is enabled. Tests cover every watcher
+      receiving the same segments; a watcher that falls behind getting the
+      segments already buffered for it, then `ErrConsumerTooSlow` for the
+      stream it couldn't be sent; a stream created while a watcher's channel
+      is full; `fn`'s error ending only its own call; `Watch` called before
+      `Run`; a failed discovery query leaving every call running; and failing
+      to follow a stream ending every call with an error.
 - [ ] **Step 5.** Take protobuf v0.7.0. `source.Remote` builds the filter from
       the types, and turns `ABORTED` from `WatchEvents` into an error that
       wraps `ErrConsumerTooSlow`. The server validates the filter, returning

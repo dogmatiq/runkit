@@ -8,17 +8,22 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
-	"golang.org/x/sync/errgroup"
 )
 
 // Local is a [Source] of the event streams in this application's database.
+//
+// [Local.Run] follows each stream once, however many calls to [Local.Watch]
+// are in progress, and delivers each segment that it loads to every one of
+// those calls.
 type Local struct {
 	// DB is the database connection used to discover event streams and read
 	// events.
@@ -34,14 +39,87 @@ type Local struct {
 	// SegmentSize is the maximum number of events delivered in one segment,
 	// which is also the number of events read per query. It must be positive.
 	SegmentSize int
+
+	// BufferSize is the number of segments buffered for each call to
+	// [Local.Watch]. A call that falls further behind than this ends with an
+	// error that wraps [ErrConsumerTooSlow]. It must be positive.
+	BufferSize int
+
+	// m guards offsets and watchers.
+	m sync.Mutex
+
+	// offsets maps the ID of each watched stream to the offset at which its
+	// next segment begins, which is the end of the last segment delivered. A
+	// call to [Local.Watch] that begins now begins the stream at that offset.
+	offsets uuidcollection.Map[uint64]
+
+	// watchers is the set of calls to [Local.Watch] that are receiving
+	// segments.
+	watchers map[*watcher]struct{}
+}
+
+// watcher is a call to [Local.Watch] that is receiving segments.
+type watcher struct {
+	// Segments receives each segment of every stream, until it is closed
+	// because the call can no longer be served.
+	Segments chan Segment
+
+	// Err is the reason that the call can no longer be served. It is set
+	// before Segments is closed.
+	Err error
+}
+
+// Run watches the application's streams on behalf of every call to
+// [Local.Watch], until ctx is canceled.
+//
+// It must be called at most once. [Local.Watch] may be called before it, and
+// the call is served once it begins.
+func (s *Local) Run(ctx context.Context) error {
+	if s.SegmentSize <= 0 {
+		panic("segment size must be positive")
+	}
+
+	group, ctx := supervisor.WithContext(ctx)
+	known := uuidcollection.NewSet()
+
+	// Discovery is retried on its own, so that a failure to discover new
+	// streams does not stop following those already known.
+	err := supervisor.Run(
+		ctx,
+		s.Logger,
+		func(ctx context.Context) error {
+			return s.discover(
+				ctx,
+				known,
+				func(streamID *uuidpb.UUID) {
+					group.Go(
+						s.Logger.With(
+							xslog.UUID("stream_id", streamID),
+						),
+						func(ctx context.Context) error {
+							return s.watchStream(ctx, streamID)
+						},
+					)
+				},
+			)
+		},
+	)
+
+	if err := group.Wait(); err != nil {
+		return err
+	}
+
+	return err
 }
 
 // Watch delivers events to fn as they are appended to the application's
 // streams.
 //
-// Each stream is delivered from its end, as it stands when the stream is
-// discovered. It returns an error if any stream can not be delivered any
-// further.
+// Each stream is delivered from its end, as it stands when the call begins or
+// when the stream is discovered. It returns an error that wraps
+// [ErrConsumerTooSlow] if fn falls more than [Local.BufferSize] segments
+// behind, and another error if any stream can not be delivered any further.
+// The call is served by [Local.Run].
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
@@ -49,36 +127,34 @@ func (s *Local) Watch(
 ) error {
 	panicIfEmpty(types)
 
-	if s.SegmentSize <= 0 {
-		panic("segment size must be positive")
+	if s.BufferSize <= 0 {
+		panic("buffer size must be positive")
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	w, openings := s.register()
+	defer s.unregister(w)
 
-	// The first stream that can not be delivered any further ends the call,
-	// since its delivery can not continue contiguously.
-	group, ctx := errgroup.WithContext(ctx)
-
-	err := s.discover(
-		ctx,
-		func(streamID *uuidpb.UUID) {
-			group.Go(func() error {
-				if err := s.watchStream(ctx, streamID, types, fn); ctx.Err() == nil {
-					return err
-				}
-				return nil
-			})
-		},
-	)
-
-	cancel()
-
-	if err := group.Wait(); err != nil {
-		return err
+	for _, seg := range openings {
+		if err := fn(seg); err != nil {
+			return err
+		}
 	}
 
-	return err
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case seg, ok := <-w.Segments:
+			if !ok {
+				return w.Err
+			}
+
+			if err := fn(filterSegment(seg, types)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // Read delivers events from a stream to fn, beginning at the given offset.
@@ -119,16 +195,16 @@ func (s *Local) Read(
 	}
 }
 
-// discover reports each event stream to fn as it is discovered.
+// discover reports each event stream that is not in known to fn, and adds it
+// to known.
 //
 // It reads the set of event streams, and reads it again each time a stream is
 // created, until ctx is canceled.
 func (s *Local) discover(
 	ctx context.Context,
+	known *uuidcollection.Set,
 	fn func(streamID *uuidpb.UUID),
 ) error {
-	known := uuidcollection.NewSet()
-
 	for range s.Signals.Watch(ctx, "eventstream.create", 1) {
 		streamIDs, err := s.loadStreamIDs(ctx)
 		if err != nil {
@@ -183,51 +259,164 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 	return streamIDs, nil
 }
 
-// watchStream delivers segments of a stream to fn as events are appended to it.
+// register adds a watcher, and returns it with the opening segment of each
+// watched stream, which is empty and begins at that stream's offset in
+// offsets.
+func (s *Local) register() (*watcher, []Segment) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	w := &watcher{
+		Segments: make(chan Segment, s.BufferSize),
+	}
+
+	if s.watchers == nil {
+		s.watchers = map[*watcher]struct{}{}
+	}
+
+	s.watchers[w] = struct{}{}
+
+	var openings []Segment
+
+	for streamID, offset := range s.offsets.All() {
+		openings = append(
+			openings,
+			Segment{
+				StreamID: streamID,
+				Begin:    offset,
+				End:      offset,
+			},
+		)
+	}
+
+	return w, openings
+}
+
+// unregister removes a watcher, unless it has already been removed.
+func (s *Local) unregister(w *watcher) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	delete(s.watchers, w)
+}
+
+// deliver sends a segment to every watcher, and records the segment's end in
+// offsets.
 //
-// It begins at the end of the stream. It returns when ctx is canceled, when fn
-// returns an error, which it returns unchanged, or when it is unable to
-// deliver the stream any further.
-func (s *Local) watchStream(
-	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
-	fn func(Segment) error,
-) error {
-	query := s.buildSegmentQuery(streamID, types)
+// A watcher whose buffer is full is removed, as the segment's stream can no
+// longer be delivered to it contiguously.
+func (s *Local) deliver(seg Segment) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.offsets.Set(seg.StreamID, seg.End)
+
+	for w := range s.watchers {
+		select {
+		case w.Segments <- seg:
+		default:
+			s.remove(
+				w,
+				fmt.Errorf("unable to deliver event stream %s: %w", seg.StreamID, ErrConsumerTooSlow),
+			)
+		}
+	}
+}
+
+// fail removes every watcher, as the given stream can no longer be delivered to
+// any of them contiguously, and removes the stream from offsets until
+// watchStream begins following it again.
+func (s *Local) fail(streamID *uuidpb.UUID, err error) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.offsets.Delete(streamID)
+
+	for w := range s.watchers {
+		s.remove(w, err)
+	}
+}
+
+// remove removes a watcher, recording the given reason that it can no longer be
+// served, and closes its channel.
+//
+// It must be called with s.m held.
+func (s *Local) remove(w *watcher, err error) {
+	delete(s.watchers, w)
+	w.Err = err
+	close(w.Segments)
+}
+
+// watchStream follows a stream, delivering its segments to every watcher as
+// events are appended to it, beginning at the end of the stream.
+//
+// It returns when ctx is canceled or it is unable to continue. In the second
+// case it ends every call to [Local.Watch], because the next attempt begins at
+// the end of the stream, which may be after events that those calls have not
+// received.
+func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
+	// Signals are watched until ctx is canceled, and after a failure the
+	// supervisor calls watchStream again with the same ctx, so each call
+	// watches with its own.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	err := s.deliverStream(ctx, streamID)
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	err = fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
+	s.fail(streamID, err)
+
+	return err
+}
+
+// deliverStream delivers the segments of a stream to every watcher as events
+// are appended to it, beginning at the end of the stream, until ctx is
+// canceled or it is unable to continue.
+//
+// It begins by delivering the stream's opening segment, which is empty, so that
+// every watcher registered before the stream was discovered learns that the
+// stream exists and where its delivery begins.
+func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error {
+	query := s.buildSegmentQuery(streamID, nil)
 
 	var (
-		next  uint64
-		first = true
-		err   error
+		next   uint64
+		opened bool
 	)
 
 	for range s.Signals.Watch(ctx, "eventstream.append."+streamID.AsString(), 1) {
-		if first {
-			if next, err = s.loadWatchOffset(ctx, streamID); err != nil {
-				return fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
+		if !opened {
+			end, err := s.loadWatchOffset(ctx, streamID)
+			if err != nil {
+				return err
 			}
+
+			next = end
+			opened = true
+
+			s.deliver(
+				Segment{
+					StreamID: streamID,
+					Begin:    next,
+					End:      next,
+				},
+			)
 		}
 
 		for {
 			seg, exhausted, err := s.loadSegment(ctx, query, streamID, next)
 			if err != nil {
-				return fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
-			}
-
-			// The first segment is delivered even if it is empty, so that the
-			// stream is delivered even when there are no events.
-			if seg.End == seg.Begin && !first {
-				break
-			}
-
-			first = false
-
-			if err := fn(seg); err != nil {
 				return err
 			}
 
-			next = seg.End
+			if seg.End > seg.Begin {
+				s.deliver(seg)
+				next = seg.End
+			}
 
 			if exhausted {
 				break
@@ -421,4 +610,24 @@ func (s *Local) loadSegment(
 	}
 
 	return seg, exhausted, nil
+}
+
+// filterSegment returns seg with only the events of the given types. A nil set
+// of types means every type.
+func filterSegment(seg Segment, types *uuidcollection.Set) Segment {
+	if types == nil {
+		return seg
+	}
+
+	var envelopes []*envelopepb.Envelope
+
+	for _, env := range seg.Envelopes {
+		if types.Has(env.GetBody().GetMessage().GetTypeId()) {
+			envelopes = append(envelopes, env)
+		}
+	}
+
+	seg.Envelopes = envelopes
+
+	return seg
 }
