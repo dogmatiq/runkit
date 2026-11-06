@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -33,7 +33,7 @@ type Catalog struct {
 
 	m         sync.Mutex
 	streams   uuidcollection.Map[*catalogStream]
-	streamIDs xsync.Observable[*uuidcollection.Set]
+	streamIDs cosyne.Observable[*uuidcollection.Set]
 }
 
 // catalogStream is an event stream known to a [Catalog].
@@ -46,13 +46,13 @@ type catalogStream struct {
 
 	// CurrentFeed is the feed that consumers are served from, or nil if there
 	// are none. It must be one of the available feeds.
-	CurrentFeed xsync.Observable[*feed]
+	CurrentFeed cosyne.Observable[*feed]
 }
 
 // StreamIDs returns an observable of the IDs of the streams in the catalog.
 //
 // The sets it holds must not be modified.
-func (c *Catalog) StreamIDs() xsync.ObservableR[*uuidcollection.Set] {
+func (c *Catalog) StreamIDs() cosyne.ObservableR[*uuidcollection.Set] {
 	return &c.streamIDs
 }
 

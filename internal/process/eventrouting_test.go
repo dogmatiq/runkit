@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -17,8 +17,8 @@ import (
 // handler based on their message type.
 func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
-		handlerACalled xsync.Latch
-		handlerBCalled xsync.Latch
+		handlerACalled cosyne.Latch
+		handlerBCalled cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -116,8 +116,8 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 // based on their message type.
 func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
-		handlerACalled xsync.Latch
-		handlerBCalled xsync.Latch
+		handlerACalled cosyne.Latch
+		handlerBCalled cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -220,7 +220,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 // events are routed to the correct instance based on the value returned by
 // the handler's RouteEventToInstance() method.
 func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
-	var handlerCalled xsync.Latch
+	var handlerCalled cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -282,7 +282,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 // events are skipped when the handler's RouteEventToInstance() method returns
 // false.
 func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
-	var handlerCalled xsync.Latch
+	var handlerCalled cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -355,7 +355,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 // process instance has been ended via [dogma.ProcessScope].End(), subsequent
 // events routed to the same instance ID are not delivered to the handler.
 func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -434,7 +434,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 
 	var (
 		streamID *uuidpb.UUID
-		done     xsync.Latch
+		done     cosyne.Latch
 	)
 
 	xtesting.SetupThenRunEngines(
@@ -577,7 +577,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 		),
 	)
 
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	// Restart the engines with "version 2" of the handler, which has an
 	// additional TypeB route.

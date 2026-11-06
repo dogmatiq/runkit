@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -14,8 +14,8 @@ import (
 // commands are routed to the correct handler based on their message type.
 func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
-		handlerACalled xsync.Latch
-		handlerBCalled xsync.Latch
+		handlerACalled cosyne.Latch
+		handlerBCalled cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -96,7 +96,7 @@ func TestCommandRouting_commandsAreRoutedToTheCorrectHandler(t *testing.T) {
 // commands are routed to the correct instance based on the value returned by
 // the handler's RouteCommandToInstance() method.
 func TestCommandRouting_commandsAreRoutedToTheCorrectInstance(t *testing.T) {
-	var handlerCalled xsync.Latch
+	var handlerCalled cosyne.Latch
 
 	xtesting.RunEngines(
 		t,

@@ -3,7 +3,7 @@ package cache
 import (
 	"fmt"
 
-	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/envelopepb"
 )
 
@@ -21,7 +21,7 @@ import (
 // through [Cache.Segment].
 type Cache struct {
 	capacity int
-	segment  xsync.Observable[Segment]
+	segment  cosyne.Observable[Segment]
 }
 
 // New returns an empty cache. It holds at most the given number of events, and
@@ -41,7 +41,7 @@ func New(capacity int, begin uint64) *Cache {
 }
 
 // Segment returns an observable of the segment that the cache holds.
-func (c *Cache) Segment() xsync.ObservableR[Segment] {
+func (c *Cache) Segment() cosyne.ObservableR[Segment] {
 	return &c.segment
 }
 

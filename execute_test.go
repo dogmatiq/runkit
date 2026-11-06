@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -17,7 +17,7 @@ import (
 // a command with the same idempotency key twice results in the handler being
 // invoked only once.
 func TestExecuteCommand_duplicateIdempotencyKeyIsIgnored(t *testing.T) {
-	var handled xsync.Latch
+	var handled cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -370,7 +370,7 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 // that event observers are invoked with the original events when a command is
 // deduplicated via its idempotency key.
 func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testing.T) {
-	var handled xsync.Latch
+	var handled cosyne.Latch
 
 	xtesting.RunEngines(
 		t,

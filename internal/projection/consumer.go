@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -154,7 +154,7 @@ func (c *Consumer) startStreamConsumer(
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	var stopped xsync.Latch
+	var stopped cosyne.Latch
 
 	c.group.Go(func() error {
 		defer stopped.Set()

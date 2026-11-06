@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -22,7 +22,7 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 	const eventCount = 3
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		checkpointMutex  sync.Mutex
 		checkpointOffset uint64
 	)
@@ -107,7 +107,7 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 	const eventCount = 2
 
 	var (
-		done             xsync.Latch
+		done             cosyne.Latch
 		checkpointMutex  sync.Mutex
 		checkpointOffset uint64
 		conflicted       bool

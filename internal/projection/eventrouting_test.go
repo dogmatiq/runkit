@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -17,8 +17,8 @@ import (
 // handler based on their message type.
 func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
-		handlerACalled xsync.Latch
-		handlerBCalled xsync.Latch
+		handlerACalled cosyne.Latch
+		handlerBCalled cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -100,8 +100,8 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 // based on their message type.
 func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *testing.T) {
 	var (
-		handlerACalled xsync.Latch
-		handlerBCalled xsync.Latch
+		handlerACalled cosyne.Latch
+		handlerBCalled cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -190,7 +190,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 	const handlerKey = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
 
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.SetupThenRunEngines(
 		t,
@@ -247,7 +247,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 		checkpoints checkpointStore
 		mixed       *uuidpb.UUID
 		onlyB       *uuidpb.UUID
-		handledA    xsync.Latch
+		handledA    cosyne.Latch
 	)
 
 	// Run "version 1" of the handler with only a TypeA route. It handles the
@@ -310,7 +310,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 		),
 	)
 
-	var handledB1, handledB2 xsync.Latch
+	var handledB1, handledB2 cosyne.Latch
 
 	// Restart the engines with "version 2" of the handler, which has an
 	// additional TypeB route.

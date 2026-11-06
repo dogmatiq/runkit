@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -50,7 +50,7 @@ type feed struct {
 	m sync.Mutex
 
 	// closed is set when the feed is closed.
-	closed xsync.Latch
+	closed cosyne.Latch
 
 	// reads counts the reads from the source that are in progress.
 	reads sync.WaitGroup

@@ -10,9 +10,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
@@ -35,7 +35,7 @@ type Cluster struct {
 
 	ctx    context.Context
 	stop   context.CancelFunc
-	failed xsync.Latch
+	failed cosyne.Latch
 
 	members map[*runkit.Engine]*clusterMember
 	started int
@@ -45,7 +45,7 @@ type Cluster struct {
 type clusterMember struct {
 	// Node is the node's membership of the cluster, which is available once it
 	// has joined.
-	Node xsync.Future[*cluster.Node]
+	Node cosyne.Future[*cluster.Node]
 
 	// Stop stops the node's engine.
 	Stop context.CancelFunc

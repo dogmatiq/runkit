@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -17,7 +17,7 @@ import (
 // a deadline scheduled by a process instance is delivered back to that same
 // instance.
 func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.T) {
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -81,7 +81,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 // TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime verifies
 // that a deadline scheduled in the future is not delivered early.
 func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *testing.T) {
-	var done xsync.Latch
+	var done cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -142,7 +142,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 }
 
 func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) {
-	var ended xsync.Latch
+	var ended cosyne.Latch
 
 	xtesting.RunEngines(
 		t,
@@ -276,7 +276,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 	})
 
 	t.Run("via HandleDeadline", func(t *testing.T) {
-		var ended xsync.Latch
+		var ended cosyne.Latch
 
 		xtesting.RunEngines(
 			t,
@@ -424,7 +424,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	var delivered xsync.Latch
+	var delivered cosyne.Latch
 
 	// Restart with the TypeA deadline route removed. The TypeB deadline is
 	// delivered; the TypeA deadline is silently skipped and remains pending in

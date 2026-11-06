@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dogmatiq/enginekit/x/xsync"
+	"github.com/dogmatiq/cosyne"
 )
 
 // WaitTimeout is the maximum amount of time that the helpers in this package
@@ -28,7 +28,7 @@ func init() {
 // test if all latches are not set within [WaitTimeout].
 func WaitForLatches(
 	t testing.TB,
-	latches ...*xsync.Latch,
+	latches ...*cosyne.Latch,
 ) {
 	t.Helper()
 
@@ -84,7 +84,7 @@ func WaitFor(
 func WaitForObservable[T any](
 	t testing.TB,
 	description string,
-	o xsync.ObservableR[T],
+	o cosyne.ObservableR[T],
 	ok func(T) bool,
 ) {
 	t.Helper()

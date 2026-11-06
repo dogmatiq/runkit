@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -21,7 +21,7 @@ import (
 func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 	var (
 		calls  atomic.Int32
-		called xsync.Latch
+		called cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -76,8 +76,8 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 			const eventCount = 10
 
 			var (
-				compacted   xsync.Latch
-				consumed    xsync.Latch
+				compacted   cosyne.Latch
+				consumed    cosyne.Latch
 				checkpoints checkpointStore
 				handled     atomic.Int32
 			)
@@ -139,7 +139,7 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 	var (
 		concurrent atomic.Int32
 		calls      atomic.Int32
-		called     xsync.Latch
+		called     cosyne.Latch
 	)
 
 	xtesting.RunEngines(
@@ -188,7 +188,7 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 		m               sync.Mutex
 		lastCompactedAt time.Time
 		calls           int
-		done            xsync.Latch
+		done            cosyne.Latch
 	)
 
 	xtesting.RunEngines(
