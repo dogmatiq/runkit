@@ -146,15 +146,6 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 			slog.Uint64("attempt", del.Failures+1),
 		}
 
-		if del.Stream != nil {
-			attrs = append(
-				attrs,
-				xslog.UUID("stream_id", del.Stream.ID),
-				slog.Uint64("event_offset", del.Stream.EventOffset),
-				slog.Uint64("checkpoint_offset", del.Stream.CheckpointOffset),
-			)
-		}
-
 		logger := p.Logger.With(slog.Group("delivery", attrs...))
 
 		env := &envelopepb.Envelope{}

@@ -16,6 +16,21 @@ This is a reference implementation of a [Dogma] engine.
 The engine stores its state in [PostgreSQL]. The minimum supported version is
 PostgreSQL 18.
 
+## Process event consumption
+
+Process handlers consume local and remote event streams through the same catalog
+as projections. A new process handler starts each stream at the beginning,
+including historical events. Existing handlers resume from their stored
+checkpoints; adding a route
+does not rewind those checkpoints. A stream without a checkpoint starts at the
+beginning.
+
+When upgrading from a version that uses `eventstream.handler_checkpoints`, stop
+all engine nodes before calling `CreateSchema()` and restarting them. The schema
+upgrade preserves process checkpoint offsets, moves them into the process schema,
+and removes the old event-pump tables. Old and new engine versions cannot run
+against the database together during this upgrade.
+
 <!-- references -->
 
 [Dogma]: https://github.com/dogmatiq/dogma

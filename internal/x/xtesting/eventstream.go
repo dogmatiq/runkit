@@ -1,7 +1,6 @@
 package xtesting
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 
@@ -267,9 +266,6 @@ func ExpectContiguousEvents(
 // WaitForHandlerToConsumeAllEvents waits until the handler with the given key
 // has caught up to the tail of all non-empty event streams. If this does not
 // occur within [WaitTimeout], the test fails.
-//
-// It assumes that all events on all streams are of types that the handler
-// consumes. If that is not the case this assertion will hang until it times out.
 func WaitForHandlerToConsumeAllEvents(
 	t testing.TB,
 	q xsql.Querier,
@@ -284,119 +280,12 @@ func WaitForHandlerToConsumeAllEvents(
 		q,
 		`SELECT COUNT(*)
 		FROM eventstream.streams AS s
-		LEFT JOIN eventstream.handler_checkpoints AS h
+		LEFT JOIN process.checkpoints AS h
 			ON h.handler_key = $1
 			AND h.stream_id = s.id
 		WHERE COALESCE(h.checkpoint_offset, 0) < s.next_offset`,
 		handlerKey,
 	)
-}
-
-// WaitForHandlerToPostponeConsumingStream waits until the handler with the
-// given key has postponed consuming events from the given stream.
-func WaitForHandlerToPostponeConsumingStream(
-	t testing.TB,
-	q xsql.Querier,
-	handlerKey string,
-	streamID *uuidpb.UUID,
-) {
-	t.Helper()
-
-	WaitForQueryResult(
-		t,
-		fmt.Sprintf("handler %q has postponed consuming from stream %q", handlerKey, streamID),
-		1,
-		q,
-		`SELECT COUNT(*)
-		FROM eventstream.handler_checkpoints
-		WHERE handler_key = $1
-		AND stream_id = $2
-		AND resume_at > clock_timestamp()`,
-		handlerKey,
-		xsql.UUID(streamID),
-	)
-}
-
-// WaitForStreamFailureCounterToReset waits until the handler with the given
-// key has its failures counter reset to zero for each of the given streams.
-func WaitForStreamFailureCounterToReset(
-	t testing.TB,
-	q xsql.Querier,
-	handlerKey string,
-	streamIDs ...*uuidpb.UUID,
-) {
-	t.Helper()
-
-	WaitForQueryResult(
-		t,
-		fmt.Sprintf("handler %q has failures reset to zero on the given streams", handlerKey),
-		0,
-		q,
-		`SELECT COUNT(*)
-		FROM eventstream.handler_checkpoints
-		WHERE handler_key = $1
-		AND stream_id = ANY($2)
-		AND failures != 0`,
-		handlerKey,
-		xsql.UUIDs(streamIDs...),
-	)
-}
-
-// WaitForStreamFailureCounter waits until the handler with the given key has
-// its failures counter reach (or exceed) the given value on each of the given
-// streams.
-func WaitForStreamFailureCounter(
-	t testing.TB,
-	q xsql.Querier,
-	handlerKey string,
-	min uint64,
-	streamIDs ...*uuidpb.UUID,
-) {
-	t.Helper()
-
-	WaitForQueryResult(
-		t,
-		fmt.Sprintf("handler %q has failures >= %d on all given streams", handlerKey, min),
-		len(streamIDs),
-		q,
-		`SELECT COUNT(*)
-		FROM eventstream.handler_checkpoints
-		WHERE handler_key = $1
-		AND stream_id = ANY($2)
-		AND failures >= $3`,
-		handlerKey,
-		xsql.UUIDs(streamIDs...),
-		min,
-	)
-}
-
-// PostponeStreamConsumption inserts a handler_checkpoints row with resume_at
-// set 24 hours in the future, preventing the handler from consuming the stream.
-func PostponeStreamConsumption(
-	t testing.TB,
-	x xsql.Executor,
-	handlerKey string,
-	streamID *uuidpb.UUID,
-) {
-	t.Helper()
-
-	if _, err := x.ExecContext(
-		t.Context(),
-		`INSERT INTO eventstream.handler_checkpoints (
-			handler_key,
-			stream_id,
-			resume_at
-		) VALUES (
-			$1, $2,
-			clock_timestamp() + INTERVAL '24 hours'
-		)
-		ON CONFLICT (handler_key, stream_id) DO UPDATE SET
-			resume_at = clock_timestamp() + INTERVAL '24 hours'`,
-		handlerKey,
-		xsql.UUID(streamID),
-	); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {

@@ -61,20 +61,3 @@ ON eventstream.events (
     message_type_id,
     stream_offset
 );
-
---------------------------------------------------------------------------------
--- The "handler_checkpoints" table tracks per-stream checkpoint progress for
--- each process handler.
---
--- A row is locked with SELECT FOR UPDATE SKIP LOCKED to serialize event
--- processing for a specific handler/stream pair.
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
-    handler_key       uuid        NOT NULL,
-    stream_id         uuid        NOT NULL REFERENCES eventstream.streams(id),
-    checkpoint_offset bigint      NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
-    failures          int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
-    resume_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
-
-    PRIMARY KEY (handler_key, stream_id)
-);

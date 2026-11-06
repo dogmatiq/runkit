@@ -302,18 +302,17 @@ func (e *Engine) Run(ctx context.Context) error {
 		return e.node.Run(ctx)
 	})
 
-	eventTypeIDs := e.projectionEventTypeIDs()
+	eventTypeIDs := e.consumedEventTypeIDs()
 
 	// The application's own streams are watched only if the catalog consumes
-	// them for projections, or the gRPC server serves them to remote engines.
+	// them for projections or processes, or the gRPC server serves them remotely.
 	if !eventTypeIDs.IsEmpty() || server != nil {
 		e.group.Go(func() error {
 			return localEventStreams.Run(ctx)
 		})
 	}
 
-	// The catalog is consumed only by projections, so it has no need of the
-	// application's own streams if no projection handles any events.
+	// Watch local streams if any enabled projection or process consumes events.
 	if !eventTypeIDs.IsEmpty() {
 		e.group.Go(func() error {
 			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs)
@@ -438,8 +437,6 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Projection:
 		return projection.InitializeHandler(ctx, e.db, handlerConfig)
-	case *config.Process:
-		return process.InitializeHandler(ctx, e.db, handlerConfig)
 	default:
 		return nil
 	}
@@ -504,26 +501,22 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		})
 
 	case *config.Process:
-		eventPumpLogger := logger.With(slog.String("component", "process.event-pump"))
-
-		eventPump := &messagepump.MessagePump{
-			Driver: &process.EventPump{
+		consumerLogger := logger.With(slog.String("component", "process.consumer"))
+		consumer := &eventstream.Consumer{
+			Node:         e.node,
+			EventStreams: e.eventStreams,
+			Sink: &process.Sink{
 				DB:                   e.db,
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
-				EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				RouteTimeout:         e.routeTimeout,
-				Logger:               eventPumpLogger,
+				Logger:               consumerLogger,
 			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			Logger:       eventPumpLogger,
+			Logger: consumerLogger,
 		}
 
 		deadlinePump := &messagepump.MessagePump{
@@ -545,7 +538,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		}
 
 		e.group.Go(func() error {
-			return eventPump.Run(ctx)
+			return consumer.Run(ctx)
 		})
 
 		e.group.Go(func() error {
@@ -622,18 +615,23 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	return 10 * runtime.GOMAXPROCS(0)
 }
 
-// projectionEventTypeIDs returns the message type IDs of every event type that
-// is routed to a (non-disabled) projection within the application.
-func (e *Engine) projectionEventTypeIDs() *uuidcollection.Set {
+// consumedEventTypeIDs returns the message type IDs of every event type that
+// is routed to a non-disabled projection or process within the application.
+func (e *Engine) consumedEventTypeIDs() *uuidcollection.Set {
 	messageTypeIDs := uuidcollection.NewSet()
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
-		projection, ok := handlerConfig.(*config.Projection)
-		if !ok || projection.IsDisabled() {
+		if handlerConfig.IsDisabled() {
 			continue
 		}
 
-		eventTypeIDs := e.inboundMessageTypeIDsForHandler(projection, message.EventKind)
+		switch handlerConfig.(type) {
+		case *config.Projection, *config.Process:
+		default:
+			continue
+		}
+
+		eventTypeIDs := e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind)
 
 		for id := range eventTypeIDs.All() {
 			messageTypeIDs.Add(id)

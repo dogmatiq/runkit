@@ -72,3 +72,55 @@ func TestCreateAndDrop(t *testing.T) {
 		FROM information_schema.schemata`,
 	)
 }
+
+// TestCreate_migratesProcessCheckpoints verifies that an existing installation
+// keeps its progress, including checkpoints for streams it cannot currently read.
+func TestCreate_migratesProcessCheckpoints(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	if _, err := db.ExecContext(t.Context(), `
+		CREATE SCHEMA eventstream;
+		CREATE SCHEMA process;
+		CREATE TABLE eventstream.handler_checkpoints (
+			handler_key uuid NOT NULL,
+			stream_id uuid NOT NULL,
+			checkpoint_offset bigint NOT NULL,
+			failures int NOT NULL,
+			resume_at timestamptz NOT NULL,
+			PRIMARY KEY (handler_key, stream_id)
+		);
+		CREATE TABLE process.handlers (
+			handler_key uuid PRIMARY KEY,
+			has_checkpoint_offsets boolean NOT NULL
+		);
+		INSERT INTO eventstream.handler_checkpoints VALUES
+			('65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			 '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5', 42, 3, now());
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		if err := schema.Create(t.Context(), db); err != nil {
+			t.Fatal(err)
+		}
+
+		xtesting.ExpectQueryResult(
+			t,
+			"existing checkpoint is preserved",
+			uint64(42),
+			db,
+			`SELECT checkpoint_offset FROM process.checkpoints`,
+		)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"obsolete process event pump tables are removed",
+		true,
+		db,
+		`SELECT to_regclass('eventstream.handler_checkpoints') IS NULL
+			AND to_regclass('process.handlers') IS NULL`,
+	)
+}

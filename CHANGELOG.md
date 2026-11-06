@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- Added support for process handlers consuming events from remote applications.
 - Added `WithHandleTimeout()`, `WithRouteTimeout()` and
   `WithProjectionCompactTimeout()`, which limit how long the engine waits for
   calls to application message handlers.
@@ -25,6 +26,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- New process handlers now consume historical events. Existing checkpoint
+  offsets are preserved; streams without a checkpoint start at the beginning.
+  Stop all engine nodes before applying this schema upgrade with
+  `CreateSchema()`, then restart them.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`
