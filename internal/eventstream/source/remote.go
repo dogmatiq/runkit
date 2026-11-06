@@ -135,19 +135,17 @@ func (s *Remote) Read(
 			)
 		}
 
-		if seg.Begin != begin && first {
-			return invalidSegment(
-				res,
-				"it does not begin at offset %d, which was requested",
-				begin,
-			)
-		}
-
 		if seg.Begin != begin {
+			reason := "where the previous segment ended"
+			if first {
+				reason = "which was requested"
+			}
+
 			return invalidSegment(
 				res,
-				"it does not begin at offset %d, where the previous segment ended",
+				"it does not begin at offset %d, %s",
 				begin,
+				reason,
 			)
 		}
 

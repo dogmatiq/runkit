@@ -288,9 +288,8 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	eventTypeIDs := e.projectionEventTypeIDs()
 
-	// The application's own streams are watched only if something consumes
-	// them: the catalog, for projections, or the gRPC server, for remote
-	// engines.
+	// The application's own streams are watched only if the catalog consumes
+	// them for projections, or the gRPC server serves them to remote engines.
 	if !eventTypeIDs.IsEmpty() || server != nil {
 		e.group.Go(func() error {
 			return localEventStreams.Run(ctx)
