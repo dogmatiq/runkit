@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## [Unreleased]
+## [0.2.0] - 2026-11-06
 
 This release introduces clustering. Several engines could already run against
 the same database, but they competed with each other for work. They now
@@ -114,10 +114,11 @@ connection per cluster.
 
 <!-- references -->
 
-[unreleased]: https://github.com/dogmatiq/runkit/compare/v0.1.2...HEAD
+[unreleased]: https://github.com/dogmatiq/runkit
 [0.1.0]: https://github.com/dogmatiq/runkit/releases/tag/v0.1.0
 [0.1.1]: https://github.com/dogmatiq/runkit/releases/tag/v0.1.1
 [0.1.2]: https://github.com/dogmatiq/runkit/releases/tag/v0.1.2
+[0.2.0]: https://github.com/dogmatiq/runkit/releases/tag/v0.2.0
 
 <!-- version template
 ## [0.0.1] - YYYY-MM-DD
