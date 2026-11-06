@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -18,68 +17,38 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// NewSink returns a sink that dispatches events to the configured projection.
-//
-// It preserves the handler's concurrency preference across all of its streams.
-func NewSink(
-	handlerConfig *config.Projection,
-	logger *slog.Logger,
-) eventstream.Sink {
-	var lock *semaphore.Weighted
-	if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-		lock = semaphore.NewWeighted(1)
-	}
-
-	types := uuidcollection.NewSet()
-	inboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageDirection(config.InboundDirection)).
-		Routes()
-
-	for route := range inboundRoutes {
-		types.Add(uuidpb.MustParse(route.MessageTypeID.Get()))
-	}
-
-	return &sink{
-		Handler:      handlerConfig.Interface(),
-		HandlerLock:  lock,
-		Logger:       logger,
-		identity:     handlerConfig.Identity(),
-		concurrency:  handlerConfig.ConcurrencyPreference(),
-		eventTypeIDs: types,
-	}
-}
-
-// sink dispatches segments of event streams to a projection message handler.
+// Sink dispatches segments of event streams to a projection message handler.
 // It implements [eventstream.Sink] using the handler's checkpoint offsets.
-type sink struct {
+type Sink struct {
 	// Handler is the projection message handler to which events are
 	// dispatched.
 	Handler dogma.ProjectionMessageHandler
 
+	// Identity is the identity of the projection handler.
+	Identity *identitypb.Identity
+
+	// Concurrency is the handler's concurrency preference. It determines
+	// whether streams share one rendezvous workload.
+	Concurrency dogma.ConcurrencyPreference
+
+	// EventTypes is the set of IDs of the event types routed to the handler.
+	EventTypes *uuidcollection.Set
+
 	// HandlerLock, if non-nil, is a semaphore with a weight of one that is
 	// held while handling each event, so that streams are handled one event
-	// at a time when the handler prefers to minimize concurrency.
+	// at a time. It must be supplied when Concurrency is
+	// [dogma.MinimizeConcurrency].
 	HandlerLock *semaphore.Weighted
 
 	// Logger is the target for log messages produced by the sink and the
 	// handler.
 	Logger *slog.Logger
-
-	// identity identifies the projection when deriving rendezvous workloads.
-	identity *identitypb.Identity
-
-	// concurrency determines whether streams share one rendezvous workload.
-	concurrency dogma.ConcurrencyPreference
-
-	// eventTypeIDs contains the IDs of events routed to the projection.
-	eventTypeIDs *uuidcollection.Set
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream
 // with the given ID. An error or panic from the handler stops the current
 // consumption attempt.
-func (s *sink) CheckpointOffset(
+func (s *Sink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) (uint64, error) {
@@ -104,7 +73,7 @@ func (s *sink) CheckpointOffset(
 //
 // cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (s *sink) ConsumeSegment(
+func (s *Sink) ConsumeSegment(
 	ctx context.Context,
 	cp uint64,
 	seg eventstream.Segment,
@@ -138,7 +107,7 @@ func (s *sink) ConsumeSegment(
 //
 // cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (s *sink) dispatch(
+func (s *Sink) dispatch(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	offset, cp uint64,
@@ -192,18 +161,18 @@ func (s *sink) dispatch(
 
 // Workload returns the rendezvous workload that determines which node consumes
 // the stream with the given ID.
-func (s *sink) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
-	if s.concurrency == dogma.MinimizeConcurrency {
-		return s.identity.GetKey()
+func (s *Sink) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
+	if s.Concurrency == dogma.MinimizeConcurrency {
+		return s.Identity.GetKey()
 	}
 
 	// If the handler does not prefer to minimize concurrency, derive a unique
 	// workload from both the handler identity and the stream ID such that both
 	// handlers and streams are distributed evenly across nodes.
-	return uuidpb.Derive(s.identity.GetKey(), streamID.AsString())
+	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
 }
 
 // EventTypeIDs returns the event types routed to the projection.
-func (s *sink) EventTypeIDs() *uuidcollection.Set {
-	return s.eventTypeIDs
+func (s *Sink) EventTypeIDs() *uuidcollection.Set {
+	return s.EventTypes
 }
