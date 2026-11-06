@@ -35,6 +35,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 )
 
@@ -540,14 +541,24 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		})
 
 	case *config.Projection:
-		consumer := &projection.Consumer{
+		var handlerLock *semaphore.Weighted
+		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
+			handlerLock = semaphore.NewWeighted(1)
+		}
+
+		consumerLogger := logger.With(slog.String("component", "projection.consumer"))
+		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
-			Handler:      handlerConfig.Interface(),
-			Identity:     handlerConfig.Identity(),
-			Concurrency:  handlerConfig.ConcurrencyPreference(),
-			EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-			Logger:       logger.With(slog.String("component", "projection.consumer")),
+			Sink: &projection.Sink{
+				Handler:     handlerConfig.Interface(),
+				Identity:    handlerConfig.Identity(),
+				Concurrency: handlerConfig.ConcurrencyPreference(),
+				EventTypes:  e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				HandlerLock: handlerLock,
+				Logger:      consumerLogger,
+			},
+			Logger: consumerLogger,
 		}
 
 		compactor := &projection.Compactor{

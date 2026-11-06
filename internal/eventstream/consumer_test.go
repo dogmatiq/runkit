@@ -1,7 +1,8 @@
-package projection_test
+package eventstream_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,12 +13,10 @@ import (
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
-	"github.com/dogmatiq/runkit/internal/eventstream"
+	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
-	. "github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -27,8 +26,8 @@ import (
 func TestConsumer(t *testing.T) {
 	// setup starts a consumer of a new catalog, and returns the catalog, the
 	// consumer's node, which is not yet running, and a channel that receives
-	// the offset of each event that the consumer's handler handles.
-	setup := func(t *testing.T) (*eventstream.Catalog, *cluster.Node, <-chan uint64) {
+	// the offset of each event that the sink consumes.
+	setup := func(t *testing.T) (*Catalog, *cluster.Node, <-chan uint64) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -46,7 +45,7 @@ func TestConsumer(t *testing.T) {
 			Logger:   logger,
 		}
 
-		catalog := &eventstream.Catalog{
+		catalog := &Catalog{
 			CacheSize: 10,
 			Logger:    logger,
 		}
@@ -58,40 +57,42 @@ func TestConsumer(t *testing.T) {
 			checkpoint uint64
 		)
 
-		handler := &ProjectionMessageHandlerStub{
-			HandleEventFunc: func(
-				_ context.Context,
-				s dogma.ProjectionEventScope,
-				_ dogma.Event,
-			) (uint64, error) {
+		sink := &sinkStub{
+			CheckpointOffsetFunc: func(context.Context, *uuidpb.UUID) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
-
-				if s.CheckpointOffset() != checkpoint {
-					return checkpoint, nil
-				}
-
-				checkpoint = s.Offset() + 1
-				handled <- s.Offset()
 
 				return checkpoint, nil
 			},
-			CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+			ConsumeSegmentFunc: func(_ context.Context, cp uint64, seg Segment) (uint64, bool, error) {
 				m.Lock()
 				defer m.Unlock()
 
-				return checkpoint, nil
+				if cp != checkpoint {
+					return checkpoint, false, nil
+				}
+
+				for _, env := range seg.Envelopes {
+					offset := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env).GetOffset()
+					checkpoint = offset + 1
+					handled <- offset
+				}
+
+				return checkpoint, true, nil
 			},
 		}
 
+		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
+		sink.EventTypeIDsFunc = func() *uuidcollection.Set {
+			return uuidcollection.NewSet(uuidpb.MustParse(mt.ID()))
+		}
 		consumer := &Consumer{
 			Node:         node,
 			EventStreams: catalog,
-			Handler:      handler,
-			Identity:     identitypb.New("<handler>", uuidpb.Generate()),
-			EventTypeIDs: uuidcollection.NewSet(MessageTypeUUID[*EventStub[TypeA]]()),
+			Sink:         sink,
 			Logger:       logger,
 		}
+
 		xtesting.GoE(t, consumer.Run)
 
 		return catalog, node, handled
@@ -101,7 +102,7 @@ func TestConsumer(t *testing.T) {
 	// function is called.
 	watch := func(
 		t *testing.T,
-		catalog *eventstream.Catalog,
+		catalog *Catalog,
 		src source.Source,
 	) func() {
 		return xtesting.GoE(
@@ -291,7 +292,7 @@ func newSegment(
 // expectStreamIDs waits until the catalog has exactly the given streams.
 func expectStreamIDs(
 	t *testing.T,
-	catalog *eventstream.Catalog,
+	catalog *Catalog,
 	want ...*uuidpb.UUID,
 ) {
 	t.Helper()
@@ -304,4 +305,155 @@ func expectStreamIDs(
 		catalog.StreamIDs(),
 		expected.IsEqual,
 	)
+}
+
+// TestConsumer_partialSuccessReloadsDurableCheckpoint verifies that a failed
+// segment is retried from the sink's stored checkpoint rather than the beginning
+// of the segment or the offset returned with the error.
+func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
+	for _, failure := range []struct {
+		name string
+		err  error
+	}{
+		{"handling error", errors.New("later event failed")},
+		{"checkpoint conflict", nil},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			node := newConsumerNode(t)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			logger := spruce.NewTestLogger(t)
+			catalog := &Catalog{
+				CacheSize: 10,
+				Logger:    logger,
+			}
+			src := &source.Memory{}
+			id := uuidpb.Generate()
+			src.Append(Segment{
+				StreamID: id,
+				Begin:    0,
+				End:      10,
+			})
+
+			watchDone := make(chan error, 1)
+			go func() {
+				watchDone <- catalog.Watch(ctx, src, nil)
+			}()
+			defer func() {
+				cancel()
+				<-watchDone
+			}()
+
+			for {
+				ids, changed := catalog.StreamIDs().Load()
+				if ids.Has(id) {
+					break
+				}
+
+				select {
+				case <-changed:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+
+			var (
+				mu      sync.Mutex
+				durable uint64
+				loads   []uint64
+				calls   int
+			)
+			done := make(chan struct{})
+			sink := &sinkStub{
+				CheckpointOffsetFunc: func(context.Context, *uuidpb.UUID) (uint64, error) {
+					mu.Lock()
+					defer mu.Unlock()
+
+					loads = append(loads, durable)
+
+					return durable, nil
+				},
+				ConsumeSegmentFunc: func(_ context.Context, cp uint64, seg Segment) (uint64, bool, error) {
+					mu.Lock()
+					defer mu.Unlock()
+
+					calls++
+					if calls == 1 {
+						if cp != 0 || seg.Begin != 0 {
+							t.Errorf("initial checkpoint/segment = %d/%d", cp, seg.Begin)
+						}
+
+						// Earlier event transactions committed before the later failure.
+						durable = 4
+
+						return 0, false, failure.err
+					}
+
+					if cp != 4 || seg.Begin != 4 {
+						t.Errorf("resumed checkpoint/segment = %d/%d, want 4/4", cp, seg.Begin)
+					}
+
+					close(done)
+
+					// Empty/filtered segments need not advance a sink's durable checkpoint.
+					return cp, true, nil
+				},
+			}
+
+			c := &Consumer{
+				EventStreams: catalog,
+				Sink:         sink,
+				Logger:       logger,
+			}
+
+			c.Node = node
+
+			stopped := make(chan error, 1)
+			go func() {
+				stopped <- c.Run(ctx)
+			}()
+
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+
+			cancel()
+			if err := <-stopped; !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if len(loads) != 2 || loads[0] != 0 || loads[1] != 4 {
+				t.Fatalf("checkpoint loads = %v, want [0 4]", loads)
+			}
+		})
+	}
+}
+
+// newConsumerNode starts a single-node cluster for the consumer tests.
+func newConsumerNode(t *testing.T) *cluster.Node {
+	t.Helper()
+
+	logger := spruce.NewTestLogger(t)
+	signals := &signal.Bus{
+		DB:     xtesting.NewDatabase(t),
+		Logger: logger,
+	}
+	xtesting.GoE(t, signals.Run)
+	node := &cluster.Node{
+		ID:       uuidpb.Generate(),
+		Signals:  signals,
+		Interval: 20 * time.Millisecond,
+		Timeout:  100 * time.Millisecond,
+		Logger:   logger,
+	}
+	xtesting.GoE(t, node.Run)
+
+	return node
 }
