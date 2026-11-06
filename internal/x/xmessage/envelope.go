@@ -6,6 +6,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // Unpack unmarshals an envelope from its binary representation and unpacks the
@@ -40,6 +41,9 @@ func Unpack[
 //
 // Unlike [Unpack], it does not unmarshal the envelope from binary; the caller
 // is responsible for ensuring the envelope is already populated and valid.
+//
+// It returns an [xerrors.PanicError] if the message's UnmarshalBinary or
+// Validate method panics.
 func UnpackMessage[
 	T interface {
 		dogma.Message
@@ -50,27 +54,31 @@ func UnpackMessage[
 	env *envelopepb.Envelope,
 	messages ...*T,
 ) error {
-	for idx := range messages {
-		m, err := envelope.Unpack[T](env)
-		if err != nil {
-			return err
-		}
+	return xerrors.Recover(
+		func() error {
+			for idx := range messages {
+				m, err := envelope.Unpack[T](env)
+				if err != nil {
+					return err
+				}
 
-		if idx == 0 {
-			// Validate the message once; assume that subsequent unpacking
-			// of the same data _must_ be valid too.
-			s := ValidationScope{
-				IsNewMessage: false,
-				Envelope:     env,
+				if idx == 0 {
+					// Validate the message once; assume that subsequent
+					// unpacking of the same data _must_ be valid too.
+					s := ValidationScope{
+						IsNewMessage: false,
+						Envelope:     env,
+					}
+
+					if err := m.Validate(any(s).(S)); err != nil {
+						return err
+					}
+				}
+
+				*messages[idx] = m
 			}
 
-			if err := m.Validate(any(s).(S)); err != nil {
-				return err
-			}
-		}
-
-		*messages[idx] = m
-	}
-
-	return nil
+			return nil
+		},
+	)
 }

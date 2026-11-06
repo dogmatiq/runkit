@@ -61,6 +61,10 @@ func (c *Connector) discover(ctx context.Context) error {
 	defer cancel()
 
 	add := func(conn grpc.ClientConnInterface) func() {
+		if conn == nil {
+			panic("remote engine connection must not be nil")
+		}
+
 		if ctx.Err() != nil || c.EventTypeIDs.IsEmpty() {
 			return func() {}
 		}

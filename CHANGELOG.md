@@ -93,6 +93,10 @@ connection per cluster.
   an error only when the engine can't start or continue, for example because
   the application's configuration is invalid or the engine can't listen on its
   address.
+- Fixed an issue where a panic in a message's `UnmarshalBinary()` or
+  `Validate()` method crashed the engine when the message was delivered to an
+  aggregate, integration or process handler. The engine now handles the message
+  as one that it can't unmarshal.
 
 ## [0.1.2] - 2026-07-04
 

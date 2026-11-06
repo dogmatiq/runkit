@@ -16,7 +16,8 @@ import (
 //
 // It calls the add function for each remote engine as it becomes available,
 // passing a connection to the remote engine, and calls the remove function that
-// it returns when the remote engine is no longer available.
+// it returns when the remote engine is no longer available. The add function
+// panics if the connection is nil.
 //
 // This engine uses the connection until the remove function is called, but
 // never closes it. The remove function blocks until the engine has stopped

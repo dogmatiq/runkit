@@ -103,6 +103,29 @@ func TestConnector(t *testing.T) {
 		expectCalls(t, &calls, 2)
 	})
 
+	t.Run("it calls the discoverer again if it adds a nil connection", func(t *testing.T) {
+		var calls atomic.Int32
+
+		connector, _ := setup(
+			t,
+			typesA,
+			func(
+				ctx context.Context,
+				add func(grpc.ClientConnInterface) func(),
+			) error {
+				if calls.Add(1) == 1 {
+					add(nil)
+				}
+
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		)
+		xtesting.GoE(t, connector.Run)
+
+		expectCalls(t, &calls, 2)
+	})
+
 	t.Run("it adds the event streams of each remote engine to the catalog", func(t *testing.T) {
 		engineA := &consumerAPIStub{StreamID: uuidpb.Generate()}
 		engineB := &consumerAPIStub{StreamID: uuidpb.Generate()}

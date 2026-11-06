@@ -138,11 +138,7 @@ func (sc *streamConsumer) dispatch(
 	env *envelopepb.Envelope,
 ) (uint64, error) {
 	var event dogma.Event
-	if err := xerrors.Recover(
-		func() error {
-			return xmessage.UnpackMessage(env, &event)
-		},
-	); err != nil {
+	if err := xmessage.UnpackMessage(env, &event); err != nil {
 		return 0, supervisor.Persistentf(
 			"unable to unmarshal event at offset %d: %w",
 			offset,
