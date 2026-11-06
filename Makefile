@@ -1,6 +1,7 @@
 GO_TEST_COVERAGE_ARGS = -coverpkg=./...
 
 -include .makefiles/Makefile
+-include .makefiles/pkg/changelog/v2/Makefile
 -include .makefiles/pkg/go/v1/Makefile
 -include .makefiles/pkg/apm/v1/Makefile
 
