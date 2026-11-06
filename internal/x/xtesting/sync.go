@@ -2,7 +2,6 @@ package xtesting
 
 import (
 	"context"
-	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -128,8 +127,9 @@ func Go(
 
 // GoE runs the given function in a goroutine until the test ends.
 //
-// If fn returns an error other than a context cancellation error, the test
-// fails.
+// If fn returns an error before the goroutine is stopped or the test ends, the
+// test fails. An error returned while the test is ending is ignored, as fn may
+// fail because something it depends on has already stopped.
 //
 // It returns a function that can be called to stop the goroutine early, which
 // blocks until fn returns.
@@ -153,7 +153,13 @@ func GoE(
 		defer close(stopped)
 
 		if err := fn(ctx); err != nil {
-			if !errors.Is(err, ctx.Err()) {
+			// When the test ends, the goroutines started by GoE are canceled
+			// one at a time, so fn may see another stop before ctx is
+			// canceled. The test's own context is canceled before any of them.
+			select {
+			case <-ctx.Done():
+			case <-t.Context().Done():
+			default:
 				t.Error(err)
 			}
 		}
