@@ -42,9 +42,9 @@ type Sink interface {
 	// ConsumeSegment handles the events in the given segment and returns the new
 	// checkpoint offset for its stream.
 	//
-	// checkpoint is the sink's last reported checkpoint offset for this stream.
+	// cp is the sink's last reported checkpoint offset for this stream.
 	// Reading past filtered events need not update the sink's storage, so both
-	// checkpoint and next may trail the segment boundaries. The consumer tracks
+	// cp and next may trail the segment boundaries. The consumer tracks
 	// its reading position separately to avoid rereading those events.
 	//
 	// If ok is false, another consumer has changed the checkpoint offset.
@@ -55,7 +55,7 @@ type Sink interface {
 	// returned by this call is used only when ok is true and err is nil.
 	ConsumeSegment(
 		ctx context.Context,
-		checkpoint uint64,
-		segment Segment,
+		cp uint64,
+		seg Segment,
 	) (next uint64, ok bool, err error)
 }

@@ -66,12 +66,12 @@ func TestSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	}
 	sink := NewSink(runtimeconfig.FromProjection(handler), spruce.NewTestLogger(t))
 	streamID := uuidpb.Generate()
-	checkpoint, err := sink.CheckpointOffset(t.Context(), streamID)
+	cp, err := sink.CheckpointOffset(t.Context(), streamID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	next, ok, err := sink.ConsumeSegment(t.Context(), checkpoint, eventstream.Segment{
+	next, ok, err := sink.ConsumeSegment(t.Context(), cp, eventstream.Segment{
 		StreamID: streamID,
 		Begin:    10,
 		End:      20,
@@ -79,7 +79,7 @@ func TestSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || next != checkpoint {
-		t.Fatalf("got checkpoint %d, ok %t; want %d, true", next, ok, checkpoint)
+	if !ok || next != cp {
+		t.Fatalf("got cp %d, ok %t; want %d, true", next, ok, cp)
 	}
 }

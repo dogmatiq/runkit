@@ -79,13 +79,13 @@ type sink struct {
 // CheckpointOffset returns the handler's checkpoint offset for the stream
 // with the given ID. An error or panic from the handler stops the current
 // consumption attempt.
-func (sc *sink) CheckpointOffset(
+func (s *sink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) (uint64, error) {
-	checkpoint, err := xerrors.RecoverT(
+	cp, err := xerrors.RecoverT(
 		func() (uint64, error) {
-			return sc.Handler.CheckpointOffset(ctx, streamID.AsString())
+			return s.Handler.CheckpointOffset(ctx, streamID.AsString())
 		},
 	)
 	if err != nil {
@@ -95,18 +95,18 @@ func (sc *sink) CheckpointOffset(
 		)
 	}
 
-	return checkpoint, nil
+	return cp, nil
 }
 
 // ConsumeSegment dispatches the events in a segment, and returns the
 // handler's new checkpoint offset for the stream. It returns false if the
 // handler reports an optimistic concurrency conflict.
 //
-// checkpoint is the offset from which the handler last said it would resume
+// cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (sc *sink) ConsumeSegment(
+func (s *sink) ConsumeSegment(
 	ctx context.Context,
-	checkpoint uint64,
+	cp uint64,
 	seg eventstream.Segment,
 ) (uint64, bool, error) {
 	// The segment's end is past events that the handler does not consume, but
@@ -118,30 +118,30 @@ func (sc *sink) ConsumeSegment(
 		pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
 		offset := pos.GetOffset()
 
-		next, err := sc.dispatch(ctx, seg.StreamID, offset, checkpoint, env)
+		next, err := s.dispatch(ctx, seg.StreamID, offset, cp, env)
 		if err != nil {
-			return checkpoint, false, err
+			return cp, false, err
 		}
 
 		if next != offset+1 {
-			return checkpoint, false, nil
+			return cp, false, nil
 		}
 
-		checkpoint = next
+		cp = next
 	}
 
-	return checkpoint, true, nil
+	return cp, true, nil
 }
 
 // dispatch passes the event at the given offset to the handler, and returns
 // the handler's new checkpoint offset for the stream.
 //
-// checkpoint is the offset from which the handler last said it would resume
+// cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (sc *sink) dispatch(
+func (s *sink) dispatch(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
-	offset, checkpoint uint64,
+	offset, cp uint64,
 	env *envelopepb.Envelope,
 ) (uint64, error) {
 	var event dogma.Event
@@ -153,23 +153,23 @@ func (sc *sink) dispatch(
 		)
 	}
 
-	if sc.HandlerLock != nil {
-		if err := sc.HandlerLock.Acquire(ctx, 1); err != nil {
+	if s.HandlerLock != nil {
+		if err := s.HandlerLock.Acquire(ctx, 1); err != nil {
 			return 0, err
 		}
-		defer sc.HandlerLock.Release(1)
+		defer s.HandlerLock.Release(1)
 	}
 
 	next, err := xerrors.RecoverT(
 		func() (uint64, error) {
-			return sc.Handler.HandleEvent(
+			return s.Handler.HandleEvent(
 				ctx,
 				&eventScope{
 					streamID:         streamID.AsString(),
 					offset:           offset,
 					recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
-					checkpointOffset: checkpoint,
-					logger: sc.Logger.With(
+					checkpointOffset: cp,
+					logger: s.Logger.With(
 						xslog.UUID("stream_id", streamID),
 						slog.Uint64("offset", offset),
 						xslog.Envelope("message", env),

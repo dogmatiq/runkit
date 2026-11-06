@@ -48,11 +48,11 @@ func (s *sinkStub) CheckpointOffset(
 // ConsumeSegment handles a segment and returns the new checkpoint offset.
 func (s *sinkStub) ConsumeSegment(
 	ctx context.Context,
-	checkpoint uint64,
-	segment Segment,
+	cp uint64,
+	seg Segment,
 ) (uint64, bool, error) {
 	if s.ConsumeSegmentFunc != nil {
-		return s.ConsumeSegmentFunc(ctx, checkpoint, segment)
+		return s.ConsumeSegmentFunc(ctx, cp, seg)
 	}
-	return segment.End, true, nil
+	return seg.End, true, nil
 }

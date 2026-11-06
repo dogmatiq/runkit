@@ -130,7 +130,7 @@ func (c *Consumer) startStreamConsumer(
 			ctx,
 			logger,
 			func(ctx context.Context) error {
-				checkpoint, err := c.Sink.CheckpointOffset(ctx, streamID)
+				cp, err := c.Sink.CheckpointOffset(ctx, streamID)
 				if err != nil {
 					return supervisor.Persistent(err)
 				}
@@ -139,10 +139,10 @@ func (c *Consumer) startStreamConsumer(
 					ctx,
 					streamID,
 					c.Sink.EventTypeIDs(),
-					checkpoint,
+					cp,
 					func(seg Segment) error {
 						var ok bool
-						checkpoint, ok, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
+						cp, ok, err = c.Sink.ConsumeSegment(ctx, cp, seg)
 						if err != nil {
 							return supervisor.Persistent(err)
 						}
