@@ -71,6 +71,12 @@ const (
 	// buffers for each call to [source.Local.Watch]. A call that falls further
 	// behind ends with [source.ErrConsumerTooSlow].
 	eventStreamBufferSize = 100
+
+	// eventStreamMaxSegmentBytes is the maximum combined size, in bytes, of the
+	// events in each segment that the gRPC server sends to a remote engine. If
+	// a single event is larger than this, it is sent on its own. It is well
+	// under the 4 MiB message size that gRPC clients accept by default.
+	eventStreamMaxSegmentBytes = 2 << 20
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -258,7 +264,8 @@ func (e *Engine) Run(ctx context.Context) error {
 				// The server provides only the application's own streams, so
 				// that it never relays events recorded by a remote engine's
 				// application.
-				EventStreams: localEventStreams,
+				EventStreams:    localEventStreams,
+				MaxSegmentBytes: eventStreamMaxSegmentBytes,
 			},
 			Options: e.grpcOptions,
 			Logger:  e.logger.With(slog.String("component", "grpc.server")),

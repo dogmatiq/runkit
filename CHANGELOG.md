@@ -35,6 +35,12 @@ connection per cluster.
 > consume all of the application's events, so the credentials should
 > authenticate clients, for example with mutual TLS.
 
+> [!NOTE]
+> gRPC clients reject messages larger than 4 MiB by default. The engine's gRPC
+> server sends events in batches of up to 2 MiB. If a single message is larger
+> than that, it is sent on its own. To consume events larger than 4 MiB, a
+> `RemoteEngineDiscoverer` must configure its connections with a higher limit.
+
 ### Added
 
 - Added `New()` and the `WithLogger()`, `WithListenAddress()` and

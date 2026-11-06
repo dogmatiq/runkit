@@ -175,6 +175,69 @@ func TestServer_eventsRecordedTogetherShareAHeader(t *testing.T) {
 	)
 }
 
+func TestServer_largeEventsRecordedTogetherAreSplit(t *testing.T) {
+	events := []dogma.Event{
+		largeEvent("1", 800<<10),
+		largeEvent("2", 800<<10),
+		largeEvent("3", 800<<10),
+		largeEvent("4", 800<<10),
+		largeEvent("5", 800<<10),
+	}
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
+
+			typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
+			client, ctx := newConsumerClient(t, cluster)
+
+			// The watch begins at the end of the stream, so the events already
+			// on it are read instead. The watch only identifies the stream.
+			streamID := watch(t, ctx, client, typeA).receive().GetEventStreamId()
+			segments := read(t, ctx, client, streamID, 0, typeA)
+
+			for _, want := range [][]dogma.Event{
+				events[0:2],
+				events[2:4],
+				events[4:5],
+			} {
+				seg := segments.receive()
+
+				if n := len(seg.GetEnvelopes()); n != 1 {
+					t.Fatalf("unexpected number of multi-envelopes: got %d, want 1", n)
+				}
+
+				xtesting.Expect(t, "events", eventsIn(t, seg), want)
+			}
+
+			segments.ExpectEOF()
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "0b0e3f1d-8d3c-4a49-9f0e-6f4f2b8c1a57")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					_ dogma.Command,
+				) error {
+					for _, e := range events {
+						s.RecordEvent(e)
+					}
+
+					return nil
+				},
+			},
+		),
+	)
+}
+
 func TestServer_historicalEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
@@ -601,6 +664,60 @@ func TestServer_ReadEvents(t *testing.T) {
 		)
 	})
 
+	t.Run("it splits a segment whose events are larger than the maximum segment size", func(t *testing.T) {
+		var streamID *uuidpb.UUID
+
+		events := []dogma.Event{
+			largeEvent("1", 800<<10),
+			largeEvent("2", 800<<10),
+			largeEvent("3", 800<<10),
+			largeEvent("4", 800<<10),
+			largeEvent("5", 800<<10),
+		}
+
+		xtesting.SetupThenRunEngines(
+			t,
+			func(t testing.TB, db *sql.DB) {
+				streamID = xtesting.CreateEventStream(t, db)
+				xtesting.AppendToEventStream(t, db, streamID, events...)
+			},
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
+				segments := read(t, ctx, client, streamID, 0, typeA)
+
+				segments.ExpectSegment(streamID, 0, 2, events[0], events[1])
+				segments.ExpectSegment(streamID, 2, 4, events[2], events[3])
+				segments.ExpectSegment(streamID, 4, 5, events[4])
+				segments.ExpectEOF()
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it sends an event that is larger than the maximum segment size on its own", func(t *testing.T) {
+		var streamID *uuidpb.UUID
+
+		large := largeEvent("<large>", 3<<20)
+
+		xtesting.SetupThenRunEngines(
+			t,
+			func(t testing.TB, db *sql.DB) {
+				streamID = xtesting.CreateEventStream(t, db)
+				xtesting.AppendToEventStream(t, db, streamID, stubs.EventA1, large, stubs.EventA2, stubs.EventX1)
+			},
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
+				segments := read(t, ctx, client, streamID, 0, typeA)
+
+				segments.ExpectSegment(streamID, 0, 1, stubs.EventA1)
+				segments.ExpectSegment(streamID, 1, 2, large)
+				segments.ExpectSegment(streamID, 2, 4, stubs.EventA2)
+				segments.ExpectEOF()
+			},
+			consumerAPIApp(),
+		)
+	})
+
 	t.Run("it closes without delivering anything when beginning at the end of the stream", func(t *testing.T) {
 		var streamID *uuidpb.UUID
 
@@ -619,6 +736,18 @@ func TestServer_ReadEvents(t *testing.T) {
 			consumerAPIApp(),
 		)
 	})
+}
+
+// largeEvent returns an event of type A whose content begins with the given
+// prefix, and whose envelope is about the given number of bytes.
+func largeEvent(prefix string, size int) dogma.Event {
+	// The envelope holds the content twice, once in the event and once in its
+	// description.
+	n := size/2 - len(prefix)
+
+	return &stubs.EventStub[stubs.TypeA]{
+		Content: stubs.TypeA(prefix + strings.Repeat("x", n)),
+	}
 }
 
 // newConsumerClient returns a client for the cluster's consumer API, and a
