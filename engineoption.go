@@ -53,6 +53,22 @@ func WithListenAddress(addr string, options ...grpc.ServerOption) EngineOption {
 	}
 }
 
+// WithRemoteEngineDiscoverer is an [EngineOption] that adds d to the
+// discoverers that the engine uses to find remote engines.
+//
+// It may be provided more than once, adding a discoverer each time. Use
+// [StaticRemoteEngines] for a fixed set of remote engines. It panics if d is
+// nil.
+func WithRemoteEngineDiscoverer(d RemoteEngineDiscoverer) EngineOption {
+	if d == nil {
+		panic("remote engine discoverer must not be nil")
+	}
+
+	return func(e *Engine) {
+		e.remoteEngineDiscoverers = append(e.remoteEngineDiscoverers, d)
+	}
+}
+
 // WithProjectionCompactInterval is an [EngineOption] that sets the minimum time
 // between successful projection compactions.
 //

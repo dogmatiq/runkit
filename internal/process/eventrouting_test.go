@@ -9,7 +9,6 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -24,7 +23,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -37,7 +36,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 				2, // one stream, two events of different types
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -123,7 +122,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -142,7 +141,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 				1, // one stream with one TypeB event
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerACalled,
 				&handlerBCalled,
@@ -225,7 +224,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -235,7 +234,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 				1, // one stream with one TypeA event
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerCalled,
 			)
@@ -287,7 +286,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -300,7 +299,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 				2, // one stream with two events
 			)
 
-			xtesting.ExpectLatchesSetEventually(
+			xtesting.WaitForLatches(
 				t,
 				&handlerCalled,
 			)
@@ -360,7 +359,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
@@ -377,7 +376,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 				3,
 			)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -451,7 +450,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 				1, // one stream with one event
 			)[0]
 		},
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Wait for the handler to finish discovering and checkpointing the
 			// historical stream, without delivering the events.
 			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
@@ -460,7 +459,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 			// caught up.
 			xtesting.AppendToEventStream(t, db, streamID, stubs.EventA2)
 
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -522,7 +521,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Create one stream that contains an event that the handler is
 			// configured to handle, and an event that it is not.
 			xtesting.PopulateEventStreams(
@@ -585,7 +584,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 	xtesting.RunEnginesWithDB(
 		t,
 		db,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Append an additional TypeB event to the same stream after the
 			// handler has checkpointed.
 			xtesting.AppendToEventStream(t, db, streamID, stubs.EventB2)
@@ -593,7 +592,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 			// Wait for the additional event to be delivered, confirming the
 			// handler is routed events that are appended after the route is
 			// added.
-			xtesting.ExpectLatchesSetEventually(t, &done)
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{

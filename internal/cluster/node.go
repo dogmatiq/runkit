@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -11,7 +10,6 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"github.com/zeebo/xxh3"
 )
 
 const (
@@ -48,79 +46,21 @@ type Node struct {
 	// Logger is the target for log messages produced by the node.
 	Logger *slog.Logger
 
-	peers xsync.Observable[*uuidcollection.Set]
-
-	once       sync.Once
-	observe    chan *observer
-	unobserve  chan *observer
-	done       xsync.Latch
+	membership xsync.Observable[*Membership]
 	heartbeats uuidcollection.Map[time.Time]
-	observers  uuidcollection.Map[map[*observer]struct{}]
 }
 
-// observer is a caller's interest in whether this node is responsible for a
-// workload, created by [Node.ObserveResponsibility].
-type observer struct {
-	Workload    *uuidpb.UUID
-	Responsible xsync.Observable[bool]
-}
-
-// Peers returns the IDs of the other live nodes in the cluster, and a channel
-// that is closed when that set changes.
-func (n *Node) Peers() (*uuidcollection.Set, <-chan struct{}) {
-	peers, changed := n.peers.Load()
-	return peers.Clone(), changed
-}
-
-// ObserveResponsibility observes whether this node is responsible for the
-// given rendezvous workload among the live nodes in the cluster.
+// Membership returns an observable of this node's view of the live nodes in
+// the cluster.
 //
-// responsible returns true while this node is responsible for the workload, and
-// a channel that is closed when that changes. This node is responsible for no
-// workloads while it can not hear its own heartbeats.
-//
-// unobserve stops observing the workload, after which responsible no longer
-// changes.
-//
-// It blocks until [Node.Run] has been called. If the node has stopped, this
-// node is never responsible for the workload.
-func (n *Node) ObserveResponsibility(workload *uuidpb.UUID) (
-	responsible func() (bool, <-chan struct{}),
-	unobserve func(),
-) {
-	n.init()
-
-	o := &observer{
-		Workload: workload,
-	}
-
-	select {
-	case <-n.done.Chan():
-		return o.Responsible.Load, func() {}
-	case n.observe <- o:
-	}
-
-	var once sync.Once
-
-	return o.Responsible.Load, func() {
-		once.Do(func() {
-			select {
-			case <-n.done.Chan():
-			case n.unobserve <- o:
-			}
-		})
-	}
+// The membership is nil until this node first hears a heartbeat, and has no
+// live nodes once this node has stopped.
+func (n *Node) Membership() xsync.ObservableR[*Membership] {
+	return &n.membership
 }
 
-func (n *Node) init() {
-	n.once.Do(func() {
-		n.observe = make(chan *observer)
-		n.unobserve = make(chan *observer)
-	})
-}
-
-// Run sends and receives heartbeats, and reports whether this node is
-// responsible for each observed workload, until ctx is canceled.
+// Run sends and receives heartbeats, and publishes the membership as it
+// changes, until ctx is canceled.
 //
 // It must be called at most once.
 func (n *Node) Run(ctx context.Context) error {
@@ -132,23 +72,12 @@ func (n *Node) Run(ctx context.Context) error {
 		panic("heartbeat timeout must be greater than the heartbeat interval")
 	}
 
-	n.init()
+	// Once this node has stopped, it is no longer responsible for any
+	// workload.
+	defer n.membership.Store(&Membership{})
 
-	defer func() {
-		n.done.Set()
-
-		// Once this node has stopped, it is no longer responsible for any
-		// workload.
-		for observers := range n.observers.Values() {
-			for o := range observers {
-				xsync.ChangeObservable(&o.Responsible, false)
-			}
-		}
-	}()
-
-	heartbeats := make(chan string, heartbeatBufferSize)
-	unsubscribe := n.Signals.Subscribe(heartbeatTopic, heartbeats)
-	defer unsubscribe()
+	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
+	defer stop()
 
 	ticker := time.NewTicker(n.Interval)
 	defer ticker.Stop()
@@ -160,13 +89,11 @@ func (n *Node) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case o := <-n.observe:
-			n.addObserver(o)
+		case nodeID, ok := <-heartbeats:
+			if !ok {
+				return ctx.Err()
+			}
 
-		case o := <-n.unobserve:
-			n.removeObserver(o)
-
-		case nodeID := <-heartbeats:
 			// A signal on the heartbeat topic itself carries no node ID, and
 			// so is not a heartbeat.
 			if nodeID == "" {
@@ -265,109 +192,21 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 	return changed
 }
 
-// publishMembershipChange updates whether this node is responsible for each
-// observed workload after the set of live nodes has changed, and publishes the
-// new set of peers if that has changed too.
+// publishMembershipChange publishes the membership after the set of live
+// nodes has changed.
 func (n *Node) publishMembershipChange() {
-	for workload, observers := range n.observers.All() {
-		responsible := n.isResponsibleFor(workload)
+	m := &Membership{
+		nodeID: n.ID,
+		peers:  uuidcollection.NewSet(),
+	}
 
-		for o := range observers {
-			xsync.ChangeObservable(&o.Responsible, responsible)
+	for nodeID := range n.heartbeats.Keys() {
+		if nodeID.Equal(n.ID) {
+			m.isLive = true
+		} else {
+			m.peers.Add(nodeID)
 		}
 	}
 
-	// [Node.Peers] may be cloning the published set on another goroutine, so a
-	// new set is built rather than modifying it.
-	peers := uuidcollection.NewSet()
-
-	for peerID := range n.heartbeats.Keys() {
-		if peerID.Equal(n.ID) {
-			continue
-		}
-
-		peers.Add(peerID)
-	}
-
-	if prev, _ := n.peers.Load(); !peers.IsEqual(prev) {
-		n.peers.Store(peers)
-	}
-}
-
-// addObserver adds o to the observers of its workload, and sets whether this
-// node is responsible for it.
-func (n *Node) addObserver(o *observer) {
-	observers, ok := n.observers.Get(o.Workload)
-	if !ok {
-		observers = map[*observer]struct{}{}
-		n.observers.Set(o.Workload, observers)
-	}
-
-	observers[o] = struct{}{}
-
-	xsync.ChangeObservable(
-		&o.Responsible,
-		n.isResponsibleFor(o.Workload),
-	)
-}
-
-// removeObserver removes o from the observers of its workload.
-func (n *Node) removeObserver(o *observer) {
-	observers, ok := n.observers.Get(o.Workload)
-	if !ok {
-		return
-	}
-
-	delete(observers, o)
-
-	if len(observers) == 0 {
-		n.observers.Delete(o.Workload)
-	}
-}
-
-// isResponsibleFor returns true if this node is responsible for the given
-// workload among the live nodes.
-//
-// It uses rendezvous hashing: each live node is scored by hashing the workload
-// with the node's ID, and the node with the highest score is responsible. Ties
-// are broken by the lower ID, so every node reaches the same answer regardless
-// of the order in which it holds the live nodes.
-//
-// This node is responsible for nothing while it can not hear its own
-// heartbeats.
-func (n *Node) isResponsibleFor(workload *uuidpb.UUID) bool {
-	if !n.heartbeats.Has(n.ID) {
-		return false
-	}
-
-	// The first half of buf holds the workload, and the second half holds the
-	// ID of the node being scored.
-	var buf [32]byte
-	uuidpb.CopyBytes(workload, buf[:16])
-
-	uuidpb.CopyBytes(n.ID, buf[16:])
-	ownScore := xxh3.Hash(buf[:])
-
-	for peerID := range n.heartbeats.Keys() {
-		if peerID.Equal(n.ID) {
-			continue
-		}
-
-		uuidpb.CopyBytes(peerID, buf[16:])
-		peerScore := xxh3.Hash(buf[:])
-
-		if peerScore > ownScore {
-			return false
-		}
-
-		if peerScore == ownScore {
-			// Break ties by the lower ID, so that every node reaches the same
-			// answer regardless of the order in which it holds the live nodes.
-			if peerID.Compare(n.ID) < 0 {
-				return false
-			}
-		}
-	}
-
-	return true
+	n.membership.Store(m)
 }

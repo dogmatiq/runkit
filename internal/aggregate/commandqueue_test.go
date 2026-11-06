@@ -9,7 +9,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -19,8 +18,8 @@ import (
 func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
@@ -44,12 +43,12 @@ func TestCommandQueue_commandIsRemovedAfterHandling(t *testing.T) {
 func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			handledCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			handledCommandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 			ignoredCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
-				engine,
+				cluster,
 				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
 					// Mangle the command type so that the handler does not
@@ -98,11 +97,11 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Execute an invalid command.
 			invalidCommandEnvelope := xtesting.ExecuteCommandWithHook(
 				t,
-				engine,
+				cluster,
 				stubs.CommandA1,
 				func(x contexthook.ExecuteCommand) {
 					// Corrupt the command envelope so that it cannot be unpacked.
@@ -115,7 +114,7 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 
 			// Execute a second valid command to verify that the invalid
 			// command does not block handling of other commands.
-			validCommandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			validCommandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
@@ -154,10 +153,10 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Execute a command to create the instance and record an
 			// event in its history.
-			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
+			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 
 			// Corrupt the stored event envelope so that it cannot be
 			// unmarshaled.
@@ -185,7 +184,7 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 			)
 
 			// Execute another command that targets the same instance.
-			commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			commandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 			xtesting.WaitForCommandToBePostponed(
 				t,
@@ -224,8 +223,8 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 	t.Run("panic in RouteCommandToInstance()", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				commandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 				xtesting.WaitForCommandToBePostponed(
 					t,
@@ -253,8 +252,8 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 	t.Run("panic in HandleCommand()", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				commandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 				xtesting.WaitForCommandToBePostponed(
 					t,
@@ -298,14 +297,14 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 
 		xtesting.RunEngines(
 			t,
-			func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				// Execute a command to create the instance and record an event
 				// in its history.
-				xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
+				xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 
 				// Execute another command that targets the same instance. When
 				// loading state, replaying the event will panic.
-				commandEnvelope := xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+				commandEnvelope := xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 				xtesting.WaitForCommandToBePostponed(
 					t,
@@ -352,7 +351,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			postponedEnvelope := xtesting.EnqueuePostponedCommand(
 				t,
 				db,

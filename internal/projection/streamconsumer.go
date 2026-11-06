@@ -7,10 +7,8 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -25,15 +23,8 @@ type streamConsumer struct {
 	// StreamID is the ID of the stream from which events are consumed.
 	StreamID *uuidpb.UUID
 
-	// Node reports whether this node is responsible for the stream's workload.
-	Node *cluster.Node
-
-	// Workload is the rendezvous workload that determines which node consumes
-	// the stream.
-	Workload *uuidpb.UUID
-
-	// Events delivers events from the stream.
-	Events *eventstream.Reader
+	// EventStreams is the catalog from which the stream is consumed.
+	EventStreams *eventstream.Catalog
 
 	// EventTypeIDs is the set of IDs of the event types that the handler
 	// consumes.
@@ -48,75 +39,29 @@ type streamConsumer struct {
 	// handle events one at a time.
 	HandlerLock *semaphore.Weighted
 
-	// BufferSize is the number of batches of events that are buffered while
-	// waiting to be dispatched.
-	BufferSize int
-
 	// Logger is the target for log messages produced by the stream consumer
 	// and the handler.
 	Logger *slog.Logger
 }
 
-// Run consumes the stream while this node is responsible for its workload,
-// until ctx is canceled.
+// Run consumes the stream until ctx is canceled or it fails fatally.
 func (sc *streamConsumer) Run(ctx context.Context) error {
-	responsible, unobserve := sc.Node.ObserveResponsibility(sc.Workload)
-	defer unobserve()
+	sc.Logger.DebugContext(ctx, "started consuming event stream")
+	defer sc.Logger.DebugContext(ctx, "stopped consuming event stream")
 
-	for {
-		if err := sc.step(ctx, responsible); err != nil {
-			return err
-		}
-	}
-}
-
-// step runs the stream consumer until ctx is canceled or its responsibility
-// changes, consuming the stream if this node is responsible for its workload.
-//
-// responsible reports whether this node is responsible for the stream's
-// workload, and returns a channel that is closed when that changes.
-func (sc *streamConsumer) step(
-	ctx context.Context,
-	responsible func() (bool, <-chan struct{}),
-) error {
-	isResponsible, responsibilityChanged := responsible()
-
-	var (
-		consumerResult  *xsync.Future[error]
-		consumerStopped <-chan struct{}
-	)
-
-	if isResponsible {
-		sc.Logger.DebugContext(ctx, "started consuming event stream")
-
-		var cancel context.CancelFunc
-		consumerResult, cancel = supervisor.Go(ctx, sc.Logger, sc.consume)
-		consumerStopped = consumerResult.Ready()
-
-		defer func() {
-			cancel()
-			consumerResult.Wait()
-
-			sc.Logger.DebugContext(ctx, "stopped consuming event stream")
-		}()
-	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-responsibilityChanged:
-		return nil
-	case <-consumerStopped:
-		return consumerResult.Wait()
-	}
+	return supervisor.Run(ctx, sc.Logger, sc.consume)
 }
 
 // consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled, an event can not be dispatched, or
-// the handler reports an optimistic concurrency conflict.
+// checkpoint offset, until ctx is canceled, a read from the stream fails, an
+// event can not be dispatched, or the handler reports an optimistic
+// concurrency conflict.
 //
 // A conflict is returned as an error so that consumption resumes from the
 // handler's checkpoint offset after a delay, rather than immediately.
+//
+// It also fails if the catalog no longer has the stream, which happens only
+// between the stream leaving the catalog and the [Consumer] noticing.
 func (sc *streamConsumer) consume(ctx context.Context) error {
 	checkpoint, err := xerrors.RecoverT(
 		func() (uint64, error) {
@@ -130,50 +75,56 @@ func (sc *streamConsumer) consume(ctx context.Context) error {
 		)
 	}
 
-	batches := make(chan eventstream.Batch, sc.BufferSize)
-	unsubscribe := sc.Events.Subscribe(
+	return sc.EventStreams.Consume(
+		ctx,
 		sc.StreamID,
-		checkpoint,
 		sc.EventTypeIDs,
-		batches,
+		checkpoint,
+		func(seg eventstream.Segment) error {
+			var err error
+			checkpoint, err = sc.dispatchSegment(ctx, checkpoint, seg)
+			return err
+		},
 	)
-	defer unsubscribe()
+}
 
-	for {
-		var batch eventstream.Batch
+// dispatchSegment dispatches the events in a segment, and returns the
+// handler's new checkpoint offset for the stream.
+//
+// checkpoint is the offset from which the handler last said it would resume
+// handling events from the stream.
+func (sc *streamConsumer) dispatchSegment(
+	ctx context.Context,
+	checkpoint uint64,
+	seg eventstream.Segment,
+) (uint64, error) {
+	// The segment's end is past events that the handler does not consume, but
+	// the handler's checkpoint advances only when it handles an event, so the
+	// segment's end is not used.
+	//
+	// See https://github.com/dogmatiq/dogma/issues/221.
+	for _, env := range seg.Envelopes {
+		pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
+		offset := pos.GetOffset()
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case batch = <-batches:
+		next, err := sc.dispatch(ctx, offset, checkpoint, env)
+		if err != nil {
+			return checkpoint, err
 		}
 
-		// The batch's own checkpoint advances past events that the handler
-		// does not consume, but the handler's checkpoint advances only when
-		// it handles an event, so the batch's checkpoint is not used.
-		//
-		// See https://github.com/dogmatiq/dogma/issues/221.
-		for _, env := range batch.Envelopes {
-			pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
-			offset := pos.GetOffset()
-
-			next, err := sc.dispatch(ctx, offset, checkpoint, env)
-			if err != nil {
-				return err
-			}
-
-			if next != offset+1 {
-				return fmt.Errorf(
-					"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
-					offset,
-					offset+1,
-					next,
-				)
-			}
-
-			checkpoint = next
+		if next != offset+1 {
+			return checkpoint, fmt.Errorf(
+				"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
+				offset,
+				offset+1,
+				next,
+			)
 		}
+
+		checkpoint = next
 	}
+
+	return checkpoint, nil
 }
 
 // dispatch passes the event at the given offset to the handler, and returns
@@ -187,7 +138,11 @@ func (sc *streamConsumer) dispatch(
 	env *envelopepb.Envelope,
 ) (uint64, error) {
 	var event dogma.Event
-	if err := xmessage.UnpackMessage(env, &event); err != nil {
+	if err := xerrors.Recover(
+		func() error {
+			return xmessage.UnpackMessage(env, &event)
+		},
+	); err != nil {
 		return 0, supervisor.Persistentf(
 			"unable to unmarshal event at offset %d: %w",
 			offset,

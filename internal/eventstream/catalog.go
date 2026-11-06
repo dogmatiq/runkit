@@ -2,121 +2,315 @@ package eventstream
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Catalog tracks the set of available event streams.
+// ErrStreamNotFound is returned by [Catalog.Consume] when the requested stream
+// is not in the catalog.
+var ErrStreamNotFound = errors.New("event stream not found")
+
+// A Catalog is an index of all event streams known to the engine, regardless of
+// whether they belong to this engine or a remote one.
 type Catalog struct {
-	// DB is the database connection used to discover event streams.
-	DB *sql.DB
+	// CacheSize is the number of each stream's most recent events to cache,
+	// per source. It must be positive.
+	CacheSize int
 
-	// Signals is the bus used to receive signals that event streams have
-	// been created.
-	Signals *signal.Bus
-
-	// Logger is the target for log messages produced by the catalog.
+	// Logger is the target for log messages produced by the catalog and the
+	// sources added to it.
 	Logger *slog.Logger
 
+	m         sync.Mutex
+	streams   uuidcollection.Map[*catalogStream]
 	streamIDs xsync.Observable[*uuidcollection.Set]
 }
 
-// StreamIDs returns the IDs of the known event streams, and a channel that is
-// closed when more streams become known.
-//
-// Streams are never removed, so each set is a superset of the sets returned
-// before it. The returned set must not be modified.
-func (c *Catalog) StreamIDs() (*uuidcollection.Set, <-chan struct{}) {
-	return c.streamIDs.Load()
-}
-
-// Run discovers event streams until ctx is canceled.
-//
-// It must be called at most once.
-func (c *Catalog) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.Logger, c.discover)
-}
-
-// discover reads the set of event streams, then waits for a stream to be
-// created and reads it again.
-func (c *Catalog) discover(ctx context.Context) error {
-	// Subscribe to signals about new streams _before_ querying, so that a
-	// stream created between the query and the subscription is not missed.
+// catalogStream is an event stream known to a [Catalog].
+type catalogStream struct {
+	// AvailableFeeds contains the feeds of this stream, one from each source
+	// that provides it.
 	//
-	// The signal identifies the stream that was created, but that is not
-	// used; each query reads the complete set of streams.
-	created := make(chan string, 1)
-	unsubscribe := c.Signals.Subscribe("eventstream.create", created)
-	defer unsubscribe()
+	// It is guarded by [Catalog.m].
+	AvailableFeeds map[*feed]struct{}
+
+	// CurrentFeed is the feed that consumers are served from, or nil if there
+	// are none. It must be one of the available feeds.
+	CurrentFeed xsync.Observable[*feed]
+}
+
+// StreamIDs returns an observable of the IDs of the streams in the catalog.
+//
+// The sets it holds must not be modified.
+func (c *Catalog) StreamIDs() xsync.ObservableR[*uuidcollection.Set] {
+	return &c.streamIDs
+}
+
+// Consume delivers events from a stream to fn, beginning at the given offset.
+//
+// Only events of the given types are delivered, in contiguous segments, as
+// soon as they are available. The offset is typically the consumer's
+// checkpoint offset. It blocks until ctx is canceled, fn returns an error, a
+// read from the stream's source fails, or the catalog no longer has the
+// stream, in which case it returns [ErrStreamNotFound]. If the offset is beyond
+// the end of the stream, it returns an error that wraps
+// [source.ErrOffsetOutOfRange].
+//
+// A consumer that keeps up with the stream is served from a cache of its most
+// recent events, and one that falls behind is served by reading from the
+// source until it catches up again.
+//
+// types must not be empty, and every type must be one that [Catalog.Watch]
+// was given for the stream's source.
+func (c *Catalog) Consume(
+	ctx context.Context,
+	streamID *uuidpb.UUID,
+	types *uuidcollection.Set,
+	begin uint64,
+	fn func(Segment) error,
+) error {
+	if types.IsEmpty() {
+		panic("message types must not be empty")
+	}
+
+	c.m.Lock()
+	cs, ok := c.streams.Get(streamID)
+	c.m.Unlock()
+
+	if !ok {
+		return ErrStreamNotFound
+	}
+
+	cp := begin
 
 	for {
-		streamIDs, err := c.loadStreamIDs(ctx)
-		if err != nil {
+		f, _ := cs.CurrentFeed.Load()
+		if f == nil {
+			return ErrStreamNotFound
+		}
+
+		if f.Types != nil {
+			if unwatched := types.Diff(f.Types); !unwatched.IsEmpty() {
+				panic(fmt.Sprintf(
+					"event stream %s is not watched for message types %s",
+					streamID,
+					unwatched,
+				))
+			}
+		}
+
+		var err error
+
+		cp, err = f.consume(ctx, types, cp, fn)
+		if !errors.Is(err, errFeedClosed) {
 			return err
 		}
 
-		// Streams are never removed, so the set has changed if and only if
-		// its size has.
-		known, _ := c.streamIDs.Load()
-
-		if streamIDs.Len() != known.Len() {
-			for streamID := range streamIDs.Diff(known).All() {
-				c.Logger.DebugContext(
-					ctx,
-					"event stream discovered",
-					xslog.UUID("stream_id", streamID),
-				)
-			}
-
-			c.streamIDs.Store(streamIDs)
-		}
-
-		select {
-		case <-ctx.Done():
+		// The feed's closure may be reported instead of ctx's error when both
+		// happen at once, but a consumer whose ctx is canceled is stopping.
+		if ctx.Err() != nil {
 			return ctx.Err()
-		case <-created:
 		}
 	}
 }
 
-// loadStreamIDs returns the IDs of all event streams.
-func (c *Catalog) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) {
-	rows, err := c.DB.QueryContext(
-		ctx,
-		`SELECT id
-		FROM eventstream.streams`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("unable to query event streams: %w", err)
+// Watch watches a source until ctx is canceled.
+//
+// If the source reports that the catalog can not keep up with it, by returning
+// an error that wraps [source.ErrConsumerTooSlow], it watches the source again
+// at once.
+//
+// It adds the streams that the source delivers to the catalog, and removes
+// them again before returning. Once it returns, no call to the source that the
+// catalog made is in progress, and the catalog makes no more.
+//
+// types is the set of message types to deliver from the source, or nil to
+// deliver every type.
+func (c *Catalog) Watch(
+	ctx context.Context,
+	src source.Source,
+	types *uuidcollection.Set,
+) error {
+	if c.CacheSize <= 0 {
+		panic("cache size must be positive")
 	}
-	defer rows.Close()
 
-	streamIDs := uuidcollection.NewSet()
+	var (
+		m     sync.Mutex
+		feeds uuidcollection.Map[*feed]
+	)
 
-	for rows.Next() {
-		streamID := &uuidpb.UUID{}
+	// feedFor returns the feed of the given stream from the source, creating
+	// it from the given offset if the source has not delivered the stream
+	// before.
+	feedFor := func(streamID *uuidpb.UUID, begin uint64) *feed {
+		m.Lock()
+		defer m.Unlock()
 
-		if err := rows.Scan(
-			xsql.UUID(streamID),
-		); err != nil {
-			return nil, fmt.Errorf("unable to scan event stream: %w", err)
+		f, ok := feeds.Get(streamID)
+		if !ok {
+			f = c.add(streamID, src, types, begin)
+			feeds.Set(streamID, f)
 		}
 
-		streamIDs.Add(streamID)
+		return f
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("unable to iterate event streams: %w", err)
+	defer func() {
+		for f := range feeds.Values() {
+			c.remove(f)
+		}
+
+		// Reads on behalf of consumers may still be calling the source.
+		for f := range feeds.Values() {
+			f.Wait()
+		}
+	}()
+
+	return supervisor.Run(
+		ctx,
+		c.Logger,
+		func(ctx context.Context) error {
+			for {
+				err := src.Watch(
+					ctx,
+					types,
+					func(seg Segment) error {
+						feedFor(seg.StreamID, seg.Begin).Append(seg)
+						return nil
+					},
+				)
+
+				// Falling behind is expected under load, and a new watch begins
+				// each stream where it stands, so the source is watched again
+				// at once rather than as though it had failed.
+				if errors.Is(err, source.ErrConsumerTooSlow) {
+					c.Logger.InfoContext(
+						ctx,
+						"unable to keep up with the source, watching it again",
+						xslog.Error(err),
+					)
+					continue
+				}
+
+				// A source that does not offer event streams, or that delivers
+				// an invalid segment, is unlikely to do otherwise soon.
+				if errors.Is(err, errors.ErrUnsupported) || errors.Is(err, source.ErrInvalidSegment) {
+					return supervisor.Persistent(err)
+				}
+
+				if err == nil && ctx.Err() == nil {
+					return errors.New("source stopped watching before the context was canceled")
+				}
+
+				return err
+			}
+		},
+	)
+}
+
+// add adds a feed of the given stream from the given source, beginning at the
+// given offset, and returns it.
+func (c *Catalog) add(
+	id *uuidpb.UUID,
+	src source.Source,
+	types *uuidcollection.Set,
+	begin uint64,
+) *feed {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	f := &feed{
+		ID:     id,
+		Source: src,
+		Types:  types,
+		cache:  cache.New(c.CacheSize, begin),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	return streamIDs, nil
+	cs, ok := c.streams.Get(id)
+	if !ok {
+		cs = &catalogStream{
+			AvailableFeeds: map[*feed]struct{}{},
+		}
+		c.streams.Set(id, cs)
+	}
+
+	cs.AvailableFeeds[f] = struct{}{}
+
+	if len(cs.AvailableFeeds) == 1 {
+		cs.CurrentFeed.Store(f)
+		c.publish(id, true)
+	}
+
+	return f
+}
+
+// remove removes a feed from the catalog. If consumers were served from it,
+// another feed of the same event stream takes over, and if there is none, the
+// event stream leaves the catalog.
+func (c *Catalog) remove(f *feed) {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	cs, _ := c.streams.Get(f.ID)
+
+	delete(cs.AvailableFeeds, f)
+
+	if current, _ := cs.CurrentFeed.Load(); current == f {
+		var next *feed
+		for next = range cs.AvailableFeeds {
+			break
+		}
+
+		cs.CurrentFeed.Store(next)
+
+		if next == nil {
+			c.streams.Delete(f.ID)
+			c.publish(f.ID, false)
+		}
+	}
+
+	// The feed is closed only after the catalog no longer consumes via it, so
+	// that a consumer that observes the closure sees the catalog's new state.
+	f.Close()
+}
+
+// publish publishes the set of stream IDs with the given ID added or removed,
+// unless that leaves the set unchanged.
+//
+// It must be called with the mutex held.
+func (c *Catalog) publish(id *uuidpb.UUID, present bool) {
+	prev, _ := c.streamIDs.Load()
+
+	if prev.Has(id) == present {
+		return
+	}
+
+	next := prev.Clone()
+
+	if next == nil {
+		next = uuidcollection.NewSet()
+	}
+
+	if present {
+		next.Add(id)
+	} else {
+		next.Delete(id)
+	}
+
+	c.streamIDs.Store(next)
 }

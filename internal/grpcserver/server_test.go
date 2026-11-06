@@ -112,7 +112,7 @@ func request(t *testing.T, addr net.Addr, deadline time.Time) error {
 
 	client := messaginggrpc.NewEventStreamConsumerAPIClient(conn)
 
-	stream, err := client.ListEventStreams(ctx, &messaginggrpc.ListEventStreamsRequest{})
+	stream, err := client.WatchEvents(ctx, &messaginggrpc.WatchEventsRequest{})
 	if err != nil {
 		return err
 	}

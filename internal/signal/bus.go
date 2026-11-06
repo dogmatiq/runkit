@@ -18,13 +18,13 @@ import (
 const channel = "signal"
 
 // Bus sends and receives signals using a PostgreSQL database, and delivers the
-// signals it receives to subscribers.
+// signals it receives to watchers.
 //
 // A signal indicates that something about a topic has changed. It carries no
-// information other than the topic itself. Delivery is lossy: a subscriber
-// whose channel is full does not receive the signal. Subscribers must read the
-// state they are interested in from the database, and must not rely on
-// receiving every signal.
+// information other than the topic itself. Delivery is lossy: a watcher whose
+// channel is full does not receive the signal. Watchers must read the state
+// they are interested in from the database, and must not rely on receiving
+// every signal.
 type Bus struct {
 	// DB is the database used to send and receive signals.
 	DB *sql.DB
@@ -42,20 +42,33 @@ type subscriber struct {
 	Subtopic chan<- string
 }
 
-// Subscribe registers ch to receive each signal on the given topic, or on any
-// topic beneath it.
+// Watch returns a channel that receives each signal on the given topic, or on
+// any topic beneath it, and a function that stops the watch.
 //
-// Topics are hierarchical, with levels separated by dots. A subscriber to
-// "a.b" receives signals on "a.b" and "a.b.c", but not on "a.bc".
+// The watch continues until the stop function is called or ctx is canceled,
+// at which point the channel is closed. The caller must call the stop function
+// once it no longer reads from the channel. Calling it more than once has no
+// effect.
 //
-// The value sent on ch is the part of the signal's topic beneath the subscribed
-// topic: "c" for a signal on "a.b.c", or "" for a signal on "a.b" itself.
+// Topics are hierarchical, with levels separated by dots. A watcher of "a.b"
+// receives signals on "a.b" and "a.b.c", but not on "a.bc". The value received
+// is the part of the signal's topic beneath the watched topic: "c" for a
+// signal on "a.b.c", or "" for a signal on "a.b" itself.
 //
-// ch should be buffered. If it is full when a signal is received, that signal
-// is not delivered to ch.
+// The channel receives "" straight away, so that a watcher reads its state
+// before it waits for the first signal, without missing any signal sent in
+// between.
 //
-// It returns a function that unsubscribes.
-func (b *Bus) Subscribe(topic string, ch chan<- string) func() {
+// The channel has the given capacity. A signal that arrives while it is full
+// is dropped.
+func (b *Bus) Watch(ctx context.Context, topic string, capacity int) (<-chan string, func()) {
+	if capacity <= 0 {
+		panic("capacity must be positive")
+	}
+
+	ch := make(chan string, capacity)
+	ch <- ""
+
 	sub := &subscriber{
 		Topic:    topic,
 		Subtopic: ch,
@@ -68,14 +81,23 @@ func (b *Bus) Subscribe(topic string, ch chan<- string) func() {
 	b.subscribers[sub] = struct{}{}
 	b.m.Unlock()
 
-	var once sync.Once
-
-	return func() {
-		once.Do(func() {
+	// Signals are only ever sent to a subscriber while the mutex is held, so
+	// once it is removed under the mutex, its channel can be closed.
+	unsubscribe := sync.OnceFunc(
+		func() {
 			b.m.Lock()
 			delete(b.subscribers, sub)
 			b.m.Unlock()
-		})
+
+			close(ch)
+		},
+	)
+
+	stop := context.AfterFunc(ctx, unsubscribe)
+
+	return ch, func() {
+		stop()
+		unsubscribe()
 	}
 }
 
@@ -95,7 +117,7 @@ func (b *Bus) Send(ctx context.Context, topic string) error {
 
 // Run executes the bus until ctx is canceled.
 //
-// It must be called at most once. Subscribe may be called before Run.
+// It must be called at most once. Watch may be called before Run.
 func (b *Bus) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, b.Logger, b.run)
 }

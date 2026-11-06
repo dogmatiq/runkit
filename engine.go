@@ -24,11 +24,13 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -61,14 +63,14 @@ const (
 	// stream for delivery to consumers that are keeping up with the stream.
 	eventStreamCacheSize = 100
 
-	// eventStreamBatchSize is the maximum number of events read per query when
-	// delivering historical events to consumers.
-	eventStreamBatchSize = 100
+	// eventStreamSegmentSize is the maximum number of events in one segment
+	// read from the database.
+	eventStreamSegmentSize = 100
 
-	// eventStreamBufferSize is the number of batches of events buffered for
-	// each subscriber to an event stream. It absorbs short bursts of appends;
-	// a subscriber that falls further behind reads historical events instead.
-	eventStreamBufferSize = 4
+	// eventStreamBufferSize is the number of segments that [source.Local]
+	// buffers for each call to [source.Local.Watch]. A call that falls further
+	// behind ends with [source.ErrConsumerTooSlow].
+	eventStreamBufferSize = 100
 )
 
 // Engine is a Dogma engine backed by a single PostgreSQL database.
@@ -97,6 +99,10 @@ type Engine struct {
 	// grpcOptions are the options used to create the engine's gRPC server.
 	grpcOptions []grpc.ServerOption
 
+	// remoteEngineDiscoverers are the discoverers that the engine uses to find
+	// remote engines.
+	remoteEngineDiscoverers []RemoteEngineDiscoverer
+
 	// logger is the structured logger used by the engine.
 	logger *slog.Logger
 
@@ -122,11 +128,8 @@ type Engine struct {
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
 
-	// eventStreams tracks the set of available event streams.
+	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
-
-	// events delivers events from event streams to consumers.
-	events *eventstream.Reader
 
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
@@ -134,6 +137,10 @@ type Engine struct {
 	// commandTypes is the set of command types that the engine accepts for
 	// execution.
 	commandTypes map[reflect.Type]struct{}
+
+	// group runs the engine's components. If any of them fails, the others are
+	// stopped.
+	group *errgroup.Group
 }
 
 // New returns a new engine that runs the given application.
@@ -230,17 +237,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	e.eventStreams = &eventstream.Catalog{
-		DB:      e.db,
-		Signals: e.signals,
-		Logger:  e.logger.With(slog.String("component", "eventstream.catalog")),
+		CacheSize: eventStreamCacheSize,
+		Logger:    e.logger.With(slog.String("component", "eventstream.catalog")),
 	}
 
-	e.events = &eventstream.Reader{
-		DB:                    e.db,
-		Signals:               e.signals,
-		Logger:                e.logger.With(slog.String("component", "eventstream.reader")),
-		ContemporaryCacheSize: eventStreamCacheSize,
-		HistoricalBatchSize:   eventStreamBatchSize,
+	localEventStreams := &source.Local{
+		DB:          e.db,
+		Signals:     e.signals,
+		Logger:      e.logger.With(slog.String("component", "eventstream.source.local")),
+		SegmentSize: eventStreamSegmentSize,
+		BufferSize:  eventStreamBufferSize,
 	}
 
 	var server *grpcserver.Server
@@ -248,15 +254,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
 			Address: e.listenAddress,
-			EventStreamConsumerAPI: &eventstream.ConsumerAPI{
-				DB:                   e.db,
-				EventStreams:         e.eventStreams,
-				Events:               e.events,
-				RecordableEventTypes: e.recordableEventTypes(),
-				BufferSize:           eventStreamBufferSize,
-				Logger: e.logger.With(
-					slog.String("component", "eventstream.consumer-api"),
-				),
+			EventStreamConsumerAPI: &source.Server{
+				// The server provides only the application's own streams, so
+				// that it never relays events recorded by a remote engine's
+				// application.
+				EventStreams: localEventStreams,
 			},
 			Options: e.grpcOptions,
 			Logger:  e.logger.With(slog.String("component", "grpc.server")),
@@ -274,44 +276,61 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	// Run all components until ctx is canceled or one of them fails.
-	group, ctx := errgroup.WithContext(ctx)
+	e.group, ctx = errgroup.WithContext(ctx)
 
-	runComponent := func(c component) {
-		group.Go(func() error {
-			err := c.Run(ctx)
+	e.group.Go(func() error {
+		return e.signals.Run(ctx)
+	})
 
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+	e.group.Go(func() error {
+		return e.node.Run(ctx)
+	})
 
-			if err == nil {
-				panic(fmt.Sprintf("%T component stopped before context was canceled", c))
-			}
+	eventTypeIDs := e.projectionEventTypeIDs()
 
-			return fmt.Errorf("%T component failed: %w", c, err)
+	// The application's own streams are watched only if the catalog consumes
+	// them for projections, or the gRPC server serves them to remote engines.
+	if !eventTypeIDs.IsEmpty() || server != nil {
+		e.group.Go(func() error {
+			return localEventStreams.Run(ctx)
 		})
 	}
 
-	runComponent(e.signals)
-	runComponent(e.node)
-	runComponent(e.eventStreams)
-	runComponent(e.events)
+	// The catalog is consumed only by projections, so it has no need of the
+	// application's own streams if no projection handles any events.
+	if !eventTypeIDs.IsEmpty() {
+		e.group.Go(func() error {
+			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs)
+		})
+	}
 
-	// Create and run components that manage all (non-disabled) handlers within
-	// the application.
+	for _, d := range e.remoteEngineDiscoverers {
+		connector := &remoteengine.Connector{
+			Discover:     d,
+			EventStreams: e.eventStreams,
+			EventTypeIDs: eventTypeIDs,
+			Logger: e.logger.With(
+				slog.String("component", "remoteengine.connector"),
+			),
+		}
+
+		e.group.Go(func() error {
+			return connector.Run(ctx)
+		})
+	}
+
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if !handlerConfig.IsDisabled() {
-			for _, c := range e.newComponentsForHandler(handlerConfig) {
-				runComponent(c)
-			}
+			e.runHandler(ctx, handlerConfig)
 		}
 	}
 
 	if server == nil {
 		e.ready.Set()
 	} else {
-		runComponent(server)
+		e.group.Go(func() error {
+			return server.Run(ctx)
+		})
 
 		// The engine is not ready until it is listening for gRPC requests. If
 		// the server failed to listen, ctx is canceled and the failure is
@@ -322,7 +341,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	return group.Wait()
+	return e.group.Wait()
 }
 
 // Ready returns a channel that is closed when the engine is ready to accept
@@ -410,8 +429,8 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 	}
 }
 
-// newComponentsForHandler creates engine components for the given handler.
-func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []component {
+// runHandler runs the components that manage the given handler.
+func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 	const (
 		backoffBase  = 10 * time.Millisecond
 		backoffCap   = 5 * time.Minute
@@ -423,107 +442,123 @@ func (e *Engine) newComponentsForHandler(handlerConfig config.Handler) []compone
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
-		return []component{
-			&messagepump.MessagePump{
-				Driver: &aggregate.CommandPump{
-					DB:                   e.db,
-					Handler:              handlerConfig.Interface(),
-					Identity:             handlerConfig.Identity(),
-					Packer:               e.packer,
-					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				},
-				DB:           e.db,
-				Workers:      workers,
-				PollInterval: pollInterval,
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       logger.With(slog.String("component", "aggregate.command-pump")),
+		pump := &messagepump.MessagePump{
+			Driver: &aggregate.CommandPump{
+				DB:                   e.db,
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				Packer:               e.packer,
+				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 			},
+			DB:           e.db,
+			Workers:      workers,
+			PollInterval: pollInterval,
+			BackoffBase:  backoffBase,
+			BackoffCap:   backoffCap,
+			Logger:       logger.With(slog.String("component", "aggregate.command-pump")),
 		}
 
+		e.group.Go(func() error {
+			return pump.Run(ctx)
+		})
+
 	case *config.Integration:
-		return []component{
-			&messagepump.MessagePump{
-				Driver: &integration.CommandPump{
-					DB:                   e.db,
-					Handler:              handlerConfig.Interface(),
-					Identity:             handlerConfig.Identity(),
-					Concurrency:          handlerConfig.ConcurrencyPreference(),
-					Packer:               e.packer,
-					CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				},
-				DB:           e.db,
-				Workers:      workers,
-				PollInterval: pollInterval,
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       logger.With(slog.String("component", "integration.command-pump")),
+		pump := &messagepump.MessagePump{
+			Driver: &integration.CommandPump{
+				DB:                   e.db,
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				Concurrency:          handlerConfig.ConcurrencyPreference(),
+				Packer:               e.packer,
+				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 			},
+			DB:           e.db,
+			Workers:      workers,
+			PollInterval: pollInterval,
+			BackoffBase:  backoffBase,
+			BackoffCap:   backoffCap,
+			Logger:       logger.With(slog.String("component", "integration.command-pump")),
 		}
+
+		e.group.Go(func() error {
+			return pump.Run(ctx)
+		})
 
 	case *config.Process:
 		eventPumpLogger := logger.With(slog.String("component", "process.event-pump"))
 
-		return []component{
-			&messagepump.MessagePump{
-				Driver: &process.EventPump{
-					DB:                   e.db,
-					Handler:              handlerConfig.Interface(),
-					Identity:             handlerConfig.Identity(),
-					Packer:               e.packer,
-					EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-					Logger:               eventPumpLogger,
-				},
-				DB:           e.db,
-				Workers:      workers,
-				PollInterval: pollInterval,
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       eventPumpLogger,
+		eventPump := &messagepump.MessagePump{
+			Driver: &process.EventPump{
+				DB:                   e.db,
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				Packer:               e.packer,
+				EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				Logger:               eventPumpLogger,
 			},
-			&messagepump.MessagePump{
-				Driver: &process.DeadlinePump{
-					DB:                   e.db,
-					Handler:              handlerConfig.Interface(),
-					Identity:             handlerConfig.Identity(),
-					Packer:               e.packer,
-					DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-					OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				},
-				DB:           e.db,
-				Workers:      workers,
-				PollInterval: pollInterval,
-				BackoffBase:  backoffBase,
-				BackoffCap:   backoffCap,
-				Logger:       logger.With(slog.String("component", "process.deadline-pump")),
-			},
+			DB:           e.db,
+			Workers:      workers,
+			PollInterval: pollInterval,
+			BackoffBase:  backoffBase,
+			BackoffCap:   backoffCap,
+			Logger:       eventPumpLogger,
 		}
 
-	case *config.Projection:
-		return []component{
-			&projection.Consumer{
-				Node:         e.node,
-				EventStreams: e.eventStreams,
-				Events:       e.events,
-				Handler:      handlerConfig.Interface(),
-				Identity:     handlerConfig.Identity(),
-				Concurrency:  handlerConfig.ConcurrencyPreference(),
-				EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				BufferSize:   eventStreamBufferSize,
-				Logger:       logger.With(slog.String("component", "projection.consumer")),
+		deadlinePump := &messagepump.MessagePump{
+			Driver: &process.DeadlinePump{
+				DB:                   e.db,
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				Packer:               e.packer,
+				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
+				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 			},
-			&projection.Compactor{
-				DB:       e.db,
-				Handler:  handlerConfig.Interface(),
-				Identity: handlerConfig.Identity(),
-				Interval: e.compactInterval,
-				Timeout:  projectionCompactTimeout,
-				Logger:   logger.With(slog.String("component", "projection.compactor")),
-			},
+			DB:           e.db,
+			Workers:      workers,
+			PollInterval: pollInterval,
+			BackoffBase:  backoffBase,
+			BackoffCap:   backoffCap,
+			Logger:       logger.With(slog.String("component", "process.deadline-pump")),
 		}
+
+		e.group.Go(func() error {
+			return eventPump.Run(ctx)
+		})
+
+		e.group.Go(func() error {
+			return deadlinePump.Run(ctx)
+		})
+
+	case *config.Projection:
+		consumer := &projection.Consumer{
+			Node:         e.node,
+			EventStreams: e.eventStreams,
+			Handler:      handlerConfig.Interface(),
+			Identity:     handlerConfig.Identity(),
+			Concurrency:  handlerConfig.ConcurrencyPreference(),
+			EventTypeIDs: e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+			Logger:       logger.With(slog.String("component", "projection.consumer")),
+		}
+
+		compactor := &projection.Compactor{
+			DB:       e.db,
+			Handler:  handlerConfig.Interface(),
+			Identity: handlerConfig.Identity(),
+			Interval: e.compactInterval,
+			Timeout:  projectionCompactTimeout,
+			Logger:   logger.With(slog.String("component", "projection.compactor")),
+		}
+
+		e.group.Go(func() error {
+			return consumer.Run(ctx)
+		})
+
+		e.group.Go(func() error {
+			return compactor.Run(ctx)
+		})
 
 	default:
 		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))
@@ -555,6 +590,27 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	return 10 * runtime.GOMAXPROCS(0)
 }
 
+// projectionEventTypeIDs returns the message type IDs of every event type that
+// is routed to a (non-disabled) projection within the application.
+func (e *Engine) projectionEventTypeIDs() *uuidcollection.Set {
+	messageTypeIDs := uuidcollection.NewSet()
+
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		projection, ok := handlerConfig.(*config.Projection)
+		if !ok || projection.IsDisabled() {
+			continue
+		}
+
+		eventTypeIDs := e.inboundMessageTypeIDsForHandler(projection, message.EventKind)
+
+		for id := range eventTypeIDs.All() {
+			messageTypeIDs.Add(id)
+		}
+	}
+
+	return messageTypeIDs
+}
+
 // inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
 // messages routed to the given handler. It is represented as a slice of UUID
 // strings for direct use in SQL queries.
@@ -578,27 +634,6 @@ func (*Engine) inboundMessageTypeIDsForHandler(
 	return messageTypeIDs
 }
 
-// recordableEventTypes returns the message type IDs of all event types that
-// may be recorded by any (non-disabled) handler within the application.
-func (e *Engine) recordableEventTypes() *uuidcollection.Set {
-	outboundEventRoutes := e.appConfig.
-		RouteSet().
-		Filter(config.FilterByMessageKind(message.EventKind)).
-		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
-		Routes()
-
-	messageTypeIDs := &uuidcollection.Set{}
-
-	for route, handlerConfig := range outboundEventRoutes {
-		if !handlerConfig.IsDisabled() {
-			messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
-			messageTypeIDs.Add(messageTypeID)
-		}
-	}
-
-	return messageTypeIDs
-}
-
 // outboundMessageTypesForHandler returns the reflect.Types of all outbound
 // messages of the given kind routed from the given handler.
 func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[reflect.Type]struct{} {
@@ -614,16 +649,4 @@ func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[
 	}
 
 	return types
-}
-
-// component is an interface for subsystems that run within the engine and
-// manage their own lifecycle.
-type component interface {
-	// Run executes the component until ctx is canceled.
-	//
-	// A component is responsible for recovering from its own errors,
-	// typically by running its fallible parts under supervision. It returns
-	// an error only if it can not continue, in which case the engine stops.
-	// Returning nil before ctx is canceled is a programming error.
-	Run(context.Context) error
 }

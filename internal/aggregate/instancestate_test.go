@@ -8,7 +8,6 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -18,8 +17,8 @@ import (
 func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
@@ -72,10 +71,10 @@ func TestInstanceState_eventsAreAppliedInMemory(t *testing.T) {
 func TestInstanceState_stateIsPersisted(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
-				engine,
+				cluster,
 				db,
 				stubs.CommandA1, // record a TypeA event
 				stubs.CommandB1, // record a TypeB event
@@ -129,10 +128,10 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 func TestInstanceState_instancesAreIsolated(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(
 				t,
-				engine,
+				cluster,
 				db,
 				&stubs.CommandStub[stubs.TypeA]{Content: "A"}, // record an event against instance A
 				&stubs.CommandStub[stubs.TypeA]{Content: "B"}, // record an event against instance B
@@ -196,13 +195,13 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Send many commands at once without waiting between them, the test
 			// is running multiple engines, which may attempt to process
 			// commands simultaneously. All commands are routed to the same
 			// instance.
 			for range commandCount {
-				xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+				xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 			}
 
 			xtesting.WaitForEmptyCommandQueue(t, db)
@@ -266,9 +265,9 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Execute a command to create the instance and record an event.
-			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandA1)
+			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 
 			// Delete the historical events. If a snapshot was persisted after
 			// handling the command above, the state will still be correct.
@@ -281,7 +280,7 @@ func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 			// Execute another command that asserts the state was loaded
 			// correctly from the snapshot (not by replaying the now-deleted
 			// events).
-			xtesting.ExecuteCommandAndWait(t, engine, db, stubs.CommandX1)
+			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandX1)
 		},
 		dogma.ViaAggregate(
 			&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
@@ -347,10 +346,10 @@ func TestInstanceState_snapshotMarshalingFailuresAreNonFatal(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 					xtesting.ExecuteCommandsSequentially(
 						t,
-						engine,
+						cluster,
 						db,
 						stubs.CommandA1, // record an event event
 						stubs.CommandX1, // assert about the aggregate state within the handler
@@ -427,10 +426,10 @@ func TestInstanceState_snapshotUnmarshalingFailuresAreNonFatal(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 					xtesting.ExecuteCommandsSequentially(
 						t,
-						engine,
+						cluster,
 						db,
 						stubs.CommandA1, // record an event event
 						stubs.CommandX1, // assert about the aggregate state within the handler

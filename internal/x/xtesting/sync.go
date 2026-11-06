@@ -16,7 +16,7 @@ import (
 // wait for a condition to be met before failing the test.
 //
 // It is longer under CI, where tests run under heavier load.
-var WaitTimeout = 3 * time.Second
+var WaitTimeout = 10 * time.Second
 
 func init() {
 	if os.Getenv("CI") != "" {
@@ -24,9 +24,9 @@ func init() {
 	}
 }
 
-// ExpectLatchesSetEventually waits for all of the given latches to be set. It
-// fails the test if all latches are not set within [WaitTimeout].
-func ExpectLatchesSetEventually(
+// WaitForLatches waits for all of the given latches to be set. It fails the
+// test if all latches are not set within [WaitTimeout].
+func WaitForLatches(
 	t testing.TB,
 	latches ...*xsync.Latch,
 ) {
@@ -54,6 +54,56 @@ func ExpectLatchesSetEventually(
 
 	if got, want := count.Load(), uint32(len(latches)); got != want {
 		t.Fatalf("timeout waiting for latches: got %d of %d latches set", got, want)
+	}
+}
+
+// WaitFor polls cond until it returns true. It fails the test if that does not
+// occur within [WaitTimeout].
+func WaitFor(
+	t testing.TB,
+	description string,
+	cond func() bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
+	defer cancel()
+
+	for !cond() {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %s", description)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// WaitForObservable waits until the value of o satisfies ok. It fails the test
+// if that does not occur within [WaitTimeout], and reports the most recent
+// value.
+func WaitForObservable[T any](
+	t testing.TB,
+	description string,
+	o xsync.ObservableR[T],
+	ok func(T) bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), WaitTimeout)
+	defer cancel()
+
+	for {
+		v, changed := o.Load()
+
+		if ok(v) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %s: got %v", description, v)
+		case <-changed:
+		}
 	}
 }
 

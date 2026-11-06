@@ -13,7 +13,6 @@ import (
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/x/xsync"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -27,8 +26,8 @@ func TestCompaction_handlerIsCalledPeriodically(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &called)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.WaitForLatches(t, &called)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -85,8 +84,8 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 
 			xtesting.RunEngines(
 				t,
-				func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-					xtesting.ExpectLatchesSetEventually(t, &compacted)
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+					xtesting.WaitForLatches(t, &compacted)
 
 					xtesting.PopulateEventStreams(
 						t,
@@ -97,7 +96,7 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 						eventCount,
 					)
 
-					xtesting.ExpectLatchesSetEventually(t, &consumed)
+					xtesting.WaitForLatches(t, &consumed)
 				},
 				dogma.ViaProjection(
 					&stubs.ProjectionMessageHandlerStub{
@@ -145,8 +144,8 @@ func TestCompaction_handlerIsNotInvokedConcurrently(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &called)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.WaitForLatches(t, &called)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{
@@ -194,8 +193,8 @@ func TestCompaction_intervalIsRespectedAcrossEngineInstances(t *testing.T) {
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExpectLatchesSetEventually(t, &done)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.WaitForLatches(t, &done)
 		},
 		dogma.ViaProjection(
 			&stubs.ProjectionMessageHandlerStub{

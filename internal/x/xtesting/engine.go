@@ -3,7 +3,6 @@ package xtesting
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -11,10 +10,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/contexthook"
-	"github.com/dogmatiq/spruce"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -29,19 +25,20 @@ const (
 // on engines started by [RunEngines] and related functions.
 const ProjectionCompactInterval = 10 * time.Millisecond
 
-// RunEngines runs the given Dogma application in a test engine and executes the
-// given function while the engine is running.
+// RunEngines runs the given Dogma application on a cluster of nodes, and
+// executes the given function while the cluster is running.
 //
-// Multiple engines are run concurrently to ensure that behavior is consistent
-// when multiple engines running against the same database.
+// Multiple nodes are run to ensure that behavior is consistent when multiple
+// engines run against the same database. fn receives the [Cluster], which
+// executes each command on a node chosen at random.
 //
-// If any of the engines stop before fn returns, the context passed to fn is
+// If any of the nodes stop before fn returns, the context passed to fn is
 // canceled, and the test fails.
 func RunEngines(
 	t *testing.T,
 	fn func(
 		testing.TB,
-		*runkit.Engine,
+		*Cluster,
 		*sql.DB,
 	),
 	routes ...dogma.HandlerRoute,
@@ -61,7 +58,7 @@ func RunEngines(
 func SetupThenRunEngines(
 	t *testing.T,
 	setup func(testing.TB, *sql.DB),
-	fn func(testing.TB, *runkit.Engine, *sql.DB),
+	fn func(testing.TB, *Cluster, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -80,7 +77,7 @@ func SetupThenRunEngines(
 func RunEnginesWithDB(
 	t *testing.T,
 	db *sql.DB,
-	fn func(testing.TB, *runkit.Engine, *sql.DB),
+	fn func(testing.TB, *Cluster, *sql.DB),
 	routes ...dogma.HandlerRoute,
 ) {
 	t.Helper()
@@ -92,114 +89,39 @@ func RunEnginesWithDB(
 		},
 	}
 
-	engineContext, stopEngines := context.WithCancel(t.Context())
-	engineGroup, engineContext := errgroup.WithContext(engineContext)
+	cluster := StartCluster(t, db, app, concurrentEngines)
+	defer cluster.Stop()
 
-	defer func() {
-		stopEngines()
-		engineGroup.Wait()
-	}()
-
-	testTimeout := 10 * time.Second
+	testTimeout := 30 * time.Second
 	if os.Getenv("CI") != "" {
 		testTimeout = 1 * time.Minute
 	}
 
-	// runContext is canceled if any engine stops. The test's own timeout
-	// starts once the engines have converged.
-	runContext, stopRun := context.WithCancel(t.Context())
-	defer stopRun()
-
-	logger := spruce.NewTestLogger(t)
-
-	var engine *runkit.Engine
-	nodes := make(chan contexthook.Node, concurrentEngines)
-
-	for idx := range concurrentEngines {
-		e := runkit.New(
-			app,
-			db,
-			runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
-			runkit.WithListenAddress("127.0.0.1:0"),
-			runkit.WithLogger(logger.With("engine", idx)),
-		)
-
-		if engine == nil {
-			engine = e
-		}
-
-		engineGroup.Go(func() error {
-			defer stopRun()
-
-			ctx := contexthook.With(
-				engineContext,
-				func(n contexthook.Node) {
-					nodes <- n
-				},
-			)
-
-			err := e.Run(ctx)
-
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("engine %d stopped unexpectedly: %v", idx, err)
-			}
-
-			return err
-		})
-
-	}
-
-	select {
-	case <-engineContext.Done():
-	case <-engine.Ready():
-	}
-
-	// Wait for every engine to see all of the others, so that the test starts
-	// from a cluster that has converged.
-	convergeContext, cancelConverge := context.WithTimeout(runContext, WaitTimeout)
-	defer cancelConverge()
-
-	for range concurrentEngines {
-		var n contexthook.Node
-
-		select {
-		case <-engineContext.Done():
-		case <-convergeContext.Done():
-			t.Fatal("timeout waiting for engines to join the cluster")
-		case n = <-nodes:
-		}
-
-		for n.Node != nil {
-			peers, changed := n.Node.Peers()
-			if peers.Len() == concurrentEngines-1 {
-				break
-			}
-
-			select {
-			case <-engineContext.Done():
-				n.Node = nil
-			case <-convergeContext.Done():
-				t.Fatalf("timeout waiting for engines to see each other: %d of %d peers", peers.Len(), concurrentEngines-1)
-			case <-changed:
-			}
-		}
-	}
-
-	testContext, stopTest := context.WithTimeout(runContext, testTimeout)
+	// The test's own timeout starts once the engines have converged. Its
+	// context is canceled if any engine stops.
+	testContext, stopTest := context.WithTimeout(t.Context(), testTimeout)
 	defer stopTest()
+
+	go func() {
+		select {
+		case <-testContext.Done():
+		case <-cluster.Failed():
+			stopTest()
+		}
+	}()
 
 	fn(
 		testingTBWithContext{t, testContext},
-		engine,
+		cluster,
 		db,
 	)
 }
 
-// ExecuteCommand executes the given command on the engine, and fails the test
-// if it returns an error.
+// ExecuteCommand executes the given command using the executor, and fails the
+// test if it returns an error.
 func ExecuteCommand(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
@@ -207,25 +129,25 @@ func ExecuteCommand(
 
 	return ExecuteCommandWithHook(
 		t,
-		engine,
+		executor,
 		command,
 		func(contexthook.ExecuteCommand) {},
 		options...,
 	)
 }
 
-// ExecuteCommandAndWait executes the given command on the engine and waits for
-// it to be removed from the command queue.
+// ExecuteCommandAndWait executes the given command using the executor and
+// waits for it to be removed from the command queue.
 func ExecuteCommandAndWait(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	db *sql.DB,
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) *envelopepb.Envelope {
 	t.Helper()
 
-	commandEnvelope := ExecuteCommand(t, engine, command, options...)
+	commandEnvelope := ExecuteCommand(t, executor, command, options...)
 
 	WaitForCommandToBeRemovedFromQueue(
 		t,
@@ -236,11 +158,11 @@ func ExecuteCommandAndWait(
 	return commandEnvelope
 }
 
-// ExecuteCommandsSequentially executes the given commands on the engine
+// ExecuteCommandsSequentially executes the given commands using the executor
 // sequentially, and fails the test if any of them returns an error.
 func ExecuteCommandsSequentially(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	db *sql.DB,
 	commands ...dogma.Command,
 ) []*envelopepb.Envelope {
@@ -249,18 +171,18 @@ func ExecuteCommandsSequentially(
 	var commandEnvelopes []*envelopepb.Envelope
 
 	for _, command := range commands {
-		commandEnvelope := ExecuteCommandAndWait(t, engine, db, command)
+		commandEnvelope := ExecuteCommandAndWait(t, executor, db, command)
 		commandEnvelopes = append(commandEnvelopes, commandEnvelope)
 	}
 
 	return commandEnvelopes
 }
 
-// ExecuteCommandWithHook executes the given command on the engine, and fails
-// the test if it returns an error.
+// ExecuteCommandWithHook executes the given command using the executor, and
+// fails the test if it returns an error.
 func ExecuteCommandWithHook(
 	t testing.TB,
-	engine *runkit.Engine,
+	executor dogma.CommandExecutor,
 	command dogma.Command,
 	hook func(contexthook.ExecuteCommand),
 	options ...dogma.ExecuteCommandOption,
@@ -277,7 +199,7 @@ func ExecuteCommandWithHook(
 		},
 	)
 
-	if err := engine.ExecuteCommand(
+	if err := executor.ExecuteCommand(
 		ctx,
 		command,
 		options...,

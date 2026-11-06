@@ -9,7 +9,6 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -24,9 +23,9 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
-			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
-			xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 
 			xtesting.WaitForEmptyCommandQueue(t, db)
 		},
@@ -66,9 +65,9 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 
 	xtesting.RunEngines(
 		t,
-		func(t testing.TB, engine *runkit.Engine, db *sql.DB) {
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			for range 10 {
-				xtesting.ExecuteCommand(t, engine, stubs.CommandA1)
+				xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
 			}
 
 			xtesting.WaitForEmptyCommandQueue(t, db)
