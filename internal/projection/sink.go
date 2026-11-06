@@ -16,19 +16,26 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// sink implements [eventstream.Sink] using a projection's own checkpoint storage.
+// sink dispatches segments of event streams to a projection message handler.
+// It implements [eventstream.Sink] using the handler's checkpoint offsets.
 type sink struct {
-	// Handler is the projection to which events are dispatched.
+	// Handler is the projection message handler to which events are
+	// dispatched.
 	Handler dogma.ProjectionMessageHandler
 
-	// HandlerLock, if non-nil, serializes dispatch across the handler's streams.
+	// HandlerLock, if non-nil, is a semaphore with a weight of one that is
+	// held while handling each event, so that streams are handled one event
+	// at a time when the handler prefers to minimize concurrency.
 	HandlerLock *semaphore.Weighted
 
-	// Logger receives messages produced by the sink and the handler.
+	// Logger is the target for log messages produced by the sink and the
+	// handler.
 	Logger *slog.Logger
 }
 
-// CheckpointOffset loads the projection handler's durable progress.
+// CheckpointOffset returns the handler's checkpoint offset for the stream
+// with the given ID. An error or panic from the handler is treated as a
+// persistent failure.
 func (sc *sink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,

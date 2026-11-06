@@ -25,7 +25,7 @@ import (
 func TestConsumer(t *testing.T) {
 	// setup starts a consumer of a new catalog, and returns the catalog, the
 	// consumer's node, which is not yet running, and a channel that receives
-	// the offset of each event that the consumer's handler handles.
+	// the offset of each event that the sink consumes.
 	setup := func(t *testing.T) (*Catalog, *cluster.Node, <-chan uint64) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)

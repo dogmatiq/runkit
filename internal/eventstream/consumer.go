@@ -15,32 +15,46 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Consumer coordinates consumption of catalog streams across cluster nodes.
+// Consumer dispatches events from a catalog's event streams to a [Sink].
 //
-// Each assigned stream runs under one supervisor. Sinks own durable progress
-// and must tolerate overlapping consumption during cluster handoff.
+// Each stream's workload is the responsibility of one of the live nodes in the
+// cluster, chosen by rendezvous hashing. While nodes are joining or leaving,
+// more than one node may briefly consume the same stream. The sink is
+// responsible for detecting concurrent changes to its checkpoint offsets.
 type Consumer struct {
-	// Node supplies cluster membership.
+	// Node is this engine's node in the cluster. Its membership determines
+	// which streams this node consumes.
 	Node *cluster.Node
 
-	// EventStreams supplies available streams and segments.
+	// EventStreams is the catalog of event streams to consume.
 	EventStreams *Catalog
 
-	// Sink owns durable progress and segment dispatch.
+	// Sink is the destination to which segments of each stream are dispatched.
 	Sink Sink
 
-	// EventTypeIDs must be nonempty and watched by the catalog.
+	// EventTypeIDs is the set of IDs of the event types that the sink
+	// consumes. It must not be empty, and every type must be one that
+	// [Catalog.Watch] was given for the stream's source.
 	EventTypeIDs *uuidcollection.Set
 
-	// Workload determines the rendezvous key for a stream. It must be non-nil
-	// and return the same key for the same stream on every node.
+	// Workload returns the rendezvous workload used to choose which node
+	// consumes the stream with the given ID.
+	//
+	// It must not be nil, and must return the same workload for a given
+	// stream on every node. Streams with the same workload are assigned to
+	// the same node.
 	Workload func(*uuidpb.UUID) *uuidpb.UUID
 
-	// Logger receives coordinator and per-stream lifecycle messages.
+	// Logger is the target for log messages produced by the consumer.
 	Logger *slog.Logger
 
+	// stopStreamConsumer holds a function for each stream being consumed.
+	// Calling it cancels consumption and waits for it to stop.
 	stopStreamConsumer uuidcollection.Map[func()]
-	group              *errgroup.Group
+
+	// group runs the stream consumers. A fatal error in any one cancels
+	// consumption of every stream.
+	group *errgroup.Group
 }
 
 // Run consumes the event streams that this node is responsible for until ctx is
@@ -147,7 +161,7 @@ func (c *Consumer) startStreamConsumer(
 			},
 		)
 
-		// Run returns the context's error once the context is canceled, which
+		// Consumption returns the context's error once it is canceled, which
 		// is not a failure of the stream consumer.
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return nil

@@ -15,8 +15,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Exercise the same supervised stream runner used by membership reconciliation,
-// without a database-backed cluster node.
+// TestConsumer_partialSuccessReloadsDurableCheckpoint verifies that a failed
+// segment is retried from the sink's stored checkpoint rather than the beginning
+// of the segment or the offset returned with the error.
 func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -128,6 +129,8 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 	}
 }
 
+// TestConsumer_fatalSinkErrorPropagates verifies that a fatal sink error stops
+// consumption instead of being retried.
 func TestConsumer_fatalSinkErrorPropagates(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -152,6 +155,7 @@ func TestConsumer_fatalSinkErrorPropagates(t *testing.T) {
 	}
 }
 
+// recordingSink implements [Sink] by calling the supplied functions.
 type recordingSink struct {
 	checkpoint func(context.Context, *uuidpb.UUID) (uint64, error)
 	consume    func(context.Context, uint64, Segment) (uint64, error)
