@@ -9,8 +9,8 @@ import (
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	. "github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
+	. "github.com/dogmatiq/runkit/internal/x/xmessage"
 )
 
 func TestUnpackMessage(t *testing.T) {
@@ -24,8 +24,7 @@ func TestUnpackMessage(t *testing.T) {
 		var command dogma.Command
 		err := UnpackMessage(env, &command)
 
-		var panicErr xerrors.PanicError
-		if !errors.As(err, &panicErr) {
+		if _, ok := errors.AsType[xerrors.PanicError](err); !ok {
 			t.Fatalf("expected a panic error, got %v", err)
 		}
 	})
