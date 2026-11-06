@@ -24,7 +24,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
-	"github.com/dogmatiq/runkit/internal/eventstream/consumerapi"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
@@ -255,11 +254,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
 			Address: e.listenAddress,
-			EventStreamConsumerAPI: &consumerapi.Server{
+			EventStreamConsumerAPI: &source.Server{
+				// The server provides only the application's own streams, so
+				// that it never relays events recorded by a remote engine's
+				// application.
 				EventStreams: localEventStreams,
-				Logger: e.logger.With(
-					slog.String("component", "eventstream.consumer-api"),
-				),
 			},
 			Options: e.grpcOptions,
 			Logger:  e.logger.With(slog.String("component", "grpc.server")),

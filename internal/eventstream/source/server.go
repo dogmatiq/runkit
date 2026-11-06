@@ -1,32 +1,25 @@
-package consumerapi
+package source
 
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"sync"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
-	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Server is a gRPC server that implements the
-// [messaginggrpc.EventStreamConsumerAPI] service.
-//
-// It serves the application's own event streams, never those of a remote
-// engine, so that it only delivers events that the application recorded.
+// Server provides the [messaginggrpc.EventStreamConsumerAPI] service over the
+// event streams of a [Source], so that remote engines can consume them.
 type Server struct {
-	// EventStreams is the source of the application's event streams.
-	EventStreams *source.Local
-
-	// Logger is the target for log messages produced by the server.
-	Logger *slog.Logger
+	// EventStreams is the source of the event streams that the server
+	// provides.
+	EventStreams Source
 }
 
 // WatchEvents implements the WatchEvents method of
@@ -46,7 +39,7 @@ func (s *Server) WatchEvents(
 	err = s.EventStreams.Watch(
 		res.Context(),
 		types,
-		func(seg source.Segment) error {
+		func(seg Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
@@ -54,7 +47,7 @@ func (s *Server) WatchEvents(
 		},
 	)
 
-	if errors.Is(err, source.ErrConsumerTooSlow) {
+	if errors.Is(err, ErrConsumerTooSlow) {
 		return status.Error(codes.Aborted, err.Error())
 	}
 
@@ -77,16 +70,16 @@ func (s *Server) ReadEvents(
 		req.GetEventStreamId(),
 		types,
 		req.GetBeginOffset(),
-		func(seg source.Segment) error {
+		func(seg Segment) error {
 			return sendSegment(res, seg)
 		},
 	)
 
-	if errors.Is(err, source.ErrUnrecognizedStream) {
+	if errors.Is(err, ErrUnrecognizedStream) {
 		return status.Error(codes.NotFound, err.Error())
 	}
 
-	if errors.Is(err, source.ErrOffsetOutOfRange) {
+	if errors.Is(err, ErrOffsetOutOfRange) {
 		return status.Error(codes.OutOfRange, err.Error())
 	}
 
@@ -110,7 +103,7 @@ func requestedTypes(filter *messaginggrpc.MessageFilter) (*uuidcollection.Set, e
 // sendSegment sends a segment to a client.
 func sendSegment(
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
-	seg source.Segment,
+	seg Segment,
 ) error {
 	envelopes := slices.Collect(
 		envelopepb.AsMultiEnvelopes(

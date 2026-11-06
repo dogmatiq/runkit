@@ -1,4 +1,4 @@
-package consumerapi_test
+package source_test
 
 import (
 	"context"

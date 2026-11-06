@@ -224,7 +224,7 @@ Every step is green under `make test` unless marked otherwise.
       event in order to a client that falls behind" now sees `ABORTED`, which
       makes it the server's test of that path. A remote test covers
       `RESOURCE_EXHAUSTED` being an ordinary failure.
-- [ ] **Step 6.** `consumerapi.Server` moves into `source` as `source.Server`,
+- [x] **Step 6.** `consumerapi.Server` moves into `source` as `source.Server`,
       taking the `Source` interface rather than `*Local`, so that it mirrors
       `source.Remote`: one turns a client into a `Source`, and the other turns
       a `Source` into the service. Its tests move with it, and the
