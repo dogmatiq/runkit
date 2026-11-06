@@ -33,6 +33,7 @@ type CommandPump struct {
 	Packer               *envelope.Packer
 	CommandTypeIDs       *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
+	HandleTimeout        time.Duration
 }
 
 // AcquireDelivery attempts to acquire the next pending command for an
@@ -86,6 +87,9 @@ func (p *CommandPump) HandleDelivery(
 		func() error {
 			return xerrors.Recover(
 				func() error {
+					ctx, cancel := context.WithTimeout(ctx, p.HandleTimeout)
+					defer cancel()
+
 					return p.Handler.HandleCommand(
 						ctx,
 						&commandScope{

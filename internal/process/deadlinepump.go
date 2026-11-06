@@ -31,6 +31,7 @@ type DeadlinePump struct {
 	Packer               *envelope.Packer
 	DeadlineTypeIDs      *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
+	HandleTimeout        time.Duration
 }
 
 // AcquireDelivery attempts to acquire the next pending deadline for the
@@ -203,6 +204,9 @@ func (p *DeadlinePump) HandleDelivery(
 
 	if err := xerrors.Recover(
 		func() error {
+			ctx, cancel := context.WithTimeout(ctx, p.HandleTimeout)
+			defer cancel()
+
 			return p.Handler.HandleDeadline(ctx, root, scope, deadline)
 		},
 	); err != nil {

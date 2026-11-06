@@ -13,6 +13,27 @@ The format is based on [Keep a Changelog], and this project adheres to
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+- Added `WithHandleTimeout()`, `WithRouteTimeout()` and
+  `WithProjectionCompactTimeout()`, which limit how long the engine waits for
+  calls to application message handlers.
+- Added `DefaultHandleTimeout`, `DefaultRouteTimeout` and
+  `DefaultProjectionCompactTimeout`, which are the defaults for those options.
+
+### Changed
+
+- Imposed a deadline on calls from the engine to these application message
+  handler methods:
+  - `ProcessMessageHandler.HandleEvent()`
+  - `ProcessMessageHandler.HandleDeadline()`
+  - `ProcessMessageHandler.RouteEventToInstance()`
+  - `IntegrationMessageHandler.HandleCommand()`
+  - `ProjectionMessageHandler.HandleEvent()`
+  - `ProjectionMessageHandler.CheckpointOffset()`
+
 ## [0.2.0] - 2026-11-06
 
 This release introduces clustering. Several engines could already run against

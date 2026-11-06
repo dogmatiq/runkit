@@ -28,6 +28,8 @@ type EventPump struct {
 	Packer               *envelope.Packer
 	EventTypeIDs         *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
+	HandleTimeout        time.Duration
+	RouteTimeout         time.Duration
 	Logger               *slog.Logger
 }
 
@@ -171,6 +173,9 @@ func (p *EventPump) HandleDelivery(
 
 	if err := xerrors.Recover(
 		func() error {
+			ctx, cancel := context.WithTimeout(ctx, p.HandleTimeout)
+			defer cancel()
+
 			return p.Handler.HandleEvent(ctx, root, scope, event)
 		},
 	); err != nil {
@@ -235,6 +240,9 @@ func (p *EventPump) routeEventToInstance(
 ) (string, bool, error) {
 	instanceID, err := xerrors.RecoverT(
 		func() (string, error) {
+			ctx, cancel := context.WithTimeout(ctx, p.RouteTimeout)
+			defer cancel()
+
 			instanceID, ok, err := p.Handler.RouteEventToInstance(ctx, event)
 			if !ok || err != nil {
 				return "", err

@@ -40,14 +40,6 @@ import (
 )
 
 const (
-	// DefaultProjectionCompactInterval is the default minimum time between
-	// successful projection compactions.
-	DefaultProjectionCompactInterval = 6 * time.Hour
-
-	// projectionCompactTimeout is the maximum time a projection is given to
-	// compact its data in a single attempt.
-	projectionCompactTimeout = 10 * time.Minute
-
 	// applicationBindTimeout is the maximum time given to bind the database to
 	// the application when the engine starts.
 	applicationBindTimeout = 15 * time.Second
@@ -98,6 +90,19 @@ type Engine struct {
 	// compactInterval is the minimum time between successful projection
 	// compactions.
 	compactInterval time.Duration
+
+	// compactTimeout is the maximum time a projection is given to compact its
+	// data in a single attempt.
+	compactTimeout time.Duration
+
+	// handleTimeout is the maximum time an application message handler is
+	// given to handle a single message.
+	handleTimeout time.Duration
+
+	// routeTimeout is the maximum time an application message handler is
+	// given to decide where a message is delivered, or where consumption of an
+	// event stream resumes.
+	routeTimeout time.Duration
 
 	// listenAddress is the address to listen on for gRPC requests from other
 	// engines. If it is empty, the engine does not listen for gRPC requests.
@@ -178,6 +183,9 @@ func New(
 		db:              db,
 		nodeID:          uuidpb.Generate(),
 		compactInterval: DefaultProjectionCompactInterval,
+		compactTimeout:  DefaultProjectionCompactTimeout,
+		handleTimeout:   DefaultHandleTimeout,
+		routeTimeout:    DefaultRouteTimeout,
 		logger:          slog.Default(),
 	}
 
@@ -481,6 +489,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Packer:               e.packer,
 				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				HandleTimeout:        e.handleTimeout,
 			},
 			DB:           e.db,
 			Workers:      workers,
@@ -505,6 +514,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Packer:               e.packer,
 				EventTypeIDs:         e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				HandleTimeout:        e.handleTimeout,
+				RouteTimeout:         e.routeTimeout,
 				Logger:               eventPumpLogger,
 			},
 			DB:           e.db,
@@ -523,6 +534,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Packer:               e.packer,
 				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				HandleTimeout:        e.handleTimeout,
 			},
 			DB:           e.db,
 			Workers:      workers,
@@ -551,12 +563,14 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			Node:         e.node,
 			EventStreams: e.eventStreams,
 			Sink: &projection.Sink{
-				Handler:     handlerConfig.Interface(),
-				Identity:    handlerConfig.Identity(),
-				Concurrency: handlerConfig.ConcurrencyPreference(),
-				EventTypes:  e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				HandlerLock: handlerLock,
-				Logger:      consumerLogger,
+				Handler:       handlerConfig.Interface(),
+				Identity:      handlerConfig.Identity(),
+				Concurrency:   handlerConfig.ConcurrencyPreference(),
+				EventTypes:    e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				HandlerLock:   handlerLock,
+				HandleTimeout: e.handleTimeout,
+				RouteTimeout:  e.routeTimeout,
+				Logger:        consumerLogger,
 			},
 			Logger: consumerLogger,
 		}
@@ -566,7 +580,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			Handler:  handlerConfig.Interface(),
 			Identity: handlerConfig.Identity(),
 			Interval: e.compactInterval,
-			Timeout:  projectionCompactTimeout,
+			Timeout:  e.compactTimeout,
 			Logger:   logger.With(slog.String("component", "projection.compactor")),
 		}
 

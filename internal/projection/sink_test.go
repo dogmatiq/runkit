@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -52,8 +53,9 @@ func TestSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 		},
 	}
 	sink := &Sink{
-		Handler: handler,
-		Logger:  spruce.NewTestLogger(t),
+		Handler:      handler,
+		RouteTimeout: time.Minute,
+		Logger:       spruce.NewTestLogger(t),
 	}
 	streamID := uuidpb.Generate()
 	cp, err := sink.CheckpointOffset(t.Context(), streamID)

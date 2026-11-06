@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -40,6 +41,14 @@ type Sink struct {
 	// [dogma.MinimizeConcurrency].
 	HandlerLock *semaphore.Weighted
 
+	// HandleTimeout is the maximum time the handler is given to handle each
+	// event.
+	HandleTimeout time.Duration
+
+	// RouteTimeout is the maximum time the handler is given to decide from
+	// where consumption of a stream resumes.
+	RouteTimeout time.Duration
+
 	// Logger is the target for log messages produced by the sink and the
 	// handler.
 	Logger *slog.Logger
@@ -54,6 +63,9 @@ func (s *Sink) CheckpointOffset(
 ) (uint64, error) {
 	cp, err := xerrors.RecoverT(
 		func() (uint64, error) {
+			ctx, cancel := context.WithTimeout(ctx, s.RouteTimeout)
+			defer cancel()
+
 			return s.Handler.CheckpointOffset(ctx, streamID.AsString())
 		},
 	)
@@ -131,6 +143,9 @@ func (s *Sink) dispatch(
 
 	next, err := xerrors.RecoverT(
 		func() (uint64, error) {
+			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
+			defer cancel()
+
 			return s.Handler.HandleEvent(
 				ctx,
 				&eventScope{
