@@ -62,13 +62,13 @@ func (c *Catalog) StreamIDs() xsync.ObservableR[*uuidcollection.Set] {
 // soon as they are available. The offset is typically the consumer's
 // checkpoint offset. It blocks until ctx is canceled, fn returns an error, a
 // read from the stream's source fails, or the catalog no longer has the
-// stream, in which case it returns [ErrStreamNotFound].
+// stream, in which case it returns [ErrStreamNotFound]. If the offset is beyond
+// the end of the stream, it returns an error that wraps
+// [source.ErrOffsetOutOfRange].
 //
 // A consumer that keeps up with the stream is served from a cache of its most
 // recent events, and one that falls behind is served by reading from the
-// source until it catches up again. It returns an error that wraps
-// [source.ErrOffsetOutOfRange] if the offset is beyond the end of the
-// source's stream.
+// source until it catches up again.
 //
 // types must not be empty, and every type must be one that [Catalog.Watch]
 // was given for the stream's source.
