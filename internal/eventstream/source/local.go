@@ -205,7 +205,10 @@ func (s *Local) discover(
 	known *uuidcollection.Set,
 	fn func(streamID *uuidpb.UUID),
 ) error {
-	for range s.Signals.Watch(ctx, "eventstream.create", 1) {
+	signals, stop := s.Signals.Watch(ctx, "eventstream.create", 1)
+	defer stop()
+
+	for range signals {
 		streamIDs, err := s.loadStreamIDs(ctx)
 		if err != nil {
 			return err
@@ -355,12 +358,6 @@ func (s *Local) remove(w *watcher, err error) {
 // the end of the stream, which may be after events that those calls have not
 // received.
 func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
-	// Signals are watched until ctx is canceled, and after a failure the
-	// supervisor calls watchStream again with the same ctx, so each call
-	// watches with its own.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	err := s.deliverStream(ctx, streamID)
 
 	if ctx.Err() != nil {
@@ -388,7 +385,10 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 		opened bool
 	)
 
-	for range s.Signals.Watch(ctx, "eventstream.append."+streamID.AsString(), 1) {
+	signals, stop := s.Signals.Watch(ctx, "eventstream.append."+streamID.AsString(), 1)
+	defer stop()
+
+	for range signals {
 		if !opened {
 			end, err := s.loadWatchOffset(ctx, streamID)
 			if err != nil {

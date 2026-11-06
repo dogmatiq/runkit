@@ -43,8 +43,12 @@ type subscriber struct {
 }
 
 // Watch returns a channel that receives each signal on the given topic, or on
-// any topic beneath it, until ctx is canceled, at which point the channel is
-// closed.
+// any topic beneath it, and a function that stops the watch.
+//
+// The watch continues until the stop function is called or ctx is canceled,
+// at which point the channel is closed. The caller must call the stop function
+// once it no longer reads from the channel. Calling it more than once has no
+// effect.
 //
 // Topics are hierarchical, with levels separated by dots. A watcher of "a.b"
 // receives signals on "a.b" and "a.b.c", but not on "a.bc". The value received
@@ -57,7 +61,7 @@ type subscriber struct {
 //
 // The channel has the given capacity. A signal that arrives while it is full
 // is dropped.
-func (b *Bus) Watch(ctx context.Context, topic string, capacity int) <-chan string {
+func (b *Bus) Watch(ctx context.Context, topic string, capacity int) (<-chan string, func()) {
 	if capacity <= 0 {
 		panic("capacity must be positive")
 	}
@@ -79,8 +83,7 @@ func (b *Bus) Watch(ctx context.Context, topic string, capacity int) <-chan stri
 
 	// Signals are only ever sent to a subscriber while the mutex is held, so
 	// once it is removed under the mutex, its channel can be closed.
-	context.AfterFunc(
-		ctx,
+	unsubscribe := sync.OnceFunc(
 		func() {
 			b.m.Lock()
 			delete(b.subscribers, sub)
@@ -90,7 +93,12 @@ func (b *Bus) Watch(ctx context.Context, topic string, capacity int) <-chan stri
 		},
 	)
 
-	return ch
+	stop := context.AfterFunc(ctx, unsubscribe)
+
+	return ch, func() {
+		stop()
+		unsubscribe()
+	}
 }
 
 // Send sends a signal on the given topic.

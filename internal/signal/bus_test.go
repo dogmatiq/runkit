@@ -27,7 +27,8 @@ func TestBus(t *testing.T) {
 	t.Run("it delivers an empty signal as soon as watching begins", func(t *testing.T) {
 		bus := setup(t)
 
-		ch := bus.Watch(t.Context(), "topic", 10)
+		ch, stop := bus.Watch(t.Context(), "topic", 10)
+		defer stop()
 
 		xtesting.ExpectToReceiveN(t, "signals", ch, "")
 		xtesting.ExpectNoReceive(t, "signal", ch)
@@ -81,26 +82,58 @@ func TestBus(t *testing.T) {
 		bus := setup(t)
 
 		ctx, cancel := context.WithCancel(t.Context())
-		ch := bus.Watch(ctx, "topic", 10)
+		ch, stop := bus.Watch(ctx, "topic", 10)
+		defer stop()
+
 		witness := watch(t, bus, "topic", 10)
 
 		xtesting.ExpectToReceiveN(t, "signals", ch, "")
 
 		cancel()
-
-		select {
-		case <-time.After(xtesting.WaitTimeout):
-			t.Fatal("timeout waiting for the channel to be closed")
-		case _, ok := <-ch:
-			if ok {
-				t.Fatal("expected the channel to be closed")
-			}
-		}
+		expectClosed(t, ch)
 
 		// The witness receiving the signal proves that it was dispatched after
 		// the channel was closed, without a send on the closed channel.
 		send(t, bus, "topic")
 		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "")
+	})
+
+	t.Run("it closes the channel when the watch is stopped, and delivers nothing more", func(t *testing.T) {
+		bus := setup(t)
+
+		ch, stop := bus.Watch(t.Context(), "topic", 10)
+		witness := watch(t, bus, "topic", 10)
+
+		xtesting.ExpectToReceiveN(t, "signals", ch, "")
+
+		stop()
+		expectClosed(t, ch)
+
+		// The witness receiving the signal proves that it was dispatched after
+		// the channel was closed, without a send on the closed channel.
+		send(t, bus, "topic")
+		xtesting.ExpectToReceiveN(t, "signals on witness", witness, "")
+	})
+
+	t.Run("it allows a watch to be stopped more than once", func(t *testing.T) {
+		bus := setup(t)
+
+		ch, stop := bus.Watch(t.Context(), "topic", 10)
+
+		stop()
+		stop()
+		expectClosed(t, ch)
+	})
+
+	t.Run("it allows a watch to be stopped after the context is canceled", func(t *testing.T) {
+		bus := setup(t)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		ch, stop := bus.Watch(ctx, "topic", 10)
+
+		cancel()
+		expectClosed(t, ch)
+		stop()
 	})
 
 	t.Run("it drops signals when the watcher's channel is full", func(t *testing.T) {
@@ -179,10 +212,31 @@ func TestBus(t *testing.T) {
 func watch(t testing.TB, bus *Bus, topic string, capacity int) <-chan string {
 	t.Helper()
 
-	ch := bus.Watch(t.Context(), topic, capacity)
+	ch, stop := bus.Watch(t.Context(), topic, capacity)
+	t.Cleanup(stop)
+
 	xtesting.ExpectToReceiveN(t, "initial signal", ch, "")
 
 	return ch
+}
+
+// expectClosed fails the test unless the given channel is closed, after
+// receiving anything already in it.
+func expectClosed(t testing.TB, ch <-chan string) {
+	t.Helper()
+
+	timeout := time.After(xtesting.WaitTimeout)
+
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("timeout waiting for the channel to be closed")
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 // send sends a signal on the given topic.
@@ -205,7 +259,9 @@ func waitForBus(t testing.TB, bus *Bus) {
 	defer cancel()
 
 	topic := "probe." + uuidpb.Generate().AsString()
-	probes := bus.Watch(ctx, topic, 1)
+	probes, stop := bus.Watch(ctx, topic, 1)
+	defer stop()
+
 	<-probes
 
 	deadline := time.After(xtesting.WaitTimeout)

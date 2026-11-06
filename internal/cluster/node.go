@@ -76,7 +76,8 @@ func (n *Node) Run(ctx context.Context) error {
 	// workload.
 	defer n.membership.Store(&Membership{})
 
-	heartbeats := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
+	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
+	defer stop()
 
 	ticker := time.NewTicker(n.Interval)
 	defer ticker.Stop()

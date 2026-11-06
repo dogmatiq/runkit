@@ -34,10 +34,8 @@ func TestNode(t *testing.T) {
 
 		// Once the bus is listening it signals every watcher, whatever its
 		// topic. The first signal is delivered as soon as watching begins.
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-
-		listening := signals.Watch(ctx, "test", 2)
+		listening, stop := signals.Watch(t.Context(), "test", 2)
+		defer stop()
 
 		xtesting.GoE(t, signals.Run)
 		xtesting.ExpectToReceiveN(t, "signal bus to start listening", listening, "", "")
@@ -62,7 +60,8 @@ func TestNode(t *testing.T) {
 	t.Run("it sends heartbeats on a topic named after the node", func(t *testing.T) {
 		signals := setup(t)
 
-		heartbeats := signals.Watch(t.Context(), "heartbeat", 10)
+		heartbeats, stop := signals.Watch(t.Context(), "heartbeat", 10)
+		defer stop()
 
 		n := newNode(t, signals, interval, timeout)
 		xtesting.GoE(t, n.Run)
@@ -120,7 +119,9 @@ func TestNode(t *testing.T) {
 	t.Run("it replies to a node that joins", func(t *testing.T) {
 		signals := setup(t)
 
-		heartbeats := signals.Watch(t.Context(), "heartbeat", 10)
+		heartbeats, stop := signals.Watch(t.Context(), "heartbeat", 10)
+		defer stop()
+
 		xtesting.ExpectToReceiveN(t, "initial signal", heartbeats, "")
 
 		// The interval is long enough that any heartbeat after the first is
