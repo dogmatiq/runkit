@@ -94,29 +94,77 @@ func (n *Node) Run(ctx context.Context) error {
 				return ctx.Err()
 			}
 
-			// A signal on the heartbeat topic itself carries no node ID, and
-			// so is not a heartbeat.
-			if nodeID == "" {
-				continue
-			}
-
-			changed, joined := n.recordHeartbeat(ctx, nodeID)
-			if changed {
+			if n.handleHeartbeat(ctx, nodeID) {
 				n.publishMembershipChange()
-			}
-
-			// A node that has just joined does not know about this one yet,
-			// so reply with a heartbeat straight away.
-			if joined {
-				n.sendHeartbeat(ctx)
 			}
 
 		case <-ticker.C:
 			n.sendHeartbeat(ctx)
 
+			changed, ok := n.drainHeartbeats(ctx, heartbeats)
+			if !ok {
+				return ctx.Err()
+			}
+
 			if n.expireNodes(ctx) {
+				changed = true
+			}
+
+			if changed {
 				n.publishMembershipChange()
 			}
+		}
+	}
+}
+
+// handleHeartbeat handles a signal received on the heartbeat topic. It returns
+// true if the set of live nodes changed.
+func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
+	// A signal on the heartbeat topic itself carries no node ID, and so is not
+	// a heartbeat.
+	if nodeID == "" {
+		return false
+	}
+
+	changed, joined := n.recordHeartbeat(ctx, nodeID)
+
+	// A node that has just joined does not know about this one yet, so reply
+	// with a heartbeat straight away.
+	if joined {
+		n.sendHeartbeat(ctx)
+	}
+
+	return changed
+}
+
+// drainHeartbeats handles the heartbeats already waiting in the given channel,
+// without waiting for more.
+//
+// Heartbeats keep arriving while this node is held up, such as while
+// sendHeartbeat waits on a slow database, and each is recorded at the time it
+// is read. They are read before expiring nodes, so that a hold-up longer than
+// the heartbeat timeout does not remove nodes whose heartbeats are waiting.
+//
+// This is not covered by tests. A node removed this way is added again by the
+// next heartbeat read, which is too soon for a test to observe reliably through
+// the membership.
+//
+// changed is true if the set of live nodes changed. ok is false if the channel
+// is closed.
+func (n *Node) drainHeartbeats(ctx context.Context, heartbeats <-chan string) (changed, ok bool) {
+	for {
+		select {
+		case nodeID, open := <-heartbeats:
+			if !open {
+				return changed, false
+			}
+
+			if n.handleHeartbeat(ctx, nodeID) {
+				changed = true
+			}
+
+		default:
+			return changed, true
 		}
 	}
 }
