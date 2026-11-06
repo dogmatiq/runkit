@@ -1,4 +1,4 @@
-package projection_test
+package eventstream_test
 
 import (
 	"context"
@@ -12,12 +12,11 @@ import (
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
-	. "github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -58,40 +57,34 @@ func TestConsumer(t *testing.T) {
 			checkpoint uint64
 		)
 
-		handler := &ProjectionMessageHandlerStub{
-			HandleEventFunc: func(
-				_ context.Context,
-				s dogma.ProjectionEventScope,
-				_ dogma.Event,
-			) (uint64, error) {
+		sink := &consumerTestSink{
+			checkpoint: func(context.Context, *uuidpb.UUID) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
-
-				if s.CheckpointOffset() != checkpoint {
-					return checkpoint, nil
-				}
-
-				checkpoint = s.Offset() + 1
-				handled <- s.Offset()
-
 				return checkpoint, nil
 			},
-			CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+			consume: func(_ context.Context, cp uint64, seg eventstream.Segment) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
-
+				if cp != checkpoint {
+					return checkpoint, fmt.Errorf("checkpoint conflict")
+				}
+				for _, env := range seg.Envelopes {
+					offset := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env).GetOffset()
+					checkpoint = offset + 1
+					handled <- offset
+				}
 				return checkpoint, nil
 			},
 		}
-
+		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
 		consumer := &Consumer{
-			Node:         node,
-			EventStreams: catalog,
-			Handler:      handler,
-			Identity:     identitypb.New("<handler>", uuidpb.Generate()),
-			EventTypeIDs: uuidcollection.NewSet(MessageTypeUUID[*EventStub[TypeA]]()),
+			Node: node, EventStreams: catalog, Sink: sink,
+			Workload:     func(id *uuidpb.UUID) *uuidpb.UUID { return id },
+			EventTypeIDs: uuidcollection.NewSet(uuidpb.MustParse(mt.ID())),
 			Logger:       logger,
 		}
+
 		xtesting.GoE(t, consumer.Run)
 
 		return catalog, node, handled
@@ -304,4 +297,17 @@ func expectStreamIDs(
 		catalog.StreamIDs(),
 		expected.IsEqual,
 	)
+}
+
+// consumerTestSink keeps lifecycle tests independent of Dogma dispatch.
+type consumerTestSink struct {
+	checkpoint func(context.Context, *uuidpb.UUID) (uint64, error)
+	consume    func(context.Context, uint64, eventstream.Segment) (uint64, error)
+}
+
+func (s *consumerTestSink) CheckpointOffset(ctx context.Context, id *uuidpb.UUID) (uint64, error) {
+	return s.checkpoint(ctx, id)
+}
+func (s *consumerTestSink) ConsumeSegment(ctx context.Context, cp uint64, seg eventstream.Segment) (uint64, error) {
+	return s.consume(ctx, cp, seg)
 }

@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Changed
+
+- Extract shared event-stream consumption and a Sink abstraction from projections,
+  preserving projection dispatch, checkpoint, and concurrency behavior.
+
 ## [0.2.0] - 2026-11-06
 
 This release introduces clustering. Several engines could already run against

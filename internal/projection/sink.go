@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
@@ -17,83 +16,29 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// streamConsumer consumes a single event stream, dispatching its events to a
-// projection, on behalf of a [Consumer].
-type streamConsumer struct {
-	// StreamID is the ID of the stream from which events are consumed.
-	StreamID *uuidpb.UUID
-
-	// EventStreams is the catalog from which the stream is consumed.
-	EventStreams *eventstream.Catalog
-
-	// EventTypeIDs is the set of IDs of the event types that the handler
-	// consumes.
-	EventTypeIDs *uuidcollection.Set
-
-	// Handler is the projection message handler to which events are
-	// dispatched.
-	Handler dogma.ProjectionMessageHandler
-
-	// HandlerLock, if non-nil, is a semaphore with a weight of one that is
-	// held while handling each event, so that stream consumers sharing it
-	// handle events one at a time.
+// sink implements eventstream.Sink using a projection's own checkpoint storage.
+type sink struct {
+	Handler     dogma.ProjectionMessageHandler
 	HandlerLock *semaphore.Weighted
-
-	// Logger is the target for log messages produced by the stream consumer
-	// and the handler.
-	Logger *slog.Logger
+	Logger      *slog.Logger
 }
 
-// Run consumes the stream until ctx is canceled or it fails fatally.
-func (sc *streamConsumer) Run(ctx context.Context) error {
-	sc.Logger.DebugContext(ctx, "started consuming event stream")
-	defer sc.Logger.DebugContext(ctx, "stopped consuming event stream")
-
-	return supervisor.Run(ctx, sc.Logger, sc.consume)
-}
-
-// consume dispatches events from the stream, resuming from the handler's own
-// checkpoint offset, until ctx is canceled, a read from the stream fails, an
-// event can not be dispatched, or the handler reports an optimistic
-// concurrency conflict.
-//
-// A conflict is returned as an error so that consumption resumes from the
-// handler's checkpoint offset after a delay, rather than immediately.
-//
-// It also fails if the catalog no longer has the stream, which happens only
-// between the stream leaving the catalog and the [Consumer] noticing.
-func (sc *streamConsumer) consume(ctx context.Context) error {
-	checkpoint, err := xerrors.RecoverT(
-		func() (uint64, error) {
-			return sc.Handler.CheckpointOffset(ctx, sc.StreamID.AsString())
-		},
-	)
+func (sc *sink) CheckpointOffset(ctx context.Context, streamID *uuidpb.UUID) (uint64, error) {
+	checkpoint, err := xerrors.RecoverT(func() (uint64, error) {
+		return sc.Handler.CheckpointOffset(ctx, streamID.AsString())
+	})
 	if err != nil {
-		return supervisor.Persistentf(
-			"unable to load checkpoint offset: %w",
-			err,
-		)
+		return 0, supervisor.Persistentf("unable to load checkpoint offset: %w", err)
 	}
-
-	return sc.EventStreams.Consume(
-		ctx,
-		sc.StreamID,
-		sc.EventTypeIDs,
-		checkpoint,
-		func(seg eventstream.Segment) error {
-			var err error
-			checkpoint, err = sc.dispatchSegment(ctx, checkpoint, seg)
-			return err
-		},
-	)
+	return checkpoint, nil
 }
 
-// dispatchSegment dispatches the events in a segment, and returns the
+// ConsumeSegment dispatches the events in a segment, and returns the
 // handler's new checkpoint offset for the stream.
 //
 // checkpoint is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (sc *streamConsumer) dispatchSegment(
+func (sc *sink) ConsumeSegment(
 	ctx context.Context,
 	checkpoint uint64,
 	seg eventstream.Segment,
@@ -107,7 +52,7 @@ func (sc *streamConsumer) dispatchSegment(
 		pos := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env)
 		offset := pos.GetOffset()
 
-		next, err := sc.dispatch(ctx, offset, checkpoint, env)
+		next, err := sc.dispatch(ctx, seg.StreamID, offset, checkpoint, env)
 		if err != nil {
 			return checkpoint, err
 		}
@@ -132,8 +77,9 @@ func (sc *streamConsumer) dispatchSegment(
 //
 // checkpoint is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (sc *streamConsumer) dispatch(
+func (sc *sink) dispatch(
 	ctx context.Context,
+	streamID *uuidpb.UUID,
 	offset, checkpoint uint64,
 	env *envelopepb.Envelope,
 ) (uint64, error) {
@@ -158,11 +104,12 @@ func (sc *streamConsumer) dispatch(
 			return sc.Handler.HandleEvent(
 				ctx,
 				&eventScope{
-					streamID:         sc.StreamID.AsString(),
+					streamID:         streamID.AsString(),
 					offset:           offset,
 					recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
 					checkpointOffset: checkpoint,
 					logger: sc.Logger.With(
+						xslog.UUID("stream_id", streamID),
 						slog.Uint64("offset", offset),
 						xslog.Envelope("message", env),
 					),
