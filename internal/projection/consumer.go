@@ -49,20 +49,27 @@ type Consumer struct {
 }
 
 // Run consumes the streams assigned to this handler until cancellation.
+//
 // It must be called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
 	var lock *semaphore.Weighted
 	if c.Concurrency == dogma.MinimizeConcurrency {
 		lock = semaphore.NewWeighted(1)
 	}
+
 	consumer := &eventstream.Consumer{
 		Node:         c.Node,
 		EventStreams: c.EventStreams,
-		Sink:         &sink{Handler: c.Handler, HandlerLock: lock, Logger: c.Logger},
+		Sink: &sink{
+			Handler:     c.Handler,
+			HandlerLock: lock,
+			Logger:      c.Logger,
+		},
 		EventTypeIDs: c.EventTypeIDs,
 		Workload:     c.workload,
 		Logger:       c.Logger,
 	}
+
 	return consumer.Run(ctx)
 }
 

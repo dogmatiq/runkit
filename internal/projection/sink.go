@@ -16,20 +16,35 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// sink implements eventstream.Sink using a projection's own checkpoint storage.
+// sink implements [eventstream.Sink] using a projection's own checkpoint storage.
 type sink struct {
-	Handler     dogma.ProjectionMessageHandler
+	// Handler is the projection to which events are dispatched.
+	Handler dogma.ProjectionMessageHandler
+
+	// HandlerLock, if non-nil, serializes dispatch across the handler's streams.
 	HandlerLock *semaphore.Weighted
-	Logger      *slog.Logger
+
+	// Logger receives messages produced by the sink and the handler.
+	Logger *slog.Logger
 }
 
-func (sc *sink) CheckpointOffset(ctx context.Context, streamID *uuidpb.UUID) (uint64, error) {
-	checkpoint, err := xerrors.RecoverT(func() (uint64, error) {
-		return sc.Handler.CheckpointOffset(ctx, streamID.AsString())
-	})
+// CheckpointOffset loads the projection handler's durable progress.
+func (sc *sink) CheckpointOffset(
+	ctx context.Context,
+	streamID *uuidpb.UUID,
+) (uint64, error) {
+	checkpoint, err := xerrors.RecoverT(
+		func() (uint64, error) {
+			return sc.Handler.CheckpointOffset(ctx, streamID.AsString())
+		},
+	)
 	if err != nil {
-		return 0, supervisor.Persistentf("unable to load checkpoint offset: %w", err)
+		return 0, supervisor.Persistentf(
+			"unable to load checkpoint offset: %w",
+			err,
+		)
 	}
+
 	return checkpoint, nil
 }
 

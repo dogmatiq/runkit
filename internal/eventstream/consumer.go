@@ -16,22 +16,29 @@ import (
 )
 
 // Consumer coordinates consumption of catalog streams across cluster nodes.
+//
 // Each assigned stream runs under one supervisor. Sinks own durable progress
 // and must tolerate overlapping consumption during cluster handoff.
 type Consumer struct {
 	// Node supplies cluster membership.
 	Node *cluster.Node
+
 	// EventStreams supplies available streams and segments.
 	EventStreams *Catalog
+
 	// Sink owns durable progress and segment dispatch.
 	Sink Sink
+
 	// EventTypeIDs must be nonempty and watched by the catalog.
 	EventTypeIDs *uuidcollection.Set
+
 	// Workload determines the rendezvous key for a stream. It must be non-nil
 	// and return the same key for the same stream on every node.
 	Workload func(*uuidpb.UUID) *uuidpb.UUID
+
 	// Logger receives coordinator and per-stream lifecycle messages.
-	Logger             *slog.Logger
+	Logger *slog.Logger
+
 	stopStreamConsumer uuidcollection.Map[func()]
 	group              *errgroup.Group
 }
@@ -104,7 +111,9 @@ func (c *Consumer) startStreamConsumer(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) {
-	logger := c.Logger.With(xslog.UUID("stream_id", streamID))
+	logger := c.Logger.With(
+		xslog.UUID("stream_id", streamID),
+	)
 
 	ctx, cancel := context.WithCancel(ctx)
 	var stopped cosyne.Latch
@@ -114,17 +123,29 @@ func (c *Consumer) startStreamConsumer(
 
 		logger.DebugContext(ctx, "started consuming event stream")
 		defer logger.DebugContext(ctx, "stopped consuming event stream")
-		err := supervisor.Run(ctx, logger, func(ctx context.Context) error {
-			checkpoint, err := c.Sink.CheckpointOffset(ctx, streamID)
-			if err != nil {
-				return err
-			}
-			return c.EventStreams.Consume(ctx, streamID, c.EventTypeIDs, checkpoint,
-				func(seg Segment) error {
-					checkpoint, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
+
+		err := supervisor.Run(
+			ctx,
+			logger,
+			func(ctx context.Context) error {
+				checkpoint, err := c.Sink.CheckpointOffset(ctx, streamID)
+				if err != nil {
 					return err
-				})
-		})
+				}
+
+				return c.EventStreams.Consume(
+					ctx,
+					streamID,
+					c.EventTypeIDs,
+					checkpoint,
+					func(seg Segment) error {
+						checkpoint, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
+
+						return err
+					},
+				)
+			},
+		)
 
 		// Run returns the context's error once the context is canceled, which
 		// is not a failure of the stream consumer.

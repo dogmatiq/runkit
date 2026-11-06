@@ -14,7 +14,6 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
-	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/signal"
@@ -27,7 +26,7 @@ func TestConsumer(t *testing.T) {
 	// setup starts a consumer of a new catalog, and returns the catalog, the
 	// consumer's node, which is not yet running, and a channel that receives
 	// the offset of each event that the consumer's handler handles.
-	setup := func(t *testing.T) (*eventstream.Catalog, *cluster.Node, <-chan uint64) {
+	setup := func(t *testing.T) (*Catalog, *cluster.Node, <-chan uint64) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
@@ -45,7 +44,7 @@ func TestConsumer(t *testing.T) {
 			Logger:   logger,
 		}
 
-		catalog := &eventstream.Catalog{
+		catalog := &Catalog{
 			CacheSize: 10,
 			Logger:    logger,
 		}
@@ -61,25 +60,32 @@ func TestConsumer(t *testing.T) {
 			checkpoint: func(context.Context, *uuidpb.UUID) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
+
 				return checkpoint, nil
 			},
-			consume: func(_ context.Context, cp uint64, seg eventstream.Segment) (uint64, error) {
+			consume: func(_ context.Context, cp uint64, seg Segment) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
+
 				if cp != checkpoint {
 					return checkpoint, fmt.Errorf("checkpoint conflict")
 				}
+
 				for _, env := range seg.Envelopes {
 					offset := envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env).GetOffset()
 					checkpoint = offset + 1
 					handled <- offset
 				}
+
 				return checkpoint, nil
 			},
 		}
+
 		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
 		consumer := &Consumer{
-			Node: node, EventStreams: catalog, Sink: sink,
+			Node:         node,
+			EventStreams: catalog,
+			Sink:         sink,
 			Workload:     func(id *uuidpb.UUID) *uuidpb.UUID { return id },
 			EventTypeIDs: uuidcollection.NewSet(uuidpb.MustParse(mt.ID())),
 			Logger:       logger,
@@ -94,7 +100,7 @@ func TestConsumer(t *testing.T) {
 	// function is called.
 	watch := func(
 		t *testing.T,
-		catalog *eventstream.Catalog,
+		catalog *Catalog,
 		src source.Source,
 	) func() {
 		return xtesting.GoE(
@@ -284,7 +290,7 @@ func newSegment(
 // expectStreamIDs waits until the catalog has exactly the given streams.
 func expectStreamIDs(
 	t *testing.T,
-	catalog *eventstream.Catalog,
+	catalog *Catalog,
 	want ...*uuidpb.UUID,
 ) {
 	t.Helper()
@@ -302,12 +308,20 @@ func expectStreamIDs(
 // consumerTestSink keeps lifecycle tests independent of Dogma dispatch.
 type consumerTestSink struct {
 	checkpoint func(context.Context, *uuidpb.UUID) (uint64, error)
-	consume    func(context.Context, uint64, eventstream.Segment) (uint64, error)
+	consume    func(context.Context, uint64, Segment) (uint64, error)
 }
 
-func (s *consumerTestSink) CheckpointOffset(ctx context.Context, id *uuidpb.UUID) (uint64, error) {
+func (s *consumerTestSink) CheckpointOffset(
+	ctx context.Context,
+	id *uuidpb.UUID,
+) (uint64, error) {
 	return s.checkpoint(ctx, id)
 }
-func (s *consumerTestSink) ConsumeSegment(ctx context.Context, cp uint64, seg eventstream.Segment) (uint64, error) {
+
+func (s *consumerTestSink) ConsumeSegment(
+	ctx context.Context,
+	cp uint64,
+	seg Segment,
+) (uint64, error) {
 	return s.consume(ctx, cp, seg)
 }
