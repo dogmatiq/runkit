@@ -56,19 +56,19 @@ func TestConsumer(t *testing.T) {
 			checkpoint uint64
 		)
 
-		sink := &consumerTestSink{
-			checkpoint: func(context.Context, *uuidpb.UUID) (uint64, error) {
+		sink := &sinkStub{
+			CheckpointOffsetFunc: func(context.Context, *uuidpb.UUID) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
 
 				return checkpoint, nil
 			},
-			consume: func(_ context.Context, cp uint64, seg Segment) (uint64, error) {
+			ConsumeSegmentFunc: func(_ context.Context, cp uint64, seg Segment) (uint64, bool, error) {
 				m.Lock()
 				defer m.Unlock()
 
 				if cp != checkpoint {
-					return checkpoint, fmt.Errorf("checkpoint conflict")
+					return checkpoint, false, nil
 				}
 
 				for _, env := range seg.Envelopes {
@@ -77,17 +77,18 @@ func TestConsumer(t *testing.T) {
 					handled <- offset
 				}
 
-				return checkpoint, nil
+				return checkpoint, true, nil
 			},
 		}
 
 		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
+		sink.EventTypeIDsFunc = func() *uuidcollection.Set {
+			return uuidcollection.NewSet(uuidpb.MustParse(mt.ID()))
+		}
 		consumer := &Consumer{
 			Node:         node,
 			EventStreams: catalog,
 			Sink:         sink,
-			Workload:     func(id *uuidpb.UUID) *uuidpb.UUID { return id },
-			EventTypeIDs: uuidcollection.NewSet(uuidpb.MustParse(mt.ID())),
 			Logger:       logger,
 		}
 
@@ -303,25 +304,4 @@ func expectStreamIDs(
 		catalog.StreamIDs(),
 		expected.IsEqual,
 	)
-}
-
-// consumerTestSink keeps lifecycle tests independent of Dogma dispatch.
-type consumerTestSink struct {
-	checkpoint func(context.Context, *uuidpb.UUID) (uint64, error)
-	consume    func(context.Context, uint64, Segment) (uint64, error)
-}
-
-func (s *consumerTestSink) CheckpointOffset(
-	ctx context.Context,
-	id *uuidpb.UUID,
-) (uint64, error) {
-	return s.checkpoint(ctx, id)
-}
-
-func (s *consumerTestSink) ConsumeSegment(
-	ctx context.Context,
-	cp uint64,
-	seg Segment,
-) (uint64, error) {
-	return s.consume(ctx, cp, seg)
 }

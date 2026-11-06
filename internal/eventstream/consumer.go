@@ -3,6 +3,7 @@ package eventstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -31,19 +32,6 @@ type Consumer struct {
 
 	// Sink is the destination to which segments of each stream are dispatched.
 	Sink Sink
-
-	// EventTypeIDs is the set of IDs of the event types that the sink
-	// consumes. It must not be empty, and every type must be one that
-	// [Catalog.Watch] was given for the stream's source.
-	EventTypeIDs *uuidcollection.Set
-
-	// Workload returns the rendezvous workload used to choose which node
-	// consumes the stream with the given ID.
-	//
-	// It must not be nil, and must return the same workload for a given
-	// stream on every node. Streams with the same workload are assigned to
-	// the same node.
-	Workload func(*uuidpb.UUID) *uuidpb.UUID
 
 	// Logger is the target for log messages produced by the consumer.
 	Logger *slog.Logger
@@ -94,7 +82,7 @@ func (c *Consumer) reconcile(
 	responsible := uuidcollection.NewSet()
 
 	for streamID := range streamIDs.All() {
-		if membership.LocalNodeIsResponsibleFor(c.Workload(streamID)) {
+		if membership.LocalNodeIsResponsibleFor(c.Sink.Workload(streamID)) {
 			responsible.Add(streamID)
 		}
 	}
@@ -144,18 +132,29 @@ func (c *Consumer) startStreamConsumer(
 			func(ctx context.Context) error {
 				checkpoint, err := c.Sink.CheckpointOffset(ctx, streamID)
 				if err != nil {
-					return classifySinkError(err)
+					return supervisor.Persistent(err)
 				}
 
 				return c.EventStreams.Consume(
 					ctx,
 					streamID,
-					c.EventTypeIDs,
+					c.Sink.EventTypeIDs(),
 					checkpoint,
 					func(seg Segment) error {
-						checkpoint, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
+						var ok bool
+						checkpoint, ok, err = c.Sink.ConsumeSegment(ctx, checkpoint, seg)
+						if err != nil {
+							return supervisor.Persistent(err)
+						}
 
-						return classifySinkError(err)
+						if !ok {
+							return fmt.Errorf(
+								"checkpoint conflict on event stream %s",
+								streamID,
+							)
+						}
+
+						return nil
 					},
 				)
 			},
@@ -174,16 +173,4 @@ func (c *Consumer) startStreamConsumer(
 		cancel()
 		stopped.Wait()
 	})
-}
-
-// classifySinkError translates sink failures into the consumer's retry policy.
-func classifySinkError(err error) error {
-	switch {
-	case errors.Is(err, ErrFatalFailure):
-		return supervisor.Fatal(err)
-	case errors.Is(err, ErrPersistentFailure):
-		return supervisor.Persistent(err)
-	default:
-		return err
-	}
 }

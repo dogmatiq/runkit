@@ -6,7 +6,10 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -14,6 +17,38 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/semaphore"
 )
+
+// NewSink returns a sink that dispatches events to the configured projection.
+//
+// It preserves the handler's concurrency preference across all of its streams.
+func NewSink(
+	handlerConfig *config.Projection,
+	logger *slog.Logger,
+) eventstream.Sink {
+	var lock *semaphore.Weighted
+	if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
+		lock = semaphore.NewWeighted(1)
+	}
+
+	types := uuidcollection.NewSet()
+	inboundRoutes := handlerConfig.
+		RouteSet().
+		Filter(config.FilterByMessageDirection(config.InboundDirection)).
+		Routes()
+
+	for route := range inboundRoutes {
+		types.Add(uuidpb.MustParse(route.MessageTypeID.Get()))
+	}
+
+	return &sink{
+		Handler:      handlerConfig.Interface(),
+		HandlerLock:  lock,
+		Logger:       logger,
+		identity:     handlerConfig.Identity(),
+		concurrency:  handlerConfig.ConcurrencyPreference(),
+		eventTypeIDs: types,
+	}
+}
 
 // sink dispatches segments of event streams to a projection message handler.
 // It implements [eventstream.Sink] using the handler's checkpoint offsets.
@@ -30,11 +65,20 @@ type sink struct {
 	// Logger is the target for log messages produced by the sink and the
 	// handler.
 	Logger *slog.Logger
+
+	// identity identifies the projection when deriving rendezvous workloads.
+	identity *identitypb.Identity
+
+	// concurrency determines whether streams share one rendezvous workload.
+	concurrency dogma.ConcurrencyPreference
+
+	// eventTypeIDs contains the IDs of events routed to the projection.
+	eventTypeIDs *uuidcollection.Set
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream
-// with the given ID. An error or panic from the handler is treated as a
-// persistent failure.
+// with the given ID. An error or panic from the handler stops the current
+// consumption attempt.
 func (sc *sink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
@@ -46,8 +90,7 @@ func (sc *sink) CheckpointOffset(
 	)
 	if err != nil {
 		return 0, fmt.Errorf(
-			"%w: unable to load checkpoint offset: %w",
-			eventstream.ErrPersistentFailure,
+			"unable to load checkpoint offset: %w",
 			err,
 		)
 	}
@@ -56,7 +99,8 @@ func (sc *sink) CheckpointOffset(
 }
 
 // ConsumeSegment dispatches the events in a segment, and returns the
-// handler's new checkpoint offset for the stream.
+// handler's new checkpoint offset for the stream. It returns false if the
+// handler reports an optimistic concurrency conflict.
 //
 // checkpoint is the offset from which the handler last said it would resume
 // handling events from the stream.
@@ -64,7 +108,7 @@ func (sc *sink) ConsumeSegment(
 	ctx context.Context,
 	checkpoint uint64,
 	seg eventstream.Segment,
-) (uint64, error) {
+) (uint64, bool, error) {
 	// The segment's end is past events that the handler does not consume, but
 	// the handler's checkpoint advances only when it handles an event, so the
 	// segment's end is not used.
@@ -76,22 +120,17 @@ func (sc *sink) ConsumeSegment(
 
 		next, err := sc.dispatch(ctx, seg.StreamID, offset, checkpoint, env)
 		if err != nil {
-			return checkpoint, err
+			return checkpoint, false, err
 		}
 
 		if next != offset+1 {
-			return checkpoint, fmt.Errorf(
-				"optimistic concurrency conflict at offset %d: expected checkpoint offset %d, got %d",
-				offset,
-				offset+1,
-				next,
-			)
+			return checkpoint, false, nil
 		}
 
 		checkpoint = next
 	}
 
-	return checkpoint, nil
+	return checkpoint, true, nil
 }
 
 // dispatch passes the event at the given offset to the handler, and returns
@@ -108,8 +147,7 @@ func (sc *sink) dispatch(
 	var event dogma.Event
 	if err := xmessage.UnpackMessage(env, &event); err != nil {
 		return 0, fmt.Errorf(
-			"%w: unable to unmarshal event at offset %d: %w",
-			eventstream.ErrPersistentFailure,
+			"unable to unmarshal event at offset %d: %w",
 			offset,
 			err,
 		)
@@ -143,12 +181,29 @@ func (sc *sink) dispatch(
 	)
 	if err != nil {
 		return 0, fmt.Errorf(
-			"%w: unable to handle event at offset %d: %w",
-			eventstream.ErrPersistentFailure,
+			"unable to handle event at offset %d: %w",
 			offset,
 			err,
 		)
 	}
 
 	return next, nil
+}
+
+// Workload returns the rendezvous workload that determines which node consumes
+// the stream with the given ID.
+func (s *sink) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
+	if s.concurrency == dogma.MinimizeConcurrency {
+		return s.identity.GetKey()
+	}
+
+	// If the handler does not prefer to minimize concurrency, derive a unique
+	// workload from both the handler identity and the stream ID such that both
+	// handlers and streams are distributed evenly across nodes.
+	return uuidpb.Derive(s.identity.GetKey(), streamID.AsString())
+}
+
+// EventTypeIDs returns the event types routed to the projection.
+func (s *sink) EventTypeIDs() *uuidcollection.Set {
+	return s.eventTypeIDs
 }
