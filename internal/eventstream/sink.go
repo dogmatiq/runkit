@@ -42,24 +42,17 @@ type Sink interface {
 	// ConsumeSegment handles the events in the given segment and returns the new
 	// checkpoint offset for its stream.
 	//
-	// checkpoint is the offset returned by CheckpointOffset at the start of
-	// the attempt, or by the previous successful call to ConsumeSegment for
-	// this stream. It may be lower than segment.Begin if the sink does not
-	// store checkpoint updates for events that it does not handle.
-	//
-	// The returned offset may likewise be lower than segment.End, even
-	// when the segment holds no events. The consumer's position in the stream
-	// advances to segment.End independently of the sink's checkpoint.
+	// checkpoint is the sink's last reported checkpoint offset for this stream.
+	// Reading past filtered events need not update the sink's storage, so both
+	// checkpoint and next may trail the segment boundaries. The consumer tracks
+	// its reading position separately to avoid rereading those events.
 	//
 	// If ok is false, another consumer has changed the checkpoint offset.
-	// The consumer stops this attempt and reloads the checkpoint before
-	// retrying. This is an expected concurrency conflict, not a failure to
-	// load or handle an event.
+	// Errors indicate a failure to load or handle an event instead.
 	//
-	// If an error is returned, some events may already have been handled and
-	// their checkpoint updates stored. The consumer stops this attempt and
-	// calls CheckpointOffset again before retrying; it does not use the offset
-	// returned alongside the error.
+	// On either outcome, the consumer reloads CheckpointOffset before retrying:
+	// earlier events in the segment may already have been committed. The offset
+	// returned by this call is used only when ok is true and err is nil.
 	ConsumeSegment(
 		ctx context.Context,
 		checkpoint uint64,
