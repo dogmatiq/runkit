@@ -95,6 +95,7 @@ func TestLocal(t *testing.T) {
 
 		select {
 		case <-time.After(xtesting.WaitTimeout):
+			xtesting.LogGoroutines(t)
 			t.Fatalf("timeout waiting for segment [%d, %d) of stream %s", begin, end, streamID)
 		case seg := <-segments:
 			if !seg.StreamID.Equal(streamID) || seg.Begin != begin || seg.End != end {
@@ -117,6 +118,7 @@ func TestLocal(t *testing.T) {
 
 		select {
 		case <-time.After(xtesting.WaitTimeout):
+			xtesting.LogGoroutines(t)
 			t.Fatal("timeout waiting for Watch to return")
 			return nil
 		case err := <-result:
@@ -193,6 +195,7 @@ func TestLocal(t *testing.T) {
 		for {
 			select {
 			case <-time.After(xtesting.WaitTimeout):
+				xtesting.LogGoroutines(t)
 				t.Fatalf("timeout waiting for segments: got %d of %d envelopes", len(got), len(want))
 			case seg := <-segments:
 				if !seg.StreamID.Equal(streamID) {
@@ -389,6 +392,7 @@ func TestLocal(t *testing.T) {
 
 			select {
 			case <-time.After(xtesting.WaitTimeout):
+				xtesting.LogGoroutines(t)
 				t.Fatal("timeout waiting for the stream's first segment")
 			case <-began:
 			}
@@ -419,6 +423,7 @@ func TestLocal(t *testing.T) {
 
 			select {
 			case <-time.After(xtesting.WaitTimeout):
+				xtesting.LogGoroutines(t)
 				t.Fatal("timeout waiting for Watch to return")
 			case err := <-result:
 				if err == nil {
@@ -530,6 +535,7 @@ func TestLocal(t *testing.T) {
 			for range 3 {
 				select {
 				case <-time.After(xtesting.WaitTimeout):
+					xtesting.LogGoroutines(t)
 					t.Fatal("timeout waiting for the next call's first segments")
 				case seg := <-next:
 					got.Add(seg.StreamID)
