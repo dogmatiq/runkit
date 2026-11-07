@@ -21,8 +21,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func (c *DeadlineConsumer) deliver(ctx context.Context, candidate deadlineCandidate) error {
-	return xsql.Transact(ctx, c.Sink.DB, func(ctx context.Context, tx *sql.Tx) error {
+var errInstanceActive = errors.New("process instance is already active locally")
+
+func (c *DeadlineConsumer) deliver(ctx context.Context, runtime *deadlineRuntime, attempt *deadlineAttempt, hint *deadlineCandidate) (bool, error) {
+	worked := false
+	err := xsql.Transact(ctx, c.Sink.DB, func(ctx context.Context, tx *sql.Tx) error {
+		delivery, err := c.claim(ctx, tx, hint, runtime.activeIDsExcept(attempt))
+		if err != nil || delivery == nil {
+			return err
+		}
+		if !runtime.reserve(attempt, delivery.instanceID) {
+			return errInstanceActive
+		}
+		worked = true
+		candidate := delivery.deadlineCandidate
 		state, ended, busy, err := c.lockInstance(ctx, tx, candidate.instanceID)
 		if err != nil {
 			return err
@@ -31,30 +43,18 @@ func (c *DeadlineConsumer) deliver(ctx context.Context, candidate deadlineCandid
 			return c.deferDeadline(ctx, tx, candidate)
 		}
 		if ended {
-			return nil
-		}
-		var data []byte
-		var failures uint64
-		err = tx.QueryRowContext(ctx, `SELECT envelope, failures FROM process.deadlines
-		WHERE message_id = $1 AND handler_key = $2 AND instance_id = $3
-			AND message_type_id = ANY($4) AND deliver_at <= $5
-		FOR UPDATE`, xsql.UUID(candidate.messageID), xsql.UUID(c.Sink.Identity.GetKey()),
-			candidate.instanceID, xsql.UUIDSeq(c.DeadlineTypeIDs.All()), time.Now()).Scan(&data, &failures)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("unable to acquire process deadline: %w", err)
+			return xsql.ExecOne(ctx, tx, `DELETE FROM process.deadlines WHERE message_id = $1`, xsql.UUID(candidate.messageID))
 		}
 		logger := c.Logger.With(xslog.UUID("deadline_id", candidate.messageID),
-			slog.Uint64("attempt", failures+1), slog.String("instance_id", candidate.instanceID))
-		err = c.handle(ctx, tx, candidate, state, data, logger)
+			slog.Uint64("attempt", delivery.failures+1), slog.String("instance_id", candidate.instanceID))
+		err = c.handle(ctx, tx, candidate, state, delivery.data, logger)
 		if errors.Is(err, messagepump.ErrFailed) {
 			logger.ErrorContext(ctx, "unable to prepare deadline delivery", xslog.Error(err))
-			return c.postpone(ctx, tx, candidate, failures+1)
+			return c.postpone(ctx, tx, candidate, delivery.failures+1)
 		}
 		return err
 	})
+	return worked, err
 }
 
 // lockInstance isolates a lock timeout in a savepoint, retaining the outer
@@ -105,20 +105,10 @@ func (c *DeadlineConsumer) lockInstance(ctx context.Context, tx *sql.Tx, instanc
 }
 
 func (c *DeadlineConsumer) deferDeadline(ctx context.Context, tx *sql.Tx, candidate deadlineCandidate) error {
-	_, err := tx.ExecContext(ctx, `WITH ready AS (
-		SELECT message_id FROM process.deadlines
-		WHERE message_id = $1 AND handler_key = $2 AND instance_id = $3
-			AND message_type_id = ANY($4) AND deliver_at <= $5
-		FOR UPDATE SKIP LOCKED
-	)
-	UPDATE process.deadlines AS d SET deliver_at = clock_timestamp() + $6
-	FROM ready WHERE d.message_id = ready.message_id`,
-		xsql.UUID(candidate.messageID), xsql.UUID(c.Sink.Identity.GetKey()), candidate.instanceID,
-		xsql.UUIDSeq(c.DeadlineTypeIDs.All()), time.Now(), c.ContentionDelay)
-	if err != nil {
-		return fmt.Errorf("unable to defer contended deadline: %w", err)
-	}
-	return nil
+	// The claim predates the instance-lock savepoint, so rollback retained
+	// ownership of this deadline and its failure count remains unchanged.
+	return xsql.ExecOne(ctx, tx, `UPDATE process.deadlines SET deliver_at = clock_timestamp() + $2 WHERE message_id = $1`,
+		xsql.UUID(candidate.messageID), c.ContentionDelay)
 }
 
 func (c *DeadlineConsumer) postpone(ctx context.Context, tx *sql.Tx, candidate deadlineCandidate, failures uint64) error {

@@ -40,24 +40,71 @@ type deadlineCandidate struct {
 	deliverAt  time.Time
 }
 
+// A reservation can move when the discovery hint is locked and claiming finds
+// another instance. Its single map entry remains bounded by execution capacity.
+type deadlineAttempt struct{ instanceID string }
+
 // deadlineRuntime survives supervised restarts and ownership changes. Workers
 // remove their instance before releasing capacity, independently of backoff.
 type deadlineRuntime struct {
 	mu      sync.Mutex
-	active  map[string]struct{}
-	changed chan struct{}
-	errors  chan error
-	workers sync.WaitGroup
+	active  map[string]*deadlineAttempt
+	retryAt time.Time
+	// A newer notification or productive completion invalidates an earlier
+	// empty claim; that stale result must not suppress the new wake-up.
+	generation uint64
+	changed    chan struct{}
+	errors     chan error
+	workers    sync.WaitGroup
 }
 
 func (s *deadlineRuntime) activeIDs() []string {
+	return s.activeIDsExcept(nil)
+}
+
+func (s *deadlineRuntime) activeIDsExcept(attempt *deadlineAttempt) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.active))
-	for id := range s.active {
-		ids = append(ids, id)
+	for id, owner := range s.active {
+		if owner != attempt {
+			ids = append(ids, id)
+		}
 	}
 	return ids
+}
+
+func (s *deadlineRuntime) reserve(attempt *deadlineAttempt, instanceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner := s.active[instanceID]; owner != nil && owner != attempt {
+		return false
+	}
+	delete(s.active, attempt.instanceID)
+	if attempt.instanceID != instanceID {
+		s.retryAt = time.Time{}
+		s.generation++
+		select {
+		case s.changed <- struct{}{}:
+		default:
+		}
+	}
+	attempt.instanceID = instanceID
+	s.active[instanceID] = attempt
+	return true
+}
+
+func (s *deadlineRuntime) retryTime() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retryAt
+}
+
+func (s *deadlineRuntime) refresh() {
+	s.mu.Lock()
+	s.retryAt = time.Time{}
+	s.generation++
+	s.mu.Unlock()
 }
 
 // pendingErrors retains every failure, including fatal classifications, while
@@ -80,7 +127,7 @@ func (c *DeadlineConsumer) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	state := &deadlineRuntime{
-		active:  make(map[string]struct{}),
+		active:  make(map[string]*deadlineAttempt),
 		changed: make(chan struct{}, 1),
 		errors:  make(chan error, cap(c.Capacity)),
 	}
@@ -113,7 +160,10 @@ func (c *DeadlineConsumer) run(ctx context.Context, state *deadlineRuntime, sign
 		var due <-chan time.Time
 		timer.Stop()
 		if owned {
-			if dirty {
+			if delay := time.Until(state.retryTime()); delay > 0 {
+				timer.Reset(delay)
+				due = timer.C
+			} else if dirty {
 				capacity = c.Capacity
 			} else if candidate != nil {
 				if delay := time.Until(candidate.deliverAt); delay > 0 {
@@ -128,12 +178,14 @@ func (c *DeadlineConsumer) run(ctx context.Context, state *deadlineRuntime, sign
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-membershipChanged:
+			state.refresh()
 			dirty = true
 			candidate = nil
 		case _, ok := <-signals:
 			if !ok {
 				return ctx.Err()
 			}
+			state.refresh()
 			dirty = true
 		case <-state.changed:
 			dirty = true
@@ -169,8 +221,9 @@ func (c *DeadlineConsumer) run(ctx context.Context, state *deadlineRuntime, sign
 			}
 			state.mu.Lock()
 			_, active := state.active[candidate.instanceID]
+			attempt := &deadlineAttempt{instanceID: candidate.instanceID}
 			if !active {
-				state.active[candidate.instanceID] = struct{}{}
+				state.active[candidate.instanceID] = attempt
 			}
 			state.mu.Unlock()
 			if active {
@@ -179,18 +232,26 @@ func (c *DeadlineConsumer) run(ctx context.Context, state *deadlineRuntime, sign
 				continue
 			}
 			state.workers.Add(1)
-			go c.attempt(ctx, state, *candidate)
+			go c.attempt(ctx, state, attempt, *candidate)
 			candidate = nil
 			dirty = true
 		}
 	}
 }
 
-func (c *DeadlineConsumer) attempt(ctx context.Context, state *deadlineRuntime, candidate deadlineCandidate) {
+func (c *DeadlineConsumer) attempt(ctx context.Context, state *deadlineRuntime, attempt *deadlineAttempt, candidate deadlineCandidate) {
 	defer state.workers.Done()
+	noWork := false
+	var generation uint64
 	defer func() {
 		state.mu.Lock()
-		delete(state.active, candidate.instanceID)
+		delete(state.active, attempt.instanceID)
+		if noWork && generation == state.generation {
+			state.retryAt = time.Now().Add(c.ContentionDelay)
+		} else if !noWork {
+			state.retryAt = time.Time{}
+			state.generation++
+		}
 		<-c.Capacity
 		state.mu.Unlock()
 		select {
@@ -198,11 +259,24 @@ func (c *DeadlineConsumer) attempt(ctx context.Context, state *deadlineRuntime, 
 		default:
 		}
 	}()
-	if err := c.deliver(ctx, candidate); err != nil && ctx.Err() == nil {
-		select {
-		case state.errors <- err:
-		case <-ctx.Done():
+	var hint *deadlineCandidate = &candidate
+	for {
+		state.mu.Lock()
+		generation = state.generation
+		state.mu.Unlock()
+		worked, err := c.deliver(ctx, state, attempt, hint)
+		if errors.Is(err, errInstanceActive) {
+			hint = nil
+			continue
 		}
+		noWork = !worked && err == nil
+		if err != nil && ctx.Err() == nil {
+			select {
+			case state.errors <- err:
+			case <-ctx.Done():
+			}
+		}
+		return
 	}
 }
 
