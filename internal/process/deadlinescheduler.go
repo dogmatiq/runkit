@@ -33,8 +33,9 @@ type DeadlineScheduler struct {
 	// assigned to this node.
 	Signals *signal.Bus
 
-	// Sinks is the set of sinks to which deadlines are dispatched.
-	Sinks []*DeadlineSink
+	// Sinks maps each sink to the maximum number of its deadline deliveries
+	// that are handled concurrently on this node.
+	Sinks map[*Sink]int
 
 	// Logger is the target for log messages produced by the scheduler and its
 	// supervisor.
@@ -44,13 +45,13 @@ type DeadlineScheduler struct {
 // deadlineRunner is the state of one supervised attempt to run a scheduler.
 //
 // Its maps are accessed only by the discovery goroutine. Delivery goroutines
-// report completion through done, which has room for every active delivery.
+// report completion through Done, which has room for every active delivery.
 type deadlineRunner struct {
-	scheduler *DeadlineScheduler
-	group     sync.WaitGroup
-	done      chan deadlineCompletion
-	active    map[string]deadlineDelivery
-	running   map[*DeadlineSink]int
+	Scheduler *DeadlineScheduler
+	Group     sync.WaitGroup
+	Done      chan deadlineCompletion
+	Active    map[string]deadlineDelivery
+	Running   map[*Sink]int
 }
 
 // deadlineDelivery identifies an active delivery within a handler.
@@ -58,7 +59,7 @@ type deadlineRunner struct {
 // It is used only by deadlineRunner to exclude active instances from discovery
 // and release the handler's concurrency slot when delivery completes.
 type deadlineDelivery struct {
-	Sink       *DeadlineSink
+	Sink       *Sink
 	InstanceID string
 }
 
@@ -70,10 +71,10 @@ type deadlineCompletion struct {
 
 // Run runs the deadline scheduler until ctx is canceled.
 //
-// It must be called at most once. Each sink's Concurrency must be positive.
+// It must be called at most once. Each sink's concurrency limit must be positive.
 func (s *DeadlineScheduler) Run(ctx context.Context) error {
-	for _, sink := range s.Sinks {
-		if sink.Concurrency <= 0 {
+	for _, concurrency := range s.Sinks {
+		if concurrency <= 0 {
 			panic("deadline concurrency must be positive")
 		}
 	}
@@ -89,19 +90,20 @@ func (s *DeadlineScheduler) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 
 	capacity := 0
-	for _, sink := range s.Sinks {
-		capacity += sink.Concurrency
+
+	for _, concurrency := range s.Sinks {
+		capacity += concurrency
 	}
 
 	r := &deadlineRunner{
-		scheduler: s,
-		done:      make(chan deadlineCompletion, capacity),
-		active:    map[string]deadlineDelivery{},
-		running:   map[*DeadlineSink]int{},
+		Scheduler: s,
+		Done:      make(chan deadlineCompletion, capacity),
+		Active:    map[string]deadlineDelivery{},
+		Running:   map[*Sink]int{},
 	}
 	defer func() {
 		cancel()
-		r.group.Wait()
+		r.Group.Wait()
 	}()
 
 	changes, stop := s.Signals.Watch(ctx, "process.deadlines", 1)
@@ -132,8 +134,8 @@ func (r *deadlineRunner) discover(
 ) (time.Time, error) {
 	var next time.Time
 
-	for _, sink := range r.scheduler.Sinks {
-		if r.running[sink] >= sink.Concurrency {
+	for sink, concurrency := range r.Scheduler.Sinks {
+		if r.Running[sink] >= concurrency {
 			continue
 		}
 
@@ -159,12 +161,13 @@ func (r *deadlineRunner) discover(
 func (r *deadlineRunner) discoverSink(
 	ctx context.Context,
 	membership *cluster.Membership,
-	sink *DeadlineSink,
+	sink *Sink,
 ) (time.Time, error) {
 	// Active instances already have a delivery that will wake discovery when
 	// it finishes. Exclude them before grouping the pending deadlines.
 	active := []string{}
-	for _, delivery := range r.active {
+
+	for _, delivery := range r.Active {
 		if delivery.Sink == sink {
 			active = append(active, delivery.InstanceID)
 		}
@@ -186,12 +189,13 @@ func (r *deadlineRunner) discoverSink(
 		GROUP BY d.instance_id
 		ORDER BY MIN(d.deliver_at), d.instance_id`,
 		xsql.UUID(sink.Identity.GetKey()),
-		xsql.UUIDSeq(sink.DeadlineTypeIDs.All()),
+		xsql.UUIDSeq(sink.DeadlineTypes.All()),
 		active,
 	)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("unable to discover deadline workloads: %w", err)
 	}
+
 	defer rows.Close()
 
 	var next time.Time
@@ -201,16 +205,18 @@ func (r *deadlineRunner) discoverSink(
 			instanceID string
 			at         time.Time
 		)
+
 		if err := rows.Scan(&instanceID, &at); err != nil {
 			return time.Time{}, fmt.Errorf("unable to scan deadline workload: %w", err)
 		}
 
 		workload := uuidpb.Derive(sink.Identity.GetKey(), instanceID)
+
 		if !membership.LocalNodeIsResponsibleFor(workload) {
 			continue
 		}
 
-		if r.running[sink] >= sink.Concurrency {
+		if r.Running[sink] >= r.Scheduler.Sinks[sink] {
 			break
 		}
 
@@ -234,23 +240,23 @@ func (r *deadlineRunner) discoverSink(
 // start starts one delivery and records it until wait receives its completion.
 func (r *deadlineRunner) start(
 	ctx context.Context,
-	sink *DeadlineSink,
+	sink *Sink,
 	instanceID string,
 ) {
 	// Include the handler identity because instance IDs are only unique
 	// within a handler.
 	id := uuidpb.Derive(sink.Identity.GetKey(), instanceID).AsString()
-	r.active[id] = deadlineDelivery{sink, instanceID}
-	r.running[sink]++
+	r.Active[id] = deadlineDelivery{sink, instanceID}
+	r.Running[sink]++
 
-	r.group.Go(func() {
+	r.Group.Go(func() {
 		// Database failures are retried without restarting other deliveries.
 		// A terminal error is passed back to the scheduler with completion.
 		err := supervisor.Run(ctx, sink.Logger, func(ctx context.Context) error {
-			return sink.Deliver(ctx, instanceID)
+			return sink.DeliverDeadline(ctx, instanceID)
 		})
 
-		r.done <- deadlineCompletion{id, err}
+		r.Done <- deadlineCompletion{id, err}
 	})
 }
 
@@ -266,6 +272,7 @@ func (r *deadlineRunner) wait(
 		timer *time.Timer
 		ready <-chan time.Time
 	)
+
 	if !next.IsZero() {
 		timer = time.NewTimer(time.Until(next))
 		defer timer.Stop()
@@ -275,10 +282,10 @@ func (r *deadlineRunner) wait(
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case result := <-r.done:
-		delivery := r.active[result.WorkloadID]
-		r.running[delivery.Sink]--
-		delete(r.active, result.WorkloadID)
+	case result := <-r.Done:
+		delivery := r.Active[result.WorkloadID]
+		r.Running[delivery.Sink]--
+		delete(r.Active, result.WorkloadID)
 
 		return result.Err
 	case <-changes:

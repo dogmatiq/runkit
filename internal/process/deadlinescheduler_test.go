@@ -25,16 +25,20 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	events, sink, _ := newDeadlineTestSink(t, db)
+	sink, _ := newSinkWithDeadlines(t, db)
 	const count = 30
+
 	for i := range count {
-		queueDeadline(t, db, events, fmt.Sprint(i), time.Now())
+		queueDeadline(t, db, sink, fmt.Sprint(i), time.Now())
 	}
+
 	// Hold the due work back until both membership views have converged.
 	if _, err := db.ExecContext(
 		t.Context(),
 		`UPDATE process.deadlines SET
-			deliver_at = $1`, time.Now().Add(time.Hour)); err != nil {
+			deliver_at = $1`,
+		time.Now().Add(time.Hour),
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,10 +47,13 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 	owner := map[string]int{}
 	var nodes []*cluster.Node
 	var stops []func()
+
 	for index := range 2 {
 		copy := *sink
 		copy.Handler = &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
-			NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
+			NewFunc: func() dogma.ProcessRoot {
+				return &stubs.ProcessRootStub{}
+			},
 			HandleDeadlineFunc: func(
 				_ context.Context,
 				_ dogma.ProcessRoot,
@@ -58,6 +65,7 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 				owner[s.InstanceID()] = index
 				mu.Unlock()
 				s.ExecuteCommand(stubs.CommandX1)
+
 				return nil
 			},
 		}
@@ -65,36 +73,48 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 		nodes = append(nodes, node)
 		stops = append(stops, stop)
 	}
+
 	xtesting.WaitFor(t, "deadline nodes converge", func() bool {
 		views := make([]*cluster.Membership, len(nodes))
+
 		for i, node := range nodes {
 			views[i], _ = node.Membership().Load()
+
 			if views[i] == nil || views[i].Peers().Len() != 1 {
 				return false
 			}
 		}
+
 		owns := make([]bool, len(nodes))
+
 		for i := range count {
 			workload := uuidpb.Derive(sink.Identity.GetKey(), fmt.Sprint(i))
 			owners := 0
+
 			for j, view := range views {
 				if view.LocalNodeIsResponsibleFor(workload) {
 					owns[j] = true
 					owners++
 				}
 			}
+
 			if owners != 1 {
 				return false
 			}
 		}
+
 		return owns[0] && owns[1]
 	})
+
 	if _, err := db.ExecContext(
 		t.Context(),
 		`UPDATE process.deadlines SET
-			deliver_at = $1`, time.Now()); err != nil {
+			deliver_at = $1`,
+		time.Now(),
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	xtesting.WaitForQueryResult(
 		t,
 		"all deadlines committed",
@@ -104,31 +124,39 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 		FROM commandqueue.commands`,
 	)
 	mu.Lock()
+
 	for i := range count {
 		instanceID := fmt.Sprint(i)
 		workload := uuidpb.Derive(sink.Identity.GetKey(), instanceID)
+
 		if handled[instanceID] != 1 {
 			t.Errorf("unexpected delivery count for %s: %d", instanceID, handled[instanceID])
 		}
+
 		m, _ := nodes[owner[instanceID]].Membership().Load()
+
 		if !m.LocalNodeIsResponsibleFor(workload) {
 			t.Errorf("deadline for %s was handled by the wrong node", instanceID)
 		}
 	}
+
 	mu.Unlock()
 
 	// Find work assigned to node zero, stop it, then enqueue that work. The
 	// remaining node must wake on membership changes as well as notifications.
 	m, _ := nodes[0].Membership().Load()
 	var instanceID string
+
 	for i := count; ; i++ {
 		instanceID = fmt.Sprint(i)
+
 		if m.LocalNodeIsResponsibleFor(uuidpb.Derive(sink.Identity.GetKey(), instanceID)) {
 			break
 		}
 	}
+
 	stops[0]()
-	queueDeadline(t, db, events, instanceID, time.Now())
+	queueDeadline(t, db, sink, instanceID, time.Now())
 	xtesting.WaitForQueryResult(
 		t,
 		"deadline delivered after owner departure",
@@ -139,6 +167,7 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 	)
 	mu.Lock()
 	defer mu.Unlock()
+
 	if handled[instanceID] != 1 || owner[instanceID] != 1 {
 		t.Fatalf("unexpected failover delivery: calls=%d, owner=%d", handled[instanceID], owner[instanceID])
 	}
@@ -150,7 +179,7 @@ func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	events, sink, handler := newDeadlineTestSink(t, db)
+	sink, handler := newSinkWithDeadlines(t, db)
 	handler.HandleDeadlineFunc = func(
 		_ context.Context,
 		_ dogma.ProcessRoot,
@@ -158,15 +187,17 @@ func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 		_ dogma.Deadline,
 	) error {
 		s.ExecuteCommand(stubs.CommandX1)
+
 		return nil
 	}
-	queueDeadline(t, db, events, "<later>", time.Now().Add(time.Hour))
+	queueDeadline(t, db, sink, "<later>", time.Now().Add(time.Hour))
 	node, _ := startDeadlineScheduler(t, sink)
 	xtesting.WaitFor(t, "deadline node is live", func() bool {
 		m, _ := node.Membership().Load()
+
 		return m.LocalNodeIsResponsibleFor(node.ID)
 	})
-	queueDeadline(t, db, events, "<earlier>", time.Now())
+	queueDeadline(t, db, sink, "<earlier>", time.Now())
 	xtesting.WaitForQueryResult(
 		t,
 		"earlier deadline committed",
@@ -192,8 +223,8 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	events, sink, handler := newDeadlineTestSink(t, db)
-	queueDeadline(t, db, events, "<instance>", time.Now())
+	sink, handler := newSinkWithDeadlines(t, db)
+	queueDeadline(t, db, sink, "<instance>", time.Now())
 
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -210,6 +241,7 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 			return ctx.Err()
 		case <-release:
 			s.ExecuteCommand(stubs.CommandX1)
+
 			return nil
 		}
 	}
@@ -228,7 +260,7 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 	scheduler := &process.DeadlineScheduler{
 		Node:    node,
 		Signals: bus,
-		Sinks:   []*process.DeadlineSink{sink},
+		Sinks:   map[*process.Sink]int{sink: 2},
 		Logger:  logger,
 	}
 
@@ -250,6 +282,7 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		stopNode()
+
 		if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Error(err)
 		}
@@ -269,6 +302,7 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 	stopNode()
 	xtesting.WaitFor(t, "local node loses ownership", func() bool {
 		m, _ := node.Membership().Load()
+
 		return !m.LocalNodeIsResponsibleFor(uuidpb.Derive(sink.Identity.GetKey(), "<instance>"))
 	})
 	close(release)
@@ -288,7 +322,7 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 // It returns a function that stops both, which is safe to call repeatedly.
 func startDeadlineScheduler(
 	t testing.TB,
-	sink *process.DeadlineSink,
+	sink *process.Sink,
 ) (*cluster.Node, func()) {
 	t.Helper()
 
@@ -305,7 +339,7 @@ func startDeadlineScheduler(
 	scheduler := &process.DeadlineScheduler{
 		Node:    node,
 		Signals: bus,
-		Sinks:   []*process.DeadlineSink{sink},
+		Sinks:   map[*process.Sink]int{sink: 2},
 		Logger:  logger,
 	}
 	group, ctx := errgroup.WithContext(ctx)
@@ -320,10 +354,12 @@ func startDeadlineScheduler(
 	})
 	stop := sync.OnceFunc(func() {
 		cancel()
+
 		if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Error(err)
 		}
 	})
 	t.Cleanup(stop)
+
 	return node, stop
 }

@@ -18,18 +18,18 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-// TestDeadlineSink_failureRollsBackEffects verifies that a failed delivery does
+// TestSink_deadlineFailureRollsBackEffects verifies that a failed delivery does
 // not commit effects and only the original deadline remains queued for retry.
-func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
+func TestSink_deadlineFailureRollsBackEffects(t *testing.T) {
 	for _, failure := range []string{"handle", "marshal"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
 
 			db := xtesting.NewDatabase(t)
-			events, sink, handler := newDeadlineTestSink(t, db)
+			sink, handler := newSinkWithDeadlines(t, db)
 			sink.BackoffBase = time.Minute
 			sink.BackoffCap = 2 * time.Minute
-			queueDeadline(t, db, events, "<instance>", time.Now())
+			queueDeadline(t, db, sink, "<instance>", time.Now())
 
 			handler.HandleDeadlineFunc = func(
 				_ context.Context,
@@ -40,6 +40,7 @@ func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
 				s.Mutate(func(root dogma.ProcessRoot) {
 					r := root.(*stubs.ProcessRootStub)
 					r.Value = "<state>"
+
 					if failure == "marshal" {
 						r.MarshalBinaryFunc = func() ([]byte, error) {
 							return nil, errors.New("<marshal failure>")
@@ -48,14 +49,18 @@ func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
 				})
 				s.ExecuteCommand(stubs.CommandX1)
 				s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(time.Hour))
+
 				if failure == "handle" {
 					return errors.New("<failure>")
 				}
+
 				return nil
 			}
-			if err := sink.Deliver(t.Context(), "<instance>"); err != nil {
+
+			if err := sink.DeliverDeadline(t.Context(), "<instance>"); err != nil {
 				t.Fatal(err)
 			}
+
 			xtesting.ExpectQueryResult(
 				t,
 				"no committed commands",
@@ -89,6 +94,7 @@ func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
 				_ dogma.Deadline,
 			) error {
 				s.ExecuteCommand(stubs.CommandX1)
+
 				return nil
 			}
 			xtesting.ExecOne(
@@ -98,9 +104,11 @@ func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
 					deliver_at = $1`,
 				time.Now(),
 			)
-			if err := sink.Deliver(t.Context(), "<instance>"); err != nil {
+
+			if err := sink.DeliverDeadline(t.Context(), "<instance>"); err != nil {
 				t.Fatal(err)
 			}
+
 			xtesting.ExpectQueryResult(
 				t,
 				"one committed command",
@@ -121,14 +129,14 @@ func TestDeadlineSink_failureRollsBackEffects(t *testing.T) {
 	}
 }
 
-// TestDeadlineSink_overlappingOwners verifies that instance locking prevents
+// TestSink_overlappingDeadlineDeliveries verifies that instance locking prevents
 // duplicate committed deliveries while cluster views disagree during handoff.
-func TestDeadlineSink_overlappingOwners(t *testing.T) {
+func TestSink_overlappingDeadlineDeliveries(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	events, sink, handler := newDeadlineTestSink(t, db)
-	queueDeadline(t, db, events, "<instance>", time.Now())
+	sink, handler := newSinkWithDeadlines(t, db)
+	queueDeadline(t, db, sink, "<instance>", time.Now())
 	var calls atomic.Int32
 	handler.HandleDeadlineFunc = func(
 		_ context.Context,
@@ -138,21 +146,26 @@ func TestDeadlineSink_overlappingOwners(t *testing.T) {
 	) error {
 		calls.Add(1)
 		s.ExecuteCommand(stubs.CommandX1)
+
 		return nil
 	}
 
 	var group sync.WaitGroup
+
 	for range 2 {
 		group.Go(func() {
-			if err := sink.Deliver(t.Context(), "<instance>"); err != nil {
+			if err := sink.DeliverDeadline(t.Context(), "<instance>"); err != nil {
 				t.Error(err)
 			}
 		})
 	}
+
 	group.Wait()
+
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("unexpected handler calls: got %d, want 1", got)
 	}
+
 	xtesting.ExpectQueryResult(
 		t,
 		"one committed command",
@@ -163,33 +176,25 @@ func TestDeadlineSink_overlappingOwners(t *testing.T) {
 	)
 }
 
-// newDeadlineTestSink returns event and deadline sinks for one process handler.
-func newDeadlineTestSink(
+// newSinkWithDeadlines returns a process sink configured to handle deadlines.
+func newSinkWithDeadlines(
 	t testing.TB,
 	db *sql.DB,
-) (*process.Sink, *process.DeadlineSink, *stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]) {
+) (*process.Sink, *stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]) {
 	t.Helper()
 
-	events := newSink(t, db)
-	events.OutboundMessageTypes = map[reflect.Type]struct{}{
+	sink := newSink(t, db)
+	sink.OutboundMessageTypes = map[reflect.Type]struct{}{
 		reflect.TypeOf(stubs.CommandX1):  {},
 		reflect.TypeOf(stubs.DeadlineA1): {},
 	}
-	handler := events.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
-	sink := &process.DeadlineSink{
-		DB:                   db,
-		Handler:              handler,
-		Identity:             events.Identity,
-		Packer:               events.Packer,
-		DeadlineTypeIDs:      uuidcollection.NewSet(stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeA]]()),
-		OutboundMessageTypes: events.OutboundMessageTypes,
-		HandleTimeout:        time.Second,
-		Concurrency:          2,
-		BackoffBase:          time.Millisecond,
-		BackoffCap:           time.Second,
-		Logger:               events.Logger,
-	}
-	return events, sink, handler
+	sink.DeadlineTypes = uuidcollection.NewSet(stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeA]]())
+	sink.BackoffBase = time.Millisecond
+	sink.BackoffCap = time.Second
+
+	handler := sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
+
+	return sink, handler
 }
 
 // queueDeadline schedules a deadline through the process event scope.
@@ -206,12 +211,27 @@ func queueDeadline(
 	handler.RouteEventToInstanceFunc = func(context.Context, dogma.Event) (string, bool, error) {
 		return instanceID, true, nil
 	}
-	handler.HandleEventFunc = func(_ context.Context, _ dogma.ProcessRoot, s dogma.ProcessEventScope[dogma.ProcessRoot], _ dogma.Event) error {
+	handler.HandleEventFunc = func(
+		_ context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessEventScope[dogma.ProcessRoot],
+		_ dogma.Event,
+	) error {
 		s.ScheduleDeadline(stubs.DeadlineA1, at)
+
 		return nil
 	}
 	id, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
-	if _, ok, err := events.ConsumeSegment(t.Context(), 0, eventstream.Segment{StreamID: id, End: 1, Envelopes: envs}); err != nil || !ok {
+
+	if _, ok, err := events.ConsumeSegment(
+		t.Context(),
+		0,
+		eventstream.Segment{
+			StreamID:  id,
+			End:       1,
+			Envelopes: envs,
+		},
+	); err != nil || !ok {
 		t.Fatalf("unable to schedule deadline: %t, %v", ok, err)
 	}
 }

@@ -342,13 +342,24 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
+	deadlineScheduler := &process.DeadlineScheduler{
+		Node:    e.node,
+		Signals: e.signals,
+		Sinks:   map[*process.Sink]int{},
+		Logger:  e.logger.With(slog.String("component", "process.deadline-scheduler")),
+	}
+
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if !handlerConfig.IsDisabled() {
-			e.runHandler(ctx, handlerConfig)
+			e.runHandler(ctx, handlerConfig, deadlineScheduler)
 		}
 	}
 
-	e.runDeadlineScheduler(ctx)
+	if len(deadlineScheduler.Sinks) != 0 {
+		e.group.Go(func() error {
+			return deadlineScheduler.Run(ctx)
+		})
+	}
 
 	if server == nil {
 		e.ready.Set()
@@ -453,7 +464,11 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 }
 
 // runHandler runs the components that manage the given handler.
-func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
+func (e *Engine) runHandler(
+	ctx context.Context,
+	handlerConfig config.Handler,
+	deadlineScheduler *process.DeadlineScheduler,
+) {
 	logger := e.newLoggerForHandler(handlerConfig)
 	workers := e.workerCountForHandler(handlerConfig)
 
@@ -505,27 +520,35 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		})
 
 	case *config.Process:
-		consumerLogger := logger.With(slog.String("component", "process.consumer"))
+		sink := &process.Sink{
+			DB:                   e.db,
+			Handler:              handlerConfig.Interface(),
+			Identity:             handlerConfig.Identity(),
+			Packer:               e.packer,
+			EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+			DeadlineTypes:        e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
+			OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+			HandleTimeout:        e.handleTimeout,
+			RouteTimeout:         e.routeTimeout,
+			BackoffBase:          messageBackoffBase,
+			BackoffCap:           messageBackoffCap,
+			Logger:               logger.With(slog.String("component", "process.sink")),
+		}
+
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				RouteTimeout:         e.routeTimeout,
-				Logger:               consumerLogger,
-			},
-			Logger: consumerLogger,
+			Sink:         sink,
+			Logger:       logger.With(slog.String("component", "process.consumer")),
 		}
 
 		e.group.Go(func() error {
 			return consumer.Run(ctx)
 		})
+
+		if !sink.DeadlineTypes.IsEmpty() {
+			deadlineScheduler.Sinks[sink] = workers
+		}
 
 	case *config.Projection:
 		var handlerLock *semaphore.Weighted
@@ -582,45 +605,6 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 			slog.String("type", handlerConfig.HandlerType().String()),
 		),
 	)
-}
-
-// runDeadlineScheduler starts one scheduler for all enabled process handlers.
-func (e *Engine) runDeadlineScheduler(ctx context.Context) {
-	scheduler := &process.DeadlineScheduler{
-		Node:    e.node,
-		Signals: e.signals,
-		Logger:  e.logger.With(slog.String("component", "process.deadline-scheduler")),
-	}
-
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		processConfig, ok := handlerConfig.(*config.Process)
-		if !ok || processConfig.IsDisabled() {
-			continue
-		}
-		types := e.inboundMessageTypeIDsForHandler(processConfig, message.DeadlineKind)
-		if types.IsEmpty() {
-			continue
-		}
-		scheduler.Sinks = append(scheduler.Sinks, &process.DeadlineSink{
-			DB:                   e.db,
-			Handler:              processConfig.Interface(),
-			Identity:             processConfig.Identity(),
-			Packer:               e.packer,
-			DeadlineTypeIDs:      types,
-			OutboundMessageTypes: e.outboundMessageTypesForHandler(processConfig),
-			HandleTimeout:        e.handleTimeout,
-			Concurrency:          e.workerCountForHandler(processConfig),
-			BackoffBase:          messageBackoffBase,
-			BackoffCap:           messageBackoffCap,
-			Logger:               e.newLoggerForHandler(processConfig).With(slog.String("component", "process.deadline-sink")),
-		})
-	}
-
-	if len(scheduler.Sinks) != 0 {
-		e.group.Go(func() error {
-			return scheduler.Run(ctx)
-		})
-	}
 }
 
 // workerCountForHandler returns the number of messages to handle concurrently
