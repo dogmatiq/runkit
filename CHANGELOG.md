@@ -26,8 +26,15 @@ This release extends remote event consumption to process handlers.
 >
 > Process handlers in already-deployed applications resume from the checkpoints
 > stored in their application's database. Upgrading does not rewind those
-> checkpoints. Adding a route can expose historical events from streams without
-> a stored checkpoint.
+> checkpoints.
+>
+> Adding an event route to an existing process handler does not guarantee that
+> historical events will be delivered or skipped. Each event's delivery depends
+> on the checkpoint for the stream containing it: events before that checkpoint
+> are skipped, while events at or after it can be delivered. A stream without a
+> checkpoint starts at the beginning. A new route may therefore receive some,
+> all, or none of its historical events, depending on which streams contain them
+> and how far the handler has progressed through each stream.
 
 ### Added
 
