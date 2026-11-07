@@ -34,60 +34,64 @@ func (s *Sink) DeliverDeadline(ctx context.Context, instanceID string) error {
 		acquired bool
 	)
 
-	err := xsql.Transact(ctx, s.DB, func(ctx context.Context, tx *sql.Tx) error {
-		if ok, err := s.lockInstance(ctx, tx, instanceID); err != nil || !ok {
-			return err
-		}
+	err := xsql.Transact(
+		ctx,
+		s.DB,
+		func(ctx context.Context, tx *sql.Tx) error {
+			if ok, err := s.lockInstance(ctx, tx, instanceID); err != nil || !ok {
+				return err
+			}
 
-		var data []byte
-		err := tx.QueryRowContext(
-			ctx,
-			`SELECT
-				message_id,
-				envelope,
-				failures
-			FROM process.deadlines
-			WHERE handler_key = $1
-			AND instance_id = $2
-			AND deliver_at <= $3
-			AND message_type_id = ANY($4)
-			ORDER BY deliver_at, message_id
-			LIMIT 1
-			FOR UPDATE`,
-			xsql.UUID(s.Identity.GetKey()),
-			instanceID,
-			time.Now(),
-			xsql.UUIDSeq(s.DeadlineTypes.All()),
-		).Scan(xsql.UUID(&id), &data, &failures)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
+			var data []byte
+			err := tx.QueryRowContext(
+				ctx,
+				`SELECT
+					message_id,
+					envelope,
+					failures
+				FROM process.deadlines
+				WHERE handler_key = $1
+				AND instance_id = $2
+				AND deliver_at <= $3
+				AND message_type_id = ANY($4)
+				ORDER BY deliver_at, message_id
+				LIMIT 1
+				FOR UPDATE`,
+				xsql.UUID(s.Identity.GetKey()),
+				instanceID,
+				time.Now(),
+				xsql.UUIDSeq(s.DeadlineTypes.All()),
+			).Scan(xsql.UUID(&id), &data, &failures)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 
-		if err != nil {
-			return err
-		}
+			if err != nil {
+				return err
+			}
 
-		acquired = true
+			acquired = true
 
-		logger := s.Logger.With(
-			slog.Group(
-				"delivery",
-				xslog.UUID("id", &id),
-				slog.Uint64("attempt", failures+1),
-			),
-		)
-		env := &envelopepb.Envelope{}
+			logger := s.Logger.With(
+				slog.Group(
+					"delivery",
+					xslog.UUID("id", &id),
+					slog.Uint64("attempt", failures+1),
+				),
+			)
+			env := &envelopepb.Envelope{}
 
-		if err := env.UnmarshalBinary(data); err != nil {
-			return fmt.Errorf("%w: unable to unmarshal deadline envelope: %w", errApplication, err)
-		}
+			if err := env.UnmarshalBinary(data); err != nil {
+				return fmt.Errorf("%w: unable to unmarshal deadline envelope: %w", errApplication, err)
+			}
 
-		if err := env.Validate(); err != nil {
-			return fmt.Errorf("%w: invalid deadline envelope: %w", errApplication, err)
-		}
+			if err := env.Validate(); err != nil {
+				return fmt.Errorf("%w: invalid deadline envelope: %w", errApplication, err)
+			}
 
-		return s.dispatchDeadline(ctx, tx, &id, env, logger)
-	})
+			return s.dispatchDeadline(ctx, tx, &id, env, logger)
+		},
+	)
 	if err == nil || !acquired || !errors.Is(err, errApplication) {
 		return err
 	}
@@ -99,29 +103,33 @@ func (s *Sink) DeliverDeadline(ctx context.Context, instanceID string) error {
 	)
 	delay := s.deadlineBackoff(failures + 1)
 
-	return xsql.Transact(ctx, s.DB, func(ctx context.Context, tx *sql.Tx) error {
-		if ok, err := s.lockInstance(ctx, tx, instanceID); err != nil || !ok {
+	return xsql.Transact(
+		ctx,
+		s.DB,
+		func(ctx context.Context, tx *sql.Tx) error {
+			if ok, err := s.lockInstance(ctx, tx, instanceID); err != nil || !ok {
+				return err
+			}
+
+			// Another owner may have handled or postponed this deadline after the
+			// failed attempt rolled back. Do not overwrite its progress.
+			_, err := tx.ExecContext(
+				ctx,
+				`UPDATE process.deadlines SET
+					failures = failures + 1,
+					deliver_at = $4
+				WHERE message_id = $1
+				AND handler_key = $2
+				AND failures = $3`,
+				xsql.UUID(&id),
+				xsql.UUID(s.Identity.GetKey()),
+				failures,
+				time.Now().Add(delay),
+			)
+
 			return err
-		}
-
-		// Another owner may have handled or postponed this deadline after the
-		// failed attempt rolled back. Do not overwrite its progress.
-		_, err := tx.ExecContext(
-			ctx,
-			`UPDATE process.deadlines SET
-				failures = failures + 1,
-				deliver_at = $4
-			WHERE message_id = $1
-			AND handler_key = $2
-			AND failures = $3`,
-			xsql.UUID(&id),
-			xsql.UUID(s.Identity.GetKey()),
-			failures,
-			time.Now().Add(delay),
-		)
-
-		return err
-	})
+		},
+	)
 }
 
 // lockInstance locks the process instance with the given ID until tx completes.

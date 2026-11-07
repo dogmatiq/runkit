@@ -57,7 +57,6 @@ events.
 - Deadline delivery is now assigned across cluster nodes by process instance.
   Nodes wake when deadlines change or become due, rather than polling for work.
   Call `CreateSchema()` before running this version to install the notifications.
-
 - **[BC]** Process handlers added to an application now consume historical events.
 - The database schema has changed. Call `CreateSchema()` before running this
   version. If the schema already exists, it applies the required modifications

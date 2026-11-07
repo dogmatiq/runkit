@@ -130,7 +130,7 @@ func TestSink_deadlineFailureRollsBackEffects(t *testing.T) {
 }
 
 // TestSink_overlappingDeadlineDeliveries verifies that instance locking prevents
-// duplicate committed deliveries while cluster views disagree during handoff.
+// duplicate committed deliveries from concurrent delivery attempts.
 func TestSink_overlappingDeadlineDeliveries(t *testing.T) {
 	t.Parallel()
 

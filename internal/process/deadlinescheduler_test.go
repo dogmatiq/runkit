@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,34 +174,64 @@ func TestDeadlineScheduler_ownershipAndFailover(t *testing.T) {
 	}
 }
 
-// TestDeadlineScheduler_earlierDeadlineWakesDiscovery verifies that newly
-// scheduled work need not wait for an existing far-future deadline's timer.
+// TestDeadlineScheduler_earlierDeadlineWakesDiscovery verifies that new work
+// can progress while another instance is blocked and a future deadline is pending.
 func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
 	sink, handler := newSinkWithDeadlines(t, db)
+	sink.HandleTimeout = 2 * xtesting.WaitTimeout
+
+	started := make(chan struct{})
+	release := make(chan struct{})
 	handler.HandleDeadlineFunc = func(
-		_ context.Context,
+		ctx context.Context,
 		_ dogma.ProcessRoot,
 		s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
 		_ dogma.Deadline,
 	) error {
+		if s.InstanceID() == "<blocked>" {
+			close(started)
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-release:
+				return nil
+			}
+		}
+
 		s.ExecuteCommand(stubs.CommandX1)
 
 		return nil
 	}
-	queueDeadline(t, db, sink, "<later>", time.Now().Add(time.Hour))
+
 	node, _ := startDeadlineScheduler(t, sink)
 	xtesting.WaitFor(t, "deadline node is live", func() bool {
 		m, _ := node.Membership().Load()
 
 		return m.LocalNodeIsResponsibleFor(node.ID)
 	})
+
+	queueDeadline(t, db, sink, "<later>", time.Now().Add(time.Hour))
+	queueDeadline(t, db, sink, "<blocked>", time.Now())
+	xtesting.WaitFor(t, "barrier deadline starts", func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	})
+
+	// The discovery query that found the blocked instance predates this
+	// insertion. Its delivery cannot provide a completion wake-up while the
+	// new deadline is waiting, and its handler timeout exceeds this wait.
 	queueDeadline(t, db, sink, "<earlier>", time.Now())
 	xtesting.WaitForQueryResult(
 		t,
-		"earlier deadline committed",
+		"newly scheduled deadline committed",
 		1,
 		db,
 		`SELECT COUNT(*)
@@ -215,39 +246,134 @@ func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 		FROM process.deadlines
 		WHERE instance_id = '<later>'`,
 	)
+
+	close(release)
 }
 
-// TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery verifies that a
-// delivery can commit after the local node loses ownership of its workload.
-func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
+// TestDeadlineScheduler_concurrencyLimit verifies that two instances can make
+// progress independently while further deliveries wait for capacity.
+func TestDeadlineScheduler_concurrencyLimit(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
 	sink, handler := newSinkWithDeadlines(t, db)
-	queueDeadline(t, db, sink, "<instance>", time.Now())
+	sink.HandleTimeout = 2 * xtesting.WaitTimeout
 
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var active atomic.Int32
+	started := make(chan string, 3)
+	releases := map[string]chan struct{}{
+		"<first>":  make(chan struct{}),
+		"<second>": make(chan struct{}),
+		"<third>":  make(chan struct{}),
+	}
 	handler.HandleDeadlineFunc = func(
 		ctx context.Context,
 		_ dogma.ProcessRoot,
 		s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
 		_ dogma.Deadline,
 	) error {
-		close(started)
+		n := active.Add(1)
+		defer active.Add(-1)
+
+		if n > 2 {
+			t.Errorf("concurrency limit exceeded: got %d active deliveries, want at most 2", n)
+		}
+
+		started <- s.InstanceID()
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-release:
+		case <-releases[s.InstanceID()]:
 			s.ExecuteCommand(stubs.CommandX1)
 
 			return nil
 		}
 	}
 
+	for id := range releases {
+		queueDeadline(t, db, sink, id, time.Now())
+	}
+
+	// startDeadlineScheduler configures a concurrency limit of two.
+	startDeadlineScheduler(t, sink)
+	var ids []string
+	xtesting.WaitFor(t, "two independent deliveries start", func() bool {
+		select {
+		case id := <-started:
+			ids = append(ids, id)
+		default:
+		}
+
+		return len(ids) == 2
+	})
+
+	// Observe the callback channel while both slots are occupied. This is a
+	// bounded negative assertion, rather than a sleep followed by a snapshot
+	// of an unsynchronized counter.
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case id := <-started:
+		t.Fatalf("delivery for %s started before capacity was released", id)
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	case <-timer.C:
+	}
+
+	close(releases[ids[0]])
+	var third string
+	xtesting.WaitFor(t, "another delivery starts after capacity is released", func() bool {
+		select {
+		case third = <-started:
+			return true
+		default:
+			return false
+		}
+	})
+
+	if third == ids[0] || third == ids[1] {
+		t.Fatalf("unexpected repeated delivery for %s", third)
+	}
+
+	if got := active.Load(); got != 2 {
+		t.Errorf("unexpected active deliveries: got %d, want 2", got)
+	}
+
+	// The other original instance is still blocked when the third starts.
+	// A completed instance therefore frees capacity independently of it.
+	xtesting.ExpectQueryResult(
+		t,
+		"one delivery committed while two remain blocked",
+		1,
+		db,
+		`SELECT COUNT(*)
+		FROM commandqueue.commands`,
+	)
+
+	close(releases[ids[1]])
+	close(releases[third])
+	xtesting.WaitForQueryResult(
+		t,
+		"all three independent deliveries commit",
+		3,
+		db,
+		`SELECT COUNT(*)
+		FROM commandqueue.commands`,
+	)
+}
+
+// TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery verifies that an
+// in-flight delivery finishes after discovery observes its reassignment.
+func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	sink, handler := newSinkWithDeadlines(t, db)
+	sink.HandleTimeout = 2 * xtesting.WaitTimeout
+
 	ctx, cancel := context.WithCancel(t.Context())
-	nodeCtx, stopNode := context.WithCancel(ctx)
 	logger := spruce.NewTestLogger(t)
 	bus := &signal.Bus{DB: db, Logger: logger}
 	node := &cluster.Node{
@@ -257,60 +383,156 @@ func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
 		Timeout:  time.Second,
 		Logger:   logger,
 	}
-	scheduler := &process.DeadlineScheduler{
-		Node:    node,
-		Signals: bus,
-		Sinks:   map[*process.Sink]int{sink: 2},
-		Logger:  logger,
-	}
-
+	peerID := uuidpb.Generate()
 	group, ctx := errgroup.WithContext(ctx)
+
 	group.Go(func() error {
 		return bus.Run(ctx)
 	})
 	group.Go(func() error {
-		err := node.Run(nodeCtx)
-		if errors.Is(err, context.Canceled) {
-			return nil
+		return node.Run(ctx)
+	})
+
+	// The peer participates in membership without delivering deadlines.
+	// Restart it with the same ID so that assignment is the same after it rejoins.
+	startPeer := func() context.CancelFunc {
+		peerCtx, stop := context.WithCancel(ctx)
+		peer := &cluster.Node{
+			ID:       peerID,
+			Signals:  bus,
+			Interval: node.Interval,
+			Timeout:  node.Timeout,
+			Logger:   logger,
 		}
 
-		return err
-	})
-	group.Go(func() error {
-		return scheduler.Run(ctx)
-	})
+		group.Go(func() error {
+			err := peer.Run(peerCtx)
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+
+			return err
+		})
+
+		return stop
+	}
+	stopPeer := startPeer()
+
 	t.Cleanup(func() {
 		cancel()
-		stopNode()
 
 		if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Error(err)
 		}
 	})
 
-	xtesting.WaitFor(t, "deadline delivery starts", func() bool {
+	xtesting.WaitFor(t, "both nodes join", func() bool {
+		m, _ := node.Membership().Load()
+
+		return m != nil && m.Peers().Has(peerID)
+	})
+
+	// Choose one instance for each owner using the published membership,
+	// then remove the peer so that this node initially owns both.
+	m, _ := node.Membership().Load()
+	var reassignedID, retainedID string
+
+	for i := 0; reassignedID == "" || retainedID == ""; i++ {
+		id := fmt.Sprint(i)
+		workload := uuidpb.Derive(sink.Identity.GetKey(), id)
+
+		if m.LocalNodeIsResponsibleFor(workload) {
+			retainedID = id
+		} else {
+			reassignedID = id
+		}
+	}
+
+	stopPeer()
+	xtesting.WaitFor(t, "peer expires", func() bool {
+		m, _ := node.Membership().Load()
+
+		return m != nil && m.Peers().Len() == 0
+	})
+
+	started := make(chan context.Context, 1)
+	release := make(chan struct{})
+	retainedStarted := make(chan struct{})
+	handler.HandleDeadlineFunc = func(
+		ctx context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
+		_ dogma.Deadline,
+	) error {
+		if s.InstanceID() == reassignedID {
+			started <- ctx
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-release:
+			}
+		} else {
+			close(retainedStarted)
+		}
+
+		s.ExecuteCommand(stubs.CommandX1)
+
+		return nil
+	}
+	queueDeadline(t, db, sink, reassignedID, time.Now())
+
+	scheduler := &process.DeadlineScheduler{
+		Node:        node,
+		Signals:     bus,
+		Sinks:       []*process.Sink{sink},
+		Concurrency: 2,
+		Logger:      logger,
+	}
+
+	group.Go(func() error {
+		return scheduler.Run(ctx)
+	})
+
+	var attemptCtx context.Context
+	xtesting.WaitFor(t, "first delivery starts", func() bool {
 		select {
-		case <-started:
+		case attemptCtx = <-started:
 			return true
 		default:
 			return false
 		}
 	})
 
-	// Stop membership participation without stopping the scheduler. This
-	// removes all local assignments while the handler is still running.
-	stopNode()
-	xtesting.WaitFor(t, "local node loses ownership", func() bool {
+	startPeer()
+	xtesting.WaitFor(t, "instance is reassigned", func() bool {
 		m, _ := node.Membership().Load()
 
-		return !m.LocalNodeIsResponsibleFor(uuidpb.Derive(sink.Identity.GetKey(), "<instance>"))
+		return m != nil && m.Peers().Has(peerID) &&
+			!m.LocalNodeIsResponsibleFor(uuidpb.Derive(sink.Identity.GetKey(), reassignedID))
 	})
-	close(release)
 
+	// This deadline is queued after the first discovery query and the membership
+	// change. Handling it establishes that discovery has read the new view.
+	queueDeadline(t, db, sink, retainedID, time.Now())
+	xtesting.WaitFor(t, "retained instance starts", func() bool {
+		select {
+		case <-retainedStarted:
+			return true
+		default:
+			return false
+		}
+	})
+
+	if err := attemptCtx.Err(); err != nil {
+		t.Fatalf("in-flight delivery was canceled after reassignment: %v", err)
+	}
+
+	close(release)
 	xtesting.WaitForQueryResult(
 		t,
-		"in-flight delivery commits after ownership is lost",
-		1,
+		"both deliveries commit",
+		2,
 		db,
 		`SELECT COUNT(*)
 		FROM commandqueue.commands`,
@@ -337,10 +559,11 @@ func startDeadlineScheduler(
 		Logger:   logger,
 	}
 	scheduler := &process.DeadlineScheduler{
-		Node:    node,
-		Signals: bus,
-		Sinks:   map[*process.Sink]int{sink: 2},
-		Logger:  logger,
+		Node:        node,
+		Signals:     bus,
+		Sinks:       []*process.Sink{sink},
+		Concurrency: 2,
+		Logger:      logger,
 	}
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {

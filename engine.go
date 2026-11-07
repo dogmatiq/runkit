@@ -343,10 +343,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	deadlineScheduler := &process.DeadlineScheduler{
-		Node:    e.node,
-		Signals: e.signals,
-		Sinks:   map[*process.Sink]int{},
-		Logger:  e.logger.With(slog.String("component", "process.deadline-scheduler")),
+		Node:        e.node,
+		Signals:     e.signals,
+		Concurrency: defaultWorkerCount(),
+		Logger:      e.logger.With(slog.String("component", "process.deadline-scheduler")),
 	}
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
@@ -547,7 +547,7 @@ func (e *Engine) runHandler(
 		})
 
 		if !sink.DeadlineTypes.IsEmpty() {
-			deadlineScheduler.Sinks[sink] = workers
+			deadlineScheduler.Sinks = append(deadlineScheduler.Sinks, sink)
 		}
 
 	case *config.Projection:
@@ -617,6 +617,12 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 		}
 	}
 
+	return defaultWorkerCount()
+}
+
+// defaultWorkerCount returns the default number of messages handled concurrently
+// for each handler on this node.
+func defaultWorkerCount() int {
 	return 10 * runtime.GOMAXPROCS(0)
 }
 

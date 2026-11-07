@@ -19,7 +19,7 @@ import (
 // It uses the cluster membership to assign each process instance's deadlines
 // to a node, using the handler's identity and instance ID as the workload.
 //
-// Deliveries are handled concurrently, up to each sink's concurrency limit.
+// Deliveries are handled concurrently, up to Concurrency deliveries per sink.
 type DeadlineScheduler struct {
 	// Node is the cluster node used to determine which process instances
 	// have their deadlines delivered by this scheduler.
@@ -33,9 +33,12 @@ type DeadlineScheduler struct {
 	// assigned to this node.
 	Signals *signal.Bus
 
-	// Sinks maps each sink to the maximum number of its deadline deliveries
-	// that are handled concurrently on this node.
-	Sinks map[*Sink]int
+	// Sinks is the set of sinks to which deadlines are dispatched.
+	Sinks []*Sink
+
+	// Concurrency is the maximum number of deadlines handled concurrently
+	// for each sink on this node.
+	Concurrency int
 
 	// Logger is the target for log messages produced by the scheduler and its
 	// supervisor.
@@ -71,12 +74,10 @@ type deadlineCompletion struct {
 
 // Run runs the deadline scheduler until ctx is canceled.
 //
-// It must be called at most once. Each sink's concurrency limit must be positive.
+// It must be called at most once. Concurrency must be positive.
 func (s *DeadlineScheduler) Run(ctx context.Context) error {
-	for _, concurrency := range s.Sinks {
-		if concurrency <= 0 {
-			panic("deadline concurrency must be positive")
-		}
+	if s.Concurrency <= 0 {
+		panic("deadline concurrency must be positive")
 	}
 
 	return supervisor.Run(ctx, s.Logger, s.run)
@@ -89,15 +90,9 @@ func (s *DeadlineScheduler) Run(ctx context.Context) error {
 func (s *DeadlineScheduler) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 
-	capacity := 0
-
-	for _, concurrency := range s.Sinks {
-		capacity += concurrency
-	}
-
 	r := &deadlineRunner{
 		Scheduler: s,
-		Done:      make(chan deadlineCompletion, capacity),
+		Done:      make(chan deadlineCompletion, len(s.Sinks)*s.Concurrency),
 		Active:    map[string]deadlineDelivery{},
 		Running:   map[*Sink]int{},
 	}
@@ -110,6 +105,13 @@ func (s *DeadlineScheduler) run(ctx context.Context) error {
 	defer stop()
 
 	for {
+		// The next scan covers changes already signaled. Remove a pending
+		// wake-up before reading, so it does not cause a redundant scan.
+		select {
+		case <-changes:
+		default:
+		}
+
 		membership, membershipChanged := s.Node.Membership().Load()
 
 		// Membership changes affect new deliveries only. A delivery already
@@ -134,8 +136,8 @@ func (r *deadlineRunner) discover(
 ) (time.Time, error) {
 	var next time.Time
 
-	for sink, concurrency := range r.Scheduler.Sinks {
-		if r.Running[sink] >= concurrency {
+	for _, sink := range r.Scheduler.Sinks {
+		if r.Running[sink] >= r.Scheduler.Concurrency {
 			continue
 		}
 
@@ -216,7 +218,7 @@ func (r *deadlineRunner) discoverSink(
 			continue
 		}
 
-		if r.Running[sink] >= r.Scheduler.Sinks[sink] {
+		if r.Running[sink] >= r.Scheduler.Concurrency {
 			break
 		}
 
