@@ -47,7 +47,8 @@ if err := runkit.CreateSchema(ctx, db); err != nil {
 
 engine := runkit.New(myDogmaApp, db)
 
-// Run blocks until the context is canceled or the engine cannot continue.
+// Run blocks until the context is canceled. It returns an error if the
+// engine is unable to start.
 return engine.Run(ctx)
 ```
 
