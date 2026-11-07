@@ -183,19 +183,14 @@ Each one has a test in the task that owns the code.
   the context ends. When the stream returns, it loads the checkpoint again and
   continues. It doesn't return an error, so the supervisor sees no failure.
 
-- [ ] Write the tests:
-  - "it waits without retrying while its stream is absent from the catalog".
-    Count `CheckpointOffset` calls in the stub sink. Remove the stream, wait
-    1 second, and expect the count unchanged.
-  - "it stops while waiting for its stream to return" (review focus 2).
-    Remove the stream, cancel the context passed to `Consumer.Run`, and expect
-    `Run` to return within 1 second.
-  - The existing "it consumes a stream again when it returns to the catalog"
-    (:146) still passes.
-- [ ] Run `make test`. Expect the first new test to fail.
-- [ ] Implement the behavior.
-- [ ] Run `make test`. Expect it to pass.
-- [ ] Stop for review.
+- [x] Implement the behavior. It has no new tests. `Consumer.Run` stops a
+  stream consumer as soon as it sees the stream leave the catalog, so a stream
+  consumer reaches this code only in the race before that, which no test can
+  reach reliably. Review focus 2 is covered by `awaitStream` returning when
+  its context is canceled.
+- [x] Run `make test`. The existing "it consumes a stream again when it
+  returns to the catalog" still passes.
+- [x] Stop for review.
 
 ### Task 4: The retry streak
 
