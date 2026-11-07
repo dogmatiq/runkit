@@ -112,9 +112,9 @@ handles creates it implicitly, which isn't something the handler did.
 ERROR means the engine can't do something it's meant to do and isn't
 recovering on its own. Use it for:
 
-- a failure that is known to be hopeless, as soon as it happens
-- any other failure once it has persisted for 30 seconds, counted from the
-  first failure in its streak
+- a deterministic failure, as soon as it happens
+- any other failure once its streak has lasted 30 seconds, counted from the
+  first failure in the streak
 
 ### WARN
 
@@ -166,9 +166,15 @@ failure until it recovers. *Recovery* is the point at which the work is known
 to be succeeding again. How recovery is detected depends on the work and how
 it's retried.
 
+A *deterministic* failure is one that the same attempt meets every time, until
+something outside the engine changes, such as a handler's code, its data or a
+remote engine. Retrying alone can't clear it. The code that decides about a
+failure classifies it as deterministic only when it knows this from the kind of
+failure. Any failure it can't classify is treated as transient.
+
 | Event | Level |
 | --- | --- |
-| A failure known to be hopeless, if the streak hasn't logged an ERROR | ERROR |
+| A deterministic failure, if the streak hasn't logged an ERROR | ERROR |
 | The first failure once the streak is 30 seconds old, if it hasn't logged an ERROR | ERROR |
 | Any other failure | DEBUG |
 | Recovery, after the streak logged an ERROR | INFO |
