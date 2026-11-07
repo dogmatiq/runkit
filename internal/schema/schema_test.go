@@ -1,6 +1,8 @@
 package schema_test
 
 import (
+	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/dogmatiq/runkit/internal/schema"
@@ -162,4 +164,36 @@ func TestCreate_removesLocalStreamConstraint(t *testing.T) {
 		db,
 		`SELECT to_regclass('process.checkpoints') IS NULL`,
 	)
+}
+
+// TestCreate_doesNotRequireExclusiveCheckpointLock verifies that applying an
+// already-upgraded schema does not wait for checkpoint writes to finish.
+func TestCreate_doesNotRequireExclusiveCheckpointLock(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+
+	xtesting.Transact(t, db, func(tx *sql.Tx) {
+		// Keep the checkpoint write uncommitted while applying the schema
+		// through another database connection.
+		if _, err := tx.ExecContext(
+			t.Context(),
+			`INSERT INTO eventstream.handler_checkpoints (
+                handler_key,
+                stream_id
+            ) VALUES (
+                '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+                '02b888ed-e546-4fba-b524-426dfbbefac0'
+            )`,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+		defer cancel()
+
+		if err := schema.Create(ctx, db); err != nil {
+			t.Fatalf("unable to apply schema during a checkpoint write: %v", err)
+		}
+	})
 }
