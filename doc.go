@@ -1,2 +1,2 @@
-// Package runkit is a reference implementation of a Dogma engine.
+// Package runkit provides an engine for Dogma applications.
 package runkit
