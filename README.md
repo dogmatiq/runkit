@@ -38,15 +38,18 @@ Pass your application and a database connection opened with the [pgx] driver to
 `runkit.New()`:
 
 ```go
+// Create or update the engine's PostgreSQL schema. This is separate from
+// running the engine so it can use different database credentials.
 if err := runkit.CreateSchema(ctx, db); err != nil {
 	return err
 }
 
 engine := runkit.New(myDogmaApp, db)
+
+// Run blocks until the context is canceled or the engine cannot continue.
 return engine.Run(ctx)
 ```
 
-`Run()` blocks until the context is canceled or the engine cannot continue.
 
 <!-- references -->
 
