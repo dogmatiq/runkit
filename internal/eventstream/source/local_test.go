@@ -230,6 +230,14 @@ func TestLocal(t *testing.T) {
 		}
 	}
 
+	// isSegmentQuery returns true if the given SQL loads a segment of a stream.
+	isSegmentQuery := func(query string) bool {
+		return strings.HasPrefix(
+			strings.Join(strings.Fields(query), " "),
+			"SELECT stream_offset, envelope FROM",
+		)
+	}
+
 	t.Run("Watch", func(t *testing.T) {
 		t.Run("it delivers each stream from its end", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
@@ -367,7 +375,7 @@ func TestLocal(t *testing.T) {
 			}
 		})
 
-		t.Run("it returns an error when it can not continue delivering a stream", func(t *testing.T) {
+		t.Run("it keeps a watch call open while it can not continue delivering a stream", func(t *testing.T) {
 			src, db := setup(t, 10)
 			streamID := xtesting.CreateEventStream(t, db)
 
@@ -410,13 +418,164 @@ func TestLocal(t *testing.T) {
 			})
 
 			select {
-			case <-time.After(xtesting.WaitTimeout):
-				t.Fatal("timeout waiting for Watch to return")
 			case err := <-result:
-				if err == nil {
-					t.Fatal("expected an error")
-				}
+				t.Fatalf("unexpected return from Watch: %v", err)
+			case <-time.After(time.Second):
 			}
+		})
+
+		t.Run("it resumes a stream from where delivery stopped after a failure", func(t *testing.T) {
+			var (
+				failing  atomic.Bool
+				failures atomic.Int32
+			)
+
+			db := xtesting.NewDatabaseWithFailingQueries(
+				t,
+				func(query string, _ []any) bool {
+					if !failing.Load() || !isSegmentQuery(query) {
+						return false
+					}
+
+					failures.Add(1)
+					return true
+				},
+			)
+
+			src := newSource(t, db, 10, 100)
+			xtesting.GoE(t, src.Run)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			// The watch fails the test if it returns an error.
+			segments, _ := watch(t, src, nil)
+			expectEnvelopes(t, segments, streamID, 0, 0)
+
+			failing.Store(true)
+			events := xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3)
+
+			xtesting.WaitFor(
+				t,
+				"delivery to fail",
+				func() bool {
+					return failures.Load() > 0
+				},
+			)
+
+			failing.Store(false)
+			events = append(events, xtesting.AppendToEventStream(t, db, streamID, EventE1)...)
+
+			expectEnvelopes(t, segments, streamID, 0, 4, events...)
+		})
+
+		t.Run("it ends watch calls when the gap after a failure exceeds the buffer", func(t *testing.T) {
+			var (
+				failing  atomic.Bool
+				failures atomic.Int32
+			)
+
+			db := xtesting.NewDatabaseWithFailingQueries(
+				t,
+				func(query string, _ []any) bool {
+					if !failing.Load() || !isSegmentQuery(query) {
+						return false
+					}
+
+					failures.Add(1)
+					return true
+				},
+			)
+
+			// Each call can buffer 2 segments of 1 event each.
+			src := newSource(t, db, 1, 2)
+			xtesting.GoE(t, src.Run)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			began := make(chan struct{})
+			result := make(chan error, 1)
+
+			go func() {
+				var once sync.Once
+
+				result <- src.Watch(
+					t.Context(),
+					nil,
+					func(Segment) error {
+						once.Do(func() { close(began) })
+						return nil
+					},
+				)
+			}()
+
+			select {
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatal("timeout waiting for the stream's opening segment")
+			case <-began:
+			}
+
+			failing.Store(true)
+			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3, EventE1, EventE2)
+
+			xtesting.WaitFor(
+				t,
+				"delivery to fail",
+				func() bool {
+					return failures.Load() > 0
+				},
+			)
+
+			failing.Store(false)
+
+			if err := expectError(t, result); !errors.Is(err, ErrNotContiguous) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrNotContiguous)
+			}
+		})
+
+		t.Run("it opens a stream that failed before its first delivery as a new stream", func(t *testing.T) {
+			var (
+				failing  atomic.Bool
+				failures atomic.Int32
+			)
+
+			failing.Store(true)
+
+			// Opening a stream is the only query that reads one stream's next
+			// offset on its own.
+			db := xtesting.NewDatabaseWithFailingQueries(
+				t,
+				func(query string, _ []any) bool {
+					if !failing.Load() {
+						return false
+					}
+
+					if strings.Join(strings.Fields(query), " ") != "SELECT next_offset FROM eventstream.streams WHERE id = $1" {
+						return false
+					}
+
+					failures.Add(1)
+					return true
+				},
+			)
+
+			src := newSource(t, db, 10, 100)
+			xtesting.GoE(t, src.Run)
+
+			// The watch fails the test if it returns an error.
+			segments, _ := watch(t, src, nil)
+
+			streamID := xtesting.CreateEventStream(t, db)
+			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2)
+
+			xtesting.WaitFor(
+				t,
+				"opening the stream to fail",
+				func() bool {
+					return failures.Load() > 0
+				},
+			)
+
+			failing.Store(false)
+
+			expectSegment(t, segments, streamID, 2, 2)
 		})
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {

@@ -51,6 +51,8 @@ type Local struct {
 	// offsets maps the ID of each watched stream to the offset at which its
 	// next segment begins, which is the end of the last segment delivered. A
 	// call to [Local.Watch] that begins now begins the stream at that offset.
+	// A stream keeps its entry while its delivery is retried after a failure,
+	// so that delivery can resume there.
 	offsets uuidcollection.Map[uint64]
 
 	// watchers is the set of calls to [Local.Watch] that are receiving
@@ -117,9 +119,9 @@ func (s *Local) Run(ctx context.Context) error {
 //
 // Each stream is delivered from its end, as it stands when the call begins or
 // when the stream is discovered. It returns an error that wraps
-// [ErrNotContiguous] if fn falls more than [Local.BufferSize] segments
-// behind, and another error if any stream can not be delivered any further.
-// The call is served by [Local.Run].
+// [ErrNotContiguous] if any stream can no longer be delivered contiguously,
+// such as when fn falls more than [Local.BufferSize] segments behind. The call
+// is served by [Local.Run].
 func (s *Local) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,
@@ -326,14 +328,13 @@ func (s *Local) deliver(seg Segment) {
 	}
 }
 
-// fail removes every watcher, as the given stream can no longer be delivered to
-// any of them contiguously, and removes the stream from offsets until
-// watchStream begins following it again.
-func (s *Local) fail(streamID *uuidpb.UUID, err error) {
+// discontinue removes every watcher, as the given stream can no longer be
+// delivered to any of them contiguously.
+func (s *Local) discontinue(streamID *uuidpb.UUID) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	s.offsets.Delete(streamID)
+	err := fmt.Errorf("unable to deliver event stream %s contiguously: %w", streamID, ErrNotContiguous)
 
 	for w := range s.watchers {
 		s.remove(w, err)
@@ -351,12 +352,11 @@ func (s *Local) remove(w *watcher, err error) {
 }
 
 // watchStream follows a stream, delivering its segments to every watcher as
-// events are appended to it, beginning at the end of the stream.
+// events are appended to it, until ctx is canceled or it is unable to
+// continue.
 //
-// It returns when ctx is canceled or it is unable to continue. In the second
-// case it ends every call to [Local.Watch], because the next attempt begins at
-// the end of the stream, which may be after events that those calls have not
-// received.
+// When it is called again after it was unable to continue, delivery resumes
+// where it stopped, if it can; see [Local.openStream].
 func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
 	err := s.deliverStream(ctx, streamID)
 
@@ -364,19 +364,12 @@ func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
 		return ctx.Err()
 	}
 
-	err = fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
-	s.fail(streamID, err)
-
-	return err
+	return fmt.Errorf("unable to watch event stream %s: %w", streamID, err)
 }
 
 // deliverStream delivers the segments of a stream to every watcher as events
-// are appended to it, beginning at the end of the stream, until ctx is
-// canceled or it is unable to continue.
-//
-// It begins by delivering the stream's opening segment, which is empty, so that
-// every watcher registered before the stream was discovered learns that the
-// stream exists and where its delivery begins.
+// are appended to it, beginning at the offset that [Local.openStream] returns,
+// until ctx is canceled or it is unable to continue.
 func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error {
 	query := s.buildSegmentQuery(streamID, nil)
 
@@ -390,21 +383,13 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 
 	for range signals {
 		if !opened {
-			end, err := s.loadWatchOffset(ctx, streamID)
+			begin, err := s.openStream(ctx, streamID)
 			if err != nil {
 				return err
 			}
 
-			next = end
+			next = begin
 			opened = true
-
-			s.deliver(
-				Segment{
-					StreamID: streamID,
-					Begin:    next,
-					End:      next,
-				},
-			)
 		}
 
 		for {
@@ -425,6 +410,46 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 	}
 
 	return ctx.Err()
+}
+
+// openStream returns the offset from which [Local.deliverStream] delivers a
+// stream.
+//
+// If the stream has been delivered before, delivery resumes where it stopped,
+// as long as each call to [Local.Watch] can buffer the events appended since,
+// which is at most [Local.BufferSize] full segments. Otherwise, every call to
+// [Local.Watch] ends, and delivery begins at the end of the stream.
+//
+// When delivery begins at the end of the stream, it first delivers the
+// stream's opening segment, which is empty, so that every watcher learns that
+// the stream exists and where its delivery begins.
+func (s *Local) openStream(ctx context.Context, streamID *uuidpb.UUID) (uint64, error) {
+	end, err := s.loadWatchOffset(ctx, streamID)
+	if err != nil {
+		return 0, err
+	}
+
+	s.m.Lock()
+	offset, ok := s.offsets.Get(streamID)
+	s.m.Unlock()
+
+	if ok {
+		if end >= offset && end-offset <= uint64(s.BufferSize*s.SegmentSize) {
+			return offset, nil
+		}
+
+		s.discontinue(streamID)
+	}
+
+	s.deliver(
+		Segment{
+			StreamID: streamID,
+			Begin:    end,
+			End:      end,
+		},
+	)
+
+	return end, nil
 }
 
 // loadWatchOffset returns the offset from which watching a stream begins,
