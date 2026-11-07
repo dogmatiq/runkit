@@ -25,8 +25,8 @@ Each record belongs to one of two layers.
 
 - **Application records** are a record of what the application did. They cover
   what a handler explicitly does through its scope, which is producing a
-  message, calling `Log()`, and ending a process instance. They also cover
-  commands sent through a `CommandExecutor`.
+  message, calling `Log()`, and mutating or ending a process instance. They
+  also cover commands sent through a `CommandExecutor`.
 - **Engine records** are everything else, including everything about handling
   a message, such as a handler failing, a delivery being postponed, or a
   command being deduplicated.
@@ -75,16 +75,17 @@ While a handler attempt runs, the two layers say different things.
 
 - **Engine, DEBUG, written as it happens.** What the handler did through the
   scope, such as recording an event, executing a command, scheduling a
-  deadline, ending the instance or calling `Log()`. These records are written
-  even if the attempt fails, which makes them the place to look when it does.
-  The record for a produced message has that message's metadata. The record
-  for a `Log()` call has the text the handler logged as an attribute.
+  deadline, mutating or ending the instance, or calling `Log()`. These records
+  are written even if the attempt fails, which makes them the place to look
+  when it does. The record for a produced message has that message's metadata.
+  The record for a `Log()` call has the text the handler logged as an
+  attribute.
 - **Application, INFO, written once it has happened.** A record of what the
   application did, in the order the handler did it. The record for each
   message it produced uses the message's own description as its log message,
-  and has that message's metadata. `Log()` calls and a process instance ending
-  are recorded too. Ending is always last, because a scope rejects further
-  effects once `End()` has been called.
+  and has that message's metadata. `Log()` calls, and a process instance being
+  mutated or ending, are recorded too. Ending is always last, because a scope
+  rejects further effects once `End()` has been called.
 
 Every application record from a handler has the metadata of the message being
 handled, so a search on that message's ID finds everything it caused.

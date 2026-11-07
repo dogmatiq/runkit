@@ -428,6 +428,7 @@ until commit waits for #100.
 | `RecordEvent` | `handler recorded an event` + `xslog.Envelope("event", …)` | the event's `MessageDescription()` + `xslog.Envelope("event", …)` |
 | `ExecuteCommand` | `handler executed a command` + `xslog.Envelope("command", …)` | the command's description + `xslog.Envelope("command", …)` |
 | `ScheduleDeadline` | `handler scheduled a deadline` + `xslog.Envelope("deadline", …)` | the deadline's description + `xslog.Envelope("deadline", …)` |
+| `Mutate` | `handler mutated the process instance` | `process instance mutated` |
 | `End` | `handler ended the process instance` | `process instance ended` |
 | `Log` | `handler logged a message` + `slog.String("text", …)` | the formatted text |
 
@@ -535,57 +536,41 @@ at ERROR and then return them, so each one is logged twice.
 - [ ] Run `make test`. Expect it to pass.
 - [ ] Stop for review.
 
-### Task 11: Instance descriptions reflect the instance when each record is written
+### Task 11: Each record describes the instance as it is at that moment
 
 An instance's description is computed once, after the instance loads, and
 added to its logger with `With`. A handler can change the instance with
-`scope.Mutate()` or by recording events, so later records can carry a stale
-description.
+`scope.Mutate()` or by recording events, so later records carry a stale
+description. Each record should instead describe the instance as it is when
+the record is made, so a reader sees the instance change in order.
 
 **Files:**
-- Create: `internal/x/xslog/late.go`
-- Modify: `internal/process/sink.go:246-252`, `internal/process/deadlinepump.go:177-183`
-- Modify: `internal/aggregate/commandpump.go:93-100`
-
-**Interfaces:**
-- Produces:
-
-  ```go
-  // Late is an [slog.Handler] that adds attributes to each record as it is
-  // handled, so that their values reflect the time each record is written.
-  type Late struct {
-      // Target is the handler that records are written to.
-      Target slog.Handler
-
-      // Attrs returns the attributes to add to a record.
-      Attrs func() []slog.Attr
-  }
-  ```
-
-  It implements `Enabled`, `Handle`, `WithAttrs` and `WithGroup`, deferring
-  to `Target` and keeping `Attrs` on the handlers it derives.
+- Modify: `internal/process/sink.go:246-252`, `messagescope.go`,
+  `deadlinepump.go:177-183`
+- Modify: `internal/aggregate/commandpump.go:93-100`, `commandscope.go`
 
 **Behavior:**
-- The instance's group, `process_instance` or `aggregate_instance`, moves from
-  `With` to a `Late` handler wrapped around the logger's handler. Its
-  `Attrs` returns the whole group, with the ID, the stream ID for aggregates,
-  and the description computed at that moment, using
-  `root.ProcessInstanceDescription(scope.ended)` or
+- The instance's group, `process_instance` or `aggregate_instance`, is no
+  longer added to the instance logger with `With`. Each record about the
+  instance carries the whole group, built when the record is made. It holds
+  the ID, the stream ID for aggregates, and the description computed at that
+  moment, using `root.ProcessInstanceDescription(ended)` or
   `root.AggregateInstanceDescription()`.
-- Use a handler, not a `slog.LogValuer` given to `With`. The built-in `slog`
-  handlers resolve a `LogValuer` when `With` is called, so it would still be
-  computed only once.
-- The whole group is added late, never half of it, because `slog` keeps
+- An unexported method builds the group. It's on the scope for records the
+  scope writes, and the pump or sink code calls it for its own records about
+  the instance. The whole group is always added at once, because `slog` keeps
   duplicate keys and would write two `process_instance` groups.
-- For buffered application records from Task 7, the `Buffer`'s `Target` is
-  the `Late` handler, not the other way around. The description is then
-  computed when the records are flushed after the commit, which describes the
-  instance as committed.
-- The process deadline pump is #100's area. Change only its instance logger
+- Values are computed when the record is made, never when it's written. A
+  buffered application record keeps the description from the moment of its
+  scope call, so the records of an attempt show the instance changing in the
+  order the handler changed it.
+- A record about a change is made after the change is applied. `Mutate` makes
+  its records after running the mutation function, and `RecordEvent` makes its
+  records after applying the event, as it does today.
+- The process deadline pump is #100's area. Change only its instance records
   there.
 
-- [ ] Implement `Late` and use it for both kinds of instance. It's untested,
-  like all logging.
+- [ ] Implement the above. It's untested, like all logging.
 - [ ] Run `make test`. Expect it to pass.
 - [ ] Stop for review.
 
