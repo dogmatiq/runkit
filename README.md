@@ -1,8 +1,8 @@
 <div align="center">
 
-# RunKit
+# Dogma Engine Reference Implementation
 
-A reference implementation of a [Dogma] engine, backed by PostgreSQL.
+Run [Dogma] applications with PostgreSQL.
 
 [![Documentation](https://img.shields.io/badge/go.dev-documentation-007d9c?&style=for-the-badge)](https://pkg.go.dev/github.com/dogmatiq/runkit)
 [![Latest Version](https://img.shields.io/github/tag/dogmatiq/runkit.svg?&style=for-the-badge&label=semver)](https://github.com/dogmatiq/runkit/releases)
@@ -11,15 +11,29 @@ A reference implementation of a [Dogma] engine, backed by PostgreSQL.
 
 </div>
 
-RunKit runs the application and message handlers you define with Dogma. It
-provides event storage, durable command delivery, process state and deadlines,
-and projection execution. Multiple engine nodes can run the same application
-against a shared database and distribute work across the cluster.
+## Overview
+
+RunKit is a reference implementation of a [Dogma] engine. It is embedded in your
+application's Go binary and orchestrates message delivery, state persistence,
+and the execution of application logic.
 
 Use Dogma to define your application's messages, handlers, identities, and
-routes. Use RunKit to supply the persistence and execution machinery. The
-[API documentation] describes the engine's public interface; the [changelog]
-covers release-specific changes and upgrade instructions.
+routes. RunKit provides the infrastructure that runs those handlers and stores
+their data in PostgreSQL.
+
+## Features
+
+- **PostgreSQL persistence** — Stores events, pending commands, process state,
+  and deadlines in the application's database.
+
+- **Handler execution** — Runs the aggregate, integration, process, and
+  projection handlers defined by your Dogma application.
+
+- **Clustering** — Distributes work between nodes running the same application
+  against a shared database, adjusting as nodes join and leave.
+
+- **Remote events** — Makes application event streams available over gRPC and
+  supports consuming events from remote applications.
 
 ## Requirements
 
@@ -33,6 +47,11 @@ The caller owns the database connection pool and closes it after the engine has
 stopped.
 
 ## Getting started
+
+If you are new to Dogma, start with its [concepts] document. The [example
+application] demonstrates how to structure a Dogma application and test its
+message flow with [testkit]. For reference material, see the [API documentation].
+Release-specific changes and upgrade instructions are in the [changelog].
 
 Add RunKit to your application's module:
 
@@ -126,6 +145,14 @@ rather than each of its individual nodes. The caller owns these connections and
 closes them after the engine stops using them. See the [remote discovery API]
 for the connection lifecycle and the [engine options] for server configuration.
 
+## Ecosystem
+
+RunKit is part of the Dogma collection of Go modules:
+
+- [dogma] — Defines the API for building applications.
+- [testkit] — Utilities for testing Dogma applications.
+- [projectionkit] — Utilities for building projections in popular database systems.
+
 ## Development
 
 Run the test suite with:
@@ -142,11 +169,15 @@ RunKit is distributed under the [MIT license].
 
 <!-- references -->
 
-[Dogma]: https://github.com/dogmatiq/dogma
-[API documentation]: https://pkg.go.dev/github.com/dogmatiq/runkit
+[api documentation]: https://pkg.go.dev/github.com/dogmatiq/runkit
 [changelog]: CHANGELOG.md
-[pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
+[concepts]: https://github.com/dogmatiq/dogma/blob/main/docs/concepts.md
+[dogma]: https://github.com/dogmatiq/dogma
 [dogma.CommandExecutor]: https://pkg.go.dev/github.com/dogmatiq/dogma#CommandExecutor
-[remote discovery API]: https://pkg.go.dev/github.com/dogmatiq/runkit#RemoteEngineDiscoverer
 [engine options]: https://pkg.go.dev/github.com/dogmatiq/runkit#EngineOption
+[example application]: https://github.com/dogmatiq/example
 [MIT license]: LICENSE
+[pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
+[projectionkit]: https://github.com/dogmatiq/projectionkit
+[remote discovery API]: https://pkg.go.dev/github.com/dogmatiq/runkit#RemoteEngineDiscoverer
+[testkit]: https://github.com/dogmatiq/testkit
