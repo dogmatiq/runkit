@@ -20,14 +20,14 @@ provides persistence and coordination between nodes running the same application
 - **Handler execution** — Runs the aggregate, integration, process, and
   projection handlers defined by your Dogma application.
 
-- **PostgreSQL persistence** — Stores events, pending commands, process state,
-  and deadlines in the application's database.
+- **Persistence** — Stores events, pending commands, process state, and deadlines
+  in the engine's database.
 
 - **Clustering** — Distributes work between nodes running the same application
   against a shared database, adjusting as nodes join and leave.
 
-- **Remote events** — Makes application event streams available over gRPC and
-  supports consuming events from remote applications.
+- **Events between applications** — Delivers events recorded by one Dogma
+  application to process and projection handlers in another, using gRPC.
 
 ## Requirements
 
@@ -38,21 +38,9 @@ Applications choose their own projection storage; the engine's PostgreSQL
 requirement does not constrain it. [ProjectionKit] provides adapters for building
 projections with several database systems.
 
-## Documentation
-
-For engine configuration and use, see the [API documentation]. Release-specific
-changes and upgrade instructions are in the [changelog].
-
-For Dogma's application model and terminology, see its [concepts] document and
-[example application].
-
 <!-- references -->
 
-[api documentation]: https://pkg.go.dev/github.com/dogmatiq/runkit
-[changelog]: CHANGELOG.md
-[concepts]: https://github.com/dogmatiq/dogma/blob/main/docs/concepts.md
 [dogma]: https://github.com/dogmatiq/dogma
 [engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
-[example application]: https://github.com/dogmatiq/example
 [PostgreSQL]: https://www.postgresql.org/
 [projectionkit]: https://github.com/dogmatiq/projectionkit
