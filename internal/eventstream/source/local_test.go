@@ -395,27 +395,19 @@ func TestLocal(t *testing.T) {
 
 			// An event whose envelope can not be decoded stops the stream from
 			// being delivered any further.
-			tx, err := db.BeginTx(t.Context(), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback()
+			xtesting.Transact(t, db, func(tx *sql.Tx) {
+				xtesting.AppendToEventStream(t, tx, streamID, EventE1)
 
-			xtesting.AppendToEventStream(t, tx, streamID, EventE1)
-
-			if _, err := tx.ExecContext(
-				t.Context(),
-				`UPDATE eventstream.events
-				SET envelope = '\xff'
-				WHERE stream_id = $1`,
-				streamID.AsString(),
-			); err != nil {
-				t.Fatal(err)
-			}
-
-			if err := tx.Commit(); err != nil {
-				t.Fatal(err)
-			}
+				if _, err := tx.ExecContext(
+					t.Context(),
+					`UPDATE eventstream.events
+					SET envelope = '\xff'
+					WHERE stream_id = $1`,
+					streamID.AsString(),
+				); err != nil {
+					t.Fatal(err)
+				}
+			})
 
 			select {
 			case <-time.After(xtesting.WaitTimeout):
