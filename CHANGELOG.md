@@ -20,8 +20,9 @@ This release extends remote event consumption to process handlers.
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
 > deadlines from historical events. Adding a route to an existing handler does
-> not guarantee either replaying or skipping history. Make the intended business
-> behavior explicit in the application's routing and handling logic.
+> not guarantee that historical events will be delivered or skipped. Make the
+> intended business behavior explicit in the application's routing and handling
+> logic.
 
 When a new process handler is added to an application, it now consumes events
 from the beginning of each stream, including events recorded before the handler
@@ -39,7 +40,8 @@ and how far the handler has progressed through each stream.
 Implement business requirements about acting on historical events explicitly,
 for example by using event data and process state to decide whether a command
 or deadline is still appropriate. Do not rely on checkpoint positions or route
-changes to establish a business cutoff or guarantee a replay.
+changes to establish a business cutoff or guarantee delivery of historical
+events.
 
 ### Added
 
