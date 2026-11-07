@@ -113,8 +113,22 @@ func TestSink_failureRollsBack(t *testing.T) {
 				t.Fatal("expected a consumption error")
 			}
 
-			xtesting.ExpectQueryResult(t, "rolled back instances", 0, db, `SELECT COUNT(*) FROM process.instances`)
-			xtesting.ExpectQueryResult(t, "rolled back checkpoints", 0, db, `SELECT COUNT(*) FROM process.checkpoints`)
+			xtesting.ExpectQueryResult(
+				t,
+				"rolled back instances",
+				0,
+				db,
+				`SELECT COUNT(*)
+				FROM process.instances`,
+			)
+			xtesting.ExpectQueryResult(
+				t,
+				"rolled back checkpoints",
+				0,
+				db,
+				`SELECT COUNT(*)
+				FROM process.checkpoints`,
+			)
 
 			handler.HandleEventFunc = nil
 			next, ok, err := s.ConsumeSegment(t.Context(), 0, seg)
@@ -171,7 +185,14 @@ func TestSink_routingRejectionsAdvancePastTrailingEvents(t *testing.T) {
 	if err != nil || cp != 8 {
 		t.Fatalf("unexpected durable checkpoint: %d, %v", cp, err)
 	}
-	xtesting.ExpectQueryResult(t, "no instance created", 0, db, `SELECT COUNT(*) FROM process.instances`)
+	xtesting.ExpectQueryResult(
+		t,
+		"no instance created",
+		0,
+		db,
+		`SELECT COUNT(*)
+		FROM process.instances`,
+	)
 }
 
 // TestSink_checkpointFailureRollsBackEffects verifies that commands, deadlines,
@@ -209,7 +230,14 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	}
 
 	for _, table := range []string{"process.instances", "process.deadlines", "process.checkpoints", "commandqueue.commands"} {
-		xtesting.ExpectQueryResult(t, "rolled back "+table, 0, db, `SELECT COUNT(*) FROM `+table)
+		xtesting.ExpectQueryResult(
+			t,
+			"rolled back "+table,
+			0,
+			db,
+			`SELECT COUNT(*)
+            FROM `+table,
+		)
 	}
 
 	fail.Store(false)
@@ -218,7 +246,14 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 		t.Fatalf("unexpected retry result: %d, %t, %v", next, ok, err)
 	}
 	for _, table := range []string{"process.instances", "process.deadlines", "process.checkpoints", "commandqueue.commands"} {
-		xtesting.ExpectQueryResult(t, "committed "+table, 1, db, `SELECT COUNT(*) FROM `+table)
+		xtesting.ExpectQueryResult(
+			t,
+			"committed "+table,
+			1,
+			db,
+			`SELECT COUNT(*)
+            FROM `+table,
+		)
 	}
 }
 

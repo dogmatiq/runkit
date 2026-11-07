@@ -530,9 +530,16 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 			)
 
 			xtesting.WaitForQueryResult(
-				t, "tracked stream checkpoint", uint64(2), db,
-				`SELECT checkpoint_offset FROM process.checkpoints WHERE handler_key = $1 AND stream_id = $2`,
-				handlerKey, tracked[0].AsString(),
+				t,
+				"tracked stream checkpoint",
+				uint64(2),
+				db,
+				`SELECT checkpoint_offset
+				FROM process.checkpoints
+				WHERE handler_key = $1
+				AND stream_id = $2`,
+				handlerKey,
+				tracked[0].AsString(),
 			)
 		},
 		dogma.ViaProcess(

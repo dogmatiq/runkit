@@ -77,7 +77,8 @@ func (s *Sink) CheckpointOffset(
 		ctx,
 		`SELECT checkpoint_offset
 		FROM process.checkpoints
-		WHERE handler_key = $1 AND stream_id = $2`,
+		WHERE handler_key = $1
+		AND stream_id = $2`,
 		xsql.UUID(s.Identity.GetKey()),
 		xsql.UUID(streamID),
 	).Scan(&cp)
@@ -132,10 +133,13 @@ func (s *Sink) consume(
 		// overlapping first-time consumers cannot both commit the same effects.
 		if err := tx.QueryRowContext(
 			ctx,
-			`INSERT INTO process.checkpoints (handler_key, stream_id)
+			`INSERT INTO process.checkpoints (
+				handler_key,
+				stream_id
+			)
 			VALUES ($1, $2)
-			ON CONFLICT (handler_key, stream_id)
-			DO UPDATE SET checkpoint_offset = process.checkpoints.checkpoint_offset
+			ON CONFLICT (handler_key, stream_id) DO UPDATE SET
+				checkpoint_offset = process.checkpoints.checkpoint_offset
 			RETURNING checkpoint_offset`,
 			xsql.UUID(s.Identity.GetKey()),
 			xsql.UUID(streamID),
@@ -161,9 +165,10 @@ func (s *Sink) consume(
 		return xsql.ExecOne(
 			ctx,
 			tx,
-			`UPDATE process.checkpoints
-			SET checkpoint_offset = $3
-			WHERE handler_key = $1 AND stream_id = $2`,
+			`UPDATE process.checkpoints SET
+				checkpoint_offset = $3
+			WHERE handler_key = $1
+			AND stream_id = $2`,
 			xsql.UUID(s.Identity.GetKey()),
 			xsql.UUID(streamID),
 			next,

@@ -79,25 +79,40 @@ func TestCreate_migratesProcessCheckpoints(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabaseWithoutSchema(t)
-	if _, err := db.ExecContext(t.Context(), `
-		CREATE SCHEMA eventstream;
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE SCHEMA eventstream;
 		CREATE SCHEMA process;
+
 		CREATE TABLE eventstream.handler_checkpoints (
-			handler_key uuid NOT NULL,
-			stream_id uuid NOT NULL,
-			checkpoint_offset bigint NOT NULL,
-			failures int NOT NULL,
-			resume_at timestamptz NOT NULL,
+			handler_key       uuid        NOT NULL,
+			stream_id         uuid        NOT NULL,
+			checkpoint_offset bigint      NOT NULL,
+			failures          int         NOT NULL,
+			resume_at         timestamptz NOT NULL,
+
 			PRIMARY KEY (handler_key, stream_id)
 		);
+
 		CREATE TABLE process.handlers (
-			handler_key uuid PRIMARY KEY,
+			handler_key            uuid PRIMARY KEY,
 			has_checkpoint_offsets boolean NOT NULL
 		);
-		INSERT INTO eventstream.handler_checkpoints VALUES
-			('65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
-			 '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5', 42, 3, now());
-	`); err != nil {
+
+		INSERT INTO eventstream.handler_checkpoints (
+			handler_key,
+			stream_id,
+			checkpoint_offset,
+			failures,
+			resume_at
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5',
+			42,
+			3,
+			now()
+		)`,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +126,8 @@ func TestCreate_migratesProcessCheckpoints(t *testing.T) {
 			"existing checkpoint is preserved",
 			uint64(42),
 			db,
-			`SELECT checkpoint_offset FROM process.checkpoints`,
+			`SELECT checkpoint_offset
+			FROM process.checkpoints`,
 		)
 	}
 
