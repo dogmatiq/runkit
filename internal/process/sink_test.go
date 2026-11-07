@@ -127,7 +127,7 @@ func TestSink_failureRollsBack(t *testing.T) {
 				0,
 				db,
 				`SELECT COUNT(*)
-				FROM process.checkpoints`,
+				FROM eventstream.handler_checkpoints`,
 			)
 
 			handler.HandleEventFunc = nil
@@ -202,7 +202,7 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 
 	var fail atomic.Bool
 	db := xtesting.NewDatabaseWithFailingQueries(t, func(query string, _ []any) bool {
-		return fail.Load() && strings.Contains(query, "UPDATE process.checkpoints")
+		return fail.Load() && strings.Contains(query, "UPDATE eventstream.handler_checkpoints")
 	})
 	s := newSink(t, db)
 	s.OutboundMessageTypes = map[reflect.Type]struct{}{
@@ -229,7 +229,7 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 		t.Fatal("expected checkpoint update to fail")
 	}
 
-	for _, table := range []string{"process.instances", "process.deadlines", "process.checkpoints", "commandqueue.commands"} {
+	for _, table := range []string{"process.instances", "process.deadlines", "eventstream.handler_checkpoints", "commandqueue.commands"} {
 		xtesting.ExpectQueryResult(
 			t,
 			"rolled back "+table,
@@ -245,7 +245,7 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	if err != nil || !ok || next != 1 {
 		t.Fatalf("unexpected retry result: %d, %t, %v", next, ok, err)
 	}
-	for _, table := range []string{"process.instances", "process.deadlines", "process.checkpoints", "commandqueue.commands"} {
+	for _, table := range []string{"process.instances", "process.deadlines", "eventstream.handler_checkpoints", "commandqueue.commands"} {
 		xtesting.ExpectQueryResult(
 			t,
 			"committed "+table,

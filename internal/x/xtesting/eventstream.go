@@ -280,7 +280,7 @@ func WaitForHandlerToConsumeAllEvents(
 		q,
 		`SELECT COUNT(*)
 		FROM eventstream.streams AS s
-		LEFT JOIN process.checkpoints AS h
+		LEFT JOIN eventstream.handler_checkpoints AS h
 			ON h.handler_key = $1
 			AND h.stream_id = s.id
 		WHERE COALESCE(h.checkpoint_offset, 0) < s.next_offset`,

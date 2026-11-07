@@ -73,31 +73,20 @@ func TestCreateAndDrop(t *testing.T) {
 	)
 }
 
-// TestCreate_migratesProcessCheckpoints verifies that an existing installation
-// keeps its progress, including checkpoints for streams it cannot currently read.
-func TestCreate_migratesProcessCheckpoints(t *testing.T) {
+// TestCreate_removesLocalStreamConstraint verifies that schema upgrades retain
+// existing process progress and allow checkpoint rows for remote streams.
+func TestCreate_removesLocalStreamConstraint(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabaseWithoutSchema(t)
+	db := xtesting.NewDatabase(t)
 	if _, err := db.ExecContext(
 		t.Context(),
-		`CREATE SCHEMA eventstream;
-		CREATE SCHEMA process;
+		`ALTER TABLE eventstream.handler_checkpoints
+		ADD CONSTRAINT handler_checkpoints_stream_id_fkey
+		FOREIGN KEY (stream_id) REFERENCES eventstream.streams(id);
 
-		CREATE TABLE eventstream.handler_checkpoints (
-			handler_key       uuid        NOT NULL,
-			stream_id         uuid        NOT NULL,
-			checkpoint_offset bigint      NOT NULL,
-			failures          int         NOT NULL,
-			resume_at         timestamptz NOT NULL,
-
-			PRIMARY KEY (handler_key, stream_id)
-		);
-
-		CREATE TABLE process.handlers (
-			handler_key            uuid PRIMARY KEY,
-			has_checkpoint_offsets boolean NOT NULL
-		);
+		INSERT INTO eventstream.streams (id)
+		VALUES ('3fc2f883-6016-4d34-b6dd-ad8cc195d3e5');
 
 		INSERT INTO eventstream.handler_checkpoints (
 			handler_key,
@@ -110,7 +99,15 @@ func TestCreate_migratesProcessCheckpoints(t *testing.T) {
 			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5',
 			42,
 			3,
-			now()
+			'2100-01-01T00:00:00Z'
+		);
+
+		INSERT INTO process.handlers (
+			handler_key,
+			has_checkpoint_offsets
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			true
 		)`,
 	); err != nil {
 		t.Fatal(err)
@@ -123,20 +120,46 @@ func TestCreate_migratesProcessCheckpoints(t *testing.T) {
 
 		xtesting.ExpectQueryResult(
 			t,
-			"existing checkpoint is preserved",
-			uint64(42),
+			"existing checkpoint and legacy retry state are preserved",
+			true,
 			db,
-			`SELECT checkpoint_offset
-			FROM process.checkpoints`,
+			`SELECT checkpoint_offset = 42
+				AND failures = 3
+				AND resume_at = '2100-01-01T00:00:00Z'::timestamptz
+			FROM eventstream.handler_checkpoints
+			WHERE stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
 		)
 	}
 
 	xtesting.ExpectQueryResult(
 		t,
-		"obsolete process event pump tables are removed",
+		"legacy handler registration is preserved",
 		true,
 		db,
-		`SELECT to_regclass('eventstream.handler_checkpoints') IS NULL
-			AND to_regclass('process.handlers') IS NULL`,
+		`SELECT has_checkpoint_offsets
+		FROM process.handlers
+		WHERE handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'`,
+	)
+
+	// This stream is not present in the local streams table.
+	if _, err := db.ExecContext(
+		t.Context(),
+		`INSERT INTO eventstream.handler_checkpoints (
+			handler_key,
+			stream_id
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'02b888ed-e546-4fba-b524-426dfbbefac0'
+		)`,
+	); err != nil {
+		t.Fatalf("unable to checkpoint a remote stream: %v", err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"no replacement checkpoint table is created",
+		true,
+		db,
+		`SELECT to_regclass('process.checkpoints') IS NULL`,
 	)
 }

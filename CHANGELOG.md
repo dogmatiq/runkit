@@ -40,8 +40,9 @@ stream's current end. Existing checkpoint offsets are preserved.
 
 - **[BC]** New process handlers now consume historical events. Existing checkpoint
   offsets are preserved; streams without a checkpoint start at the beginning.
-  Stop all engine nodes before applying this schema upgrade with
-  `CreateSchema()`, then restart them.
+- The checkpoint table now accepts remote stream IDs. Call `CreateSchema()`
+  before running this version to remove its foreign key to local streams.
+  Existing checkpoint rows and legacy columns are retained.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`

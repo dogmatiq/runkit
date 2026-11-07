@@ -61,3 +61,28 @@ ON eventstream.events (
     message_type_id,
     stream_offset
 );
+
+--------------------------------------------------------------------------------
+-- The "handler_checkpoints" table tracks per-stream checkpoint progress for
+-- each process handler.
+--
+-- A checkpoint row is locked while applying event effects to serialize
+-- processing for a specific handler/stream pair. Stream IDs may refer to local
+-- or remote streams.
+--
+-- The failures and resume_at columns are retained for compatibility with the
+-- event pump used by older engines.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
+    handler_key       uuid        NOT NULL,
+    stream_id         uuid        NOT NULL,
+    checkpoint_offset bigint      NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
+    failures          int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    resume_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+
+    PRIMARY KEY (handler_key, stream_id)
+);
+
+-- Remove the local-stream constraint from databases created by older engines.
+ALTER TABLE eventstream.handler_checkpoints
+DROP CONSTRAINT IF EXISTS handler_checkpoints_stream_id_fkey;

@@ -1,15 +1,12 @@
 CREATE SCHEMA IF NOT EXISTS process;
 
 --------------------------------------------------------------------------------
--- The "checkpoints" table tracks per-stream checkpoint progress for each
--- process handler. Stream IDs may refer to local or remote event streams.
+-- The "handlers" table keeps track of handlers that exist or have existed
+-- within the application.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS process.checkpoints (
-    handler_key       uuid   NOT NULL,
-    stream_id         uuid   NOT NULL,
-    checkpoint_offset bigint NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
-
-    PRIMARY KEY (handler_key, stream_id)
+CREATE TABLE IF NOT EXISTS process.handlers (
+    handler_key            uuid PRIMARY KEY,
+    has_checkpoint_offsets boolean NOT NULL DEFAULT false
 );
 
 --------------------------------------------------------------------------------
