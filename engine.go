@@ -40,6 +40,14 @@ import (
 )
 
 const (
+	// messageBackoffBase and messageBackoffCap bound the delay before a message
+	// that could not be handled is attempted again.
+	messageBackoffBase = 10 * time.Millisecond
+	messageBackoffCap  = 5 * time.Minute
+
+	// messagePollInterval is the polling interval for command queues.
+	messagePollInterval = 25 * time.Millisecond
+
 	// applicationBindTimeout is the maximum time given to bind the database to
 	// the application when the engine starts.
 	applicationBindTimeout = 15 * time.Second
@@ -334,10 +342,23 @@ func (e *Engine) Run(ctx context.Context) error {
 		})
 	}
 
+	deadlineScheduler := &process.DeadlineScheduler{
+		Node:        e.node,
+		Signals:     e.signals,
+		Concurrency: defaultWorkerCount(),
+		Logger:      e.logger.With(slog.String("component", "process.deadline-scheduler")),
+	}
+
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if !handlerConfig.IsDisabled() {
-			e.runHandler(ctx, handlerConfig)
+			e.runHandler(ctx, handlerConfig, deadlineScheduler)
 		}
+	}
+
+	if len(deadlineScheduler.Sinks) != 0 {
+		e.group.Go(func() error {
+			return deadlineScheduler.Run(ctx)
+		})
 	}
 
 	if server == nil {
@@ -443,13 +464,11 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 }
 
 // runHandler runs the components that manage the given handler.
-func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
-	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 5 * time.Minute
-		pollInterval = 25 * time.Millisecond
-	)
-
+func (e *Engine) runHandler(
+	ctx context.Context,
+	handlerConfig config.Handler,
+	deadlineScheduler *process.DeadlineScheduler,
+) {
 	logger := e.newLoggerForHandler(handlerConfig)
 	workers := e.workerCountForHandler(handlerConfig)
 
@@ -466,9 +485,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			},
 			DB:           e.db,
 			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
+			PollInterval: messagePollInterval,
+			BackoffBase:  messageBackoffBase,
+			BackoffCap:   messageBackoffCap,
 			Logger:       logger.With(slog.String("component", "aggregate.command-pump")),
 		}
 
@@ -490,9 +509,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			},
 			DB:           e.db,
 			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
+			PollInterval: messagePollInterval,
+			BackoffBase:  messageBackoffBase,
+			BackoffCap:   messageBackoffCap,
 			Logger:       logger.With(slog.String("component", "integration.command-pump")),
 		}
 
@@ -501,49 +520,35 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		})
 
 	case *config.Process:
-		consumerLogger := logger.With(slog.String("component", "process.consumer"))
+		sink := &process.Sink{
+			DB:                   e.db,
+			Handler:              handlerConfig.Interface(),
+			Identity:             handlerConfig.Identity(),
+			Packer:               e.packer,
+			EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+			DeadlineTypes:        e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
+			OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+			HandleTimeout:        e.handleTimeout,
+			RouteTimeout:         e.routeTimeout,
+			BackoffBase:          messageBackoffBase,
+			BackoffCap:           messageBackoffCap,
+			Logger:               logger.With(slog.String("component", "process.sink")),
+		}
+
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				RouteTimeout:         e.routeTimeout,
-				Logger:               consumerLogger,
-			},
-			Logger: consumerLogger,
-		}
-
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "process.deadline-pump")),
+			Sink:         sink,
+			Logger:       logger.With(slog.String("component", "process.consumer")),
 		}
 
 		e.group.Go(func() error {
 			return consumer.Run(ctx)
 		})
 
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
-		})
+		if !sink.DeadlineTypes.IsEmpty() {
+			deadlineScheduler.Sinks = append(deadlineScheduler.Sinks, sink)
+		}
 
 	case *config.Projection:
 		var handlerLock *semaphore.Weighted
@@ -602,8 +607,8 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 	)
 }
 
-// workerCountForHandler returns the number of workers goroutines to run for the
-// given handler's message pump.
+// workerCountForHandler returns the number of messages to handle concurrently
+// for the given handler.
 func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Integration:
@@ -612,6 +617,12 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 		}
 	}
 
+	return defaultWorkerCount()
+}
+
+// defaultWorkerCount returns the default number of messages handled concurrently
+// for each handler on this node.
+func defaultWorkerCount() int {
 	return 10 * runtime.GOMAXPROCS(0)
 }
 

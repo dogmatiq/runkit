@@ -21,14 +21,17 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Sink dispatches segments of event streams to a process message handler.
+// Sink dispatches events and deadlines to a process message handler.
+//
 // It implements [eventstream.Sink], committing each event's effects and
-// checkpoint offset in the same database transaction.
+// checkpoint offset in the same database transaction. Deadline effects are
+// committed in the same transaction as removal of the pending deadline.
 type Sink struct {
-	// DB is the database that stores process state and checkpoint offsets.
+	// DB is the database that stores process state, checkpoint offsets, and
+	// pending deadlines.
 	DB *sql.DB
 
-	// Handler is the process message handler to which events are dispatched.
+	// Handler is the process message handler to which messages are dispatched.
 	Handler dogma.ProcessMessageHandler[dogma.ProcessRoot]
 
 	// Identity is the identity of the process handler.
@@ -40,11 +43,18 @@ type Sink struct {
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
 
+	// DeadlineTypes is the set of IDs of the deadline types routed to the handler.
+	DeadlineTypes *uuidcollection.Set
+
+	// BackoffBase and BackoffCap bound the delay before a deadline that could
+	// not be handled is attempted again.
+	BackoffBase, BackoffCap time.Duration
+
 	// OutboundMessageTypes contains the types the handler is allowed to produce.
 	OutboundMessageTypes map[reflect.Type]struct{}
 
 	// HandleTimeout is the maximum time the handler is given to handle each
-	// event.
+	// message.
 	HandleTimeout time.Duration
 
 	// RouteTimeout is the maximum time the handler is given to route each
@@ -157,7 +167,7 @@ func (s *Sink) consume(
 				slog.Uint64("offset", next-1),
 				xslog.Envelope("message", env),
 			)
-			if err := s.dispatch(ctx, tx, env, logger); err != nil {
+			if err := s.dispatchEvent(ctx, tx, env, logger); err != nil {
 				return err
 			}
 		}
@@ -185,8 +195,8 @@ func (s *Sink) consume(
 	return next, true, nil
 }
 
-// dispatch routes an event to its instance and applies its effects within tx.
-func (s *Sink) dispatch(
+// dispatchEvent routes an event to its instance and applies its effects within tx.
+func (s *Sink) dispatchEvent(
 	ctx context.Context,
 	tx *sql.Tx,
 	env *envelopepb.Envelope,
@@ -288,39 +298,43 @@ func (s *Sink) dispatch(
 		return fmt.Errorf("unable to handle event: %w", err)
 	}
 
+	return s.applyEffects(ctx, tx, &scope.messageScope)
+}
+
+// applyEffects persists the commands, deadlines, and instance state produced
+// while handling a message within tx.
+func (s *Sink) applyEffects(
+	ctx context.Context,
+	tx *sql.Tx,
+	scope *messageScope,
+) error {
 	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
 		return err
 	}
 
 	if scope.ended {
-		if err := endInstance(
+		return endInstance(
 			ctx,
 			tx,
 			s.Identity.GetKey(),
-			instanceID,
-		); err != nil {
-			return err
-		}
-	} else {
-		if scope.mutated {
-			if err := saveInstance(
-				ctx,
-				tx,
-				s.Identity.GetKey(),
-				instanceID,
-				root,
-				instanceLogger,
-			); err != nil {
-				return err
-			}
-		}
+			scope.instanceID,
+		)
+	}
 
-		if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
+	if scope.mutated {
+		if err := saveInstance(
+			ctx,
+			tx,
+			s.Identity.GetKey(),
+			scope.instanceID,
+			scope.root,
+			scope.logger,
+		); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return persistDeadlines(ctx, tx, scope.deadlinePacker)
 }
 
 // routeEventToInstance routes the event to a process instance by calling the

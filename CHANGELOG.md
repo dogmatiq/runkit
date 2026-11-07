@@ -54,6 +54,9 @@ events.
 
 ### Changed
 
+- Deadline delivery is now assigned across cluster nodes by process instance.
+  Nodes wake when deadlines change or become due, rather than polling for work.
+  Call `CreateSchema()` before running this version to install the notifications.
 - **[BC]** Process handlers added to an application now consume historical events.
 - The database schema has changed. Call `CreateSchema()` before running this
   version. If the schema already exists, it applies the required modifications
@@ -66,6 +69,12 @@ events.
   - `IntegrationMessageHandler.HandleCommand()`
   - `ProjectionMessageHandler.HandleEvent()`
   - `ProjectionMessageHandler.CheckpointOffset()`
+
+### Fixed
+
+- Failed deadline deliveries no longer commit queued commands when process state
+  cannot be serialized. All effects of the failed attempt are rolled back before
+  the deadline is scheduled for retry.
 
 ## [0.2.0] - 2026-11-06
 

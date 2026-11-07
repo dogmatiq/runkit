@@ -8,9 +8,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
-
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -34,7 +32,7 @@ func newRoot(
 			xslog.Error(err),
 		)
 
-		return nil, messagepump.ErrFailed
+		return nil, fmt.Errorf("%w: %w", errApplication, err)
 	}
 
 	return root, nil
@@ -93,7 +91,7 @@ func loadInstance(
 				xslog.Error(err),
 			)
 
-			return false, messagepump.ErrFailed
+			return false, fmt.Errorf("%w: %w", errApplication, err)
 		}
 	}
 
@@ -121,7 +119,7 @@ func saveInstance(
 			xslog.Error(err),
 		)
 
-		return messagepump.ErrFailed
+		return fmt.Errorf("%w: %w", errApplication, err)
 	}
 
 	if err := xsql.ExecOne(
