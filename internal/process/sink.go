@@ -288,36 +288,13 @@ func (s *Sink) dispatch(
 		return fmt.Errorf("unable to handle event: %w", err)
 	}
 
-	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
+	effects, err := prepareEffects(&scope.messageScope)
+	if err != nil {
+		instanceLogger.ErrorContext(ctx, "unable to prepare process effects", xslog.Error(err))
 		return err
 	}
-
-	if scope.ended {
-		if err := endInstance(
-			ctx,
-			tx,
-			s.Identity.GetKey(),
-			instanceID,
-		); err != nil {
-			return err
-		}
-	} else {
-		if scope.mutated {
-			if err := saveInstance(
-				ctx,
-				tx,
-				s.Identity.GetKey(),
-				instanceID,
-				root,
-				instanceLogger,
-			); err != nil {
-				return err
-			}
-		}
-
-		if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
-			return err
-		}
+	if err := effects.persist(ctx, tx, s.Identity.GetKey(), instanceID); err != nil {
+		return err
 	}
 
 	return nil

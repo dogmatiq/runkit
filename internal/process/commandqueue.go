@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -14,20 +13,16 @@ import (
 func addCommandsToQueue(
 	ctx context.Context,
 	tx *sql.Tx,
-	packer *envelope.EffectPacker,
+	envelopes []preparedEnvelope,
 ) error {
-	commandEnvelopes, ok := packer.Seal()
-	if !ok {
-		return nil
-	}
-
-	for commandEnvelope := range commandEnvelopes.All() {
+	for _, prepared := range envelopes {
+		commandEnvelope := prepared.envelope
 		if _, err := tx.ExecContext(
 			ctx,
 			`SELECT commandqueue.add($1, $2, $3, $4)`,
 			xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
-			xsql.Envelope(commandEnvelope),
+			prepared.data,
 			commandEnvelope.GetBody().GetIdempotencyKey(),
 		); err != nil {
 			return fmt.Errorf("unable to add command to queue: %w", err)

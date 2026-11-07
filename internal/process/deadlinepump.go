@@ -219,38 +219,16 @@ func (p *DeadlinePump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
+	effects, err := prepareEffects(&scope.messageScope)
+	if err != nil {
+		instanceLogger.ErrorContext(ctx, "unable to prepare process effects", xslog.Error(err))
 		return err
 	}
-
-	if scope.ended {
-		if err := endInstance(
-			ctx,
-			tx,
-			p.Identity.GetKey(),
-			instanceID,
-		); err != nil {
-			return err
-		}
-
+	if err := effects.persist(ctx, tx, p.Identity.GetKey(), instanceID); err != nil {
+		return err
+	}
+	if effects.ended {
 		return nil
-	}
-
-	if scope.mutated {
-		if err := saveInstance(
-			ctx,
-			tx,
-			p.Identity.GetKey(),
-			instanceID,
-			root,
-			instanceLogger,
-		); err != nil {
-			return err
-		}
-	}
-
-	if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
-		return err
 	}
 
 	return p.deleteDeadline(ctx, tx, delivery.MessageID)
