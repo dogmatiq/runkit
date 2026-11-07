@@ -55,10 +55,9 @@ events.
 ### Changed
 
 - **[BC]** Process handlers added to an application now consume historical events.
-  See the warning above.
-- The checkpoint table now accepts remote stream IDs. Call `CreateSchema()`
-  before running this version to remove its foreign key to local streams.
-  Existing checkpoint rows and legacy columns are retained.
+- The database schema has changed. Call `CreateSchema()` before running this
+  version. If the schema already exists, it applies the required modifications
+  while preserving existing data.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`
