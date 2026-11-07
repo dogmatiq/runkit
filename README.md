@@ -15,19 +15,13 @@ The [engine] is embedded in your application's Go binary and orchestrates messag
 delivery, state persistence, and the execution of application logic. PostgreSQL
 provides persistence and coordination between nodes running the same application.
 
-## Features
+Run multiple engine instances for the same application against a shared database
+to form a cluster. Work is distributed across nodes and reassigned as nodes join
+or leave.
 
-- **Handler execution** — Runs the aggregate, integration, process, and
-  projection handlers defined by your Dogma application.
-
-- **Persistence** — Stores events, pending commands, process state, and deadlines
-  in the engine's database.
-
-- **Clustering** — Distributes work between nodes running the same application
-  against a shared database, adjusting as nodes join and leave.
-
-- **Events between applications** — Delivers events recorded by one Dogma
-  application to process and projection handlers in another, using gRPC.
+Applications can also consume events recorded by other Dogma applications. The
+engines exchange events over gRPC, delivering them to process and projection
+handlers in the consuming application.
 
 ## Requirements
 
@@ -35,12 +29,31 @@ The engine stores its state in [PostgreSQL]. The minimum supported version is
 PostgreSQL 18.
 
 Applications choose their own projection storage; the engine's PostgreSQL
-requirement does not constrain it. [ProjectionKit] provides adapters for building
+requirement does not constrain it. [projectionkit] provides adapters for building
 projections with several database systems.
+
+## Running an application
+
+To run an application you've already built and tested with [testkit], pass it
+and a database connection opened with the [pgx] driver to `runkit.New()`:
+
+```go
+if err := runkit.CreateSchema(ctx, db); err != nil {
+	return err
+}
+
+engine := runkit.New(app, db)
+return engine.Run(ctx)
+```
+
+Here, `app` is your `dogma.Application`. `Run()` blocks until the context is
+canceled or the engine cannot continue.
 
 <!-- references -->
 
 [dogma]: https://github.com/dogmatiq/dogma
 [engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
 [PostgreSQL]: https://www.postgresql.org/
+[pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [projectionkit]: https://github.com/dogmatiq/projectionkit
+[testkit]: https://github.com/dogmatiq/testkit
