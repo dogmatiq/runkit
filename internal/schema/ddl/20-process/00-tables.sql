@@ -36,10 +36,13 @@ CREATE TABLE IF NOT EXISTS process.deadlines (
     deliver_at      timestamptz NOT NULL
 );
 
--- Create an index for finding deadlines that are ready to be processed by a
--- specific handler.
-CREATE INDEX IF NOT EXISTS pending_deadlines_by_handler
-ON process.deadlines (
-    handler_key,
-    deliver_at
-);
+-- Find the earliest pending deadline for each routed type without scanning
+-- deadlines whose routes have been removed. Include the message-ID tie-breaker.
+CREATE INDEX IF NOT EXISTS pending_deadlines_by_handler_type_time
+ON process.deadlines (handler_key, message_type_id, deliver_at, message_id);
+
+-- Ending an instance removes its deadlines without scanning the handler queue.
+CREATE INDEX IF NOT EXISTS pending_deadlines_by_instance
+ON process.deadlines (handler_key, instance_id);
+
+DROP INDEX IF EXISTS process.pending_deadlines_by_handler;

@@ -45,6 +45,9 @@ events.
 
 ### Added
 
+- Added independent `WithQueueLockTimeout()` and `WithQueueContentionDelay()`
+  options for process deadline delivery, each defaulting to 200 ms.
+
 - Added support for process handlers consuming events from remote applications.
 - Added `WithHandleTimeout()`, `WithRouteTimeout()` and
   `WithProjectionCompactTimeout()`, which limit how long the engine waits for
@@ -53,6 +56,11 @@ events.
   `DefaultProjectionCompactTimeout`, which are the defaults for those options.
 
 ### Changed
+
+- Process deadline delivery is assigned to cluster nodes per handler. Discovery
+  wakes on notifications and deadline timers, and uses a shared per-node limit
+  of `10 × GOMAXPROCS` concurrent attempts. Call `CreateSchema()` before running
+  this version to install the indexes and transactional notifications.
 
 - **[BC]** Process handlers added to an application now consume historical events.
 - The database schema has changed. Call `CreateSchema()` before running this

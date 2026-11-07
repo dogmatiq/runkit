@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"time"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
@@ -167,7 +166,7 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 				ctx,
 				tx,
 				del,
-				p.computeBackoff(del.Failures),
+				BackoffDelay(p.BackoffBase, p.BackoffCap, del.Failures),
 			); err != nil {
 				tx.Rollback()
 				return nil, false, fmt.Errorf("unable to postpone delivery: %w", err)
@@ -248,7 +247,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 
 	case errors.Is(err, ErrFailed):
 		task.Delivery.Failures++
-		delay := p.computeBackoff(task.Delivery.Failures)
+		delay := BackoffDelay(p.BackoffBase, p.BackoffCap, task.Delivery.Failures)
 
 		if err := p.Driver.PostponeDelivery(
 			ctx,
@@ -298,22 +297,4 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 	afterCommit()
 
 	return nil
-}
-
-// computeBackoff returns a delay computed from a capped, equal-jitter
-// exponential backoff window for a delivery that has failed n times.
-func (p *MessagePump) computeBackoff(n uint64) time.Duration {
-	if p.BackoffBase <= 0 || p.BackoffCap <= p.BackoffBase {
-		return p.BackoffBase
-	}
-
-	limit := p.BackoffBase << n
-
-	// base << iterations may overflow time.Duration (int64 nanoseconds) for
-	// large iteration counts, hence the check for limit <= 0.
-	if limit <= 0 || limit > p.BackoffCap {
-		limit = p.BackoffCap
-	}
-
-	return p.BackoffBase + rand.N(limit-p.BackoffBase)
 }
