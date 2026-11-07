@@ -23,6 +23,7 @@ import (
 )
 
 // DeadlineSink dispatches pending deadlines to a process message handler.
+//
 // Each deadline's effects and removal from the queue are committed in the
 // same database transaction.
 type DeadlineSink struct {
@@ -61,8 +62,9 @@ type DeadlineSink struct {
 	Logger *slog.Logger
 }
 
-// Deliver dispatches at most one due deadline for the process instance with
-// the given ID. It returns nil if the instance has ended or has no due deadlines.
+// Deliver dispatches at most one due deadline for the given process instance.
+//
+// It returns nil if the instance has ended or has no due deadlines.
 //
 // If application code fails, its effects are rolled back and the deadline is
 // postponed in a separate transaction. Deliver returns nil if the deadline is
@@ -153,6 +155,7 @@ func (s *DeadlineSink) Deliver(ctx context.Context, instanceID string) error {
 }
 
 // lockInstance locks the process instance with the given ID until tx completes.
+//
 // It returns false if the instance does not exist or has ended.
 //
 // The instance must be locked before its deadlines, matching the lock order
@@ -181,6 +184,7 @@ func (s *DeadlineSink) lockInstance(
 }
 
 // backoff returns the delay before retrying a deadline that has failed n times.
+//
 // The delay increases exponentially, with jitter, up to BackoffCap.
 func (s *DeadlineSink) backoff(n uint64) time.Duration {
 	if s.BackoffBase <= 0 || s.BackoffCap <= s.BackoffBase {

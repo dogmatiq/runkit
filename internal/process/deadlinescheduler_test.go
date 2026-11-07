@@ -186,7 +186,105 @@ func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 	)
 }
 
+// TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery verifies that a
+// delivery can commit after the local node loses ownership of its workload.
+func TestDeadlineScheduler_membershipChangeDoesNotCancelDelivery(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	events, sink, handler := newDeadlineTestSink(t, db)
+	queueDeadline(t, db, events, "<instance>", time.Now())
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler.HandleDeadlineFunc = func(
+		ctx context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
+		_ dogma.Deadline,
+	) error {
+		close(started)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			s.ExecuteCommand(stubs.CommandX1)
+			return nil
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	nodeCtx, stopNode := context.WithCancel(ctx)
+	logger := spruce.NewTestLogger(t)
+	bus := &signal.Bus{DB: db, Logger: logger}
+	node := &cluster.Node{
+		ID:       uuidpb.Generate(),
+		Signals:  bus,
+		Interval: 25 * time.Millisecond,
+		Timeout:  time.Second,
+		Logger:   logger,
+	}
+	scheduler := &process.DeadlineScheduler{
+		Node:    node,
+		Signals: bus,
+		Sinks:   []*process.DeadlineSink{sink},
+		Logger:  logger,
+	}
+
+	group, ctx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return bus.Run(ctx)
+	})
+	group.Go(func() error {
+		err := node.Run(nodeCtx)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+
+		return err
+	})
+	group.Go(func() error {
+		return scheduler.Run(ctx)
+	})
+	t.Cleanup(func() {
+		cancel()
+		stopNode()
+		if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+			t.Error(err)
+		}
+	})
+
+	xtesting.WaitFor(t, "deadline delivery starts", func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	})
+
+	// Stop membership participation without stopping the scheduler. This
+	// removes all local assignments while the handler is still running.
+	stopNode()
+	xtesting.WaitFor(t, "local node loses ownership", func() bool {
+		m, _ := node.Membership().Load()
+		return !m.LocalNodeIsResponsibleFor(uuidpb.Derive(sink.Identity.GetKey(), "<instance>"))
+	})
+	close(release)
+
+	xtesting.WaitForQueryResult(
+		t,
+		"in-flight delivery commits after ownership is lost",
+		1,
+		db,
+		`SELECT COUNT(*)
+		FROM commandqueue.commands`,
+	)
+}
+
 // startDeadlineScheduler starts a cluster node and deadline scheduler.
+//
 // It returns a function that stops both, which is safe to call repeatedly.
 func startDeadlineScheduler(
 	t testing.TB,
