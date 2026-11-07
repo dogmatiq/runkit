@@ -22,13 +22,14 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// DeadlineSink delivers pending deadlines to a process message handler.
-// A delivery commits its effects and removal from the queue atomically.
+// DeadlineSink dispatches pending deadlines to a process message handler.
+// Each deadline's effects and removal from the queue are committed in the
+// same database transaction.
 type DeadlineSink struct {
-	// DB stores pending deadlines and process state.
+	// DB is the database that stores process state and pending deadlines.
 	DB *sql.DB
 
-	// Handler is the process message handler that receives deadlines.
+	// Handler is the process message handler to which deadlines are dispatched.
 	Handler dogma.ProcessMessageHandler[dogma.ProcessRoot]
 
 	// Identity is the identity of the process handler.
@@ -37,29 +38,35 @@ type DeadlineSink struct {
 	// Packer packs commands and deadlines produced by the handler.
 	Packer *envelope.Packer
 
-	// DeadlineTypeIDs contains the deadline types routed to the handler.
+	// DeadlineTypeIDs is the set of IDs of the deadline types routed to the
+	// handler.
 	DeadlineTypeIDs *uuidcollection.Set
 
-	// OutboundMessageTypes contains the types the handler may produce.
+	// OutboundMessageTypes contains the types the handler is allowed to produce.
 	OutboundMessageTypes map[reflect.Type]struct{}
 
-	// HandleTimeout bounds each application handler call.
+	// HandleTimeout is the maximum time the handler is given to handle each
+	// deadline.
 	HandleTimeout time.Duration
 
-	// Concurrency limits simultaneous deliveries for this handler on this node.
+	// Concurrency is the maximum number of deliveries that the scheduler
+	// handles concurrently for this sink on this node.
 	Concurrency int
 
-	// BackoffBase and BackoffCap bound the retry delay after application failures.
+	// BackoffBase and BackoffCap bound the delay before a deadline that could
+	// not be handled is attempted again.
 	BackoffBase, BackoffCap time.Duration
 
-	// Logger receives messages from the sink and application handler.
+	// Logger is the target for log messages produced by the sink and handler.
 	Logger *slog.Logger
 }
 
-// Deliver attempts to deliver one due deadline for instanceID. A handler failure
-// rolls back its effects before the deadline is postponed in another transaction.
-// It returns nil if no deadline is due or an application failure is postponed;
-// infrastructure errors are returned for the scheduler to retry.
+// Deliver dispatches at most one due deadline for the process instance with
+// the given ID. It returns nil if the instance has ended or has no due deadlines.
+//
+// If application code fails, its effects are rolled back and the deadline is
+// postponed in a separate transaction. Deliver returns nil if the deadline is
+// postponed successfully. Database errors are returned to the caller.
 func (s *DeadlineSink) Deliver(ctx context.Context, instanceID string) error {
 	var (
 		id       uuidpb.UUID
@@ -145,8 +152,11 @@ func (s *DeadlineSink) Deliver(ctx context.Context, instanceID string) error {
 	})
 }
 
-// lockInstance keeps instance locking ahead of deadline locking, as it is when
-// an event ends an instance and deletes its pending deadlines.
+// lockInstance locks the process instance with the given ID until tx completes.
+// It returns false if the instance does not exist or has ended.
+//
+// The instance must be locked before its deadlines, matching the lock order
+// used when handling an event that ends an instance.
 func (s *DeadlineSink) lockInstance(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -170,8 +180,8 @@ func (s *DeadlineSink) lockInstance(
 	return err == nil, err
 }
 
-// backoff preserves the capped, equal-jitter retry schedule used by deadline
-// delivery before it moved out of the message pump.
+// backoff returns the delay before retrying a deadline that has failed n times.
+// The delay increases exponentially, with jitter, up to BackoffCap.
 func (s *DeadlineSink) backoff(n uint64) time.Duration {
 	if s.BackoffBase <= 0 || s.BackoffCap <= s.BackoffBase {
 		return s.BackoffBase
@@ -316,6 +326,7 @@ func (s *DeadlineSink) dispatch(
 	return s.deleteDeadline(ctx, tx, deadlineID)
 }
 
+// deleteDeadline removes the deadline with the given message ID from the queue.
 func (*DeadlineSink) deleteDeadline(
 	ctx context.Context,
 	tx *sql.Tx,

@@ -14,31 +14,38 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// DeadlineScheduler discovers pending deadline workloads and delivers those
-// assigned to this node. Workloads are derived from handler and instance IDs.
-// Pending instances have no goroutine until they have due work and capacity.
+// DeadlineScheduler dispatches pending deadlines to process message handlers.
+// It uses the cluster membership to assign each process instance's deadlines
+// to a node, using the handler's identity and instance ID as the workload.
+//
+// Deliveries are handled concurrently, up to each sink's concurrency limit.
 type DeadlineScheduler struct {
-	// Node determines which instance workloads belong to this node.
+	// Node is the cluster node used to determine which process instances
+	// have their deadlines delivered by this scheduler.
 	Node *cluster.Node
 
-	// Signals wakes discovery when pending deadlines change or LISTEN reconnects.
+	// Signals is the bus used to receive notifications of changes to pending
+	// deadlines.
 	Signals *signal.Bus
 
-	// Sinks contains the enabled process handlers that accept deadlines.
+	// Sinks is the set of sinks to which deadlines are dispatched.
 	Sinks []*DeadlineSink
 
-	// Logger receives scheduler and discovery messages.
+	// Logger is the target for log messages produced by the scheduler and its
+	// supervisor.
 	Logger *slog.Logger
 }
 
+// deadlineTask is an active delivery for a process instance.
 type deadlineTask struct {
 	sink       *DeadlineSink
 	instanceID string
 	cancel     context.CancelFunc
 }
 
-// Run schedules deadlines until ctx is canceled. Database failures are retried
-// through the supervisor, with pending deadlines retained in the database.
+// Run runs the deadline scheduler until ctx is canceled.
+//
+// It must be called at most once. Each sink's Concurrency must be positive.
 func (s *DeadlineScheduler) Run(ctx context.Context) error {
 	for _, sink := range s.Sinks {
 		if sink.Concurrency <= 0 {
@@ -48,6 +55,12 @@ func (s *DeadlineScheduler) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, s.Logger, s.run)
 }
 
+// run discovers pending deadlines and starts deliveries for process instances
+// assigned to this node until ctx is canceled or discovery fails.
+//
+// Active deliveries are canceled when the cluster membership assigns their
+// process instance to another node. All deliveries are canceled and awaited
+// before run returns.
 func (s *DeadlineScheduler) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var group sync.WaitGroup

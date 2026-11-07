@@ -186,8 +186,8 @@ func TestDeadlineScheduler_earlierDeadlineWakesDiscovery(t *testing.T) {
 	)
 }
 
-// startDeadlineScheduler starts one node through exported APIs, without an
-// engine or any event consumers. Its stop function is safe to call repeatedly.
+// startDeadlineScheduler starts a cluster node and deadline scheduler.
+// It returns a function that stops both, which is safe to call repeatedly.
 func startDeadlineScheduler(
 	t testing.TB,
 	sink *process.DeadlineSink,

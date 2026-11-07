@@ -40,7 +40,8 @@ import (
 )
 
 const (
-	// messageBackoffBase and messageBackoffCap bound message delivery retries.
+	// messageBackoffBase and messageBackoffCap bound the delay before a message
+	// that could not be handled is attempted again.
 	messageBackoffBase = 10 * time.Millisecond
 	messageBackoffCap  = 5 * time.Minute
 
@@ -622,8 +623,8 @@ func (e *Engine) runDeadlineScheduler(ctx context.Context) {
 	}
 }
 
-// workerCountForHandler returns the number of workers goroutines to run for the
-// given handler's message pump.
+// workerCountForHandler returns the number of messages to handle concurrently
+// for the given handler.
 func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Integration:
