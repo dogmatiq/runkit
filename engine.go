@@ -40,6 +40,13 @@ import (
 )
 
 const (
+	// messageBackoffBase and messageBackoffCap bound message delivery retries.
+	messageBackoffBase = 10 * time.Millisecond
+	messageBackoffCap  = 5 * time.Minute
+
+	// messagePollInterval is the polling interval for command queues.
+	messagePollInterval = 25 * time.Millisecond
+
 	// applicationBindTimeout is the maximum time given to bind the database to
 	// the application when the engine starts.
 	applicationBindTimeout = 15 * time.Second
@@ -340,6 +347,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
+	e.runDeadlineScheduler(ctx)
+
 	if server == nil {
 		e.ready.Set()
 	} else {
@@ -444,12 +453,6 @@ func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Han
 
 // runHandler runs the components that manage the given handler.
 func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
-	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 5 * time.Minute
-		pollInterval = 25 * time.Millisecond
-	)
-
 	logger := e.newLoggerForHandler(handlerConfig)
 	workers := e.workerCountForHandler(handlerConfig)
 
@@ -466,9 +469,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			},
 			DB:           e.db,
 			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
+			PollInterval: messagePollInterval,
+			BackoffBase:  messageBackoffBase,
+			BackoffCap:   messageBackoffCap,
 			Logger:       logger.With(slog.String("component", "aggregate.command-pump")),
 		}
 
@@ -490,9 +493,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			},
 			DB:           e.db,
 			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
+			PollInterval: messagePollInterval,
+			BackoffBase:  messageBackoffBase,
+			BackoffCap:   messageBackoffCap,
 			Logger:       logger.With(slog.String("component", "integration.command-pump")),
 		}
 
@@ -519,30 +522,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			Logger: consumerLogger,
 		}
 
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "process.deadline-pump")),
-		}
-
 		e.group.Go(func() error {
 			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
 		})
 
 	case *config.Projection:
@@ -600,6 +581,45 @@ func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger 
 			slog.String("type", handlerConfig.HandlerType().String()),
 		),
 	)
+}
+
+// runDeadlineScheduler starts one scheduler for all enabled process handlers.
+func (e *Engine) runDeadlineScheduler(ctx context.Context) {
+	scheduler := &process.DeadlineScheduler{
+		Node:    e.node,
+		Signals: e.signals,
+		Logger:  e.logger.With(slog.String("component", "process.deadline-scheduler")),
+	}
+
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		processConfig, ok := handlerConfig.(*config.Process)
+		if !ok || processConfig.IsDisabled() {
+			continue
+		}
+		types := e.inboundMessageTypeIDsForHandler(processConfig, message.DeadlineKind)
+		if types.IsEmpty() {
+			continue
+		}
+		scheduler.Sinks = append(scheduler.Sinks, &process.DeadlineSink{
+			DB:                   e.db,
+			Handler:              processConfig.Interface(),
+			Identity:             processConfig.Identity(),
+			Packer:               e.packer,
+			DeadlineTypeIDs:      types,
+			OutboundMessageTypes: e.outboundMessageTypesForHandler(processConfig),
+			HandleTimeout:        e.handleTimeout,
+			Concurrency:          e.workerCountForHandler(processConfig),
+			BackoffBase:          messageBackoffBase,
+			BackoffCap:           messageBackoffCap,
+			Logger:               e.newLoggerForHandler(processConfig).With(slog.String("component", "process.deadline-sink")),
+		})
+	}
+
+	if len(scheduler.Sinks) != 0 {
+		e.group.Go(func() error {
+			return scheduler.Run(ctx)
+		})
+	}
 }
 
 // workerCountForHandler returns the number of workers goroutines to run for the
