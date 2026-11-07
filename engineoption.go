@@ -16,6 +16,14 @@ const (
 	// is given to compact its data in a single attempt.
 	DefaultProjectionCompactTimeout = 10 * time.Minute
 
+	// DefaultQueueLockTimeout is the maximum wait for a queued delivery's
+	// instance lock. It currently applies to process deadline delivery.
+	DefaultQueueLockTimeout = 200 * time.Millisecond
+
+	// DefaultQueueContentionDelay is the postponement after queue lock
+	// contention. It currently applies to process deadline delivery.
+	DefaultQueueContentionDelay = 200 * time.Millisecond
+
 	// DefaultHandleTimeout is the default maximum time an application message
 	// handler is given to handle a single message.
 	DefaultHandleTimeout = 1 * time.Minute
@@ -170,4 +178,27 @@ func WithRouteTimeout(timeout time.Duration) EngineOption {
 	return func(e *Engine) {
 		e.routeTimeout = timeout
 	}
+}
+
+// WithQueueLockTimeout sets how long queue delivery waits for the lock that
+// serializes access to its target. It currently applies to process deadlines.
+// A timed-out deadline is postponed without recording an application failure.
+// Positive values are rounded up to PostgreSQL's millisecond resolution.
+// It defaults to DefaultQueueLockTimeout and panics if timeout is not positive.
+func WithQueueLockTimeout(timeout time.Duration) EngineOption {
+	if timeout <= 0 {
+		panic("queue lock timeout must be positive")
+	}
+	return func(e *Engine) { e.queueLockTimeout = timeout }
+}
+
+// WithQueueContentionDelay sets how long a queued message is postponed after
+// lock contention. It currently applies to process deadlines, independently of
+// the lock wait and application failure backoff. It defaults to
+// DefaultQueueContentionDelay and panics if delay is not positive.
+func WithQueueContentionDelay(delay time.Duration) EngineOption {
+	if delay <= 0 {
+		panic("queue contention delay must be positive")
+	}
+	return func(e *Engine) { e.queueContentionDelay = delay }
 }

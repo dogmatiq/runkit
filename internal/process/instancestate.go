@@ -124,8 +124,9 @@ func saveInstance(
 	return nil
 }
 
-// endInstance marks the process instance as ended, clears its state and
-// deletes any pending deadlines.
+// endInstance marks the instance ended and deletes unlocked deadlines. A
+// delivery that already claimed another deadline observes ended under the
+// instance lock and consumes its message without invoking application code.
 func endInstance(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -148,9 +149,13 @@ func endInstance(
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`DELETE FROM process.deadlines
-		WHERE handler_key = $1
-			AND instance_id = $2`,
+		`WITH removable AS (
+			SELECT message_id FROM process.deadlines
+			WHERE handler_key = $1 AND instance_id = $2
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM process.deadlines AS d USING removable
+		WHERE d.message_id = removable.message_id`,
 		xsql.UUID(handlerKey),
 		instanceID,
 	); err != nil {

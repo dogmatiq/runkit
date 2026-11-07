@@ -99,6 +99,15 @@ type Engine struct {
 	// given to handle a single message.
 	handleTimeout time.Duration
 
+	// queueLockTimeout bounds the wait for the target of a queued delivery.
+	queueLockTimeout time.Duration
+
+	// queueContentionDelay postpones messages whose target remains busy.
+	queueContentionDelay time.Duration
+
+	// queueCapacity is shared by all deadline consumers on this node.
+	queueCapacity chan struct{}
+
 	// routeTimeout is the maximum time an application message handler is
 	// given to decide where a message is delivered, or where consumption of an
 	// event stream resumes.
@@ -179,14 +188,16 @@ func New(
 	}
 
 	e := &Engine{
-		app:             app,
-		db:              db,
-		nodeID:          uuidpb.Generate(),
-		compactInterval: DefaultProjectionCompactInterval,
-		compactTimeout:  DefaultProjectionCompactTimeout,
-		handleTimeout:   DefaultHandleTimeout,
-		routeTimeout:    DefaultRouteTimeout,
-		logger:          slog.Default(),
+		app:                  app,
+		db:                   db,
+		nodeID:               uuidpb.Generate(),
+		compactInterval:      DefaultProjectionCompactInterval,
+		compactTimeout:       DefaultProjectionCompactTimeout,
+		handleTimeout:        DefaultHandleTimeout,
+		queueLockTimeout:     DefaultQueueLockTimeout,
+		queueContentionDelay: DefaultQueueContentionDelay,
+		routeTimeout:         DefaultRouteTimeout,
+		logger:               slog.Default(),
 	}
 
 	for _, option := range options {
@@ -292,6 +303,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
+	e.queueCapacity = make(chan struct{}, 10*runtime.GOMAXPROCS(0))
 	e.group, ctx = errgroup.WithContext(ctx)
 
 	e.group.Go(func() error {
@@ -502,48 +514,32 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 
 	case *config.Process:
 		consumerLogger := logger.With(slog.String("component", "process.consumer"))
+		sink := &process.Sink{
+			DB:                   e.db,
+			Handler:              handlerConfig.Interface(),
+			Identity:             handlerConfig.Identity(),
+			Packer:               e.packer,
+			EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+			OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+			HandleTimeout:        e.handleTimeout,
+			RouteTimeout:         e.routeTimeout,
+			Logger:               consumerLogger,
+		}
 		consumer := &eventstream.Consumer{
-			Node:         e.node,
-			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				RouteTimeout:         e.routeTimeout,
-				Logger:               consumerLogger,
-			},
-			Logger: consumerLogger,
+			Node: e.node, EventStreams: e.eventStreams, Sink: sink, Logger: consumerLogger,
 		}
-
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "process.deadline-pump")),
+		e.group.Go(func() error { return consumer.Run(ctx) })
+		deadlineTypes := e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind)
+		if !deadlineTypes.IsEmpty() {
+			deadlines := &process.DeadlineConsumer{
+				Node: e.node, Signals: e.signals, Sink: sink, DeadlineTypeIDs: deadlineTypes,
+				Capacity: e.queueCapacity, LockTimeout: e.queueLockTimeout,
+				ContentionDelay: e.queueContentionDelay,
+				BackoffBase:     backoffBase, BackoffCap: backoffCap,
+				Logger: logger.With(slog.String("component", "process.deadline-consumer")),
+			}
+			e.group.Go(func() error { return deadlines.Run(ctx) })
 		}
-
-		e.group.Go(func() error {
-			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
-		})
 
 	case *config.Projection:
 		var handlerLock *semaphore.Weighted

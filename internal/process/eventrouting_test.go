@@ -3,7 +3,6 @@ package process_test
 import (
 	"context"
 	"database/sql"
-	"sync/atomic"
 	"testing"
 
 	"github.com/dogmatiq/cosyne"
@@ -577,7 +576,6 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 	)[0]
 
 	var historical, done cosyne.Latch
-	var historicalCount atomic.Int64
 
 	// Restart the engines with "version 2" of the handler, which has an
 	// additional TypeB route.
@@ -596,9 +594,12 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 			// added.
 			xtesting.WaitForLatches(t, &done)
 			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
-			if got := historicalCount.Load(); got != 1 {
-				t.Fatalf("unexpected number of historical events: got %d, want 1", got)
-			}
+			// Ownership changes may cancel an invocation before its transaction
+			// commits. Count committed process state, not those invocations, so
+			// a real replay from the tracked stream still produces a count of 2.
+			xtesting.ExpectQueryResult(t, "one committed historical event", "1", db,
+				`SELECT convert_from(state, 'UTF8')::jsonb ->> 'value'
+				FROM process.instances WHERE handler_key = $1 AND instance_id = '<instance>'`, handlerKey)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -626,7 +627,13 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 					case *stubs.EventStub[stubs.TypeB]:
 						switch m.Content {
 						case "B1":
-							historicalCount.Add(1)
+							s.Mutate(func(root *stubs.ProcessRootStub) {
+								if root.Value == nil {
+									root.Value = 1
+								} else {
+									root.Value = root.Value.(float64) + 1
+								}
+							})
 							historical.Set()
 						case "B2":
 							done.Set()
