@@ -3,6 +3,7 @@ package process_test
 import (
 	"context"
 	"database/sql"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dogmatiq/cosyne"
@@ -426,15 +427,16 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 	)
 }
 
-// TestEventRouting_newHandlersDoNotSeeHistoricalEvents verifies that a handler
-// deployed for the first time does not receive events that were recorded before
+// TestEventRouting_newHandlersSeeHistoricalEvents verifies that a handler
+// deployed for the first time receives events that were recorded before
 // it started.
-func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
+func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 	const handlerKey = "aab7927f-5d67-439c-8649-3b5bc4fdb57c"
 
 	var (
-		streamID *uuidpb.UUID
-		done     cosyne.Latch
+		streamID   *uuidpb.UUID
+		done       cosyne.Latch
+		historical cosyne.Latch
 	)
 
 	xtesting.SetupThenRunEngines(
@@ -451,8 +453,8 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 			)[0]
 		},
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			// Wait for the handler to finish discovering and checkpointing the
-			// historical stream, without delivering the events.
+			// Wait for historical events to commit before appending a live event.
+			xtesting.WaitForLatches(t, &historical)
 			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
 
 			// Append an additional event to the same stream after the handler has
@@ -484,7 +486,7 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 				) error {
 					switch m := m.(*stubs.EventStub[stubs.TypeA]); m.Content {
 					case "A1":
-						t.Errorf("historical event was delivered to new handler")
+						historical.Set()
 					case "A2":
 						done.Set()
 					}
@@ -496,19 +498,9 @@ func TestEventRouting_newHandlersDoNotSeeHistoricalEvents(t *testing.T) {
 	)
 }
 
-// TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents verifies that
-// adding a new event route to a handler does not cause the engine to deliver
-// historical events of that type.
-//
-// For streams that are already "tracked" by the handler because they contain
-// events of a type the handler is already configured to handle, this property
-// is maintained trivially by checkpoint offsets.
-//
-// The interesting case is a stream that was previously ignored by the handler
-// because it did not contain any relevant event types, that has become relevant
-// due to the addition of the new route. In this case, the handler must begin
-// consuming from the stream's current head, not from the beginning.
-func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T) {
+// TestEventRouting_newRoutesResumeFromExistingCheckpoints verifies that a new
+// route delivers history only from streams that have no existing checkpoint.
+func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 	t.Parallel()
 
 	const handlerKey = "4727c77a-8c9c-42bc-856e-2cf14a7df161"
@@ -524,7 +516,7 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			// Create one stream that contains an event that the handler is
 			// configured to handle, and an event that it is not.
-			xtesting.PopulateEventStreams(
+			tracked := xtesting.PopulateEventStreams(
 				t,
 				db,
 				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
@@ -537,18 +529,18 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 				2, // one stream with both a TypeA and TypeB event
 			)
 
-			// Create a second stream that contains only an event that the
-			// handler is not configured to handle at this stage.
-			streamID = xtesting.PopulateEventStreams(
+			xtesting.WaitForQueryResult(
 				t,
+				"tracked stream checkpoint",
+				uint64(2),
 				db,
-				func(streamID *uuidpb.UUID, _ uint64) dogma.Event {
-					return stubs.EventB1
-				},
-				1, // one stream with only a TypeB event
-			)[0]
-
-			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+				`SELECT checkpoint_offset
+				FROM eventstream.handler_checkpoints
+				WHERE handler_key = $1
+				AND stream_id = $2`,
+				handlerKey,
+				tracked[0].AsString(),
+			)
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -577,7 +569,15 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 		),
 	)
 
-	var done cosyne.Latch
+	// A stream discovered only after the first deployment has no checkpoint.
+	streamID = xtesting.PopulateEventStreams(
+		t, db,
+		func(*uuidpb.UUID, uint64) dogma.Event { return stubs.EventB1 },
+		1,
+	)[0]
+
+	var historical, done cosyne.Latch
+	var historicalCount atomic.Int64
 
 	// Restart the engines with "version 2" of the handler, which has an
 	// additional TypeB route.
@@ -585,14 +585,20 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 		t,
 		db,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			// Append an additional TypeB event to the same stream after the
-			// handler has checkpointed.
+			// Wait for history from the newly discovered stream before live events.
+			xtesting.WaitForLatches(t, &historical)
+
+			// Append an additional TypeB event to the same stream.
 			xtesting.AppendToEventStream(t, db, streamID, stubs.EventB2)
 
 			// Wait for the additional event to be delivered, confirming the
 			// handler is routed events that are appended after the route is
 			// added.
 			xtesting.WaitForLatches(t, &done)
+			xtesting.WaitForHandlerToConsumeAllEvents(t, db, handlerKey)
+			if got := historicalCount.Load(); got != 1 {
+				t.Fatalf("unexpected number of historical events: got %d, want 1", got)
+			}
 		},
 		dogma.ViaProcess(
 			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
@@ -620,7 +626,8 @@ func TestEventRouting_newRoutesDoNotCauseDeliveryOfHistoricalEvents(t *testing.T
 					case *stubs.EventStub[stubs.TypeB]:
 						switch m.Content {
 						case "B1":
-							t.Errorf("historical TypeB event was delivered after adding route")
+							historicalCount.Add(1)
+							historical.Set()
 						case "B2":
 							done.Set()
 						}

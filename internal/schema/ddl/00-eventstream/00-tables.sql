@@ -66,15 +66,35 @@ ON eventstream.events (
 -- The "handler_checkpoints" table tracks per-stream checkpoint progress for
 -- each process handler.
 --
--- A row is locked with SELECT FOR UPDATE SKIP LOCKED to serialize event
--- processing for a specific handler/stream pair.
+-- A checkpoint row is locked while applying event effects to serialize
+-- processing for a specific handler/stream pair. Stream IDs may refer to local
+-- or remote streams.
+--
+-- The failures and resume_at columns are retained for compatibility with the
+-- event pump used by older engines.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
     handler_key       uuid        NOT NULL,
-    stream_id         uuid        NOT NULL REFERENCES eventstream.streams(id),
+    stream_id         uuid        NOT NULL,
     checkpoint_offset bigint      NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
     failures          int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     resume_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     PRIMARY KEY (handler_key, stream_id)
 );
+
+-- Remove the local-stream constraint from databases created by older engines.
+-- Avoid taking an exclusive checkpoint-table lock once the upgrade is applied.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_constraint
+        WHERE conrelid = 'eventstream.handler_checkpoints'::regclass
+        AND conname = 'handler_checkpoints_stream_id_fkey'
+    ) THEN
+        ALTER TABLE eventstream.handler_checkpoints
+        DROP CONSTRAINT handler_checkpoints_stream_id_fkey;
+    END IF;
+END;
+$$;

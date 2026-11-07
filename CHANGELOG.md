@@ -15,8 +15,37 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+This release extends remote event consumption to process handlers.
+
+> [!WARNING]
+> Adding a new process handler to an application can now trigger commands and
+> deadlines from historical events. Adding a route to an existing handler does
+> not guarantee that historical events will be delivered or skipped. Make the
+> intended business behavior explicit in the application's routing and handling
+> logic.
+
+When a new process handler is added to an application, it now consumes events
+from the beginning of each stream, including events recorded before the handler
+was added. Previously, it started at the stream's current end. Process handlers
+in already-deployed applications resume from the checkpoints stored in their
+application's database; upgrading does not rewind those checkpoints.
+
+For an event route added to an existing handler, delivery depends on the
+checkpoint for the stream containing each event. Events before that checkpoint
+are skipped; events at or after it can be delivered. A stream without a
+checkpoint starts at the beginning. A new route may therefore receive some,
+all, or none of its historical events, depending on which streams contain them
+and how far the handler has progressed through each stream.
+
+Implement business requirements about acting on historical events explicitly,
+for example by using event data and process state to decide whether a command
+or deadline is still appropriate. Do not rely on checkpoint positions or route
+changes to establish a business cutoff or guarantee delivery of historical
+events.
+
 ### Added
 
+- Added support for process handlers consuming events from remote applications.
 - Added `WithHandleTimeout()`, `WithRouteTimeout()` and
   `WithProjectionCompactTimeout()`, which limit how long the engine waits for
   calls to application message handlers.
@@ -25,6 +54,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **[BC]** Process handlers added to an application now consume historical events.
+- The database schema has changed. Call `CreateSchema()` before running this
+  version. If the schema already exists, it applies the required modifications
+  while preserving existing data.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`
