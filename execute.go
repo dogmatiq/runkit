@@ -162,8 +162,8 @@ func (e *Engine) resolveExecuteCommandOptions(
 // waitForEvents waits for events that satisfy the given observers, or until the
 // context expires.
 //
-// This reference implementation does not attempt to detect when no further
-// events are possible; only the context deadline bounds the wait time.
+// The engine does not attempt to detect when no further events are possible;
+// only the context deadline bounds the wait time.
 func waitForEvents(
 	ctx context.Context,
 	q xsql.Querier,
