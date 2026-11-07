@@ -75,63 +75,59 @@ func (c *Compactor) run(ctx context.Context) error {
 }
 
 func (c *Compactor) tryCompact(ctx context.Context) error {
-	tx, err := c.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("unable to begin compaction transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	row := tx.QueryRowContext(
+	return xsql.Transact(
 		ctx,
-		`SELECT handler_key
-		FROM projection.handlers
-		WHERE handler_key = $1
-			AND clock_timestamp() - last_compacted_at >= $2
-		FOR UPDATE SKIP LOCKED`,
-		xsql.UUID(c.Identity.GetKey()),
-		c.Interval,
-	)
-
-	var handlerKey uuidpb.UUID
-	if err := row.Scan(xsql.UUID(&handlerKey)); err != nil {
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return fmt.Errorf("unable to acquire compaction lock: %w", err)
-	}
-
-	compactCtx, cancel := context.WithTimeout(ctx, c.Timeout)
-	defer cancel()
-
-	if err := xerrors.Recover(
-		func() error {
-			return c.Handler.Compact(
-				compactCtx,
-				&compactScope{c.Logger},
+		c.DB,
+		func(ctx context.Context, tx *sql.Tx) error {
+			row := tx.QueryRowContext(
+				ctx,
+				`SELECT handler_key
+				FROM projection.handlers
+				WHERE handler_key = $1
+				AND clock_timestamp() - last_compacted_at >= $2
+				FOR UPDATE SKIP LOCKED`,
+				xsql.UUID(c.Identity.GetKey()),
+				c.Interval,
 			)
+
+			var handlerKey uuidpb.UUID
+			if err := row.Scan(xsql.UUID(&handlerKey)); err != nil {
+				if err == sql.ErrNoRows {
+					return nil
+				}
+				return fmt.Errorf("unable to acquire compaction lock: %w", err)
+			}
+
+			compactCtx, cancel := context.WithTimeout(ctx, c.Timeout)
+			defer cancel()
+
+			if err := xerrors.Recover(
+				func() error {
+					return c.Handler.Compact(
+						compactCtx,
+						&compactScope{c.Logger},
+					)
+				},
+			); err != nil {
+				return supervisor.Persistentf(
+					"unable to compact projection: %w",
+					err,
+				)
+			}
+
+			if _, err := tx.ExecContext(
+				ctx,
+				`UPDATE projection.handlers
+				SET last_compacted_at = clock_timestamp()
+				WHERE handler_key = $1`,
+				xsql.UUID(c.Identity.GetKey()),
+			); err != nil {
+				return fmt.Errorf("unable to update compaction timestamp: %w", err)
+			}
+
+			return nil
 		},
-	); err != nil {
-		return supervisor.Persistentf(
-			"unable to compact projection: %w",
-			err,
-		)
-	}
-
-	if _, err := tx.ExecContext(
-		ctx,
-		`UPDATE projection.handlers
-		SET last_compacted_at = clock_timestamp()
-		WHERE handler_key = $1`,
-		xsql.UUID(c.Identity.GetKey()),
-	); err != nil {
-		return fmt.Errorf("unable to update compaction timestamp: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("unable to commit transaction: %w", err)
-	}
-
-	return nil
+	)
 }
 
 // compactScope implements [dogma.ProjectionCompactScope].
