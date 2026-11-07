@@ -616,18 +616,12 @@ func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
 }
 
 // consumedEventTypeIDs returns the message type IDs of every event type that
-// is routed to a non-disabled projection or process within the application.
+// is routed to a non-disabled handler within the application.
 func (e *Engine) consumedEventTypeIDs() *uuidcollection.Set {
 	messageTypeIDs := uuidcollection.NewSet()
 
 	for _, handlerConfig := range e.appConfig.Handlers() {
 		if handlerConfig.IsDisabled() {
-			continue
-		}
-
-		switch handlerConfig.(type) {
-		case *config.Projection, *config.Process:
-		default:
 			continue
 		}
 
