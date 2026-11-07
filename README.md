@@ -2,7 +2,7 @@
 
 # Dogma Engine
 
-Run message-driven, event-sourced [Dogma] applications with PostgreSQL.
+Run message-driven, event-sourced [Dogma] applications.
 
 [![Documentation](https://img.shields.io/badge/go.dev-documentation-007d9c?&style=for-the-badge)](https://pkg.go.dev/github.com/dogmatiq/runkit)
 [![Latest Version](https://img.shields.io/github/tag/dogmatiq/runkit.svg?&style=for-the-badge&label=semver)](https://github.com/dogmatiq/runkit/releases)
@@ -11,7 +11,7 @@ Run message-driven, event-sourced [Dogma] applications with PostgreSQL.
 
 </div>
 
-The engine is embedded in your application's Go binary and orchestrates message
+The [engine] is embedded in your application's Go binary and orchestrates message
 delivery, state persistence, and the execution of application logic. PostgreSQL
 provides persistence and coordination between nodes running the same application.
 
@@ -34,6 +34,10 @@ provides persistence and coordination between nodes running the same application
 The engine stores its state in [PostgreSQL]. The minimum supported version is
 PostgreSQL 18.
 
+Applications choose their own projection storage; the engine's PostgreSQL
+requirement does not constrain it. [ProjectionKit] provides adapters for building
+projections with several database systems.
+
 ## Documentation
 
 For engine configuration and use, see the [API documentation]. Release-specific
@@ -48,5 +52,7 @@ For Dogma's application model and terminology, see its [concepts] document and
 [changelog]: CHANGELOG.md
 [concepts]: https://github.com/dogmatiq/dogma/blob/main/docs/concepts.md
 [dogma]: https://github.com/dogmatiq/dogma
+[engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
 [example application]: https://github.com/dogmatiq/example
 [PostgreSQL]: https://www.postgresql.org/
+[projectionkit]: https://github.com/dogmatiq/projectionkit

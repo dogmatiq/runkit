@@ -1,2 +1,2 @@
-// Package runkit provides a PostgreSQL-backed Dogma engine.
+// Package runkit provides an engine for Dogma applications.
 package runkit
