@@ -15,17 +15,19 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
-This release extends remote event consumption to process handlers. It also
-changes where process handlers begin consuming a stream when no checkpoint
-exists: at the beginning, including historical events, rather than at the
-stream's current end. Existing checkpoint offsets are preserved.
+This release extends remote event consumption to process handlers.
 
 > [!WARNING]
-> Newly deployed process handlers can now execute commands and schedule
-> deadlines in response to events recorded before deployment. Review their
-> routing and handling logic for historical events before deploying them.
-> Adding a route to an existing handler can also expose historical events from
-> streams without a stored checkpoint; it does not rewind existing checkpoints.
+> When a new process handler is added to an application, it now consumes events
+> from the beginning of each stream, including events recorded before the
+> handler was added. Previously, it started at the stream's current end. These
+> historical events can cause the handler to execute commands and schedule
+> deadlines, so review its routing and handling logic before deploying it.
+>
+> Process handlers in already-deployed applications resume from the checkpoints
+> stored in their application's database. Upgrading does not rewind those
+> checkpoints. Adding a route can expose historical events from streams without
+> a stored checkpoint.
 
 ### Added
 
@@ -38,8 +40,8 @@ stream's current end. Existing checkpoint offsets are preserved.
 
 ### Changed
 
-- **[BC]** New process handlers now consume historical events. Existing checkpoint
-  offsets are preserved; streams without a checkpoint start at the beginning.
+- **[BC]** Process handlers added to an application now consume historical events.
+  See the warning above.
 - The checkpoint table now accepts remote stream IDs. Call `CreateSchema()`
   before running this version to remove its foreign key to local streams.
   Existing checkpoint rows and legacy columns are retained.
