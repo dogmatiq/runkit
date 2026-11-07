@@ -67,6 +67,12 @@ events.
   - `ProjectionMessageHandler.HandleEvent()`
   - `ProjectionMessageHandler.CheckpointOffset()`
 
+### Fixed
+
+- Failed process deadline preparation no longer commits commands or successor
+  deadlines when state serialization fails. All results are prepared before
+  writing them, and the original deadline remains pending for retry.
+
 ## [0.2.0] - 2026-11-06
 
 This release introduces clustering. Several engines could already run against

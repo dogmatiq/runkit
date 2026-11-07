@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/envelope"
 
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
@@ -106,24 +105,8 @@ func saveInstance(
 	tx *sql.Tx,
 	handlerKey *uuidpb.UUID,
 	instanceID string,
-	root dogma.ProcessRoot,
-	logger *slog.Logger,
+	data []byte,
 ) error {
-	data, err := xerrors.RecoverT(
-		func() ([]byte, error) {
-			return root.MarshalBinary()
-		},
-	)
-	if err != nil {
-		logger.ErrorContext(
-			ctx,
-			"unable to marshal process instance state",
-			xslog.Error(err),
-		)
-
-		return messagepump.ErrFailed
-	}
-
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
@@ -182,19 +165,10 @@ func endInstance(
 func persistDeadlines(
 	ctx context.Context,
 	tx *sql.Tx,
-	packer *envelope.EffectPacker,
+	envelopes []preparedEnvelope,
 ) error {
-	deadlineEnvelopes, ok := packer.Seal()
-	if !ok {
-		return nil
-	}
-
-	for deadlineEnvelope := range deadlineEnvelopes.All() {
-		data, err := deadlineEnvelope.MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("unable to marshal deadline envelope: %w", err)
-		}
-
+	for _, prepared := range envelopes {
+		deadlineEnvelope := prepared.envelope
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO process.deadlines (
@@ -209,7 +183,7 @@ func persistDeadlines(
 			xsql.UUID(deadlineEnvelope.GetBody().GetMessage().GetTypeId()),
 			xsql.UUID(deadlineEnvelope.GetHeader().GetSource().GetHandler().GetKey()),
 			deadlineEnvelope.GetHeader().GetSource().GetInstanceId(),
-			data,
+			prepared.data,
 			deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
 		); err != nil {
 			return fmt.Errorf("unable to persist deadline: %w", err)
