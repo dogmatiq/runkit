@@ -42,12 +42,11 @@ if err := runkit.CreateSchema(ctx, db); err != nil {
 	return err
 }
 
-engine := runkit.New(app, db)
+engine := runkit.New(myDogmaApp, db)
 return engine.Run(ctx)
 ```
 
-Here, `app` is your `dogma.Application`. `Run()` blocks until the context is
-canceled or the engine cannot continue.
+`Run()` blocks until the context is canceled or the engine cannot continue.
 
 <!-- references -->
 
