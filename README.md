@@ -11,9 +11,10 @@ Run message-driven, event-sourced [Dogma] applications in production.
 
 </div>
 
-The [engine] is embedded in your application's Go binary and orchestrates message
-delivery, state persistence, and the execution of application logic. PostgreSQL
-provides persistence and coordination between nodes running the same application.
+This repository provides a [Dogma engine]. It is embedded in your application's
+Go binary and orchestrates message delivery, state persistence, and the execution
+of application logic. PostgreSQL provides persistence and coordination between
+nodes running the same application.
 
 Run multiple engine instances for the same application against a shared database
 to form a cluster. Work is distributed across nodes and reassigned as nodes join
@@ -54,7 +55,7 @@ return engine.Run(ctx)
 <!-- references -->
 
 [dogma]: https://github.com/dogmatiq/dogma
-[engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
+[dogma engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
 [PostgreSQL]: https://www.postgresql.org/
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [projectionkit]: https://github.com/dogmatiq/projectionkit
