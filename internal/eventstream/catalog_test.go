@@ -356,7 +356,7 @@ func TestCatalog(t *testing.T) {
 						Source: src,
 						WatchFunc: func(ctx context.Context, fn func(Segment) error) error {
 							if calls.Add(1) == 1 {
-								return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
+								return fmt.Errorf("<too slow>: %w", source.ErrNotContiguous)
 							}
 
 							delay <- time.Since(began)
@@ -840,7 +840,7 @@ func TestCatalog(t *testing.T) {
 							case <-ctx.Done():
 								return ctx.Err()
 							case <-restart:
-								return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
+								return fmt.Errorf("<too slow>: %w", source.ErrNotContiguous)
 							}
 						}
 
@@ -900,7 +900,7 @@ func TestCatalog(t *testing.T) {
 						case <-ctx.Done():
 							return ctx.Err()
 						case first = <-restart:
-							return fmt.Errorf("<too slow>: %w", source.ErrConsumerTooSlow)
+							return fmt.Errorf("<too slow>: %w", source.ErrNotContiguous)
 						}
 					}
 

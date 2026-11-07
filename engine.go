@@ -62,7 +62,7 @@ const (
 
 	// eventStreamBufferSize is the number of segments that [source.Local]
 	// buffers for each call to [source.Local.Watch]. A call that falls further
-	// behind ends with [source.ErrConsumerTooSlow].
+	// behind ends with [source.ErrNotContiguous].
 	eventStreamBufferSize = 100
 
 	// eventStreamMaxSegmentBytes is the maximum combined size, in bytes, of the

@@ -28,8 +28,8 @@ type Source interface {
 	//
 	// It blocks until ctx is canceled or it is unable to continue, and may be
 	// called again once it returns. It returns fn's error, unchanged, if fn
-	// returns one, and an error that wraps [ErrConsumerTooSlow] if the caller
-	// can not keep up.
+	// returns one, and an error that wraps [ErrNotContiguous] if it can no
+	// longer deliver a stream contiguously.
 	Watch(
 		ctx context.Context,
 		types *uuidcollection.Set,

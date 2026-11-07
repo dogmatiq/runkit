@@ -171,7 +171,7 @@ func watchError(ctx context.Context, err error) error {
 
 	switch status.Code(err) {
 	case codes.Aborted:
-		return fmt.Errorf("unable to watch events: %w (%w)", err, ErrConsumerTooSlow)
+		return fmt.Errorf("unable to watch events: %w (%w)", err, ErrNotContiguous)
 	case codes.Unimplemented:
 		return fmt.Errorf("unable to watch events: %w (%w)", err, errors.ErrUnsupported)
 	}

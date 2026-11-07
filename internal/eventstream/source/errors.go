@@ -3,10 +3,10 @@ package source
 import "errors"
 
 var (
-	// ErrConsumerTooSlow is the error that [Source.Watch] returns when its
-	// caller can not keep up, so that a stream can no longer be delivered
-	// contiguously.
-	ErrConsumerTooSlow = errors.New("consumer is too slow")
+	// ErrNotContiguous is the error that [Source.Watch] returns when it can no
+	// longer deliver a stream contiguously, such as when its caller can not
+	// keep up. The caller should watch again, and read any events it missed.
+	ErrNotContiguous = errors.New("event stream can not be delivered contiguously")
 
 	// ErrUnrecognizedStream is the error that [Source.Read] returns for a
 	// stream that the source does not have.

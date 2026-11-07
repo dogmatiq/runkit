@@ -126,9 +126,9 @@ func (c *Catalog) Consume(
 
 // Watch watches a source until ctx is canceled.
 //
-// If the source reports that the catalog can not keep up with it, by returning
-// an error that wraps [source.ErrConsumerTooSlow], it watches the source again
-// at once.
+// If the source can no longer deliver a stream contiguously, and returns an
+// error that wraps [source.ErrNotContiguous], it watches the source again at
+// once.
 //
 // It adds the streams that the source delivers to the catalog, and removes
 // them again before returning. Once it returns, no call to the source that the
@@ -191,10 +191,12 @@ func (c *Catalog) Watch(
 					},
 				)
 
-				// Falling behind is expected under load, and a new watch begins
-				// each stream where it stands, so the source is watched again
-				// at once rather than as though it had failed.
-				if errors.Is(err, source.ErrConsumerTooSlow) {
+				// A source that can no longer deliver a stream contiguously,
+				// such as when the catalog falls behind under load, is
+				// expected. A new watch begins each stream where it stands, so
+				// the source is watched again at once rather than as though it
+				// had failed.
+				if errors.Is(err, source.ErrNotContiguous) {
 					c.Logger.InfoContext(
 						ctx,
 						"unable to keep up with the source, watching it again",

@@ -58,7 +58,7 @@ func (s *Server) WatchEvents(
 		},
 	)
 
-	if errors.Is(err, ErrConsumerTooSlow) {
+	if errors.Is(err, ErrNotContiguous) {
 		return status.Error(codes.Aborted, err.Error())
 	}
 

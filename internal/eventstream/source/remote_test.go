@@ -456,7 +456,7 @@ func TestRemote(t *testing.T) {
 			expectError(t, err, "unable to watch events: rpc error: code = Unavailable desc = <unavailable>")
 		})
 
-		t.Run("it returns ErrConsumerTooSlow when the remote engine aborts the call", func(t *testing.T) {
+		t.Run("it returns ErrNotContiguous when the remote engine aborts the call", func(t *testing.T) {
 			src := &Remote{
 				Client: &messaginggrpc.EventStreamConsumerAPIClientStub{
 					WatchEventsFunc: func(
@@ -471,8 +471,8 @@ func TestRemote(t *testing.T) {
 
 			_, err := watchUntilError(t, src, nil)
 
-			if !errors.Is(err, ErrConsumerTooSlow) {
-				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			if !errors.Is(err, ErrNotContiguous) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrNotContiguous)
 			}
 		})
 
@@ -491,8 +491,8 @@ func TestRemote(t *testing.T) {
 
 			_, err := watchUntilError(t, src, nil)
 
-			if err == nil || errors.Is(err, ErrConsumerTooSlow) {
-				t.Fatalf("unexpected error: got %v, want an error other than %v", err, ErrConsumerTooSlow)
+			if err == nil || errors.Is(err, ErrNotContiguous) {
+				t.Fatalf("unexpected error: got %v, want an error other than %v", err, ErrNotContiguous)
 			}
 		})
 

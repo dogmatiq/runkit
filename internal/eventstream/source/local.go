@@ -42,7 +42,7 @@ type Local struct {
 
 	// BufferSize is the number of segments buffered for each call to
 	// [Local.Watch]. A call that falls further behind than this ends with an
-	// error that wraps [ErrConsumerTooSlow]. It must be positive.
+	// error that wraps [ErrNotContiguous]. It must be positive.
 	BufferSize int
 
 	// m guards offsets and watchers.
@@ -117,7 +117,7 @@ func (s *Local) Run(ctx context.Context) error {
 //
 // Each stream is delivered from its end, as it stands when the call begins or
 // when the stream is discovered. It returns an error that wraps
-// [ErrConsumerTooSlow] if fn falls more than [Local.BufferSize] segments
+// [ErrNotContiguous] if fn falls more than [Local.BufferSize] segments
 // behind, and another error if any stream can not be delivered any further.
 // The call is served by [Local.Run].
 func (s *Local) Watch(
@@ -320,7 +320,7 @@ func (s *Local) deliver(seg Segment) {
 		default:
 			s.remove(
 				w,
-				fmt.Errorf("unable to deliver event stream %s: %w", seg.StreamID, ErrConsumerTooSlow),
+				fmt.Errorf("unable to deliver event stream %s: %w", seg.StreamID, ErrNotContiguous),
 			)
 		}
 	}

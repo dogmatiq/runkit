@@ -480,8 +480,8 @@ func TestLocal(t *testing.T) {
 
 			expectSegment(t, slow, streamID, 0, 1)
 
-			if err := expectError(t, result); !errors.Is(err, ErrConsumerTooSlow) {
-				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			if err := expectError(t, result); !errors.Is(err, ErrNotContiguous) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrNotContiguous)
 			}
 		})
 
@@ -508,8 +508,8 @@ func TestLocal(t *testing.T) {
 
 			expectSegment(t, slow, first, 0, 0)
 
-			if err := expectError(t, result); !errors.Is(err, ErrConsumerTooSlow) {
-				t.Fatalf("unexpected error: got %v, want %v", err, ErrConsumerTooSlow)
+			if err := expectError(t, result); !errors.Is(err, ErrNotContiguous) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrNotContiguous)
 			}
 
 			// The next call begins with every stream, including the one that
