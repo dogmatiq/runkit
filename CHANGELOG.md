@@ -15,6 +15,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+This release extends remote event consumption to process handlers. It also
+changes where process handlers begin consuming a stream when no checkpoint
+exists: at the beginning, including historical events, rather than at the
+stream's current end. Existing checkpoint offsets are preserved.
+
+> [!WARNING]
+> Newly deployed process handlers can now execute commands and schedule
+> deadlines in response to events recorded before deployment. Review their
+> routing and handling logic for historical events before deploying them.
+> Adding a route to an existing handler can also expose historical events from
+> streams without a stored checkpoint; it does not rewind existing checkpoints.
+
 ### Added
 
 - Added support for process handlers consuming events from remote applications.
@@ -26,7 +38,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
-- New process handlers now consume historical events. Existing checkpoint
+- **[BC]** New process handlers now consume historical events. Existing checkpoint
   offsets are preserved; streams without a checkpoint start at the beginning.
   Stop all engine nodes before applying this schema upgrade with
   `CreateSchema()`, then restart them.
