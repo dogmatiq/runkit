@@ -130,33 +130,26 @@ func (c *Consumer) startStreamConsumer(
 			ctx,
 			logger,
 			func(ctx context.Context) error {
-				cp, err := c.Sink.CheckpointOffset(ctx, streamID)
-				if err != nil {
-					return supervisor.Persistent(err)
+				for {
+					err := c.consume(ctx, streamID)
+
+					// A stream that leaves the catalog, such as when the
+					// remote engine it comes from is removed, is expected. Run
+					// usually stops this stream consumer soon after, but the
+					// stream may return first.
+					if !errors.Is(err, ErrStreamNotFound) || ctx.Err() != nil {
+						return err
+					}
+
+					logger.DebugContext(
+						ctx,
+						"event stream left the catalog, waiting for it to return",
+					)
+
+					if err := c.awaitStream(ctx, streamID); err != nil {
+						return err
+					}
 				}
-
-				return c.EventStreams.Consume(
-					ctx,
-					streamID,
-					c.Sink.EventTypeIDs(),
-					cp,
-					func(seg Segment) error {
-						var ok bool
-						cp, ok, err = c.Sink.ConsumeSegment(ctx, cp, seg)
-						if err != nil {
-							return supervisor.Persistent(err)
-						}
-
-						if !ok {
-							return fmt.Errorf(
-								"checkpoint conflict on event stream %s",
-								streamID,
-							)
-						}
-
-						return nil
-					},
-				)
 			},
 		)
 
@@ -173,4 +166,54 @@ func (c *Consumer) startStreamConsumer(
 		cancel()
 		stopped.Wait()
 	})
+}
+
+// consume dispatches the events of the stream with the given ID to the sink,
+// beginning at the sink's checkpoint offset, until ctx is canceled or it is
+// unable to continue.
+func (c *Consumer) consume(ctx context.Context, streamID *uuidpb.UUID) error {
+	cp, err := c.Sink.CheckpointOffset(ctx, streamID)
+	if err != nil {
+		return supervisor.Persistent(err)
+	}
+
+	return c.EventStreams.Consume(
+		ctx,
+		streamID,
+		c.Sink.EventTypeIDs(),
+		cp,
+		func(seg Segment) error {
+			var ok bool
+			cp, ok, err = c.Sink.ConsumeSegment(ctx, cp, seg)
+			if err != nil {
+				return supervisor.Persistent(err)
+			}
+
+			if !ok {
+				return fmt.Errorf(
+					"checkpoint conflict on event stream %s",
+					streamID,
+				)
+			}
+
+			return nil
+		},
+	)
+}
+
+// awaitStream blocks until the catalog has the stream with the given ID, or
+// ctx is canceled.
+func (c *Consumer) awaitStream(ctx context.Context, streamID *uuidpb.UUID) error {
+	for {
+		streamIDs, changed := c.EventStreams.StreamIDs().Load()
+		if streamIDs.Has(streamID) {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+	}
 }

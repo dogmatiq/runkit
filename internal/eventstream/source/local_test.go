@@ -230,6 +230,11 @@ func TestLocal(t *testing.T) {
 		}
 	}
 
+	// failedAttempts is the number of consecutive attempts to run a query that
+	// a test fails so that the query fails once. database/sql retries a query
+	// that fails before it is sent, up to two more times.
+	const failedAttempts = 3
+
 	// isSegmentQuery returns true if the given SQL loads a segment of a stream.
 	isSegmentQuery := func(query string) bool {
 		return strings.HasPrefix(
@@ -425,20 +430,12 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it resumes a stream from where delivery stopped after a failure", func(t *testing.T) {
-			var (
-				failing  atomic.Bool
-				failures atomic.Int32
-			)
+			var remaining atomic.Int32
 
 			db := xtesting.NewDatabaseWithFailingQueries(
 				t,
 				func(query string, _ []any) bool {
-					if !failing.Load() || !isSegmentQuery(query) {
-						return false
-					}
-
-					failures.Add(1)
-					return true
+					return isSegmentQuery(query) && remaining.Add(-1) >= 0
 				},
 			)
 
@@ -450,38 +447,29 @@ func TestLocal(t *testing.T) {
 			segments, _ := watch(t, src, nil)
 			expectEnvelopes(t, segments, streamID, 0, 0)
 
-			failing.Store(true)
+			remaining.Store(failedAttempts)
 			events := xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3)
 
 			xtesting.WaitFor(
 				t,
 				"delivery to fail",
 				func() bool {
-					return failures.Load() > 0
+					return remaining.Load() <= 0
 				},
 			)
 
-			failing.Store(false)
 			events = append(events, xtesting.AppendToEventStream(t, db, streamID, EventE1)...)
 
 			expectEnvelopes(t, segments, streamID, 0, 4, events...)
 		})
 
 		t.Run("it ends watch calls when the gap after a failure exceeds the buffer", func(t *testing.T) {
-			var (
-				failing  atomic.Bool
-				failures atomic.Int32
-			)
+			var remaining atomic.Int32
 
 			db := xtesting.NewDatabaseWithFailingQueries(
 				t,
 				func(query string, _ []any) bool {
-					if !failing.Load() || !isSegmentQuery(query) {
-						return false
-					}
-
-					failures.Add(1)
-					return true
+					return isSegmentQuery(query) && remaining.Add(-1) >= 0
 				},
 			)
 
@@ -512,18 +500,8 @@ func TestLocal(t *testing.T) {
 			case <-began:
 			}
 
-			failing.Store(true)
+			remaining.Store(failedAttempts)
 			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3, EventE1, EventE2)
-
-			xtesting.WaitFor(
-				t,
-				"delivery to fail",
-				func() bool {
-					return failures.Load() > 0
-				},
-			)
-
-			failing.Store(false)
 
 			if err := expectError(t, result); !errors.Is(err, ErrNotContiguous) {
 				t.Fatalf("unexpected error: got %v, want %v", err, ErrNotContiguous)
@@ -531,28 +509,16 @@ func TestLocal(t *testing.T) {
 		})
 
 		t.Run("it opens a stream that failed before its first delivery as a new stream", func(t *testing.T) {
-			var (
-				failing  atomic.Bool
-				failures atomic.Int32
-			)
-
-			failing.Store(true)
+			var remaining atomic.Int32
+			remaining.Store(failedAttempts)
 
 			// Opening a stream is the only query that reads one stream's next
 			// offset on its own.
 			db := xtesting.NewDatabaseWithFailingQueries(
 				t,
 				func(query string, _ []any) bool {
-					if !failing.Load() {
-						return false
-					}
-
-					if strings.Join(strings.Fields(query), " ") != "SELECT next_offset FROM eventstream.streams WHERE id = $1" {
-						return false
-					}
-
-					failures.Add(1)
-					return true
+					return strings.Join(strings.Fields(query), " ") == "SELECT next_offset FROM eventstream.streams WHERE id = $1" &&
+						remaining.Add(-1) >= 0
 				},
 			)
 
@@ -564,16 +530,6 @@ func TestLocal(t *testing.T) {
 
 			streamID := xtesting.CreateEventStream(t, db)
 			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2)
-
-			xtesting.WaitFor(
-				t,
-				"opening the stream to fail",
-				func() bool {
-					return failures.Load() > 0
-				},
-			)
-
-			failing.Store(false)
 
 			expectSegment(t, segments, streamID, 2, 2)
 		})
