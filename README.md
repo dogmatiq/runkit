@@ -34,8 +34,8 @@ projections with several database systems.
 
 ## Running an application
 
-To run an application you've already built and tested with [testkit], pass it
-and a database connection opened with the [pgx] driver to `runkit.New()`:
+Pass your application and a database connection opened with the [pgx] driver to
+`runkit.New()`:
 
 ```go
 if err := runkit.CreateSchema(ctx, db); err != nil {
@@ -56,4 +56,3 @@ canceled or the engine cannot continue.
 [PostgreSQL]: https://www.postgresql.org/
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [projectionkit]: https://github.com/dogmatiq/projectionkit
-[testkit]: https://github.com/dogmatiq/testkit
