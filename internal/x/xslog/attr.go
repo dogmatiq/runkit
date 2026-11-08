@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -59,6 +60,7 @@ func messageType(v *uuidpb.UUID) slog.Attr {
 		attrs = append(
 			attrs,
 			slog.String("name", t.GoType().Elem().Name()),
+			slog.String("kind", message.TypeFromReflect(t.GoType()).Kind().String()),
 		)
 	}
 

@@ -15,7 +15,7 @@ import (
 // commandScope implements [dogma.IntegrationCommandScope].
 type commandScope struct {
 	packer               *envelope.EffectPacker
-	engineLogger         *slog.Logger
+	appLogger            *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -24,7 +24,7 @@ func (s *commandScope) Now() time.Time {
 }
 
 func (s *commandScope) Log(format string, args ...any) {
-	s.engineLogger.Info(fmt.Sprintf(format, args...))
+	s.appLogger.Info(fmt.Sprintf(format, args...))
 }
 
 func (s *commandScope) RecordEvent(event dogma.Event) {
@@ -43,8 +43,8 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 		panic(fmt.Sprintf("event of type %T is invalid: %s", event, err))
 	}
 
-	s.engineLogger.Info(
+	s.appLogger.Info(
 		event.MessageDescription(),
-		xslog.Envelope("event", eventEnvelope),
+		xslog.Envelope("produced_message", eventEnvelope),
 	)
 }

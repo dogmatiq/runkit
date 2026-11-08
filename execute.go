@@ -65,7 +65,10 @@ func (e *Engine) ExecuteCommand(
 		return fmt.Errorf("no route found for command type: %T", command)
 	}
 
-	var messageID *uuidpb.UUID
+	var (
+		messageID *uuidpb.UUID
+		enqueued  bool
+	)
 
 	if err := xsql.Transact(
 		ctx,
@@ -84,30 +87,29 @@ func (e *Engine) ExecuteCommand(
 			)
 
 			messageID = &uuidpb.UUID{}
-			var ok bool
-			if err := row.Scan(xsql.UUID(messageID), &ok); err != nil {
+			if err := row.Scan(xsql.UUID(messageID), &enqueued); err != nil {
 				return fmt.Errorf("unable to add command to queue: %w", err)
-			}
-
-			if ok {
-				e.appLogger.InfoContext(
-					ctx,
-					command.MessageDescription(),
-					xslog.Envelope("command", commandEnvelope),
-				)
-			} else {
-				e.engineLogger.DebugContext(
-					ctx,
-					"command deduplicated",
-					xslog.Envelope("command", commandEnvelope),
-					xslog.UUID("duplicate_message_id", messageID),
-				)
 			}
 
 			return nil
 		},
 	); err != nil {
 		return err
+	}
+
+	if enqueued {
+		e.appLogger.InfoContext(
+			ctx,
+			command.MessageDescription(),
+			xslog.Envelope("produced_message", commandEnvelope),
+		)
+	} else {
+		e.engineLogger.DebugContext(
+			ctx,
+			"command deduplicated",
+			xslog.Envelope("produced_message", commandEnvelope),
+			xslog.UUID("duplicate_message_id", messageID),
+		)
 	}
 
 	if len(eventObservers) == 0 {

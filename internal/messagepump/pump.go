@@ -185,7 +185,7 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 			del,
 			env,
 			logger.With(
-				xslog.Envelope("message", env),
+				xslog.Envelope("handled_message", env),
 			),
 		}, true, nil
 	}

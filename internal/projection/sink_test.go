@@ -56,6 +56,7 @@ func TestSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 		Handler:      handler,
 		RouteTimeout: time.Minute,
 		EngineLogger: spruce.NewTestLogger(t),
+		AppLogger:    spruce.NewTestLogger(t),
 	}
 	streamID := uuidpb.Generate()
 	cp, err := sink.CheckpointOffset(t.Context(), streamID)

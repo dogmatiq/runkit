@@ -22,6 +22,7 @@ type messageScope struct {
 	commandPacker        *envelope.EffectPacker
 	deadlinePacker       *envelope.EffectPacker
 	engineLogger         *slog.Logger
+	appLogger            *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -30,7 +31,14 @@ func (s *messageScope) Now() time.Time {
 }
 
 func (s *messageScope) Log(format string, args ...any) {
-	s.engineLogger.Info(fmt.Sprintf(format, args...))
+	text := fmt.Sprintf(format, args...)
+
+	s.engineLogger.Debug(
+		"handler logged a message",
+		slog.String("text", text),
+	)
+
+	s.appLogger.Info(text)
 }
 
 func (s *messageScope) InstanceID() string {
@@ -44,10 +52,16 @@ func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
 
 	fn(s.root)
 	s.mutated = true
+
+	s.engineLogger.Debug("handler mutated the process instance")
+	s.appLogger.Info("process instance mutated")
 }
 
 func (s *messageScope) End() {
 	s.ended = true
+
+	s.engineLogger.Debug("handler ended the process instance")
+	s.appLogger.Info("process instance ended")
 }
 
 func (s *messageScope) ExecuteCommand(c dogma.Command) {
@@ -70,9 +84,14 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 		panic(fmt.Sprintf("command of type %T is invalid: %s", c, err))
 	}
 
-	s.engineLogger.Info(
+	s.engineLogger.Debug(
+		"handler executed a command",
+		xslog.Envelope("produced_message", commandEnvelope),
+	)
+
+	s.appLogger.Info(
 		c.MessageDescription(),
-		xslog.Envelope("command", commandEnvelope),
+		xslog.Envelope("produced_message", commandEnvelope),
 	)
 }
 
@@ -96,8 +115,13 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic(fmt.Sprintf("deadline of type %T is invalid: %s", d, err))
 	}
 
-	s.engineLogger.Info(
+	s.engineLogger.Debug(
+		"handler scheduled a deadline",
+		xslog.Envelope("produced_message", deadlineEnvelope),
+	)
+
+	s.appLogger.Info(
 		d.MessageDescription(),
-		xslog.Envelope("deadline", deadlineEnvelope),
+		xslog.Envelope("produced_message", deadlineEnvelope),
 	)
 }

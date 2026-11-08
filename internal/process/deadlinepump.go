@@ -32,6 +32,7 @@ type DeadlinePump struct {
 	DeadlineTypeIDs      *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	HandleTimeout        time.Duration
+	AppLogger            *slog.Logger
 }
 
 // AcquireDelivery attempts to acquire the next pending deadline for the
@@ -196,7 +197,15 @@ func (p *DeadlinePump) HandleDelivery(
 				p.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			engineLogger:         instanceLogger,
+			engineLogger: instanceLogger,
+			appLogger: p.AppLogger.With(
+				xslog.Envelope("handled_message", env),
+				slog.Group(
+					"process_instance",
+					slog.String("id", instanceID),
+					slog.String("description", root.ProcessInstanceDescription(false)),
+				),
+			),
 			outboundMessageTypes: p.OutboundMessageTypes,
 		},
 		env.GetBody().GetScheduledFor().AsTime(),

@@ -461,6 +461,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 	)
 
 	engineLogger := e.newLoggerForHandler(e.engineLogger, handlerConfig)
+	appLogger := e.newLoggerForHandler(e.appLogger, handlerConfig)
 	workers := e.workerCountForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
@@ -473,6 +474,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Packer:               e.packer,
 				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				AppLogger:            appLogger,
 			},
 			DB:           e.db,
 			Workers:      workers,
@@ -497,6 +499,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
+				AppLogger:            appLogger,
 			},
 			DB:           e.db,
 			Workers:      workers,
@@ -524,6 +527,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				HandleTimeout:        e.handleTimeout,
 				RouteTimeout:         e.routeTimeout,
 				EngineLogger:         engineLogger,
+				AppLogger:            appLogger,
 			},
 			EngineLogger: engineLogger,
 		}
@@ -537,6 +541,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
+				AppLogger:            appLogger,
 			},
 			DB:           e.db,
 			Workers:      workers,
@@ -572,6 +577,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				HandleTimeout: e.handleTimeout,
 				RouteTimeout:  e.routeTimeout,
 				EngineLogger:  engineLogger,
+				AppLogger:     appLogger,
 			},
 			EngineLogger: engineLogger,
 		}
@@ -583,6 +589,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			Interval:     e.compactInterval,
 			Timeout:      e.compactTimeout,
 			EngineLogger: engineLogger,
+			AppLogger:    appLogger,
 		}
 
 		e.group.Go(func() error {

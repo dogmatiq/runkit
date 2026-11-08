@@ -34,6 +34,7 @@ type CommandPump struct {
 	CommandTypeIDs       *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	HandleTimeout        time.Duration
+	AppLogger            *slog.Logger
 }
 
 // AcquireDelivery attempts to acquire the next pending command for an
@@ -93,8 +94,10 @@ func (p *CommandPump) HandleDelivery(
 					return p.Handler.HandleCommand(
 						ctx,
 						&commandScope{
-							packer:               packer,
-							engineLogger:         engineLogger,
+							packer: packer,
+							appLogger: p.AppLogger.With(
+								xslog.Envelope("handled_message", env),
+							),
 							outboundMessageTypes: p.OutboundMessageTypes,
 						},
 						commandForHandling,

@@ -158,6 +158,7 @@ func newSink(t testing.TB, db *sql.DB) *Sink {
 		HandleTimeout: time.Minute,
 		RouteTimeout:  10 * time.Second,
 		EngineLogger:  spruce.NewTestLogger(t),
+		AppLogger:     spruce.NewTestLogger(t),
 	}
 }
 

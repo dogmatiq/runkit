@@ -32,6 +32,7 @@ type CommandPump struct {
 	Packer               *envelope.Packer
 	CommandTypeIDs       *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
+	AppLogger            *slog.Logger
 }
 
 // AcquireDelivery attempts to acquire the next pending command for an
@@ -110,10 +111,17 @@ func (p *CommandPump) HandleDelivery(
 			p.Handler.HandleCommand(
 				root,
 				&commandScope{
-					instanceID:           instanceID,
-					root:                 root,
-					packer:               packer,
-					engineLogger:         instanceLogger,
+					instanceID: instanceID,
+					root:       root,
+					packer:     packer,
+					appLogger: p.AppLogger.With(
+						xslog.Envelope("handled_message", env),
+						slog.Group(
+							"aggregate_instance",
+							slog.String("id", instanceID),
+							slog.String("description", root.AggregateInstanceDescription()),
+						),
+					),
 					outboundMessageTypes: p.OutboundMessageTypes,
 				},
 				commandForHandling,

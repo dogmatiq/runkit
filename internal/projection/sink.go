@@ -49,9 +49,12 @@ type Sink struct {
 	// where consumption of a stream resumes.
 	RouteTimeout time.Duration
 
-	// EngineLogger is the target for log messages produced by the sink and the
-	// handler.
+	// EngineLogger is the target for the engine's records about the sink and
+	// the handler.
 	EngineLogger *slog.Logger
+
+	// AppLogger is the target for the application's records from the handler.
+	AppLogger *slog.Logger
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream
@@ -141,6 +144,14 @@ func (s *Sink) dispatch(
 		defer s.HandlerLock.Release(1)
 	}
 
+	// The application's records are written only if the handler handles the
+	// event, which it reports by advancing its checkpoint past it.
+	appLogger, flush := xslog.Buffered(
+		s.AppLogger.With(
+			xslog.Envelope("handled_message", env),
+		),
+	)
+
 	next, err := xerrors.RecoverT(
 		func() (uint64, error) {
 			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
@@ -156,8 +167,9 @@ func (s *Sink) dispatch(
 					engineLogger: s.EngineLogger.With(
 						xslog.UUID("stream_id", streamID),
 						slog.Uint64("offset", offset),
-						xslog.Envelope("message", env),
+						xslog.Envelope("handled_message", env),
 					),
+					appLogger: appLogger,
 				},
 				event,
 			)
@@ -169,6 +181,10 @@ func (s *Sink) dispatch(
 			offset,
 			err,
 		)
+	}
+
+	if next == offset+1 {
+		flush(ctx)
 	}
 
 	return next, nil

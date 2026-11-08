@@ -51,8 +51,12 @@ type Sink struct {
 	// event to a process instance.
 	RouteTimeout time.Duration
 
-	// EngineLogger is the target for log messages produced by the sink and handler.
+	// EngineLogger is the target for the engine's records about the sink and
+	// the handler.
 	EngineLogger *slog.Logger
+
+	// AppLogger is the target for the application's records from the handler.
+	AppLogger *slog.Logger
 }
 
 // Workload returns the rendezvous workload that determines which node consumes
@@ -127,7 +131,11 @@ func (s *Sink) consume(
 	cp, next uint64,
 	env *envelopepb.Envelope,
 ) (uint64, bool, error) {
-	var actual uint64
+	var (
+		actual uint64
+		flush  func(context.Context)
+	)
+
 	err := xsql.Transact(ctx, s.DB, func(ctx context.Context, tx *sql.Tx) error {
 		// The upsert also locks a checkpoint that has not been created yet, so
 		// overlapping first-time consumers cannot both commit the same effects.
@@ -152,12 +160,22 @@ func (s *Sink) consume(
 		}
 
 		if env != nil {
-			logger := s.EngineLogger.With(
+			engineLogger := s.EngineLogger.With(
 				xslog.UUID("stream_id", streamID),
 				slog.Uint64("offset", next-1),
-				xslog.Envelope("message", env),
+				xslog.Envelope("handled_message", env),
 			)
-			if err := s.dispatch(ctx, tx, env, logger); err != nil {
+
+			// Each attempt of the transaction buffers its own application
+			// records, which are written only once it commits.
+			var appLogger *slog.Logger
+			appLogger, flush = xslog.Buffered(
+				s.AppLogger.With(
+					xslog.Envelope("handled_message", env),
+				),
+			)
+
+			if err := s.dispatch(ctx, tx, env, engineLogger, appLogger); err != nil {
 				return err
 			}
 		}
@@ -182,6 +200,10 @@ func (s *Sink) consume(
 		return actual, false, nil
 	}
 
+	if flush != nil {
+		flush(ctx)
+	}
+
 	return next, true, nil
 }
 
@@ -191,6 +213,7 @@ func (s *Sink) dispatch(
 	tx *sql.Tx,
 	env *envelopepb.Envelope,
 	logger *slog.Logger,
+	appLogger *slog.Logger,
 ) error {
 	var event dogma.Event
 
@@ -265,7 +288,14 @@ func (s *Sink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			engineLogger:         instanceLogger,
+			engineLogger: instanceLogger,
+			appLogger: appLogger.With(
+				slog.Group(
+					"process_instance",
+					slog.String("id", instanceID),
+					slog.String("description", root.ProcessInstanceDescription(false)),
+				),
+			),
 			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetCreatedAt().AsTime(),

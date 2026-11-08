@@ -391,28 +391,15 @@ until commit waits for #100.
 - Produces:
 
   ```go
-  // Buffer is an [slog.Handler] that holds records until they are flushed,
-  // keeping each record's time and the attributes and groups added to its
-  // logger.
-  type Buffer struct {
-      // Target is the handler that flushed records are written to.
-      Target slog.Handler
-      // unexported state
-  }
-
-  func (b *Buffer) Enabled(ctx context.Context, level slog.Level) bool
-  func (b *Buffer) Handle(ctx context.Context, r slog.Record) error
-  func (b *Buffer) WithAttrs(attrs []slog.Attr) slog.Handler
-  func (b *Buffer) WithGroup(name string) slog.Handler
-  func (b *Buffer) Flush(ctx context.Context)
+  // Buffered returns a logger that holds the records written to it until the
+  // returned function is called.
+  func Buffered(logger *slog.Logger) (*slog.Logger, func(context.Context))
   ```
 
-  `Enabled` defers to `Target`. A handler returned by `WithAttrs` or
-  `WithGroup` shares the buffer and pairs each record with the matching
-  derived `Target` handler, so `Flush` writes every record through the handler
-  its logger had. A scope's application logger is `slog.New(buffer)`, built
-  from the application logger's handler, and the scope logs through it as
-  usual.
+  The returned function writes the records to the given logger in the order
+  they were made, keeping each record's time and the attributes and groups
+  added to the logger that made it. Loggers derived from the returned logger
+  share its records. The handler behind it is unexported.
   - `aggregate.CommandPump`, `integration.CommandPump` and
     `process.DeadlinePump` gain an `AppLogger` field, set in `engine.go`. The
     `messagepump.Driver` interface and `MessagePump` are unchanged.
@@ -422,9 +409,9 @@ until commit waits for #100.
 
 | Scope call | Engine record, written at once at DEBUG | Application record, at INFO |
 | --- | --- | --- |
-| `RecordEvent` | `handler recorded an event` + `xslog.Envelope("event", …)` | the event's `MessageDescription()` + `xslog.Envelope("event", …)` |
-| `ExecuteCommand` | `handler executed a command` + `xslog.Envelope("command", …)` | the command's description + `xslog.Envelope("command", …)` |
-| `ScheduleDeadline` | `handler scheduled a deadline` + `xslog.Envelope("deadline", …)` | the deadline's description + `xslog.Envelope("deadline", …)` |
+| `RecordEvent` | `handler recorded an event` + `xslog.Envelope("produced_message", …)` | the event's `MessageDescription()` + `xslog.Envelope("produced_message", …)` |
+| `ExecuteCommand` | `handler executed a command` + `xslog.Envelope("produced_message", …)` | the command's description + `xslog.Envelope("produced_message", …)` |
+| `ScheduleDeadline` | `handler scheduled a deadline` + `xslog.Envelope("produced_message", …)` | the deadline's description + `xslog.Envelope("produced_message", …)` |
 | `Mutate` | `handler mutated the process instance` | `process instance mutated` |
 | `End` | `handler ended the process instance` | `process instance ended` |
 | `Log` | `handler logged a message` + `slog.String("text", …)` | the formatted text |
@@ -442,10 +429,10 @@ until commit waits for #100.
   pump's `AppLogger`, until #100.
 
 Every application logger for a handler carries the message being handled as
-`xslog.Envelope("message", …)`, the handler identity, and the instance ID
+`xslog.Envelope("handled_message", …)`, the handler identity, and the instance ID
 where there is one. It carries no `delivery`, stream or offset attributes.
 
-- [ ] Implement `Buffer`. It's untested, like all logging.
+- [ ] Implement `Buffered`. It's untested, like all logging.
 - [ ] Change each scope to write its engine record at once and its application
   record through its application logger, as in the table.
 - [ ] Wire the buffers and flush points for process events and projection
@@ -583,7 +570,11 @@ the record is made, so a reader sees the instance change in order.
 implemented, this work finishes with:
 
 - Buffering the application records of message pump deliveries until commit,
-  for commands and deadlines.
+  for commands and deadlines. Once they're buffered, the aggregate and
+  integration scopes write an engine DEBUG record of each call again, as the
+  process and projection event scopes do. Until then, the process deadline
+  scope writes an engine record and an application record of each call at the
+  same time, because it shares its methods with the event scope.
 - Per-delivery streaks, including a persisted first-failure time.
 
 ## Out of scope

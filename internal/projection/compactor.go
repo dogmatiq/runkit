@@ -34,9 +34,12 @@ type Compactor struct {
 	// projection in a single attempt.
 	Timeout time.Duration
 
-	// EngineLogger is the target for log messages produced by the compactor and by
-	// the handler during compaction.
+	// EngineLogger is the target for the engine's records about the compactor.
 	EngineLogger *slog.Logger
+
+	// AppLogger is the target for the application's records from the handler
+	// while it compacts the projection.
+	AppLogger *slog.Logger
 }
 
 // Run attempts to compact the projection immediately and then once per interval
@@ -105,7 +108,9 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 				func() error {
 					return c.Handler.Compact(
 						compactCtx,
-						&compactScope{c.EngineLogger},
+						&compactScope{
+							appLogger: c.AppLogger,
+						},
 					)
 				},
 			); err != nil {
@@ -132,7 +137,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 
 // compactScope implements [dogma.ProjectionCompactScope].
 type compactScope struct {
-	engineLogger *slog.Logger
+	appLogger *slog.Logger
 }
 
 func (s *compactScope) Now() time.Time {
@@ -140,5 +145,5 @@ func (s *compactScope) Now() time.Time {
 }
 
 func (s *compactScope) Log(format string, args ...any) {
-	s.engineLogger.Info(fmt.Sprintf(format, args...))
+	s.appLogger.Info(fmt.Sprintf(format, args...))
 }
