@@ -84,9 +84,10 @@ These were made with the maintainer, and aren't in [#100][100].
   Everywhere else, a name says what the key identifies, so the column is
   `queue_id` on messages and `deadline_queue_id` on process instances, the way
   aggregate instances have `stream_id`.
-- **The observed set of queues is a component, `messagequeue.Queues`.** It
-  watches the `messagequeue` topic, adds each queue it hears, and rebuilds
-  itself with `SELECT DISTINCT queue_id` on each recovery wake-up. The consumer
+- **The observed set of queues is a component, `messagequeue.Catalog`.** It
+  watches the `messagequeue` topic and reads the whole set with `SELECT
+  DISTINCT queue_id` on every signal, because the signal bus drops signals
+  when a watcher's channel is full. The consumer
   plan reads ownership from the same set.
 - **Every initial queue ID is the producing node's ID** in this pass. With
   self-affinity, each node delivers what it produced, and the rendezvous moves a
@@ -308,54 +309,53 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 3: `messagequeue.Queues`
+### Task 3: `messagequeue.Catalog`
 
 **Files:**
 - Create: `internal/messagequeue/doc.go`,
-  `internal/messagequeue/queues.go`
+  `internal/messagequeue/catalog.go`
 - Modify: `engine.go` (build and run it),
   `internal/schema/ddl/10-messagequeue/20-triggers.sql` (name the listener)
-- Test: `internal/messagequeue/queues_test.go`
+- Test: `internal/messagequeue/catalog_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // Queues is the set of queues that have messages, as this node has
-  // observed it.
+  // Catalog keeps track of which queues have messages, as seen from this
+  // node.
   //
-  // It hears each queue as messages join it, and rebuilds itself from the
-  // database whenever the signal bus recovers, so it can be stale by at most
-  // the signals missed since then.
-  type Queues struct {
+  // It reads the whole set from the database each time a message queue
+  // signal arrives, so a signal dropped by the bus is covered by the next.
+  type Catalog struct {
       DB           *sql.DB
       Signals      *signal.Bus
       EngineLogger *slog.Logger
       // unexported: cosyne.Observable[*uuidcollection.Set]
   }
 
-  // Observe returns an observable of the set. The set must not be modified.
-  func (q *Queues) Observe() cosyne.ObservableR[*uuidcollection.Set]
+  // QueueIDs returns an observable of the IDs of the queues that have
+  // messages. The set must not be modified.
+  func (c *Catalog) QueueIDs() cosyne.ObservableR[*uuidcollection.Set]
 
   // Run watches for queues until ctx is canceled. It must be called at most
   // once.
-  func (q *Queues) Run(ctx context.Context) error
+  func (c *Catalog) Run(ctx context.Context) error
   ```
 
   Each published set is a new value, so readers never see it change under
-  them. A queue is never removed except by a rebuild.
+  them. The set is nil until the first read.
 
 - Consumes: the trigger from task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
   ```go
-  func TestQueues(t *testing.T) {
+  func TestCatalog(t *testing.T) {
       t.Run("it reads the queues that already have messages", ...)       // rows inserted before Run
       t.Run("it hears a queue as a message joins it", ...)
       t.Run("it hears a queue when a message moves to it", ...)           // UPDATE … SET queue_id
-      t.Run("it ignores a subtopic that is not a UUID", ...)             // Signals.Send("messagequeue.garbage"); set unchanged
-      t.Run("it forgets a queue with no messages when it rebuilds", ...)
+      t.Run("it forgets a queue with no messages on the next signal", ...)
   }
   ```
 
@@ -364,20 +364,21 @@ Each one has a test in the task that owns the code.
 
 - [ ] **Step 2: Run `make test` to verify they fail**
 
-- [ ] **Step 3: Implement `Queues`**
+- [ ] **Step 3: Implement `Catalog`**
 
   `Run` wraps `supervisor.Run(ctx, EngineLogger, "observe queues", …)`. The
-  body watches `messagequeue` with a capacity of, say, 64. On `""` it rebuilds
-  with `SELECT DISTINCT queue_id FROM messagequeue.messages`. On a queue ID it
-  parses it, logs a WARN "ignored invalid queue ID in message queue signal"
-  with the subtopic if it doesn't parse, and otherwise adds it if absent.
-  Publish only when the set changed.
+  body watches `messagequeue` with a capacity of 1 and ignores the subtopic,
+  as the local event stream source does for `eventstream.create`. On every
+  signal it reads `SELECT DISTINCT queue_id FROM messagequeue.messages`, and
+  publishes the result only when the set changed. The signal bus drops a
+  signal when a watcher's channel is full, so reading the whole set on each
+  signal means no dropped signal can leave a queue out.
 
 - [ ] **Step 4: Wire it in `engine.go`**
 
-  `e.queues = &messagequeue.Queues{…}` next to the node, run in
+  `e.queues = &messagequeue.Catalog{…}` next to the node, run in
   the same group. Add a sentence to the doc comment of each `messagequeue`
-  trigger saying that `messagequeue.Queues` watches the signal to learn which
+  trigger saying that `messagequeue.Catalog` watches the signal to learn which
   queues have messages.
 
 - [ ] **Step 5: Run `make test` to verify they pass**
@@ -499,9 +500,13 @@ Each is a small change on its own, in this order:
    with the score, on its own `heartbeat` channel, and `cluster.Node` listens
    on its own connection instead of through `signal.Bus`. `Membership` gains
    `Score(nodeID)` and `LiveNodes()`. This is a **[BC]** transport change.
+   Heartbeats are the last users of `signal.Bus` once task 1 of [plan
+   2][plan-2] adds `cluster.Signal` and `cluster.Observable`. Moving them onto
+   the LISTEN connection that `cluster.Node` already owns lets this follow-up
+   delete `signal.Bus` and the `signal` package.
 2. **Score-based process binding allocation.**
    `QueuePolicy.ForProcessInstance` implements the six-step algorithm
-   from [#100][100] using `messagequeue.Queues` and the scores.
+   from [#100][100] using `messagequeue.Catalog` and the scores.
 3. **Producer-side command routing.** `QueuePolicy.ForCommand` routes
    the command to its aggregate instance's stream, or an integration
    handler's key when it minimizes concurrency.
@@ -519,7 +524,7 @@ Each is a small change on its own, in this order:
 ## Out of scope
 
 - Discovery, admission and claiming. The consumer plan reads
-  `messagequeue.Queues` and the index from task 1.
+  `messagequeue.Catalog` and the index from task 1.
 - Changing a stored queue ID automatically.
 - Score-based binding allocation and producer-side command routing. They are
   follow-ups above.
@@ -531,3 +536,4 @@ Each is a small change on its own, in this order:
 [100]: https://github.com/dogmatiq/runkit/issues/100
 [103]: https://github.com/dogmatiq/runkit/issues/103
 [logging guide]: ../maintainers/logging.md
+[plan-2]: 2026-11-08-queue-2-consumer.md

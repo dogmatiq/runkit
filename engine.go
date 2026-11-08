@@ -28,6 +28,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/integration"
 	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
@@ -142,6 +143,9 @@ type Engine struct {
 
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
+
+	// queues keeps track of which queues have messages.
+	queues *messagequeue.Catalog
 
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
@@ -263,6 +267,12 @@ func (e *Engine) Run(ctx context.Context) error {
 		Node: e.node,
 	})
 
+	e.queues = &messagequeue.Catalog{
+		DB:           e.db,
+		Signals:      e.signals,
+		EngineLogger: e.engineLogger,
+	}
+
 	e.eventStreams = &eventstream.Catalog{
 		CacheSize:    eventStreamCacheSize,
 		EngineLogger: e.engineLogger,
@@ -312,6 +322,10 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.group.Go(func() error {
 		return e.node.Run(ctx)
+	})
+
+	e.group.Go(func() error {
+		return e.queues.Run(ctx)
 	})
 
 	eventTypeIDs := e.consumedEventTypeIDs()
