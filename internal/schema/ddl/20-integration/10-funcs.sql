@@ -9,7 +9,7 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    PERFORM commandqueue.remove(complete_without_events.message_id);
+    PERFORM messagequeue.remove(complete_without_events.message_id);
 END;
 $$;
 
@@ -26,7 +26,7 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    PERFORM commandqueue.remove(complete_with_events.message_id);
+    PERFORM messagequeue.remove(complete_with_events.message_id);
 
     PERFORM eventstream.append_any(
         complete_with_events.correlation_id,

@@ -1,4 +1,4 @@
-# Queue Plan 1: Storage, Rendezvous and Process Bindings
+# Queue Plan 1: Storage, Queues and Process Bindings
 
 > **For agentic workers:** Implement this plan task by task. Every task ends
 > with one review stop; do not batch tasks. Before each task, confirm its
@@ -8,21 +8,21 @@
 > `make precommit`), never by invoking the Go toolchain directly. Tests start
 > PostgreSQL through testcontainers, so Docker must be running.
 
-**Goal:** Store commands and deadlines in one queue table keyed by rendezvous
-key, migrate the existing tables into it, observe the keys in use, name the
-node responsible for each key, and give every process instance a queue
-binding that its deadlines inherit.
+**Goal:** Store commands and deadlines in one table, each in a queue whose ID
+is its rendezvous key, migrate the existing tables into it, observe the queues
+in use, name the node responsible for each queue, and bind every process
+instance to the queue its deadlines join.
 
-**Architecture:** A new `queue` schema holds one `messages` table and the
-idempotency keys. A statement trigger signals `queue.<rendezvous-key>` on the
-existing `signal` channel for inserts, deletes and key changes. `CreateSchema()`
-moves rows from the old `commandqueue.commands` and `process.deadlines` tables
-into it. A new `internal/queue` package owns the observed set of rendezvous
-keys and the policy that chooses each message's initial key, which in this
-pass is always the producing node's ID. The existing message pumps are
-repointed at the new table so the engine keeps working until the consumer
-plan replaces them. `Membership.ResponsibleNode` names the node responsible
-for any rendezvous key, with self-affinity.
+**Architecture:** A new `messagequeue` schema holds one `messages` table and the
+idempotency keys. A statement trigger signals `messagequeue.<queue-id>` on the
+existing `signal` channel when messages are added or move between queues.
+`CreateSchema()` moves rows from the old `commandqueue.commands` and
+`process.deadlines` tables into it. A new `internal/messagequeue` package owns
+the observed set of queues and the policy that chooses each message's initial
+queue, whose ID in this pass is always the producing node's ID. The existing
+message pumps are repointed at the new table so the engine keeps working until
+the consumer plan replaces them. `Membership.ResponsibleNode` returns the node
+responsible for any rendezvous key, with self-affinity.
 
 **Tech stack:** Go, PostgreSQL 18, `cosyne`.
 
@@ -63,42 +63,47 @@ These were made with the maintainer, and aren't in [#100][100].
   configuration say whether a row is a command or a deadline. Deadlines carry
   `handler_key` and `instance_id`; commands leave them null.
 - **The queue signals on the `signal` channel**, with the topic
-  `queue.<rendezvous-key>`. A watcher of `queue` receives each key as the
-  subtopic, and the bus's recovery wake-up as `""`. A key change signals both
-  the old and the new key.
+  `messagequeue.<queue-id>`. A watcher of `messagequeue` receives each queue ID
+  as the subtopic, and the bus's recovery wake-up as `""`. A message that moves
+  between queues signals both.
 - **The migration runs inside `CreateSchema()`**, during a stop. It is tested
   against the old tables with rows in them and against a fresh database where
   they never existed. The old tables and the `commandqueue` schema are dropped
   once their rows are moved.
 - **The migration is disposable.** It lives in one file,
-  `10-queue/90-migrate.sql`, whose header names the version it migrates from
-  and says that deleting the file and `TestCreate_migratesQueues` is the
+  `10-messagequeue/90-migrate.sql`, whose header gives the version it migrates
+  from and says that deleting the file and `TestCreate_migratesQueues` is the
   whole cleanup. Nothing else in the DDL refers to the old tables. The
-  checkpoint-constraint migration already in `CreateSchema()` is the
-  precedent, and both go in the same follow-up.
+  checkpoint-constraint migration already in `CreateSchema()` is the precedent,
+  and both go in the same follow-up.
 - **`failing_since` is a column from the start**, even though only the
   deliveries plan writes it, so there is one migration.
-- **The observed rendezvous key set is a component,
-  `queue.RendezvousKeys`.** It watches the `queue` topic, adds each
-  rendezvous key it hears, and rebuilds itself with
-  `SELECT DISTINCT rendezvous_key` on each recovery wake-up. The consumer plan
-  reads ownership from the same set.
-- **Every initial rendezvous key is the producing node's ID** in this pass.
-  With self-affinity, each node delivers what it produced, and the
-  rendezvous moves a stopped node's work to a live one.
-  `queue.RendezvousKeyPolicy` has a method for commands and one for process
-  instances so that the follow-ups at the end of this plan can add smarter
-  selection without touching the producers again.
+- **A queue is the set of messages one node delivers, and its ID is its
+  rendezvous key.** There is no table of queues, since a queue has no state of
+  its own. "Rendezvous key" is the term for the mechanism in `cluster`.
+  Everywhere else, a name says what the key identifies, so the column is
+  `queue_id` on messages and `deadline_queue_id` on process instances, the way
+  aggregate instances have `stream_id`.
+- **The observed set of queues is a component, `messagequeue.Queues`.** It
+  watches the `messagequeue` topic, adds each queue it hears, and rebuilds
+  itself with `SELECT DISTINCT queue_id` on each recovery wake-up. The consumer
+  plan reads ownership from the same set.
+- **Every initial queue ID is the producing node's ID** in this pass. With
+  self-affinity, each node delivers what it produced, and the rendezvous moves a
+  stopped node's work to a live one. `messagequeue.QueuePolicy` has a method for
+  commands and one for process instances so that the follow-ups at the end of
+  this plan can add smarter selection without touching the producers again.
 - **No capacity scores or capacity sharing.** Heartbeats keep their current
   transport, and nothing advertises spare capacity. The consumer bounds its
   own attempts.
 - **Self-affinity lives in `Membership.ResponsibleNode`.** No `rendezvous`
   package.
-- **The discovery index leads with the key and the type**:
-  `(rendezvous_key, message_type_id, deliver_at, message_id)`. Discovery in
-  the consumer plan looks up each owned key and routed type, so a retired
-  route's rows stay outside the ranges it reads. PostgreSQL 18's skip scan
-  serves `SELECT DISTINCT rendezvous_key` from the same index.
+- **The discovery index is `(queue_id, message_type_id, deliver_at)`.**
+  Discovery in the consumer plan looks up each owned queue and routed type, so a
+  retired route's rows stay outside the ranges it reads. PostgreSQL 18's skip
+  scan serves `SELECT DISTINCT queue_id` from the same index. Messages with the
+  same `deliver_at` come in no particular order, so `message_id` isn't a
+  tie-break and isn't in the index.
 
 ## Global constraints
 
@@ -120,7 +125,8 @@ These were made with the maintainer, and aren't in [#100][100].
   `engineLogger` and `appLogger` if unexported. Never use `Logger` or `logger`.
 - At most one `&&` or `||` per expression.
 - Use a set or map when order means nothing.
-- Use "rendezvous key" in names outside the rendezvous code; `key` inside it.
+- Use "rendezvous key" only in `cluster`, where keys are resolved to nodes.
+  Elsewhere name what the key identifies: a queue, by its `queue_id`.
 
 ## Review focus
 
@@ -143,24 +149,24 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 1: The `queue` schema and the migration
+### Task 1: The `messagequeue` schema and the migration
 
 **Files:**
-- Create: `internal/schema/ddl/10-queue/00-tables.sql`,
+- Create: `internal/schema/ddl/10-messagequeue/00-tables.sql`,
   `10-funcs.sql`, `20-triggers.sql`, `90-migrate.sql`
 - Delete: `internal/schema/ddl/10-commandqueue/`
 - Modify: `internal/schema/ddl/20-process/00-tables.sql` (remove
-  `process.deadlines`, add `rendezvous_key uuid` to `process.instances`)
+  `process.deadlines`, add `deadline_queue_id uuid` to `process.instances`)
 - Test: `internal/schema/schema_test.go`
 
 **Interfaces:**
 - Produces, in SQL:
 
   ```sql
-  CREATE TABLE IF NOT EXISTS queue.messages (
+  CREATE TABLE IF NOT EXISTS messagequeue.messages (
       message_id      uuid        PRIMARY KEY,
       message_type_id uuid        NOT NULL,
-      rendezvous_key  uuid        NOT NULL,
+      queue_id  uuid        NOT NULL,
       handler_key     uuid,
       instance_id     text        CHECK (instance_id != ''),
       envelope        bytea       NOT NULL,
@@ -173,21 +179,19 @@ Each one has a test in the task that owns the code.
       CHECK ((failures = 0) = (failing_since IS NULL))
   );
 
-  CREATE INDEX IF NOT EXISTS messages_by_rendezvous_key
-  ON queue.messages (rendezvous_key, message_type_id, deliver_at, message_id);
+  CREATE INDEX IF NOT EXISTS messages_by_queue
+  ON messagequeue.messages (queue_id, message_type_id, deliver_at);
 
   CREATE INDEX IF NOT EXISTS messages_by_instance
-  ON queue.messages (handler_key, instance_id)
+  ON messagequeue.messages (handler_key, instance_id)
   WHERE handler_key IS NOT NULL;
 
-  CREATE TABLE IF NOT EXISTS queue.idempotency_keys (…);  -- as today
+  CREATE TABLE IF NOT EXISTS messagequeue.idempotency_keys (…);  -- as today
 
-  -- queue.add_command(message_id, message_type_id, rendezvous_key, envelope,
-  -- idem_key) RETURNS TABLE (actual_message_id uuid, enqueued boolean), as
-  -- commandqueue.add today with the extra column.
-  -- queue.add_deadline(message_id, message_type_id, rendezvous_key,
-  -- handler_key, instance_id, envelope, scheduled_at) RETURNS void.
-  -- queue.remove(message_id) RETURNS void, as commandqueue.remove today.
+  -- messagequeue.add_command(message_id, message_type_id, queue_id,
+  -- envelope, idem_key) RETURNS TABLE (actual_message_id uuid, enqueued
+  -- boolean), as commandqueue.add today with the extra column.
+  -- messagequeue.remove(message_id) RETURNS void, as commandqueue.remove today.
   ```
 
   `scheduled_at` is the original time: `enqueued_at` for a command, the
@@ -195,23 +199,26 @@ Each one has a test in the task that owns the code.
   the next attempt may run. It starts equal to `scheduled_at` and moves later
   on each postponement.
 
-  The trigger function `queue.signal_change()` runs `FOR EACH STATEMENT`
-  after insert, delete, and update of `rendezvous_key`, with both transition
-  tables, and performs `pg_notify('signal', 'queue.' || rendezvous_key)` for
-  each distinct key in either table.
+  Two statement-level triggers, each with a function of the same name, send
+  `pg_notify('signal', 'messagequeue.' || queue_id)` once per distinct queue.
+  `signal_add` fires after insert, and `signal_move` after update, signaling
+  the old and new queue of each message whose `queue_id` changed. Deletes
+  signal nothing, since every successful delivery deletes a row and every node
+  receives every signal. PostgreSQL doesn't allow transition tables on an
+  `UPDATE OF` trigger, so `signal_move` compares the rows itself. Trigger
+  functions are named for the operation, as `eventstream.signal_append` is.
 
-  `90-migrate.sql` is a `DO` block. If `to_regclass('commandqueue.commands')`
-  is not null, it inserts each row into `queue.messages` with
-  `rendezvous_key = message_type_id`, `scheduled_at = enqueued_at` and
+  `90-migrate.sql` is a `DO` block. If `to_regclass('commandqueue.commands')` is
+  not null, it inserts each row into `messagequeue.messages` with
+  `queue_id = message_type_id`, `scheduled_at = enqueued_at` and
   `failing_since = CASE WHEN failures > 0 THEN deliver_at END`, moves
-  `commandqueue.idempotency_keys` into `queue.idempotency_keys`, and drops
-  the `commandqueue` schema. If
-  `to_regclass('process.deadlines')` is not null, it inserts each row with
-  `rendezvous_key = handler_key` and `scheduled_at = deliver_at`, and drops
-  the table. The scheduled time is
-  inside the protobuf envelope, which SQL can't read, so a deadline that had
-  already failed before the upgrade keeps its next attempt time as its
-  scheduled time. The changelog says so.
+  `commandqueue.idempotency_keys` into `messagequeue.idempotency_keys`, and
+  drops the `commandqueue` schema. If `to_regclass('process.deadlines')` is not
+  null, it inserts each row with `queue_id = handler_key` and
+  `scheduled_at = deliver_at`, and drops the table. The scheduled time is inside
+  the protobuf envelope, which SQL can't read, so a deadline that had already
+  failed before the upgrade keeps its next attempt time as its scheduled time.
+  The changelog says so.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -220,26 +227,26 @@ Each one has a test in the task that owns the code.
   // builds the v0.2.0 tables by hand (commandqueue.commands,
   // commandqueue.idempotency_keys, process.deadlines) with two commands, one
   // idempotency key and two deadlines, runs schema.Create twice, then checks:
-  //   - queue.messages has four rows with the expected keys and times
-  //   - queue.idempotency_keys has the key, pointing at its command
+  //   - messagequeue.messages has four rows with the expected keys and times
+  //   - messagequeue.idempotency_keys has the key, pointing at its command
   //   - to_regclass('commandqueue.commands') and ('process.deadlines') are null
   //   - the commandqueue schema is gone
 
   func TestCreate_onFreshDatabase(t *testing.T)
-  // schema.Create on a new database succeeds and creates queue.messages
+  // schema.Create on a new database succeeds and creates messagequeue.messages
   ```
 
-  Extend `TestCreateAndDrop` so `Drop` removes the `queue` schema.
+  Extend `TestCreateAndDrop` so `Drop` removes the `messagequeue` schema.
 
 - [ ] **Step 2: Run `make test` to verify they fail**
 
 - [ ] **Step 3: Write the DDL**
 
   `schema.Create` walks the embedded directory in name order, so
-  `10-queue/90-migrate.sql` runs once the `queue` tables exist and before
-  `20-process`. `20-process/00-tables.sql` no longer creates
+  `10-messagequeue/90-migrate.sql` runs once the `messagequeue` tables exist and
+  before `20-process`. `20-process/00-tables.sql` no longer creates
   `process.deadlines`, and adds the binding column with `ALTER TABLE … ADD
-  COLUMN IF NOT EXISTS rendezvous_key uuid`.
+  COLUMN IF NOT EXISTS deadline_queue_id uuid`.
 
 - [ ] **Step 4: Run `make test` to verify the schema tests pass**
 
@@ -258,32 +265,33 @@ Each one has a test in the task that owns the code.
   `internal/process/deadlinepump.go:40-130,255-270`
 - Modify: `internal/x/xtesting/commandqueue.go`,
   `internal/x/xtesting/deadline.go`
-- Modify: `internal/messagepump/delivery.go` (add `RendezvousKey`)
+- Modify: `internal/messagepump/delivery.go` (add `QueueID`)
 - Test: existing tests in `internal/aggregate`, `internal/integration`,
   `internal/process`, and the root package
 
 **Interfaces:**
-- Produces: every producer passes a rendezvous key. In this task it is the
+- Produces: every producer passes a queue ID. In this task it is the
   node ID, through a new `NodeID *uuidpb.UUID` field on `process.Sink`,
   `process.DeadlinePump` and the integration pump, and `e.nodeID` in
-  `execute.go`. Task 4 replaces this with `RendezvousKeyPolicy`.
-- Consumes: the `queue` schema from task 1.
+  `execute.go`. Task 4 replaces this with `QueuePolicy`.
+- Consumes: the `messagequeue` schema from task 1.
 
 - [ ] **Step 1: Repoint the SQL**
 
-  `commandqueue.add` → `queue.add_command`. `persistDeadlines` →
-  `queue.add_deadline`. `endInstance` deletes from `queue.messages` by
-  handler and instance. `AcquireCommandDelivery` reads `queue.messages WHERE
-  handler_key IS NULL AND message_type_id = ANY($1) AND deliver_at <=
-  clock_timestamp()`. The deadline pump reads `WHERE handler_key = $1`,
-  joining `process.instances` as today. Both postponements set `deliver_at`,
-  bump `failures`, and set `failing_since = COALESCE(failing_since,
-  clock_timestamp())`. Successful removal is `queue.remove`.
+  `commandqueue.add` → `messagequeue.add_command`. `persistDeadlines` inserts
+  into `messagequeue.messages` with `deliver_at = scheduled_at`. `endInstance`
+  deletes from `messagequeue.messages` by handler and instance.
+  `AcquireCommandDelivery` reads `messagequeue.messages WHERE handler_key IS
+  NULL AND message_type_id = ANY($1) AND deliver_at <= clock_timestamp()`. The
+  deadline pump reads `WHERE handler_key = $1`, joining `process.instances` as
+  today. Both postponements set `deliver_at`, bump `failures`, and set
+  `failing_since = COALESCE(failing_since, clock_timestamp())`. Successful
+  removal is `messagequeue.remove`.
 
 - [ ] **Step 2: Update the test helpers**
 
-  The `xtesting` helpers query `queue.messages`. `EnqueuePostponedCommand`
-  inserts with a rendezvous key argument.
+  The `xtesting` helpers query `messagequeue.messages`.
+  `EnqueuePostponedCommand` inserts with a queue ID argument.
 
 - [ ] **Step 3: Run `make test` to verify everything passes**
 
@@ -300,24 +308,26 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 3: `queue.RendezvousKeys`
+### Task 3: `messagequeue.Queues`
 
 **Files:**
-- Create: `internal/queue/doc.go`, `internal/queue/rendezvouskeys.go`
-- Modify: `engine.go` (build and run it)
-- Test: `internal/queue/rendezvouskeys_test.go`
+- Create: `internal/messagequeue/doc.go`,
+  `internal/messagequeue/queues.go`
+- Modify: `engine.go` (build and run it),
+  `internal/schema/ddl/10-messagequeue/20-triggers.sql` (name the listener)
+- Test: `internal/messagequeue/queues_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // RendezvousKeys is the set of rendezvous keys present in the queue, as
-  // this node has observed it.
+  // Queues is the set of queues that have messages, as this node has
+  // observed it.
   //
-  // It hears each rendezvous key as messages are queued under it, and
-  // rebuilds itself from the database whenever the signal bus recovers, so it
-  // can be stale by at most the signals missed since then.
-  type RendezvousKeys struct {
+  // It hears each queue as messages join it, and rebuilds itself from the
+  // database whenever the signal bus recovers, so it can be stale by at most
+  // the signals missed since then.
+  type Queues struct {
       DB           *sql.DB
       Signals      *signal.Bus
       EngineLogger *slog.Logger
@@ -325,27 +335,27 @@ Each one has a test in the task that owns the code.
   }
 
   // Observe returns an observable of the set. The set must not be modified.
-  func (k *RendezvousKeys) Observe() cosyne.ObservableR[*uuidcollection.Set]
+  func (q *Queues) Observe() cosyne.ObservableR[*uuidcollection.Set]
 
-  // Run watches the queue until ctx is canceled. It must be called at most
+  // Run watches for queues until ctx is canceled. It must be called at most
   // once.
-  func (k *RendezvousKeys) Run(ctx context.Context) error
+  func (q *Queues) Run(ctx context.Context) error
   ```
 
   Each published set is a new value, so readers never see it change under
-  them. A rendezvous key is never removed except by a rebuild.
+  them. A queue is never removed except by a rebuild.
 
 - Consumes: the trigger from task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
   ```go
-  func TestRendezvousKeys(t *testing.T) {
-      t.Run("it reads the rendezvous keys that are already queued", ...)   // rows inserted before Run
-      t.Run("it hears a rendezvous key as a message is queued under it", ...)
-      t.Run("it hears a rendezvous key when a message's key changes", ...)   // UPDATE … SET rendezvous_key
-      t.Run("it ignores a subtopic that is not a UUID", ...)        // Signals.Send("queue.garbage"); set unchanged
-      t.Run("it forgets a rendezvous key with no messages when it rebuilds", ...)
+  func TestQueues(t *testing.T) {
+      t.Run("it reads the queues that already have messages", ...)       // rows inserted before Run
+      t.Run("it hears a queue as a message joins it", ...)
+      t.Run("it hears a queue when a message moves to it", ...)           // UPDATE … SET queue_id
+      t.Run("it ignores a subtopic that is not a UUID", ...)             // Signals.Send("messagequeue.garbage"); set unchanged
+      t.Run("it forgets a queue with no messages when it rebuilds", ...)
   }
   ```
 
@@ -354,29 +364,31 @@ Each one has a test in the task that owns the code.
 
 - [ ] **Step 2: Run `make test` to verify they fail**
 
-- [ ] **Step 3: Implement `RendezvousKeys`**
+- [ ] **Step 3: Implement `Queues`**
 
-  `Run` wraps `supervisor.Run(ctx, EngineLogger, "observe rendezvous keys",
-  …)`. The body watches `queue` with a capacity of, say, 64. On `""` it
-  rebuilds with `SELECT DISTINCT rendezvous_key FROM queue.messages`. On a
-  rendezvous key it parses it, logs a WARN "ignored invalid rendezvous key in
-  queue signal" with the subtopic if it doesn't parse, and otherwise adds it
-  if absent. Publish only when the set changed.
+  `Run` wraps `supervisor.Run(ctx, EngineLogger, "observe queues", …)`. The
+  body watches `messagequeue` with a capacity of, say, 64. On `""` it rebuilds
+  with `SELECT DISTINCT queue_id FROM messagequeue.messages`. On a queue ID it
+  parses it, logs a WARN "ignored invalid queue ID in message queue signal"
+  with the subtopic if it doesn't parse, and otherwise adds it if absent.
+  Publish only when the set changed.
 
 - [ ] **Step 4: Wire it in `engine.go`**
 
-  `e.rendezvousKeys = &queue.RendezvousKeys{…}` next to the node, run in the
-  same group.
+  `e.queues = &messagequeue.Queues{…}` next to the node, run in
+  the same group. Add a sentence to the doc comment of each `messagequeue`
+  trigger saying that `messagequeue.Queues` watches the signal to learn which
+  queues have messages.
 
 - [ ] **Step 5: Run `make test` to verify they pass**
 - [ ] **Step 6: Stop for review**
 
 ---
 
-### Task 4: `queue.RendezvousKeyPolicy` and process bindings
+### Task 4: `messagequeue.QueuePolicy` and process bindings
 
 **Files:**
-- Create: `internal/queue/rendezvouskeypolicy.go`
+- Create: `internal/messagequeue/queuepolicy.go`
 - Modify: `internal/process/instancestate.go`, `internal/process/sink.go`,
   `internal/process/deadlinepump.go`, `internal/process/commandqueue.go`,
   `internal/integration/commandpump.go`, `execute.go`, `engine.go`
@@ -386,32 +398,30 @@ Each one has a test in the task that owns the code.
 - Produces:
 
   ```go
-  // RendezvousKeyPolicy chooses the rendezvous key that each newly queued
-  // message is queued under.
+  // QueuePolicy chooses the queue that each new message joins.
   //
-  // It decides the initial key only. A stored key can be changed at any
-  // time, and later messages follow the stored key.
-  type RendezvousKeyPolicy struct {
+  // It decides the initial queue only. A stored queue ID can be changed at
+  // any time, and later messages follow the stored one.
+  type QueuePolicy struct {
       NodeID *uuidpb.UUID
   }
 
-  // ForCommand returns the rendezvous key that the given command is queued
-  // under.
-  func (p *RendezvousKeyPolicy) ForCommand(command dogma.Command) *uuidpb.UUID
+  // ForCommand returns the ID of the queue that the given command joins.
+  func (p *QueuePolicy) ForCommand(command dogma.Command) *uuidpb.UUID
 
-  // ForProcessInstance returns the rendezvous key that a new process
-  // instance's deadlines are queued under.
-  func (p *RendezvousKeyPolicy) ForProcessInstance() *uuidpb.UUID
+  // ForProcessInstance returns the ID of the queue that a new process
+  // instance's deadlines join.
+  func (p *QueuePolicy) ForProcessInstance() *uuidpb.UUID
   ```
 
   Both return `NodeID`. The parameter is there so that the follow-up adding
   routing changes no caller.
 
   In `process`, `loadInstance` returns the binding as well. It selects
-  `rendezvous_key` in its `RETURNING`, and when it is null, asks the policy
+  `deadline_queue_id` in its `RETURNING`, and when it is null, asks the policy
   for one and updates the row before returning. `persistDeadlines` takes the
-  binding as the rendezvous key. Every producer from task 2 takes a
-  `RendezvousKeyPolicy *queue.RendezvousKeyPolicy` field in place of its
+  binding as the queue ID. Every producer from task 2 takes a
+  `QueuePolicy *messagequeue.QueuePolicy` field in place of its
   `NodeID` field.
 
 - Consumes: nothing new. The type has no tests of its own.
@@ -421,10 +431,10 @@ Each one has a test in the task that owns the code.
   In `instancestate_test.go`:
 
   ```go
-  t.Run("it binds a new instance when it is first stored", ...)             // row has a non-null rendezvous_key after the first event
+  t.Run("it binds a new instance when it is first stored", ...)             // row has a non-null deadline_queue_id after the first event
   t.Run("it binds an existing instance when it is next loaded", ...)         // insert a row with NULL by hand; deliver an event; now non-null
-  t.Run("it queues a deadline under the instance's binding", ...)
-  t.Run("it keeps a binding that was changed by hand", ...)                  // UPDATE the column; next deadline uses the new key
+  t.Run("it adds a deadline to the instance's queue", ...)
+  t.Run("it keeps a binding that was changed by hand", ...)                  // UPDATE the column; next deadline uses the new queue
   ```
 
 - [ ] **Step 2: Run `make test` to verify they fail**
@@ -466,7 +476,7 @@ Each one has a test in the task that owns the code.
   func TestMembership(t *testing.T) {
       t.Run("it makes the node whose ID is the key responsible for it", ...)
       t.Run("it scores a key normally when no live node has that ID", ...)
-      t.Run("it names the same responsible node on every node", ...)   // two nodes; ResponsibleNode agrees with each node's LocalNodeIsResponsibleFor
+      t.Run("it returns the same responsible node on every node", ...)   // two nodes; ResponsibleNode agrees with each node's LocalNodeIsResponsibleFor
       t.Run("it names no responsible node when no node is live", ...)
   }
   ```
@@ -490,9 +500,9 @@ Each is a small change on its own, in this order:
    on its own connection instead of through `signal.Bus`. `Membership` gains
    `Score(nodeID)` and `LiveNodes()`. This is a **[BC]** transport change.
 2. **Score-based process binding allocation.**
-   `RendezvousKeyPolicy.ForProcessInstance` implements the six-step algorithm
-   from [#100][100] using `queue.RendezvousKeys` and the scores.
-3. **Producer-side command routing.** `RendezvousKeyPolicy.ForCommand` routes
+   `QueuePolicy.ForProcessInstance` implements the six-step algorithm
+   from [#100][100] using `messagequeue.Queues` and the scores.
+3. **Producer-side command routing.** `QueuePolicy.ForCommand` routes
    the command to its aggregate instance's stream, or an integration
    handler's key when it minimizes concurrency.
 4. **`WithQueueConcurrencyLimit`.**
@@ -503,14 +513,14 @@ Each is a small change on its own, in this order:
 6. **Garbage collection** of queued rows whose message types are no longer
    routed, which discovery never reads.
 7. **Drop the pre-release migrations** from `CreateSchema()`, this plan's
-   `90-migrate.sql` and the checkpoint-constraint one, with their tests, once
-   no v0.2.0 database is left, and before 1.0.
+   `90-migrate.sql` and the checkpoint-constraint one, with their tests, before
+   1.0. [#103][103] proposes a migration ledger whose 1.0 baseline does this.
 
 ## Out of scope
 
 - Discovery, admission and claiming. The consumer plan reads
-  `queue.RendezvousKeys` and the index from task 1.
-- Changing a stored binding or key automatically.
+  `messagequeue.Queues` and the index from task 1.
+- Changing a stored queue ID automatically.
 - Score-based binding allocation and producer-side command routing. They are
   follow-ups above.
 - Writing `failing_since` from a streak. The deliveries plan does that; task 2
@@ -519,4 +529,5 @@ Each is a small change on its own, in this order:
 <!-- references -->
 
 [100]: https://github.com/dogmatiq/runkit/issues/100
+[103]: https://github.com/dogmatiq/runkit/issues/103
 [logging guide]: ../maintainers/logging.md
