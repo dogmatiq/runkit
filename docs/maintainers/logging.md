@@ -49,18 +49,23 @@ only one logger.
 | `node_id` | The ID of the node that wrote the record | The ID of the node that wrote the record |
 | Application identity | The application's name and key | The application's name and key |
 | Handler identity | The handler's name, key and type, on records about a handler | The handler's name, key and type, on records from a handler |
-| The message being handled | Its metadata, on records about a delivery | Its metadata, on records from a handler |
-| The message produced | Its metadata, on records about producing it | Its metadata |
+| `handled_message` | The metadata of the message being handled, on records about a delivery | The metadata of the message being handled, on records from a handler |
+| `produced_message` | The metadata of the message produced, on records about producing it | The metadata of the message produced |
 | Instance ID | The instance's ID, on records about an instance | The instance's ID, on records from an instance |
 | `delivery` group | The delivery's ID and attempt number | — |
 | Stream | The stream's ID and offset, on records about a stream | — |
 
 A message is always described by its metadata, which is the attributes written
 by `xslog.Envelope`. They are the message's ID, causation ID, correlation ID,
-description and type, but never its body. A record never refers to a message by
-its ID alone. The metadata is identical in both layers, and a message in a given
-role, such as the message being handled, always has the same key. A search on a
-message's ID then finds the records from both layers.
+description, and type, including its kind, but never its body. A record never
+refers to a message by its ID alone.
+
+The metadata is identical in both layers, and its key is the message's role,
+never its kind. The message being handled is always `handled_message`, and a
+message that a handler or a `CommandExecutor` produces is always
+`produced_message`. A record about producing a message has both. A search on
+`handled_message.message_id` finds everything about handling a message and
+everything it caused, in both layers.
 
 Attributes and log messages name things that a person running the engine knows
 about, such as handlers, streams, messages and nodes. Never name internal
