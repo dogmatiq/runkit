@@ -182,11 +182,14 @@ failure. Any failure it can't classify is treated as transient.
 | Recovery, after a streak that logged no ERROR | DEBUG |
 | Shutdown during a streak | — |
 
-A streak logs at most one ERROR. Its log message says that later failures in
-the streak are logged at DEBUG until the work recovers, so that the silence
-afterward isn't mistaken for the problem going away. Every failure record has
-the `error` as an attribute. The ERROR record also has attributes for how long
-the streak has lasted and how many failures it has had.
+A streak logs at most one ERROR. Its log message describes the failure itself,
+like any other failure record. Every failure record has the `error` as an
+attribute. The ERROR record also has attributes for how long the streak has
+lasted and how many failures it has had.
+
+A streak's ERROR is followed by its recovery record when the work succeeds
+again. Until then, the work is still failing, and later failures in the streak
+are logged at DEBUG.
 
 A reader must be able to match a streak's ERROR record to its recovery record,
 and tell that pair apart from every other streak, including earlier streaks of
@@ -235,8 +238,8 @@ checked by review against this guide instead.
    If not, return the `error` and don't log it.
 3. Is it an expected event? Then it's not a failure, so use DEBUG, or INFO if
    it's a rare change in what this node does.
-4. Does it follow the streak rules, with at most one ERROR whose log message
-   says what happens next, and a recovery record that can be matched to it?
+4. Does it follow the streak rules, with at most one ERROR, and a recovery
+   record that can be matched to it?
 5. For an engine record, is the log message a constant?
 6. Are values in attributes, and do the attributes match the table and name
    things a person running the engine would know about?
