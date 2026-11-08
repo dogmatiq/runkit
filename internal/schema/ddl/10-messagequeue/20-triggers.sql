@@ -1,6 +1,7 @@
 --------------------------------------------------------------------------------
 -- The "signal_add" trigger sends a "messagequeue" signal through the signal bus
--- in internal/signal when messages are added to a queue.
+-- in internal/signal when messages are added to a queue. The Catalog type in
+-- internal/messagequeue watches for it to learn which queues have messages.
 --
 -- The signal's subtopic is the queue ID, so that only the node responsible for
 -- the queue needs to look. PostgreSQL delivers identical notifications sent
@@ -30,7 +31,9 @@ EXECUTE FUNCTION messagequeue.signal_add();
 
 --------------------------------------------------------------------------------
 -- The "signal_move" trigger sends a "messagequeue" signal through the signal
--- bus in internal/signal when messages move from one queue to another.
+-- bus in internal/signal when messages move from one queue to another. The
+-- Catalog type in internal/messagequeue watches for it to learn which queues
+-- have messages.
 --
 -- It sends one for both the queue each message left and the queue it joined. An
 -- update that leaves a message in the same queue signals nothing.

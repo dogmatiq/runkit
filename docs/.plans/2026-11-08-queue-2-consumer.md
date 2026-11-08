@@ -30,7 +30,7 @@ decisions below.
 
 This is the second of three plans for [#100][100]. It depends on
 [plan 1][plan-1] for the `messagequeue.messages` table, its signal,
-`messagequeue.Queues` and `Membership.ResponsibleNode`.
+`messagequeue.Catalog` and `Membership.ResponsibleNode`.
 
 ## Reviewability
 
@@ -62,9 +62,9 @@ These were made with the maintainer, and aren't in [#100][100].
   every queue it is responsible for. Active-attempt tracking is per message and
   bounded by the consumer's own concurrency limit, `10 × GOMAXPROCS`, which
   it holds as a semaphore. Nothing is shared with other nodes.
-- **The consumer lands in two tasks.** Task 2 is ownership, discovery,
+- **The consumer lands in two tasks.** Task 3 is ownership, discovery,
   timers and wake-ups, dispatching to an attempt function the test supplies.
-  Task 3 is the real attempt: the concurrency limit, the claim, the handler
+  Task 4 is the real attempt: the concurrency limit, the claim, the handler
   call and postponement. Each is reviewable alone.
 - **Discovery is one query** that takes the owned queues, the routed message
   types and the active message IDs, and returns the candidate with the earliest
@@ -78,7 +78,7 @@ These were made with the maintainer, and aren't in [#100][100].
 - **Handlers keep their own lock behavior for now.** The aggregate handler
   keeps `SKIP LOCKED` on its instance and reports `ErrBusy`. The deadline
   handler gains the savepoint and `lock_timeout` sequence from [#100][100] in
-  task 5. The deliveries plan may unify them.
+  task 6. The deliveries plan may unify them.
 - **An attempt's context derives from the consumer's**, not from ownership,
   so losing a queue lets in-flight attempts finish and shutdown cancels them.
 - **The consumer's own failures use `supervisor.Work`** with a quiet period,
@@ -121,22 +121,96 @@ These conditions are easy to get wrong, and no existing test exercises them.
 Each one has a test in the task that owns the code.
 
 1. A completion must remove its message from the active set before releasing
-   its slot, or the next discovery can re-dispatch it. Task 3 has the test,
+   its slot, or the next discovery can re-dispatch it. Task 4 has the test,
    which runs with one slot.
 2. A wake-up that arrives while the consumer is blocked waiting for a slot
-   must not be lost. Task 3 has the test.
+   must not be lost. Task 4 has the test.
 3. A message that moves to a queue owned by another node while this node
-   holds a future timer for it must not be delivered here. Task 2 has the
+   holds a future timer for it must not be delivered here. Task 3 has the
    test.
 4. A deadline claimed before its instance lock times out must be postponed
    without a failure, and the transaction's `lock_timeout` restored on both
-   paths. Task 5 has the tests.
+   paths. Task 6 has the tests.
 5. Shutdown with attempts in flight must roll them back and return only when
-   every slot is released. Task 3 has the test.
+   every slot is released. Task 4 has the test.
 
 ---
 
-### Task 1: Queue timing options
+### Task 1: `cluster.Signal` and `cluster.Observable`
+
+`signal.Bus` drops a signal when a watcher's channel is full, and delivers a
+subtopic that only heartbeats read. The consumer in task 3 has to wake for any
+of a changing set of owned queues, which doesn't fit one channel per watch.
+This task adds cluster-wide versions of `cosyne.Signal` and
+`cosyne.Observable`, and moves every watcher except heartbeats onto them.
+`signal.Bus` stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
+
+**Files:**
+- Modify: `internal/cluster/node.go` (own the LISTEN connection)
+- Create: `internal/cluster/signal.go`, `internal/cluster/observable.go`
+- Modify: `internal/eventstream/source/local.go`,
+  `internal/messagequeue/catalog.go`, `engine.go`
+- Test: `internal/cluster/signal_test.go`,
+  `internal/cluster/observable_test.go`, and the existing suites of the
+  callers that move
+
+**Interfaces:**
+- Produces, as a proposal to confirm with the maintainer before starting:
+
+  ```go
+  // Notify notifies the given signal straight away, and again each time a
+  // signal arrives on the given topic or a topic beneath it, until the
+  // returned function is called or ctx is canceled.
+  func (n *Node) Notify(ctx context.Context, topic string, s cosyne.SignalW) (stop func())
+
+  // Signal is a signal that any node in the cluster can notify. Each
+  // notification wakes the signal on every node.
+  type Signal struct {
+      Node  *Node
+      Topic string
+      // unexported: cosyne.Signal
+  }
+
+  func (s *Signal) Notify(ctx context.Context) error
+  func (s *Signal) Chan() <-chan struct{}
+
+  // Observable is a value stored in the database that every node in the
+  // cluster can observe. Each node reads it again whenever its signal is
+  // notified, and publishes it only when it changes.
+  type Observable[T any] struct {
+      Signal *Signal
+      Load   func(ctx context.Context) (T, error)
+      Equal  func(a, b T) bool
+      // unexported: cosyne.Observable[T]
+  }
+
+  func (o *Observable[T]) Observe() cosyne.ObservableR[T]
+  func (o *Observable[T]) Run(ctx context.Context) error
+  ```
+
+  `cluster.Node` holds the one LISTEN connection on each node, which every
+  `Notify` call shares. Notifications that arrive while one is pending
+  coalesce, as they do in `cosyne.Signal`, so none is ever dropped. The
+  consumer in task 3 calls `Node.Notify` with one `cosyne.Signal` for each
+  queue it owns, and waits on that one signal.
+
+- [ ] **Step 1: Agree the interfaces**, including whether `Node.Notify` is
+  exported or only used by `Signal`, and whether `Observable` takes `Equal`
+  or requires a comparable type.
+- [ ] **Step 2: Write the failing tests** for `Node.Notify`, `Signal` and
+  `Observable`: a notification wakes a signal on another node, notifications
+  coalesce, a signal is notified straight away, and an observable reloads on
+  each notification and publishes only changes.
+- [ ] **Step 3: Implement them**
+- [ ] **Step 4: Move stream discovery, event delivery and
+  `messagequeue.Catalog`**, one commit each. The catalog's `QueueIDs()`
+  becomes a `cluster.Observable[*uuidcollection.Set]`.
+- [ ] **Step 5: Run `make test`**
+- [ ] **Step 6: Stop for review** after each commit.
+
+---
+
+### Task 2: Queue timing options
 
 **Files:**
 - Modify: `engineoption.go`, `engine.go`
@@ -171,7 +245,7 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 2: `messagequeue.Consumer`: ownership and discovery
+### Task 3: `messagequeue.Consumer`: ownership and discovery
 
 **Files:**
 - Create: `internal/messagequeue/consumer.go`,
@@ -186,7 +260,7 @@ Each one has a test in the task that owns the code.
   type Consumer struct {
       DB           *sql.DB
       Node         *cluster.Node
-      Queues       *Queues
+      Queues       *Catalog
       Signals      *signal.Bus
       EngineLogger *slog.Logger
 
@@ -204,7 +278,7 @@ Each one has a test in the task that owns the code.
   ```
 
   `Attempt` is a field in this task so the loop can be tested with a stub.
-  Task 3 makes it a method and removes the field.
+  Task 4 makes it a method and removes the field.
 
   Discovery, in `discovery.go`, is an unexported function that runs:
 
@@ -226,20 +300,21 @@ Each one has a test in the task that owns the code.
   ```
 
   The routed types are a `MessageTypeIDs *uuidcollection.Set` field in this
-  task, which task 3 derives from `Handlers`.
+  task, which task 4 derives from `Handlers`.
 
-  The loop watches the `messagequeue` topic before its first discovery, so no
-  signal falls between them. It then computes the owned queues from
-  `Node.Membership()` and `Queues.Observe()` and discovers. If the candidate is
-  due, it adds its ID to the active set and starts `Attempt`; if it's in the
-  future, it sets the timer. Then it waits on the first of the membership, the
-  queues, a `messagequeue` signal for an owned queue, the timer, a completion,
-  or ctx. A completion removes the ID from the active set and wakes the loop.
-  The consumer's own failures go through `supervisor.Work` with the description
-  "consume queue".
+  The loop registers its wake-up signal with `Node.Notify` for the topic of each
+  owned queue, `messagequeue.<queue-id>`, before discovering, so no signal falls
+  between them. It updates the registrations when the owned queues change. It
+  then computes the owned queues from `Node.Membership()` and
+  `Queues.QueueIDs()` and discovers. If the candidate is due, it adds its ID to
+  the active set and starts `Attempt`; if it's in the future, it sets the timer.
+  Then it waits on the first of the membership, the queues, its wake-up signal,
+  the timer, a completion, or ctx. A completion removes the ID from the active
+  set and wakes the loop. The consumer's own failures go through
+  `supervisor.Work` with the description "consume queue".
 
-- Consumes: `Membership.LocalNodeIsResponsibleFor`, `Queues.Observe`,
-  `signal.Bus.Watch("messagequeue", …)`.
+- Consumes: `Membership.LocalNodeIsResponsibleFor`, `Catalog.QueueIDs`,
+  `Node.Notify` from task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -271,7 +346,7 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 3: `messagequeue.Consumer`: the attempt
+### Task 4: `messagequeue.Consumer`: the attempt
 
 **Files:**
 - Create: `internal/messagequeue/message.go`,
@@ -347,7 +422,7 @@ Each one has a test in the task that owns the code.
   `ErrFailed`, at DEBUG for now; the deliveries plan's streak gives it its
   ERROR.
 
-- Consumes: task 2's loop.
+- Consumes: task 3's loop.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -375,7 +450,7 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 4: Handlers, wiring and removal of `messagepump`
+### Task 5: Handlers, wiring and removal of `messagepump`
 
 **Files:**
 - Rename: `internal/aggregate/commandpump.go` → `commandhandler.go`,
@@ -403,7 +478,7 @@ Each one has a test in the task that owns the code.
   runs it in the group. `runHandler` no longer starts pumps.
   `workerCountForHandler` and the pump constants go.
 
-- Consumes: `messagequeue.Consumer` and `messagequeue.Handler` from task 3.
+- Consumes: `messagequeue.Consumer` and `messagequeue.Handler` from task 4.
 
 - [ ] **Step 1: Make the handlers implement `messagequeue.Handler`**
 - [ ] **Step 2: Wire the consumer and delete `messagepump`**
@@ -411,8 +486,9 @@ Each one has a test in the task that owns the code.
   Add a sentence to the doc comment of each trigger in
   `internal/schema/ddl/10-messagequeue/20-triggers.sql` saying that
   `messagequeue.Consumer` watches the signal for the queues this node is
-  responsible for.
-- [ ] **Step 3: Run `make test`**
+  responsible for. Widen the package doc in `internal/messagequeue/doc.go` to
+  say that the package also delivers the messages. - [ ] **Step 3: Run `make
+  test`**
 
   The existing engine-level suites cover delivery of commands and deadlines.
   Adjust any test that relied on the pump's poll interval or worker count;
@@ -428,7 +504,7 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 5: Claim-first deadline delivery
+### Task 6: Claim-first deadline delivery
 
 **Files:**
 - Modify: `internal/process/deadlinehandler.go`,
@@ -453,7 +529,7 @@ Each one has a test in the task that owns the code.
   claimed. The attempt that holds it observes `ended` under the instance lock
   and removes it.
 
-- Consumes: `messagequeue.ErrBusy`, and `ContentionDelay` from task 3, which the
+- Consumes: `messagequeue.ErrBusy`, and `ContentionDelay` from task 4, which the
   consumer applies.
 
 - [ ] **Step 1: Write the failing tests**
