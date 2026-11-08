@@ -218,3 +218,13 @@ func persistDeadlines(
 
 	return nil
 }
+
+// instanceLogAttr returns an attribute that describes the process instance with
+// the given ID and root, as it is now.
+func instanceLogAttr(instanceID string, root dogma.ProcessRoot, ended bool) slog.Attr {
+	return slog.Group(
+		"process_instance",
+		slog.String("id", instanceID),
+		slog.String("description", root.ProcessInstanceDescription(ended)),
+	)
+}

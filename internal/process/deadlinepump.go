@@ -175,14 +175,6 @@ func (p *DeadlinePump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	instanceLogger = engineLogger.With(
-		slog.Group(
-			"process_instance",
-			slog.String("id", instanceID),
-			slog.String("description", root.ProcessInstanceDescription(false)),
-		),
-	)
-
 	scope := &deadlineScope{
 		messageScope{
 			instanceID: instanceID,
@@ -197,14 +189,9 @@ func (p *DeadlinePump) HandleDelivery(
 				p.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			engineLogger: instanceLogger,
+			engineLogger: engineLogger,
 			appLogger: p.AppLogger.With(
 				xslog.Envelope("handled_message", env),
-				slog.Group(
-					"process_instance",
-					slog.String("id", instanceID),
-					slog.String("description", root.ProcessInstanceDescription(false)),
-				),
 			),
 			outboundMessageTypes: p.OutboundMessageTypes,
 		},

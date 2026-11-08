@@ -36,9 +36,10 @@ func (s *messageScope) Log(format string, args ...any) {
 	s.engineLogger.Debug(
 		"handler logged a message",
 		slog.String("text", text),
+		instanceLogAttr(s.instanceID, s.root, s.ended),
 	)
 
-	s.appLogger.Info(text)
+	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root, s.ended))
 }
 
 func (s *messageScope) InstanceID() string {
@@ -53,15 +54,15 @@ func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
 	fn(s.root)
 	s.mutated = true
 
-	s.engineLogger.Debug("handler mutated the process instance")
-	s.appLogger.Info("process instance mutated")
+	s.engineLogger.Debug("handler mutated the process instance", instanceLogAttr(s.instanceID, s.root, s.ended))
+	s.appLogger.Info("process instance mutated", instanceLogAttr(s.instanceID, s.root, s.ended))
 }
 
 func (s *messageScope) End() {
 	s.ended = true
 
-	s.engineLogger.Debug("handler ended the process instance")
-	s.appLogger.Info("process instance ended")
+	s.engineLogger.Debug("handler ended the process instance", instanceLogAttr(s.instanceID, s.root, s.ended))
+	s.appLogger.Info("process instance ended", instanceLogAttr(s.instanceID, s.root, s.ended))
 }
 
 func (s *messageScope) ExecuteCommand(c dogma.Command) {
@@ -87,11 +88,13 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 	s.engineLogger.Debug(
 		"handler executed a command",
 		xslog.Envelope("produced_message", commandEnvelope),
+		instanceLogAttr(s.instanceID, s.root, s.ended),
 	)
 
 	s.appLogger.Info(
 		c.MessageDescription(),
 		xslog.Envelope("produced_message", commandEnvelope),
+		instanceLogAttr(s.instanceID, s.root, s.ended),
 	)
 }
 
@@ -118,10 +121,12 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 	s.engineLogger.Debug(
 		"handler scheduled a deadline",
 		xslog.Envelope("produced_message", deadlineEnvelope),
+		instanceLogAttr(s.instanceID, s.root, s.ended),
 	)
 
 	s.appLogger.Info(
 		d.MessageDescription(),
 		xslog.Envelope("produced_message", deadlineEnvelope),
+		instanceLogAttr(s.instanceID, s.root, s.ended),
 	)
 }

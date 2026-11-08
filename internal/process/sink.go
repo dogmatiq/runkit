@@ -213,7 +213,7 @@ func (s *Sink) dispatch(
 	ctx context.Context,
 	tx *sql.Tx,
 	env *envelopepb.Envelope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	appLogger *slog.Logger,
 ) error {
 	messageID := env.GetBody().GetMessageId()
@@ -240,14 +240,13 @@ func (s *Sink) dispatch(
 		return nil
 	}
 
-	instanceLogger := logger.With(
-		slog.Group(
-			"process_instance",
-			slog.String("id", instanceID),
-		),
+	// Until the instance is loaded, a record can identify it only by its ID.
+	instanceIDAttr := slog.Group(
+		"process_instance",
+		slog.String("id", instanceID),
 	)
 
-	root, err := newRoot(ctx, s.Handler, instanceLogger)
+	root, err := newRoot(ctx, s.Handler, engineLogger.With(instanceIDAttr))
 	if err != nil {
 		return err
 	}
@@ -258,7 +257,7 @@ func (s *Sink) dispatch(
 		s.Identity.GetKey(),
 		instanceID,
 		root,
-		instanceLogger,
+		engineLogger.With(instanceIDAttr),
 	)
 	if err != nil {
 		return err
@@ -267,14 +266,6 @@ func (s *Sink) dispatch(
 	if !ok {
 		return nil
 	}
-
-	instanceLogger = logger.With(
-		slog.Group(
-			"process_instance",
-			slog.String("id", instanceID),
-			slog.String("description", root.ProcessInstanceDescription(false)),
-		),
-	)
 
 	scope := &eventScope{
 		messageScope{
@@ -290,14 +281,8 @@ func (s *Sink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			engineLogger: instanceLogger,
-			appLogger: appLogger.With(
-				slog.Group(
-					"process_instance",
-					slog.String("id", instanceID),
-					slog.String("description", root.ProcessInstanceDescription(false)),
-				),
-			),
+			engineLogger:         engineLogger,
+			appLogger:            appLogger,
 			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetCreatedAt().AsTime(),
@@ -335,7 +320,7 @@ func (s *Sink) dispatch(
 				s.Identity.GetKey(),
 				instanceID,
 				root,
-				instanceLogger,
+				engineLogger.With(instanceLogAttr(instanceID, root, scope.ended)),
 			); err != nil {
 				return err
 			}

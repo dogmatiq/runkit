@@ -579,6 +579,9 @@ implemented, this work finishes with:
   scope writes an engine record and an application record of each call at the
   same time, because it shares its methods with the event scope.
 - Per-delivery streaks, including a persisted first-failure time.
+- Building instance attributes for each record in the aggregate and deadline
+  pumps, as the process sink does, without an `instanceLogger` that fixes the
+  instance's ID when it's created.
 
 ## Out of scope
 

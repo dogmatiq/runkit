@@ -95,7 +95,6 @@ func (p *CommandPump) HandleDelivery(
 		slog.Group(
 			"aggregate_instance",
 			slog.String("id", instanceID),
-			slog.String("description", root.AggregateInstanceDescription()),
 			xslog.UUID("stream_id", streamID),
 		),
 	)
@@ -116,11 +115,6 @@ func (p *CommandPump) HandleDelivery(
 					packer:     packer,
 					appLogger: p.AppLogger.With(
 						xslog.Envelope("handled_message", env),
-						slog.Group(
-							"aggregate_instance",
-							slog.String("id", instanceID),
-							slog.String("description", root.AggregateInstanceDescription()),
-						),
 					),
 					outboundMessageTypes: p.OutboundMessageTypes,
 				},
@@ -627,4 +621,14 @@ func (p *CommandPump) marshalSnapshot(
 	}
 
 	return snapshot, true
+}
+
+// instanceLogAttr returns an attribute that describes the aggregate instance with
+// the given ID and root, as it is now.
+func instanceLogAttr(instanceID string, root dogma.AggregateRoot) slog.Attr {
+	return slog.Group(
+		"aggregate_instance",
+		slog.String("id", instanceID),
+		slog.String("description", root.AggregateInstanceDescription()),
+	)
 }

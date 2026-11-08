@@ -26,7 +26,10 @@ func (s *commandScope) Now() time.Time {
 }
 
 func (s *commandScope) Log(format string, args ...any) {
-	s.appLogger.Info(fmt.Sprintf(format, args...))
+	s.appLogger.Info(
+		fmt.Sprintf(format, args...),
+		instanceLogAttr(s.instanceID, s.root),
+	)
 }
 
 func (s *commandScope) InstanceID() string {
@@ -54,5 +57,6 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 	s.appLogger.Info(
 		event.MessageDescription(),
 		xslog.Envelope("produced_message", eventEnvelope),
+		instanceLogAttr(s.instanceID, s.root),
 	)
 }
