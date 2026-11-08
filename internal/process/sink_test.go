@@ -155,6 +155,7 @@ func newSink(t testing.TB, db *sql.DB) *Sink {
 		Packer: &envelope.Packer{
 			Application: identitypb.New("<app>", uuidpb.Generate()),
 		},
+		NodeID:        uuidpb.Generate(),
 		HandleTimeout: time.Minute,
 		RouteTimeout:  10 * time.Second,
 		EngineLogger:  spruce.NewTestLogger(t),
@@ -230,7 +231,12 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 		t.Fatal("expected checkpoint update to fail")
 	}
 
-	for _, table := range []string{"process.instances", "process.deadlines", "eventstream.handler_checkpoints", "commandqueue.commands"} {
+	for _, table := range []string{
+		"process.instances",
+		"eventstream.handler_checkpoints",
+		"messagequeue.messages WHERE handler_key IS NULL",
+		"messagequeue.messages WHERE handler_key IS NOT NULL",
+	} {
 		xtesting.ExpectQueryResult(
 			t,
 			"rolled back "+table,
@@ -246,7 +252,12 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	if err != nil || !ok || next != 1 {
 		t.Fatalf("unexpected retry result: %d, %t, %v", next, ok, err)
 	}
-	for _, table := range []string{"process.instances", "process.deadlines", "eventstream.handler_checkpoints", "commandqueue.commands"} {
+	for _, table := range []string{
+		"process.instances",
+		"eventstream.handler_checkpoints",
+		"messagequeue.messages WHERE handler_key IS NULL",
+		"messagequeue.messages WHERE handler_key IS NOT NULL",
+	} {
 		xtesting.ExpectQueryResult(
 			t,
 			"committed "+table,

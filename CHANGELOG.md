@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 <!-- references -->
 
+[0.3.0 migration guide]: https://github.com/dogmatiq/runkit/blob/main/docs/MIGRATING-v0.3.0.md
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs
 [dogmatiq/protobuf]: https://github.com/dogmatiq/protobuf
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
@@ -15,7 +16,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
-This release extends remote event consumption to process handlers.
+This release extends remote event consumption to process handlers, and stores
+commands and deadlines in a single queue table.
+
+> [!IMPORTANT]
+> Upgrading from 0.2.0 or earlier requires downtime. Stop every engine that
+> uses the database before calling `CreateSchema()`, and back up the database
+> first, since the upgrade drops the old tables. See the [0.3.0 migration
+> guide].
 
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
@@ -58,6 +66,11 @@ events.
 - The database schema has changed. Call `CreateSchema()` before running this
   version. If the schema already exists, it applies the required modifications
   while preserving existing data.
+- Commands and deadlines are now stored in a single queue table.
+  `CreateSchema()` moves pending commands and deadlines from a database
+  created by an earlier version into it, and every engine must be stopped while
+  it does. See the [0.3.0
+  migration guide].
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`

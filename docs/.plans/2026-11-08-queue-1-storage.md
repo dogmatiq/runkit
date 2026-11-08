@@ -224,7 +224,7 @@ Each one has a test in the task that owns the code.
 
   ```go
   func TestCreate_migratesQueues(t *testing.T)
-  // builds the v0.2.0 tables by hand (commandqueue.commands,
+  // builds the tables of v0.1.0 through v0.2.0 by hand (commandqueue.commands,
   // commandqueue.idempotency_keys, process.deadlines) with two commands, one
   // idempotency key and two deadlines, runs schema.Create twice, then checks:
   //   - messagequeue.messages has four rows with the expected keys and times

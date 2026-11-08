@@ -165,7 +165,7 @@ func endInstance(
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`DELETE FROM process.deadlines
+		`DELETE FROM messagequeue.messages
 		WHERE handler_key = $1
 			AND instance_id = $2`,
 		xsql.UUID(handlerKey),
@@ -177,11 +177,12 @@ func endInstance(
 	return nil
 }
 
-// persistDeadlines inserts any deadlines scheduled by the handler into the
-// process.deadlines table.
+// persistDeadlines adds any deadlines scheduled by the handler to the queue
+// with the given ID.
 func persistDeadlines(
 	ctx context.Context,
 	tx *sql.Tx,
+	queueID *uuidpb.UUID,
 	packer *envelope.EffectPacker,
 ) error {
 	deadlineEnvelopes, ok := packer.Seal()
@@ -197,16 +198,19 @@ func persistDeadlines(
 
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO process.deadlines (
+			`INSERT INTO messagequeue.messages (
 				message_id,
 				message_type_id,
+				queue_id,
 				handler_key,
 				instance_id,
 				envelope,
+				scheduled_at,
 				deliver_at
-			) VALUES ($1, $2, $3, $4, $5, $6)`,
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
 			xsql.UUID(deadlineEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(deadlineEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(queueID),
 			xsql.UUID(deadlineEnvelope.GetHeader().GetSource().GetHandler().GetKey()),
 			deadlineEnvelope.GetHeader().GetSource().GetInstanceId(),
 			data,

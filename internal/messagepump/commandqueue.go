@@ -26,8 +26,9 @@ func AcquireCommandDelivery(
 			c.message_type_id,
 			c.envelope,
 			c.failures
-		FROM commandqueue.commands AS c
-		WHERE message_type_id = ANY($1)
+		FROM messagequeue.messages AS c
+		WHERE handler_key IS NULL
+		AND message_type_id = ANY($1)
 		AND deliver_at <= clock_timestamp()
 		ORDER BY deliver_at
 		LIMIT 1
@@ -66,8 +67,13 @@ func PostponeCommandDelivery(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE commandqueue.commands SET
+		`UPDATE messagequeue.messages SET
 			failures = $2,
+			failing_since = CASE
+				WHEN $2 = 0 THEN NULL
+				WHEN failing_since IS NULL THEN clock_timestamp()
+				ELSE failing_since
+			END,
 			deliver_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
 		xsql.UUID(delivery.MessageID),
