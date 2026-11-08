@@ -12,7 +12,7 @@ replacing the supervisor's retry logic with a retry streak that the code
 deciding about a failure owns.
 
 **Architecture:** Tasks 1 to 3 are behavior fixes to event stream consumption
-that stand on their own. A new `supervisor.Streak` type then tracks consecutive
+that stand on their own. A new `supervisor.Work` type then tracks consecutive
 failures of one piece of work. It decides the backoff and writes every failure
 and recovery record by the guide's streak rules. `supervisor.Run` uses it for
 now and reports a time-only success. The engine builds an engine logger and an
@@ -41,7 +41,7 @@ These were made with the maintainer, and aren't in the logging guide.
 - **A stream that leaves the catalog** isn't a failure. The stream consumer
   waits for the stream to return, without logging above DEBUG, and then
   resumes from the handler's checkpoint.
-- **The retry streak.** One type, `supervisor.Streak`, with a recovery policy.
+- **The retry streak.** One type, `supervisor.Work`, with a recovery policy.
   The policy is a quiet period. With a quiet period of zero, a reported success
   is recovery at once, which suits discrete work. With a positive quiet period,
   a success starts the period, and recovery comes when it passes without a
@@ -94,7 +94,7 @@ Each one has a test in the task that owns the code.
 2. A stream consumer waiting for its stream to return must stop when the
    `Consumer` stops it. Task 3 has the test.
 3. A streak's quiet period ending after shutdown must not write a recovery
-   record or touch a stopped streak. Task 4 has the test.
+   record once the work is complete. Task 4 has the test.
 4. A success and a failure reported from different goroutines while the quiet
    timer fires. `make test` runs with `-race`. Task 4 has the test.
 5. An attempt whose commit fails after its handler succeeded must write no
@@ -192,27 +192,29 @@ Each one has a test in the task that owns the code.
   returns to the catalog" still passes.
 - [x] Stop for review.
 
-### Task 4: The retry streak
+### Task 4: Work that can fail
 
 **Files:**
-- Create: `internal/supervisor/streak.go`
-- Test: `internal/supervisor/streak_test.go`, using `testing/synctest`
+- Create: `internal/supervisor/work.go`
+- Test: `internal/supervisor/work_test.go`, using `testing/synctest`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // Streak tracks a run of consecutive failures of one piece of work. It
+  // Work is a piece of ongoing or repeated work that can fail, such as
+  // consuming an event stream. It tracks each streak of consecutive failures,
   // decides how long to wait before each retry, and writes each failure and
   // recovery record by the rules in docs/maintainers/logging.md.
-  type Streak struct {
-      // EngineLogger is the target for the streak's records. Its attributes
+  type Work struct {
+      // Description describes the work as a verb phrase in its base form,
+      // such as "consume event stream". It completes the log messages
+      // "attempt to … failed" and "attempt to … succeeded after failures".
+      Description string
+
+      // EngineLogger is the target for the work's records. Its attributes
       // must identify the work.
       EngineLogger *slog.Logger
-
-      // Description describes the work as a verb phrase, such as "consume
-      // event stream". It's used in the records' log messages.
-      Description string
 
       // QuietPeriod is how long the work must go without failing after a
       // success before the streak ends. Zero ends it at the success itself.
@@ -220,16 +222,16 @@ Each one has a test in the task that owns the code.
       // unexported state, guarded by a mutex
   }
 
-  func (s *Streak) Failed(ctx context.Context, err error) time.Duration
-  func (s *Streak) FailedDeterministically(ctx context.Context, err error) time.Duration
-  func (s *Streak) Succeeded(ctx context.Context)
-  func (s *Streak) Stop()
+  func (w *Work) Failed(ctx context.Context, err error) time.Duration
+  func (w *Work) FailedDeterministically(ctx context.Context, err error) time.Duration
+  func (w *Work) Succeeded(ctx context.Context)
+  func (w *Work) Complete()
   ```
 
   Package constants: `baseDelay = 100 * time.Millisecond`,
   `transientMaxDelay = 15 * time.Second`,
   `deterministicMaxDelay = 5 * time.Minute`,
-  `errorAfter = 30 * time.Second`. Use the package's existing `Jitter`.
+  `maxDebugStreak = 30 * time.Second`. Use the package's existing `Jitter`.
 
 **Behavior:**
 - `Failed` and `FailedDeterministically` return the delay before the next
@@ -243,18 +245,18 @@ Each one has a test in the task that owns the code.
   it passes.
 - Ending a streak writes the recovery record and resets all state, so the next
   failure starts a new streak at `baseDelay`.
-- `Stop` cancels the quiet period and writes nothing. Call it when the work
+- `Complete` cancels the quiet period and writes nothing. Call it when the work
   stops for good, such as at shutdown.
 
 **Records**, with the exact log messages. `{description}` is `Description`.
 
 | When | Level | Log message |
 | --- | --- | --- |
-| A deterministic failure, if the streak hasn't logged an ERROR | ERROR | `unable to {description}, further failures are logged at DEBUG until it succeeds again` |
-| A failure once the streak is `errorAfter` old, if it hasn't logged an ERROR | ERROR | same as above |
-| Any other failure | DEBUG | `unable to {description}, retrying` |
-| Recovery after an ERROR | INFO | `able to {description} again` |
-| Recovery without an ERROR | DEBUG | `able to {description} again` |
+| A deterministic failure, if the streak hasn't logged an ERROR | ERROR | `attempt to {description} failed` |
+| A failure `maxDebugStreak` after the streak's first failure, if it hasn't logged an ERROR | ERROR | same as above |
+| Any other failure | DEBUG | `attempt to {description} failed` |
+| Recovery after an ERROR | INFO | `attempt to {description} succeeded after failures` |
+| Recovery without an ERROR | DEBUG | `attempt to {description} succeeded after failures` |
 
 Every record has `failing_since`, the time of the streak's first failure, and
 `failures`. Failure records also have `xslog.Error(err)` and `delay`. ERROR
@@ -275,14 +277,14 @@ failure.
     returns at most 200ms.
   - "it ends a streak when the quiet period passes without a failure": the
     same, but sleep 31s. Then `Failed` returns at most 100ms.
-  - "it writes nothing after it is stopped" (review focus 3): `Failed`,
-    `Succeeded`, `Stop`, then sleep past the quiet period inside
+  - "it writes nothing once the work is complete" (review focus 3): `Failed`,
+    `Succeeded`, `Complete`, then sleep past the quiet period inside
     `synctest.Test`. Expect no panic or race. The test makes no log assertions.
   - "it tolerates successes and failures from different goroutines" (review
     focus 4): 100 goroutines each call `Failed` and `Succeeded`, then wait.
-- [ ] Run `make test`. Expect the new tests to fail, because `Streak` doesn't
+- [ ] Run `make test`. Expect the new tests to fail, because `Work` doesn't
   exist yet.
-- [ ] Implement `Streak` in `streak.go`, with the behavior and records above.
+- [ ] Implement `Work` in `work.go`, with the behavior and records above.
 - [ ] Run `make test`. Expect it to pass.
 - [ ] Stop for review.
 
@@ -295,18 +297,18 @@ failure.
   `error_test.go`
 
 **Interfaces:**
-- Consumes: `Streak` from Task 4.
+- Consumes: `Work` from Task 4.
 - Produces:
   - `func Run(ctx context.Context, engineLogger *slog.Logger, description string, fn func(context.Context) error) error`
   - `func (g *Group) Go(engineLogger *slog.Logger, description string, fn func(context.Context) error)`
   - `func Deterministic(err error) error` and `func Deterministicf(format string, args ...any) error` replace `Persistent` and `Persistentf`.
 
 **Behavior:**
-- `Run` builds a `Streak` with a `QuietPeriod` of 30 seconds, and reports
+- `Run` builds a `Work` with a `QuietPeriod` of 30 seconds, and reports
   `Succeeded` at the start of each attempt, because it can't see inside `fn`.
 - It reports a failure that wraps `Deterministic` with
   `FailedDeterministically`, and any other failure with `Failed`.
-- It calls `Stop` when it returns. `Fatal`, the panic on a SQL deadlock, and
+- It calls `Complete` when it returns. `Fatal`, the panic on a SQL deadlock, and
   returning the context's error are unchanged.
 - Remove `resetThreshold` and the "component failed" record.
 
@@ -317,7 +319,7 @@ failure.
 | `catalog.go:180` | `watch event stream source` |
 | `consumer.go:129` | `consume event stream` |
 | `source/local.go:87` | `discover event streams` |
-| `source/local.go:95` (`group.Go`) | `follow event stream` |
+| `source/local.go:95` (`group.Go`) | `deliver event stream` |
 | `messagepump/pump.go:55` | `deliver messages` |
 | `remoteengine/connector.go:48` | `discover remote engines` |
 | `grpcserver/server.go:47` | `serve gRPC requests` |
@@ -464,7 +466,7 @@ where there is one. It carries no `delivery`, stream or offset attributes.
   after a successful send. Sends happen only on the node's own goroutine, so no
   lock is needed.
 - `expireNodes` removing this node logs ERROR `this node's heartbeat was not
-  heard within the timeout, failed sends are logged at DEBUG`, with
+  heard within the timeout`, with
   `slog.Duration("timeout", n.Timeout)` and `xslog.Error(lastSendErr)` if
   there is one.
 - `recordHeartbeat` for this node, after it had been removed, logs INFO `this

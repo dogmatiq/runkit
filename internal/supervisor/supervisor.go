@@ -20,9 +20,9 @@ const (
 	// is not created by [Persistent] or [Persistentf].
 	transientMaxDelay = 15 * time.Second
 
-	// persistentMaxDelay is the maximum backoff duration after a failure
+	// deterministicMaxDelay is the maximum backoff duration after a failure
 	// created by [Persistent] or [Persistentf].
-	persistentMaxDelay = 5 * time.Minute
+	deterministicMaxDelay = 5 * time.Minute
 
 	// resetThreshold is how long fn must run before failing for the backoff to
 	// be reset to [baseDelay].
@@ -66,7 +66,7 @@ func Run(
 
 		limit := transientMaxDelay
 		if _, ok := errors.AsType[persistentError](err); ok {
-			limit = persistentMaxDelay
+			limit = deterministicMaxDelay
 		}
 
 		if backoff == 0 || time.Since(startedAt) >= resetThreshold {
