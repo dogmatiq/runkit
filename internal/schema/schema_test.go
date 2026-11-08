@@ -56,6 +56,14 @@ func TestCreateAndDrop(t *testing.T) {
 		WHERE routine_schema = 'public'`,
 	)
 
+	xtesting.ExpectQueryResult(
+		t,
+		"the queue is created on a database that never had the old tables",
+		true,
+		db,
+		`SELECT to_regclass('messagequeue.messages') IS NOT NULL`,
+	)
+
 	// Create() again to verify idempotency.
 	if err := schema.Create(t.Context(), db); err != nil {
 		t.Fatalf("schema creation is not idempotent: %s", err)
@@ -196,4 +204,206 @@ func TestCreate_doesNotRequireExclusiveCheckpointLock(t *testing.T) {
 			t.Fatalf("unable to apply schema during a checkpoint write: %v", err)
 		}
 	})
+}
+
+// TestCreate_migratesQueues verifies that schema upgrades move pending commands
+// and deadlines from the tables of earlier versions into the queue.
+func TestCreate_migratesQueues(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE SCHEMA commandqueue;
+
+		CREATE TABLE commandqueue.commands (
+			message_id      uuid        PRIMARY KEY,
+			message_type_id uuid        NOT NULL,
+			envelope        bytea       NOT NULL,
+			failures        int         NOT NULL DEFAULT 0,
+			enqueued_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+			deliver_at      timestamptz NOT NULL DEFAULT clock_timestamp()
+		);
+
+		CREATE TABLE commandqueue.idempotency_keys (
+			idempotency_key text PRIMARY KEY,
+			message_id      uuid NOT NULL UNIQUE
+		);
+
+		CREATE SCHEMA process;
+
+		CREATE TABLE process.deadlines (
+			message_id      uuid        PRIMARY KEY,
+			message_type_id uuid        NOT NULL,
+			handler_key     uuid        NOT NULL,
+			instance_id     text        NOT NULL,
+			envelope        bytea       NOT NULL,
+			failures        int         NOT NULL DEFAULT 0,
+			deliver_at      timestamptz NOT NULL
+		);
+
+		INSERT INTO commandqueue.commands (
+			message_id,
+			message_type_id,
+			envelope,
+			failures,
+			enqueued_at,
+			deliver_at
+		) VALUES (
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
+			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
+			'\x01',
+			0,
+			'2100-01-01T00:00:00Z',
+			'2100-01-01T00:00:00Z'
+		), (
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e02',
+			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
+			'\x02',
+			3,
+			'2100-01-01T00:00:00Z',
+			'2100-01-01T00:05:00Z'
+		);
+
+		INSERT INTO commandqueue.idempotency_keys (
+			idempotency_key,
+			message_id
+		) VALUES (
+			'<key>',
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'
+		);
+
+		INSERT INTO process.deadlines (
+			message_id,
+			message_type_id,
+			handler_key,
+			instance_id,
+			envelope,
+			failures,
+			deliver_at
+		) VALUES (
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e03',
+			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c02',
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'<instance>',
+			'\x03',
+			0,
+			'2100-01-01T01:00:00Z'
+		), (
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e04',
+			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c02',
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'<instance>',
+			'\x04',
+			2,
+			'2100-01-01T01:05:00Z'
+		)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		if err := schema.Create(t.Context(), db); err != nil {
+			t.Fatal(err)
+		}
+
+		xtesting.ExpectQueryResult(
+			t,
+			"every pending message is in the queue once",
+			4,
+			db,
+			`SELECT COUNT(*)
+			FROM messagequeue.messages`,
+		)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"a command is queued under its message type",
+		true,
+		db,
+		`SELECT queue_id = message_type_id
+			AND handler_key IS NULL
+			AND instance_id IS NULL
+			AND envelope = '\x01'
+			AND failures = 0
+			AND failing_since IS NULL
+			AND scheduled_at = '2100-01-01T00:00:00Z'::timestamptz
+			AND deliver_at = '2100-01-01T00:00:00Z'::timestamptz
+		FROM messagequeue.messages
+		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"a failing command keeps its failures and is failing since its next attempt",
+		true,
+		db,
+		`SELECT failures = 3
+			AND failing_since = '2100-01-01T00:05:00Z'::timestamptz
+			AND scheduled_at = '2100-01-01T00:00:00Z'::timestamptz
+			AND deliver_at = '2100-01-01T00:05:00Z'::timestamptz
+		FROM messagequeue.messages
+		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e02'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"a deadline is queued under its handler",
+		true,
+		db,
+		`SELECT queue_id = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'
+			AND handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'
+			AND instance_id = '<instance>'
+			AND envelope = '\x03'
+			AND failures = 0
+			AND failing_since IS NULL
+			AND scheduled_at = '2100-01-01T01:00:00Z'::timestamptz
+			AND deliver_at = '2100-01-01T01:00:00Z'::timestamptz
+		FROM messagequeue.messages
+		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e03'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"a failing deadline keeps its failures and is failing since its next attempt",
+		true,
+		db,
+		`SELECT failures = 2
+			AND failing_since = '2100-01-01T01:05:00Z'::timestamptz
+			AND scheduled_at = '2100-01-01T01:05:00Z'::timestamptz
+			AND deliver_at = '2100-01-01T01:05:00Z'::timestamptz
+		FROM messagequeue.messages
+		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e04'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the idempotency key still refers to its command",
+		true,
+		db,
+		`SELECT message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'
+		FROM messagequeue.idempotency_keys
+		WHERE idempotency_key = '<key>'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the old tables are gone",
+		true,
+		db,
+		`SELECT to_regclass('commandqueue.commands') IS NULL
+			AND to_regclass('commandqueue.idempotency_keys') IS NULL
+			AND to_regclass('process.deadlines') IS NULL`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the commandqueue schema is gone",
+		0,
+		db,
+		`SELECT COUNT(*)
+		FROM information_schema.schemata
+		WHERE schema_name = 'commandqueue'`,
+	)
 }

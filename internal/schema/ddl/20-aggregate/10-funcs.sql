@@ -18,7 +18,7 @@ BEGIN
     AND aggregate.instances.instance_id = complete_without_events.instance_id
     AND aggregate.instances.stream_id IS NULL;
 
-    PERFORM commandqueue.remove(complete_without_events.message_id);
+    PERFORM messagequeue.remove(complete_without_events.message_id);
 END;
 $$;
 
@@ -71,6 +71,6 @@ BEGIN
     END IF;
 
     -- Remove the command from the queue.
-    PERFORM commandqueue.remove(complete_with_events.message_id);
+    PERFORM messagequeue.remove(complete_with_events.message_id);
 END;
 $$;

@@ -27,10 +27,10 @@ each failure's level and delay from those columns alone.
 [logging plan][logging-plan], the "Delivery correctness and contention"
 section of [#100][100], and [#99][99].
 
-This is the last of three plans for [#100][100]. It depends on
-[plan 2][plan-2] for `queue.Consumer`, `queue.Handler` and the claim-first
-deadline delivery. Finishing it closes [#99][99], and lets [#101][101] and
-[#102][102] close as superseded.
+This is the last of three plans for [#100][100]. It depends on [plan 2][plan-2]
+for `messagequeue.Consumer`, `messagequeue.Handler` and the claim-first deadline
+delivery. Finishing it closes [#99][99], and lets [#101][101] and [#102][102]
+close as superseded.
 
 ## Reviewability
 
@@ -59,15 +59,15 @@ the last one taught them, and change the plan before changing the code.
 These were made with the maintainer, and aren't in [#100][100].
 
 - **The consumer owns the loggers.** `Consumer.Handlers` maps each message
-  type to a `queue.Route`, which pairs the handler with its engine and
+  type to a `messagequeue.Route`, which pairs the handler with its engine and
   application loggers. The consumer derives the attempt's loggers, buffers
   the application one, and flushes it after the commit. Handlers lose their
   `EngineLogger` and `AppLogger` fields.
 - **A failure is logged once, by the consumer.** Handlers return errors with
-  context and don't log them. `queue.Fail(err)` marks an application failure
-  to postpone with a failure counted. `queue.ErrBusy` marks contention.
-  `supervisor.Deterministic` marks one that retrying can't clear. Any other
-  error rolls the attempt back and leaves the row for another attempt.
+  context and don't log them. `messagequeue.Fail(err)` marks an application
+  failure to postpone with a failure counted. `messagequeue.ErrBusy` marks
+  contention. `supervisor.Deterministic` marks one that retrying can't clear.
+  Any other error rolls the attempt back and leaves the row for another attempt.
 - **The streak lives on the row.** `supervisor.Streak` is a value built from
   `Failures` and `FailingSince`. It writes the failure record at ERROR when
   the failure is deterministic or the streak is older than `maxDebugStreak`,
@@ -131,14 +131,15 @@ Each one has a test in the task that owns the code.
 ### Task 1: Buffered application records
 
 **Files:**
-- Create: `internal/queue/route.go`
-- Modify: `internal/queue/consumer.go`, `internal/queue/attempt.go`,
-  `internal/queue/handler.go`
+- Create: `internal/messagequeue/route.go`
+- Modify: `internal/messagequeue/consumer.go`,
+  `internal/messagequeue/attempt.go`, `internal/messagequeue/handler.go`
 - Modify: `internal/aggregate/commandhandler.go`, `commandscope.go`,
   `internal/integration/commandhandler.go`, `commandscope.go`,
   `internal/process/deadlinehandler.go`, `messagescope.go`
 - Modify: `engine.go` (`runHandler` builds routes)
-- Test: `internal/queue/consumer_test.go`, and the existing handler suites
+- Test: `internal/messagequeue/consumer_test.go`, and the existing handler
+  suites
 
 **Interfaces:**
 - Produces:
@@ -231,15 +232,15 @@ Each one has a test in the task that owns the code.
   func write(ctx, tx, handlerKey, binding *uuidpb.UUID, e effects) error
   ```
 
-  `write` queues the commands through the policy's key, ends the instance or
-  saves the state, and queues the deadlines under the binding. `dispatch` and
-  `Deliver` each become: load, prepare, write. A preparation error from the
+  `write` adds the commands to the policy's queue, ends the instance or saves
+  the state, and adds the deadlines to the instance's deadline queue. `dispatch`
+  and `Deliver` each become: load, prepare, write. A preparation error from the
   handler or the marshal is returned wrapped with context, as
-  `queue.Fail(err)` from the deadline handler and as a plain error from the
-  sink, where the stream consumer's streak handles it as today.
+  `messagequeue.Fail(err)` from the deadline handler and as a plain error from
+  the sink, where the stream consumer's streak handles it as today.
 
-- Consumes: `queue.Fail` from task 3, or `queue.ErrFailed` if task 3 hasn't
-  landed; do task 3 first if that's awkward.
+- Consumes: `messagequeue.Fail` from task 3, or `messagequeue.ErrFailed` if task
+  3 hasn't landed; do task 3 first if that's awkward.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -272,15 +273,15 @@ Each one has a test in the task that owns the code.
 ### Task 3: Per-delivery streaks
 
 **Files:**
-- Create: `internal/supervisor/streak.go`, `internal/queue/fail.go`
-- Modify: `internal/queue/attempt.go`, `internal/queue/handler.go`
+- Create: `internal/supervisor/streak.go`, `internal/messagequeue/fail.go`
+- Modify: `internal/messagequeue/attempt.go`, `internal/messagequeue/handler.go`
 - Modify: `internal/aggregate/commandhandler.go`,
   `internal/integration/commandhandler.go`,
   `internal/process/deadlinehandler.go` (return errors with context; stop
-  logging them; `queue.Fail` for application failures;
+  logging them; `messagequeue.Fail` for application failures;
   `supervisor.Deterministic` for unmarshal failures)
 - Test: `internal/supervisor/streak_test.go`,
-  `internal/queue/consumer_test.go`
+  `internal/messagequeue/consumer_test.go`
 
 **Interfaces:**
 - Produces:
@@ -314,7 +315,7 @@ Each one has a test in the task that owns the code.
   // Succeeded writes the recovery record if a streak was in progress.
   func (s Streak) Succeeded(ctx context.Context)
 
-  // In queue:
+  // In messagequeue:
   // Fail marks err as a failure of the delivery itself, to be postponed with
   // its failure count incremented.
   func Fail(err error) error
@@ -338,7 +339,7 @@ Each one has a test in the task that owns the code.
   succeeds the streak. Contention keeps `failing_since` as it is.
 
   Handlers stop logging "unable to handle command", "unable to unmarshal
-  command" and the like, and return `queue.Fail(fmt.Errorf("unable to
+  command" and the like, and return `messagequeue.Fail(fmt.Errorf("unable to
   handle command %s: %w", id, err))`, or `supervisor.Deterministic(...)` for
   an envelope or message that can't be unmarshaled. The consumer's attempt
   logs each failure once through the streak, with `handled_message`.
