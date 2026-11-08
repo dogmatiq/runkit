@@ -129,6 +129,7 @@ func (c *Consumer) startStreamConsumer(
 		err := supervisor.Run(
 			ctx,
 			logger,
+			"consume event stream",
 			func(ctx context.Context) error {
 				for {
 					err := c.consume(ctx, streamID)
@@ -174,7 +175,7 @@ func (c *Consumer) startStreamConsumer(
 func (c *Consumer) consume(ctx context.Context, streamID *uuidpb.UUID) error {
 	cp, err := c.Sink.CheckpointOffset(ctx, streamID)
 	if err != nil {
-		return supervisor.Persistent(err)
+		return err
 	}
 
 	return c.EventStreams.Consume(
@@ -186,7 +187,7 @@ func (c *Consumer) consume(ctx context.Context, streamID *uuidpb.UUID) error {
 			var ok bool
 			cp, ok, err = c.Sink.ConsumeSegment(ctx, cp, seg)
 			if err != nil {
-				return supervisor.Persistent(err)
+				return err
 			}
 
 			if !ok {

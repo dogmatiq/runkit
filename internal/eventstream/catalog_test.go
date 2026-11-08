@@ -194,11 +194,11 @@ func TestCatalog(t *testing.T) {
 		}
 	}
 
-	// expectRetriedAsPersistent waits for attempts to be timed on the given
+	// expectRetriedAsDeterministic waits for attempts to be timed on the given
 	// channel, and fails the test unless two of them are eventually more than
 	// 15 seconds apart, the longest that [supervisor.Run] waits after a failure
-	// that is not persistent. It must be called from within a synctest bubble.
-	expectRetriedAsPersistent := func(t *testing.T, attempts <-chan time.Time) {
+	// that is not deterministic. It must be called from within a synctest bubble.
+	expectRetriedAsDeterministic := func(t *testing.T, attempts <-chan time.Time) {
 		t.Helper()
 
 		prev := <-attempts
@@ -213,7 +213,7 @@ func TestCatalog(t *testing.T) {
 			prev = next
 		}
 
-		t.Fatal("expected the attempts to back off as after a persistent failure")
+		t.Fatal("expected the attempts to back off as after a deterministic failure")
 	}
 
 	t.Run("Watch", func(t *testing.T) {
@@ -375,7 +375,7 @@ func TestCatalog(t *testing.T) {
 			})
 		})
 
-		t.Run("it retries a source that can never be watched as after a persistent failure", func(t *testing.T) {
+		t.Run("it retries a source that can never be watched as after a deterministic failure", func(t *testing.T) {
 			cases := []struct {
 				Name string
 				Err  error
@@ -414,7 +414,7 @@ func TestCatalog(t *testing.T) {
 						)
 						defer remove()
 
-						expectRetriedAsPersistent(t, attempts)
+						expectRetriedAsDeterministic(t, attempts)
 					})
 				})
 			}
@@ -1074,7 +1074,7 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
-		t.Run("it fails a read that the source can never serve as a persistent failure", func(t *testing.T) {
+		t.Run("it fails a read that the source can never serve as a deterministic failure", func(t *testing.T) {
 			cases := []struct {
 				Name string
 				Err  error
@@ -1134,6 +1134,7 @@ func TestCatalog(t *testing.T) {
 							supervisor.Run(
 								ctx,
 								spruce.NewTestLogger(t),
+								"<work>",
 								func(ctx context.Context) error {
 									return c.Consume(
 										ctx,
@@ -1148,7 +1149,7 @@ func TestCatalog(t *testing.T) {
 							)
 						}()
 
-						expectRetriedAsPersistent(t, attempts)
+						expectRetriedAsDeterministic(t, attempts)
 
 						cancel()
 						<-done

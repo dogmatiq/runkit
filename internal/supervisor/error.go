@@ -29,30 +29,29 @@ func (e fatalError) Unwrap() error {
 	return e.err
 }
 
-// Persistent returns an error that causes [Run] to retry fn with a backoff
-// suited to failures that persist until something outside the engine changes,
-// such as a handler's code or data.
+// Deterministic returns an error that causes [Run] to retry fn as after a
+// deterministic failure, which retrying alone can't clear.
 //
-// [Run] waits longer between retries after such a failure than after others.
-func Persistent(err error) error {
-	return persistentError{err}
+// [Run] logs such a failure at ERROR at once, and waits longer between retries
+// after it than after others.
+func Deterministic(err error) error {
+	return deterministicError{err}
 }
 
-// Persistentf returns an error formatted according to format, as per
-// [fmt.Errorf], that causes [Run] to retry fn with the backoff described by
-// [Persistent].
-func Persistentf(format string, args ...any) error {
-	return Persistent(fmt.Errorf(format, args...))
+// Deterministicf returns an error formatted according to format, as per
+// [fmt.Errorf], that causes [Run] to retry fn as described by [Deterministic].
+func Deterministicf(format string, args ...any) error {
+	return Deterministic(fmt.Errorf(format, args...))
 }
 
-type persistentError struct {
+type deterministicError struct {
 	err error
 }
 
-func (e persistentError) Error() string {
+func (e deterministicError) Error() string {
 	return e.err.Error()
 }
 
-func (e persistentError) Unwrap() error {
+func (e deterministicError) Unwrap() error {
 	return e.err
 }

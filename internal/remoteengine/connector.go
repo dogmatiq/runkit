@@ -45,7 +45,7 @@ type Connector struct {
 
 // Run discovers remote engines until ctx is canceled.
 func (c *Connector) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.Logger, c.discover)
+	return supervisor.Run(ctx, c.Logger, "discover remote engines", c.discover)
 }
 
 // discover calls Discover, watching each remote engine that it adds for event

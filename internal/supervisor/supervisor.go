@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -17,41 +16,45 @@ const (
 	baseDelay = 100 * time.Millisecond
 
 	// transientMaxDelay is the maximum backoff duration after a failure that
-	// is not created by [Persistent] or [Persistentf].
+	// is not deterministic.
 	transientMaxDelay = 15 * time.Second
 
-	// deterministicMaxDelay is the maximum backoff duration after a failure
-	// created by [Persistent] or [Persistentf].
+	// deterministicMaxDelay is the maximum backoff duration after a
+	// deterministic failure.
 	deterministicMaxDelay = 5 * time.Minute
 
-	// resetThreshold is how long fn must run before failing for the backoff to
-	// be reset to [baseDelay].
-	resetThreshold = 3 * time.Minute
+	// quietPeriod is how long fn must run without failing for [Run] to end a
+	// streak of failures.
+	quietPeriod = 30 * time.Second
 )
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //
 // A nil return from fn is success. An error created by [Fatal] or [Fatalf] is
-// returned to the caller without retrying. Any other error is logged and fn is
-// called again after a delay. Once ctx is canceled, fn is not called again
-// regardless of what it returned.
+// returned to the caller without retrying. Any other error is recorded as a
+// failure of a [Work] with the given description, and fn is called again
+// after the delay that the [Work] decides. Once ctx is canceled, fn is not
+// called again regardless of what it returned.
 //
-// The delay doubles with each consecutive failure, up to a limit. The limit is
-// higher when the error was created by [Persistent] or [Persistentf], so that
-// failures unlikely to resolve themselves are retried less often. The delay
-// returns to its initial value once fn runs for long enough before failing.
+// An error created by [Deterministic] or [Deterministicf] is recorded as a
+// deterministic failure. [Run] can't see whether fn is making progress, so a
+// streak of failures ends once fn has run for the quiet period without
+// failing.
 func Run(
 	ctx context.Context,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
+	description string,
 	fn func(context.Context) error,
 ) error {
-	var (
-		backoff  time.Duration
-		failures uint64
-	)
+	work := &Work{
+		Description:  description,
+		EngineLogger: engineLogger,
+		QuietPeriod:  quietPeriod,
+	}
+	defer work.Complete()
 
 	for {
-		startedAt := time.Now()
+		work.Succeeded(ctx)
 		err := fn(ctx)
 
 		if ctx.Err() != nil || err == nil {
@@ -64,29 +67,12 @@ func Run(
 
 		xsql.PanicOnDeadlock(err)
 
-		limit := transientMaxDelay
-		if _, ok := errors.AsType[persistentError](err); ok {
-			limit = deterministicMaxDelay
-		}
-
-		if backoff == 0 || time.Since(startedAt) >= resetThreshold {
-			backoff = baseDelay
-			failures = 0
+		var delay time.Duration
+		if _, ok := errors.AsType[deterministicError](err); ok {
+			delay = work.FailedDeterministically(ctx, err)
 		} else {
-			backoff = min(2*backoff, limit)
+			delay = work.Failed(ctx, err)
 		}
-
-		failures++
-
-		delay := Jitter(backoff)
-
-		logger.ErrorContext(
-			ctx,
-			"component failed, restarting after delay",
-			xslog.Error(err),
-			slog.Uint64("failures", failures),
-			slog.Duration("delay", delay),
-		)
 
 		select {
 		case <-ctx.Done():

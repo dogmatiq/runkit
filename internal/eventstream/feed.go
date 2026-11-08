@@ -272,7 +272,7 @@ func (f *feed) read(
 		if errors.Is(err, source.ErrUnrecognizedStream) ||
 			errors.Is(err, source.ErrOffsetOutOfRange) ||
 			errors.Is(err, source.ErrInvalidSegment) {
-			return cp, supervisor.Persistent(err)
+			return cp, supervisor.Deterministic(err)
 		}
 
 		return cp, err

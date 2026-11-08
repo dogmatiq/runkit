@@ -21,6 +21,7 @@ func TestGroup(t *testing.T) {
 
 		group.Go(
 			logger,
+			"<work>",
 			func(context.Context) error {
 				calls.Add(1)
 				return nil
@@ -46,6 +47,7 @@ func TestGroup(t *testing.T) {
 
 			group.Go(
 				logger,
+				"<work>",
 				func(context.Context) error {
 					if calls.Add(1) < 3 {
 						return errors.New("<error>")
@@ -85,6 +87,7 @@ func TestGroup(t *testing.T) {
 
 			group.Go(
 				logger,
+				"<work>",
 				func(context.Context) error {
 					calls.Add(1)
 					return errors.New("<error>")
@@ -115,6 +118,7 @@ func TestGroup(t *testing.T) {
 
 		group.Go(
 			logger,
+			"<work>",
 			func(context.Context) error {
 				calls.Add(1)
 				cancel()
@@ -140,6 +144,7 @@ func TestGroup(t *testing.T) {
 		for range 3 {
 			group.Go(
 				logger,
+				"<work>",
 				func(context.Context) error {
 					calls.Add(1)
 					return nil
@@ -163,6 +168,7 @@ func TestGroup(t *testing.T) {
 
 		group.Go(
 			logger,
+			"<work>",
 			func(ctx context.Context) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -171,6 +177,7 @@ func TestGroup(t *testing.T) {
 
 		group.Go(
 			logger,
+			"<work>",
 			func(context.Context) error {
 				return Fatal(want)
 			},

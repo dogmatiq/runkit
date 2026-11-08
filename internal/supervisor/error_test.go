@@ -15,6 +15,7 @@ func TestFatalf(t *testing.T) {
 	err := Run(
 		t.Context(),
 		spruce.NewTestLogger(t),
+		"<work>",
 		func(context.Context) error {
 			return Fatalf("<error %d>: %w", 1, cause)
 		},
@@ -29,9 +30,9 @@ func TestFatalf(t *testing.T) {
 	}
 }
 
-func TestPersistentf(t *testing.T) {
+func TestDeterministicf(t *testing.T) {
 	cause := errors.New("<cause>")
-	err := Persistentf("<error %d>: %w", 1, cause)
+	err := Deterministicf("<error %d>: %w", 1, cause)
 
 	if err.Error() != "<error 1>: <cause>" {
 		t.Fatalf("unexpected error: got %v, want %q", err, "<error 1>: <cause>")

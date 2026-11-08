@@ -52,7 +52,7 @@ type deliveryTask struct {
 //
 // It must be called at most once.
 func (p *MessagePump) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, p.Logger, p.run)
+	return supervisor.Run(ctx, p.Logger, "deliver messages", p.run)
 }
 
 // run starts the dispatcher and workers, and runs them until ctx is canceled

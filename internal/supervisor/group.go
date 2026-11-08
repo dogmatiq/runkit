@@ -29,11 +29,12 @@ func WithContext(ctx context.Context) (*Group, context.Context) {
 
 // Go calls [Run] in a new goroutine, with the group's context.
 func (g *Group) Go(
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
+	description string,
 	fn func(context.Context) error,
 ) {
 	g.group.Go(func() error {
-		err := Run(g.ctx, logger, fn)
+		err := Run(g.ctx, engineLogger, description, fn)
 
 		// Run returns the context's error once the context is canceled, which
 		// is not a failure of fn.

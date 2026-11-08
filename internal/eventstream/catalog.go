@@ -180,6 +180,7 @@ func (c *Catalog) Watch(
 	return supervisor.Run(
 		ctx,
 		c.Logger,
+		"watch event stream source",
 		func(ctx context.Context) error {
 			for {
 				err := src.Watch(
@@ -208,7 +209,7 @@ func (c *Catalog) Watch(
 				// A source that does not offer event streams, or that delivers
 				// an invalid segment, is unlikely to do otherwise soon.
 				if errors.Is(err, errors.ErrUnsupported) || errors.Is(err, source.ErrInvalidSegment) {
-					return supervisor.Persistent(err)
+					return supervisor.Deterministic(err)
 				}
 
 				if err == nil && ctx.Err() == nil {

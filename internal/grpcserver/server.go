@@ -44,7 +44,7 @@ func (s *Server) ListenAddr(ctx context.Context) (net.Addr, error) {
 //
 // It must be called at most once.
 func (s *Server) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, s.Logger, s.serve)
+	return supervisor.Run(ctx, s.Logger, "serve gRPC requests", s.serve)
 }
 
 // serve accepts connections until ctx is canceled or serving fails.

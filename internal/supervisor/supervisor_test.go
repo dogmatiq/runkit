@@ -22,6 +22,7 @@ func TestRun(t *testing.T) {
 		err := Run(
 			t.Context(),
 			logger,
+			"<work>",
 			func(context.Context) error {
 				calls.Add(1)
 				return Fatal(want)
@@ -56,6 +57,7 @@ func TestRun_backoff(t *testing.T) {
 		err := Run(
 			t.Context(),
 			spruce.NewTestLogger(t),
+			"<work>",
 			func(context.Context) error {
 				if calls > 0 {
 					delays = append(delays, time.Since(returned))
@@ -102,13 +104,13 @@ func TestRun_backoff(t *testing.T) {
 		})
 	})
 
-	t.Run("it allows a longer delay after a persistent error", func(t *testing.T) {
+	t.Run("it allows a longer delay after a deterministic failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			got := delays(
 				t,
 				15,
 				func(int) error {
-					return Persistent(errors.New("<error>"))
+					return Deterministic(errors.New("<error>"))
 				},
 			)
 
@@ -118,15 +120,15 @@ func TestRun_backoff(t *testing.T) {
 				}
 			}
 
-			// Delays longer than the reset threshold must not reset the backoff,
-			// so the final delays are close to the cap.
+			// Delays longer than the quiet period must not end the streak, so the
+			// final delays are close to the cap.
 			if last := got[len(got)-1]; last < 150*time.Second {
 				t.Fatalf("expected the final delay to reach the cap, got %s", last)
 			}
 		})
 	})
 
-	t.Run("it grows the delay from the transient cap after a persistent error", func(t *testing.T) {
+	t.Run("it grows the delay from the transient cap after a deterministic failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			got := delays(
 				t,
@@ -135,11 +137,11 @@ func TestRun_backoff(t *testing.T) {
 					if call < 15 {
 						return errors.New("<error>")
 					}
-					return Persistent(errors.New("<error>"))
+					return Deterministic(errors.New("<error>"))
 				},
 			)
 
-			// The first persistent error follows 15 transient errors, so its
+			// The first deterministic failure follows 15 transient failures, so its
 			// delay is drawn from double the 15 second cap.
 			if d := got[15]; d > 30*time.Second {
 				t.Fatalf("expected the delay to grow from the transient cap, got %s", d)
@@ -147,14 +149,14 @@ func TestRun_backoff(t *testing.T) {
 		})
 	})
 
-	t.Run("it resets the delay when fn runs for long enough before failing", func(t *testing.T) {
+	t.Run("it resets the delay when fn runs for the quiet period before failing", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			got := delays(
 				t,
 				6,
 				func(call int) error {
 					if call == 4 {
-						time.Sleep(3 * time.Minute)
+						time.Sleep(31 * time.Second)
 					}
 					return errors.New("<error>")
 				},

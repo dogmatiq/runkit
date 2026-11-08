@@ -528,8 +528,14 @@ at ERROR and then return them, so each one is logged twice.
 - `internal/process/instancestate.go` keeps its records. The process deadline
   pump also calls it, and that pump returns only `messagepump.ErrFailed`, so
   the records are where its failures are logged until #100.
+- An event that can't be unmarshaled fails the same way on every retry, so the
+  process sink wraps that failure in `supervisor.Deterministic`. The stream
+  consumer's supervisor then logs it at ERROR at once, and retries it at the
+  deterministic limit.
 
-- [ ] Implement the above. It's untested, like all logging.
+- [ ] Implement the above. The logging is untested. The deterministic
+  classification is too, because it's observable only through the retry
+  timing of a whole stream consumer.
 - [ ] Run `make test`. Expect it to pass.
 - [ ] Stop for review.
 

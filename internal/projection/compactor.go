@@ -52,7 +52,7 @@ func (c *Compactor) Run(ctx context.Context) error {
 		panic("compaction timeout must be positive")
 	}
 
-	return supervisor.Run(ctx, c.Logger, c.run)
+	return supervisor.Run(ctx, c.Logger, "compact projection", c.run)
 }
 
 // run attempts to compact the projection once per interval until ctx is
@@ -109,7 +109,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 					)
 				},
 			); err != nil {
-				return supervisor.Persistentf(
+				return fmt.Errorf(
 					"unable to compact projection: %w",
 					err,
 				)

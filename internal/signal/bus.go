@@ -119,7 +119,7 @@ func (b *Bus) Send(ctx context.Context, topic string) error {
 //
 // It must be called at most once. Watch may be called before Run.
 func (b *Bus) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, b.Logger, b.run)
+	return supervisor.Run(ctx, b.Logger, "listen for signals", b.run)
 }
 
 // run holds a dedicated database connection with LISTEN active on the signal

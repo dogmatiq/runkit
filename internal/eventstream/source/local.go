@@ -89,6 +89,7 @@ func (s *Local) Run(ctx context.Context) error {
 	err := supervisor.Run(
 		ctx,
 		s.Logger,
+		"discover event streams",
 		func(ctx context.Context) error {
 			return s.discover(
 				ctx,
@@ -98,6 +99,7 @@ func (s *Local) Run(ctx context.Context) error {
 						s.Logger.With(
 							xslog.UUID("stream_id", streamID),
 						),
+						"deliver event stream",
 						func(ctx context.Context) error {
 							return s.watchStream(ctx, streamID)
 						},
