@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -215,23 +216,24 @@ func (s *Sink) dispatch(
 	logger *slog.Logger,
 	appLogger *slog.Logger,
 ) error {
+	messageID := env.GetBody().GetMessageId()
+
 	var event dogma.Event
 
+	// An event that can't be unmarshaled fails the same way however often it's
+	// retried.
 	if err := xmessage.UnpackMessage(
 		env,
 		&event,
 	); err != nil {
-		logger.ErrorContext(
-			ctx,
-			"unable to unmarshal event",
-			xslog.Error(err),
+		return supervisor.Deterministic(
+			fmt.Errorf("unable to unmarshal event %s: %w", messageID, err),
 		)
-		return fmt.Errorf("unable to unmarshal event: %w", err)
 	}
 
-	instanceID, ok, err := s.routeEventToInstance(ctx, logger, event)
+	instanceID, ok, err := s.routeEventToInstance(ctx, event)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to route event %s to an instance: %w", messageID, err)
 	}
 
 	if !ok {
@@ -309,13 +311,7 @@ func (s *Sink) dispatch(
 			return s.Handler.HandleEvent(ctx, root, scope, event)
 		},
 	); err != nil {
-		instanceLogger.ErrorContext(
-			ctx,
-			"unable to handle event",
-			xslog.Error(err),
-		)
-
-		return fmt.Errorf("unable to handle event: %w", err)
+		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, instanceID, err)
 	}
 
 	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
@@ -357,7 +353,6 @@ func (s *Sink) dispatch(
 // handler's RouteEventToInstance() method.
 func (s *Sink) routeEventToInstance(
 	ctx context.Context,
-	logger *slog.Logger,
 	event dogma.Event,
 ) (string, bool, error) {
 	instanceID, err := xerrors.RecoverT(
@@ -378,13 +373,7 @@ func (s *Sink) routeEventToInstance(
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(
-			ctx,
-			"unable to route event to instance",
-			xslog.Error(err),
-		)
-
-		return "", false, fmt.Errorf("unable to route event to instance: %w", err)
+		return "", false, err
 	}
 
 	return instanceID, instanceID != "", nil
