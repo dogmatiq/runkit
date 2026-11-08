@@ -29,6 +29,16 @@ type Remote struct {
 	// Client is the client used to call the remote engine's event stream
 	// consumer API.
 	Client messaginggrpc.EventStreamConsumerAPIClient
+
+	// ID identifies the remote engine in log records.
+	//
+	// It's assigned when the remote engine is added, so it identifies that
+	// addition rather than the remote engine itself.
+	ID *uuidpb.UUID
+
+	// Description is the description of the remote engine given by the code
+	// that discovered it, or empty if there is none.
+	Description string
 }
 
 // Watch delivers events to fn as they are appended to the remote
@@ -156,6 +166,15 @@ func (s *Remote) Read(
 		begin = seg.End
 		first = false
 	}
+}
+
+// String returns a description of the remote engine for log records.
+func (s *Remote) String() string {
+	if s.Description == "" {
+		return fmt.Sprintf("remote %s", s.ID)
+	}
+
+	return fmt.Sprintf("remote %s (%s)", s.ID, s.Description)
 }
 
 // watchError returns the error that [Remote.Watch] returns when its call to

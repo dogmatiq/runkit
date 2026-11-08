@@ -1,6 +1,7 @@
 package supervisor_test
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -109,6 +110,28 @@ func TestWork(t *testing.T) {
 			time.Sleep(31 * time.Second)
 
 			expectDelay(t, w.Failed(t.Context(), failure), 100*time.Millisecond)
+		})
+	})
+
+	t.Run("it doesn't end a streak when the quiet period passes after its context is canceled", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			w := &Work{
+				Description:  "<work>",
+				EngineLogger: spruce.NewTestLogger(t),
+				QuietPeriod:  30 * time.Second,
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+
+			w.Failed(ctx, failure)
+			w.Failed(ctx, failure)
+			w.Succeeded(ctx)
+			cancel()
+
+			time.Sleep(31 * time.Second)
+			synctest.Wait()
+
+			expectDelay(t, w.Failed(t.Context(), failure), 400*time.Millisecond)
 		})
 	})
 

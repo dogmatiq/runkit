@@ -2,6 +2,7 @@ package runkit
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"google.golang.org/grpc"
@@ -15,9 +16,12 @@ import (
 // rather than any individual replica.
 //
 // It calls the add function for each remote engine as it becomes available,
-// passing a connection to the remote engine, and calls the remove function that
-// it returns when the remote engine is no longer available. The add function
-// panics if the connection is nil.
+// passing a description of the remote engine and a connection to it, and calls
+// the remove function that it returns when the remote engine is no longer
+// available. The add function panics if the connection is nil.
+//
+// The description identifies the remote engine in log records, such as by its
+// address or service name.
 //
 // This engine uses the connection until the remove function is called, but
 // never closes it. The remove function blocks until the engine has stopped
@@ -34,11 +38,15 @@ import (
 // delay. The add function must not be called after the discoverer returns.
 type RemoteEngineDiscoverer func(
 	ctx context.Context,
-	add func(conn grpc.ClientConnInterface) (remove func()),
+	add func(description string, conn grpc.ClientConnInterface) (remove func()),
 ) error
 
 // StaticRemoteEngines returns a [RemoteEngineDiscoverer] that adds each of the
 // given connections, and never removes them.
+//
+// Each remote engine is described by its connection's target, such as when the
+// connection is a [grpc.ClientConn], or otherwise by its position among the
+// given connections.
 //
 // It panics if any of the connections is nil.
 func StaticRemoteEngines(conns ...grpc.ClientConnInterface) RemoteEngineDiscoverer {
@@ -52,13 +60,24 @@ func StaticRemoteEngines(conns ...grpc.ClientConnInterface) RemoteEngineDiscover
 
 	return func(
 		ctx context.Context,
-		add func(grpc.ClientConnInterface) func(),
+		add func(string, grpc.ClientConnInterface) func(),
 	) error {
-		for _, conn := range conns {
-			add(conn)
+		for i, conn := range conns {
+			description := fmt.Sprintf("static remote engine %d", i+1)
+			if t, ok := conn.(targetedConn); ok {
+				description = t.Target()
+			}
+
+			add(description, conn)
 		}
 
 		<-ctx.Done()
 		return ctx.Err()
 	}
+}
+
+// targetedConn is a gRPC client connection that reports the target it was
+// created with, as [grpc.ClientConn] does.
+type targetedConn interface {
+	Target() string
 }

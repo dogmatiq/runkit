@@ -259,9 +259,16 @@ Each one has a test in the task that owns the code.
 | Recovery without an ERROR | DEBUG | `attempt to {description} succeeded after failures` |
 
 Every record has `failing_since`, the time of the streak's first failure, and
-`failures`. Failure records also have `xslog.Error(err)` and `delay`. ERROR
-and recovery records also have `failing_for`, the time since the first
-failure.
+`failures`. Failure records also have `xslog.Error(err)` and `delay`.
+
+ERROR and recovery records also have `failing_for`. On an ERROR, it's the time
+since the first failure. On a recovery record, it's the time from the first
+failure to the last. Recovery records also have `succeeding_for`, which is how
+long the work has been succeeding.
+
+If the context is canceled before a quiet period passes, the streak doesn't
+end, and nothing is written. If a supervised function returns nil during a
+streak, the streak ends without a recovery record.
 
 - [ ] Write the tests in `streak_test.go`, each inside `synctest.Test`:
   - "it starts each streak at the base delay": the first `Failed` returns a
@@ -452,13 +459,15 @@ where there is one. It carries no `delivery`, stream or offset attributes.
   keeps the `error` in an unexported `lastSendErr` field. It clears the field
   after a successful send. Sends happen only on the node's own goroutine, so no
   lock is needed.
-- `expireNodes` removing this node logs ERROR `this node's heartbeat was not
-  heard within the timeout`, with
-  `slog.Duration("timeout", n.Timeout)` and `xslog.Error(lastSendErr)` if
-  there is one.
-- `recordHeartbeat` for this node, after it had been removed, logs INFO `this
-  node's heartbeat is heard again`. Track this with an unexported
-  `wasLive bool`. The first time this node becomes live stays a DEBUG record.
+- `expireNodes` removing this node logs ERROR `local node removed from
+  cluster`, with `timeout`, `last_heartbeat_at`, and an error that says what
+  failed. That's `lastSendErr`, wrapped as "unable to send heartbeat: …", or
+  "no heartbeat received from the local node" if sends succeeded.
+- `recordHeartbeat` for this node logs DEBUG `local node joined cluster` the
+  first time, and INFO `local node rejoined cluster` after it had been removed,
+  with the same `last_heartbeat_at` as the ERROR. An unexported
+  `heardOwnHeartbeatAt` field holds the time this node last heard its own
+  heartbeat, or zero if it never has. `isSelf` compares an ID with this node's.
 
 - [ ] Implement the above. It's untested, like all logging. The existing test
   "it keeps running when a heartbeat can not be sent" (node_test.go:92) still

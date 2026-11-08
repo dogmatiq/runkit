@@ -203,6 +203,10 @@ type deliveringSource struct {
 	Delivered cosyne.Latch
 }
 
+func (s *deliveringSource) String() string {
+	return s.Source.String()
+}
+
 func (s *deliveringSource) Watch(
 	ctx context.Context,
 	types *uuidcollection.Set,

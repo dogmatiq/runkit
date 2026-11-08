@@ -69,6 +69,11 @@ events.
 - Added a `layer` attribute to every log record, with the value `application`
   or `engine`, and added the application's identity. Removed the `component`
   attribute.
+- **[BC]** Changed the add function passed to a `RemoteEngineDiscoverer` to
+  take a description of the remote engine before its connection. The
+  description identifies the remote engine in log records.
+  `StaticRemoteEngines()` describes each remote engine by its connection's
+  target.
 
 ## [0.2.0] - 2026-11-06
 

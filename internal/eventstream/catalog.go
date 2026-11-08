@@ -27,8 +27,8 @@ type Catalog struct {
 	// per source. It must be positive.
 	CacheSize int
 
-	// EngineLogger is the target for log messages produced by the catalog and the
-	// sources added to it.
+	// EngineLogger is the target for the engine's records about the catalog
+	// and the sources it watches.
 	EngineLogger *slog.Logger
 
 	m         sync.Mutex
@@ -145,6 +145,10 @@ func (c *Catalog) Watch(
 		panic("cache size must be positive")
 	}
 
+	engineLogger := c.EngineLogger.With(
+		slog.String("event_stream_source", src.String()),
+	)
+
 	var (
 		m     sync.Mutex
 		feeds uuidcollection.Map[*feed]
@@ -179,7 +183,7 @@ func (c *Catalog) Watch(
 
 	return supervisor.Run(
 		ctx,
-		c.EngineLogger,
+		engineLogger,
 		"watch event stream source",
 		func(ctx context.Context) error {
 			for {
@@ -198,7 +202,7 @@ func (c *Catalog) Watch(
 				// the source is watched again at once rather than as though it
 				// had failed.
 				if errors.Is(err, source.ErrNotContiguous) {
-					c.EngineLogger.DebugContext(
+					engineLogger.DebugContext(
 						ctx,
 						"watching event stream source again",
 						xslog.Error(err),
@@ -215,7 +219,7 @@ func (c *Catalog) Watch(
 				// Neither is a source that delivers an invalid segment, which
 				// is also evidence that the source is misbehaving.
 				if errors.Is(err, source.ErrInvalidSegment) {
-					c.EngineLogger.WarnContext(
+					engineLogger.WarnContext(
 						ctx,
 						"received an invalid segment from an event stream source",
 						xslog.Error(err),

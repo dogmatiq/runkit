@@ -21,7 +21,7 @@ func TestStaticRemoteEngines(t *testing.T) {
 		xtesting.GoE(t, func(ctx context.Context) error {
 			return discover(
 				ctx,
-				func(conn grpc.ClientConnInterface) func() {
+				func(_ string, conn grpc.ClientConnInterface) func() {
 					reported <- conn
 					return func() {}
 				},

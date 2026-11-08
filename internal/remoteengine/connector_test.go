@@ -29,7 +29,7 @@ func TestConnector(t *testing.T) {
 	setup := func(
 		t *testing.T,
 		types *uuidcollection.Set,
-		discover func(context.Context, func(grpc.ClientConnInterface) func()) error,
+		discover func(context.Context, func(string, grpc.ClientConnInterface) func()) error,
 	) (*Connector, *eventstream.Catalog) {
 		catalog := &eventstream.Catalog{
 			CacheSize:    10,
@@ -65,7 +65,7 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				_ func(grpc.ClientConnInterface) func(),
+				_ func(string, grpc.ClientConnInterface) func(),
 			) error {
 				if calls.Add(1) == 1 {
 					return errors.New("<error>")
@@ -88,7 +88,7 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				_ func(grpc.ClientConnInterface) func(),
+				_ func(string, grpc.ClientConnInterface) func(),
 			) error {
 				if calls.Add(1) == 1 {
 					panic("<panic>")
@@ -111,10 +111,10 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
 				if calls.Add(1) == 1 {
-					add(nil)
+					add("<engine>", nil)
 				}
 
 				<-ctx.Done()
@@ -138,10 +138,10 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
-				add(connA)
-				add(connB)
+				add("<engine-a>", connA)
+				add("<engine-b>", connB)
 
 				<-ctx.Done()
 				return ctx.Err()
@@ -165,9 +165,9 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
-				add(conn)
+				add("<engine>", conn)
 
 				<-ctx.Done()
 				return ctx.Err()
@@ -199,9 +199,9 @@ func TestConnector(t *testing.T) {
 			uuidcollection.NewSet(),
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
-				add(conn)
+				add("<engine>", conn)
 				close(added)
 
 				<-ctx.Done()
@@ -229,10 +229,10 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
-				removeA <- add(connA)
-				add(connB)
+				removeA <- add("<engine-a>", connA)
+				add("<engine-b>", connB)
 
 				<-ctx.Done()
 				return ctx.Err()
@@ -260,10 +260,10 @@ func TestConnector(t *testing.T) {
 			typesA,
 			func(
 				ctx context.Context,
-				add func(grpc.ClientConnInterface) func(),
+				add func(string, grpc.ClientConnInterface) func(),
 			) error {
 				if calls.Add(1) == 1 {
-					add(conn)
+					add("<engine>", conn)
 					<-fail
 					return errors.New("<error>")
 				}

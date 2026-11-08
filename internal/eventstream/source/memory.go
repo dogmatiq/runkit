@@ -89,6 +89,11 @@ func (s *Memory) Watch(
 	}
 }
 
+// String returns a description of the source for log records.
+func (s *Memory) String() string {
+	return "memory"
+}
+
 // Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Memory) Read(
 	ctx context.Context,

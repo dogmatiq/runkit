@@ -59,9 +59,9 @@ type Node struct {
 	// heartbeat failed, or is nil if it was sent.
 	lastSendErr error
 
-	// hasHeardOwnHeartbeat is true once this node has first heard its own
-	// heartbeat. It's never reset.
-	hasHeardOwnHeartbeat bool
+	// heardOwnHeartbeatAt is the time this node last heard its own heartbeat,
+	// or zero if it never has.
+	heardOwnHeartbeatAt time.Time
 }
 
 // Membership returns an observable of this node's view of the live nodes in
@@ -73,8 +73,8 @@ func (n *Node) Membership() cosyne.ObservableR[*Membership] {
 	return &n.membership
 }
 
-// IsSelf returns true if the given ID is this node's ID.
-func (n *Node) IsSelf(id *uuidpb.UUID) bool {
+// isSelf returns true if the given ID is this node's ID.
+func (n *Node) isSelf(id *uuidpb.UUID) bool {
 	return id.Equal(n.ID)
 }
 
@@ -145,11 +145,11 @@ func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
 		return false
 	}
 
-	changed, joined := n.recordHeartbeat(ctx, nodeID)
+	changed, peerJoined := n.recordHeartbeat(ctx, nodeID)
 
-	// A node that has just joined does not know about this one yet, so reply
+	// A peer that has just joined does not know about this node yet, so reply
 	// with a heartbeat straight away.
-	if joined {
+	if peerJoined {
 		n.sendHeartbeat(ctx)
 	}
 
@@ -217,9 +217,9 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 
 // recordHeartbeat records a heartbeat from the node with the given ID.
 //
-// changed is true if the node was not already live. joined is true if, in
+// changed is true if the node was not already live. peerJoined is true if, in
 // addition, it is a node other than this one.
-func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined bool) {
+func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoined bool) {
 	nodeID, err := uuidpb.Parse(id)
 	if err != nil {
 		n.EngineLogger.WarnContext(
@@ -231,14 +231,15 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined 
 		return false, false
 	}
 
+	now := time.Now()
 	exists := n.heartbeats.Has(nodeID)
-	n.heartbeats.Set(nodeID, time.Now())
+	n.heartbeats.Set(nodeID, now)
 
-	if exists {
-		return false, false
-	}
+	if !n.isSelf(nodeID) {
+		if exists {
+			return false, false
+		}
 
-	if !n.IsSelf(nodeID) {
 		n.EngineLogger.DebugContext(
 			ctx,
 			"node added to cluster",
@@ -248,17 +249,23 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined 
 		return true, true
 	}
 
-	if n.hasHeardOwnHeartbeat {
-		n.EngineLogger.InfoContext(
-			ctx,
-			"local node rejoined cluster",
-		)
-	} else {
-		n.hasHeardOwnHeartbeat = true
+	previous := n.heardOwnHeartbeatAt
+	n.heardOwnHeartbeatAt = now
 
+	if exists {
+		return false, false
+	}
+
+	if previous.IsZero() {
 		n.EngineLogger.DebugContext(
 			ctx,
 			"local node joined cluster",
+		)
+	} else {
+		n.EngineLogger.InfoContext(
+			ctx,
+			"local node rejoined cluster",
+			slog.Time("last_heartbeat_at", previous),
 		)
 	}
 
@@ -278,7 +285,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 		n.heartbeats.Delete(nodeID)
 		changed = true
 
-		if n.IsSelf(nodeID) {
+		if n.isSelf(nodeID) {
 			err := n.lastSendErr
 			if err == nil {
 				err = errors.New("no heartbeat received from the local node")
@@ -288,6 +295,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 				ctx,
 				"local node removed from cluster",
 				slog.Duration("timeout", n.Timeout),
+				slog.Time("last_heartbeat_at", lastBeatAt),
 				xslog.Error(err),
 			)
 		} else {
@@ -311,7 +319,7 @@ func (n *Node) publishMembershipChange() {
 	}
 
 	for nodeID := range n.heartbeats.Keys() {
-		if n.IsSelf(nodeID) {
+		if n.isSelf(nodeID) {
 			m.isLive = true
 		} else {
 			m.peers.Add(nodeID)

@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -10,6 +11,9 @@ import (
 // Source is where an event stream's events come from: this application's
 // database, or a remote engine.
 type Source interface {
+	// String describes the source in log records.
+	fmt.Stringer
+
 	// Watch delivers events to fn as they are appended to the source's
 	// streams.
 	//

@@ -45,7 +45,7 @@ type Local struct {
 	// error that wraps [ErrNotContiguous]. It must be positive.
 	BufferSize int
 
-	// m guards offsets and watchers.
+	// m guards the offsets and watchers fields.
 	m sync.Mutex
 
 	// offsets maps the ID of each watched stream to the offset at which its
@@ -161,6 +161,11 @@ func (s *Local) Watch(
 	}
 }
 
+// String returns a description of the source for log records.
+func (s *Local) String() string {
+	return "local"
+}
+
 // Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Local) Read(
 	ctx context.Context,
@@ -199,8 +204,8 @@ func (s *Local) Read(
 	}
 }
 
-// discover reports each event stream that is not in known to fn, and adds it
-// to known.
+// discover reports each event stream that isn't in the given set to fn, and
+// adds it to the set.
 //
 // It reads the set of event streams, and reads it again each time a stream is
 // created, until ctx is canceled.
@@ -268,7 +273,7 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 
 // register adds a watcher, and returns it with the opening segment of each
 // watched stream, which is empty and begins at that stream's offset in
-// offsets.
+// s.offsets.
 func (s *Local) register() (*watcher, []Segment) {
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -308,7 +313,7 @@ func (s *Local) unregister(w *watcher) {
 }
 
 // deliver sends a segment to every watcher, and records the segment's end in
-// offsets.
+// s.offsets.
 //
 // A watcher whose buffer is full is removed, as the segment's stream can no
 // longer be delivered to it contiguously.
@@ -332,9 +337,15 @@ func (s *Local) deliver(seg Segment) {
 
 // discontinue removes every watcher, as the given stream can no longer be
 // delivered to any of them contiguously.
+//
+// It also removes the stream from s.offsets, so that a watcher that registers
+// before the stream's delivery begins again isn't given an opening segment at
+// the old offset.
 func (s *Local) discontinue(streamID *uuidpb.UUID) {
 	s.m.Lock()
 	defer s.m.Unlock()
+
+	s.offsets.Delete(streamID)
 
 	err := fmt.Errorf("unable to deliver event stream %s contiguously: %w", streamID, ErrNotContiguous)
 
@@ -484,7 +495,8 @@ func (s *Local) loadWatchOffset(
 //
 // The query returns two kinds of rows via UNION ALL: the first row contains
 // the stream's next offset (and a NULL envelope); subsequent rows contain up
-// to SegmentSize events of the given types, or of every type if types is nil.
+// to [Local.SegmentSize] events of the given types, or of every type if the
+// given set of types is nil.
 //
 // The stream ID, message type IDs and segment size are embedded as constants so
 // that PostgreSQL knows them when planning the query. In particular, it can
@@ -549,9 +561,9 @@ func (s *Local) buildSegmentQuery(
 // loadSegment loads a segment of a stream, beginning at the given offset, using
 // a query built by [Local.buildSegmentQuery].
 //
-// The segment holds up to SegmentSize matching events, and ends after the last
-// of them. It also returns whether the stream has been exhausted, that is,
-// there are no more matching events on the stream at this time. When the
+// The segment holds up to [Local.SegmentSize] matching events, and ends after
+// the last of them. It also returns whether the stream has been exhausted, that
+// is, there are no more matching events on the stream at this time. When the
 // stream is exhausted, the segment ends at the stream's end, skipping past any
 // trailing events of other types, unless the given offset is already beyond
 // it.

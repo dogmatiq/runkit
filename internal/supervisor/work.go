@@ -54,6 +54,14 @@ type Work struct {
 	// since is the time of the first failure in the streak in progress.
 	since time.Time
 
+	// lastFailure is the time of the most recent failure in the streak in
+	// progress.
+	lastFailure time.Time
+
+	// succeedingSince is the time of the success that began the quiet period
+	// in progress.
+	succeedingSince time.Time
+
 	// loggedError is true if the streak in progress has written an ERROR
 	// record.
 	loggedError bool
@@ -94,6 +102,7 @@ func (w *Work) Succeeded(ctx context.Context) {
 	}
 
 	if w.QuietPeriod == 0 {
+		w.succeedingSince = time.Now()
 		w.recover(ctx)
 		return
 	}
@@ -102,6 +111,8 @@ func (w *Work) Succeeded(ctx context.Context) {
 		return
 	}
 
+	w.succeedingSince = time.Now()
+
 	var timer *time.Timer
 
 	timer = time.AfterFunc(
@@ -109,6 +120,12 @@ func (w *Work) Succeeded(ctx context.Context) {
 		func() {
 			w.m.Lock()
 			defer w.m.Unlock()
+
+			// The work is stopping, so nothing is written, and the streak
+			// doesn't end.
+			if ctx.Err() != nil {
+				return
+			}
 
 			// A timer whose quiet period was canceled after it fired is no
 			// longer w.quiet. It reads timer only once w.m is held, by which
@@ -150,6 +167,7 @@ func (w *Work) fail(
 	w.cancelQuietPeriod()
 
 	now := time.Now()
+	w.lastFailure = now
 
 	if w.failures == 0 {
 		w.since = now
@@ -204,13 +222,16 @@ func (w *Work) recover(ctx context.Context) {
 		"attempt to "+w.Description+" succeeded after failures",
 		slog.Time("failing_since", w.since),
 		slog.Uint64("failures", w.failures),
-		slog.Duration("failing_for", time.Since(w.since)),
+		slog.Duration("failing_for", w.lastFailure.Sub(w.since)),
+		slog.Duration("succeeding_for", time.Since(w.succeedingSince)),
 	)
 
 	w.cancelQuietPeriod()
 	w.failures = 0
 	w.backoff = 0
 	w.since = time.Time{}
+	w.lastFailure = time.Time{}
+	w.succeedingSince = time.Time{}
 	w.loggedError = false
 }
 

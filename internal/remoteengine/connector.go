@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
@@ -24,7 +25,7 @@ type Connector struct {
 	// [github.com/dogmatiq/runkit.RemoteEngineDiscoverer].
 	Discover func(
 		ctx context.Context,
-		add func(conn grpc.ClientConnInterface) (remove func()),
+		add func(description string, conn grpc.ClientConnInterface) (remove func()),
 	) error
 
 	// EventStreams is the catalog to which each available remote engine's
@@ -60,7 +61,7 @@ func (c *Connector) discover(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	add := func(conn grpc.ClientConnInterface) func() {
+	add := func(description string, conn grpc.ClientConnInterface) func() {
 		if conn == nil {
 			panic("remote engine connection must not be nil")
 		}
@@ -69,18 +70,20 @@ func (c *Connector) discover(ctx context.Context) error {
 			return func() {}
 		}
 
+		// Each remote engine is given an ID when it's added, so that its records
+		// can be told apart even when two have the same description. A remote
+		// engine that's removed and added again gets a new ID.
 		src := &source.Remote{
-			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			Client:      messaginggrpc.NewEventStreamConsumerAPIClient(conn),
+			ID:          uuidpb.Generate(),
+			Description: description,
 		}
 
-		logger := c.EngineLogger
-		if t, ok := conn.(targetedConn); ok {
-			logger = logger.With(
-				slog.String("grpc_target", t.Target()),
-			)
-		}
+		engineLogger := c.EngineLogger.With(
+			slog.String("event_stream_source", src.String()),
+		)
 
-		logger.InfoContext(ctx, "remote engine added")
+		engineLogger.InfoContext(ctx, "remote engine added")
 
 		ctx, cancel := context.WithCancel(ctx)
 		var stopped cosyne.Latch
@@ -96,7 +99,10 @@ func (c *Connector) discover(ctx context.Context) error {
 			cancel()
 			<-stopped.Chan()
 
-			logger.InfoContext(ctx, "remote engine removed")
+			engineLogger.InfoContext(
+				context.WithoutCancel(ctx),
+				"remote engine removed",
+			)
 		}
 	}
 
@@ -109,13 +115,4 @@ func (c *Connector) discover(ctx context.Context) error {
 	}
 
 	return err
-}
-
-// targetedConn is a gRPC client connection that reports the target it was
-// created with, as [grpc.ClientConn] does.
-//
-// The connector logs the target, when there is one, to identify a remote
-// engine.
-type targetedConn interface {
-	Target() string
 }

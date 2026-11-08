@@ -39,7 +39,8 @@ const (
 // An error created by [Deterministic] or [Deterministicf] is recorded as a
 // deterministic failure. [Run] can't see whether fn is making progress, so a
 // streak of failures ends once fn has run for the quiet period without
-// failing.
+// failing. If fn returns nil during a streak, the streak ends without a
+// recovery record.
 func Run(
 	ctx context.Context,
 	engineLogger *slog.Logger,
@@ -57,8 +58,12 @@ func Run(
 		work.Succeeded(ctx)
 		err := fn(ctx)
 
-		if ctx.Err() != nil || err == nil {
+		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+
+		if err == nil {
+			return nil
 		}
 
 		if fatal, ok := errors.AsType[fatalError](err); ok {
