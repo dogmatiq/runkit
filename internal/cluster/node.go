@@ -2,6 +2,8 @@ package cluster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -46,8 +48,20 @@ type Node struct {
 	// EngineLogger is the target for log messages produced by the node.
 	EngineLogger *slog.Logger
 
+	// membership is this node's view of the live nodes in the cluster.
 	membership cosyne.Observable[*Membership]
+
+	// heartbeats maps the ID of each live node to the time its most recent
+	// heartbeat was received.
 	heartbeats uuidcollection.Map[time.Time]
+
+	// lastSendErr explains why the most recent attempt to send this node's
+	// heartbeat failed, or is nil if it was sent.
+	lastSendErr error
+
+	// hasHeardOwnHeartbeat is true once this node has first heard its own
+	// heartbeat. It's never reset.
+	hasHeardOwnHeartbeat bool
 }
 
 // Membership returns an observable of this node's view of the live nodes in
@@ -57,6 +71,11 @@ type Node struct {
 // live nodes once this node has stopped.
 func (n *Node) Membership() cosyne.ObservableR[*Membership] {
 	return &n.membership
+}
+
+// IsSelf returns true if the given ID is this node's ID.
+func (n *Node) IsSelf(id *uuidpb.UUID) bool {
+	return id.Equal(n.ID)
 }
 
 // Run sends and receives heartbeats, and publishes the membership as it
@@ -176,8 +195,19 @@ func (n *Node) drainHeartbeats(ctx context.Context, heartbeats <-chan string) (c
 func (n *Node) sendHeartbeat(ctx context.Context) {
 	topic := heartbeatTopic + "." + n.ID.AsString()
 
-	if err := n.Signals.Send(ctx, topic); err != nil && ctx.Err() == nil {
-		n.EngineLogger.WarnContext(
+	err := n.Signals.Send(ctx, topic)
+	if err == nil {
+		n.lastSendErr = nil
+		return
+	}
+
+	// A failed send is logged only at DEBUG. If sends keep failing, this node
+	// stops hearing its own heartbeat, and expireNodes logs that at ERROR with
+	// this error, which says what failed.
+	n.lastSendErr = fmt.Errorf("unable to send heartbeat: %w", err)
+
+	if ctx.Err() == nil {
+		n.EngineLogger.DebugContext(
 			ctx,
 			"unable to send heartbeat",
 			xslog.Error(err),
@@ -208,13 +238,31 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined 
 		return false, false
 	}
 
-	n.EngineLogger.DebugContext(
-		ctx,
-		"node added to cluster",
-		xslog.UUID("node_id", nodeID),
-	)
+	if !n.IsSelf(nodeID) {
+		n.EngineLogger.DebugContext(
+			ctx,
+			"node added to cluster",
+			xslog.UUID("node_id", nodeID),
+		)
 
-	return true, !nodeID.Equal(n.ID)
+		return true, true
+	}
+
+	if n.hasHeardOwnHeartbeat {
+		n.EngineLogger.InfoContext(
+			ctx,
+			"local node rejoined cluster",
+		)
+	} else {
+		n.hasHeardOwnHeartbeat = true
+
+		n.EngineLogger.DebugContext(
+			ctx,
+			"local node joined cluster",
+		)
+	}
+
+	return true, false
 }
 
 // expireNodes removes the nodes that have not sent a heartbeat within the
@@ -230,11 +278,25 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 		n.heartbeats.Delete(nodeID)
 		changed = true
 
-		n.EngineLogger.DebugContext(
-			ctx,
-			"node removed from cluster",
-			xslog.UUID("node_id", nodeID),
-		)
+		if n.IsSelf(nodeID) {
+			err := n.lastSendErr
+			if err == nil {
+				err = errors.New("no heartbeat received from the local node")
+			}
+
+			n.EngineLogger.ErrorContext(
+				ctx,
+				"local node removed from cluster",
+				slog.Duration("timeout", n.Timeout),
+				xslog.Error(err),
+			)
+		} else {
+			n.EngineLogger.DebugContext(
+				ctx,
+				"node removed from cluster",
+				xslog.UUID("node_id", nodeID),
+			)
+		}
 	}
 
 	return changed
@@ -249,7 +311,7 @@ func (n *Node) publishMembershipChange() {
 	}
 
 	for nodeID := range n.heartbeats.Keys() {
-		if nodeID.Equal(n.ID) {
+		if n.IsSelf(nodeID) {
 			m.isLive = true
 		} else {
 			m.peers.Add(nodeID)
