@@ -11,7 +11,7 @@ type eventScope struct {
 	streamID                 string
 	offset, checkpointOffset uint64
 	recordedAt               time.Time
-	logger                   *slog.Logger
+	engineLogger             *slog.Logger
 }
 
 func (s *eventScope) Now() time.Time {
@@ -19,7 +19,7 @@ func (s *eventScope) Now() time.Time {
 }
 
 func (s *eventScope) Log(format string, args ...any) {
-	s.logger.Info(fmt.Sprintf(format, args...))
+	s.engineLogger.Info(fmt.Sprintf(format, args...))
 }
 
 func (s *eventScope) StreamID() string {

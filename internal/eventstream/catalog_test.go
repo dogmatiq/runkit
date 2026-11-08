@@ -68,8 +68,8 @@ func TestCatalog(t *testing.T) {
 	// stream.
 	setup := func(t *testing.T, cacheSize int) *Catalog {
 		return &Catalog{
-			CacheSize: cacheSize,
-			Logger:    spruce.NewTestLogger(t),
+			CacheSize:    cacheSize,
+			EngineLogger: spruce.NewTestLogger(t),
 		}
 	}
 

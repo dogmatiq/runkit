@@ -51,8 +51,8 @@ type Sink struct {
 	// event to a process instance.
 	RouteTimeout time.Duration
 
-	// Logger is the target for log messages produced by the sink and handler.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the sink and handler.
+	EngineLogger *slog.Logger
 }
 
 // Workload returns the rendezvous workload that determines which node consumes
@@ -152,7 +152,7 @@ func (s *Sink) consume(
 		}
 
 		if env != nil {
-			logger := s.Logger.With(
+			logger := s.EngineLogger.With(
 				xslog.UUID("stream_id", streamID),
 				slog.Uint64("offset", next-1),
 				xslog.Envelope("message", env),
@@ -265,7 +265,7 @@ func (s *Sink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			logger:               instanceLogger,
+			engineLogger:         instanceLogger,
 			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetCreatedAt().AsTime(),

@@ -43,8 +43,8 @@ type Node struct {
 	// before it is considered offline.
 	Timeout time.Duration
 
-	// Logger is the target for log messages produced by the node.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the node.
+	EngineLogger *slog.Logger
 
 	membership cosyne.Observable[*Membership]
 	heartbeats uuidcollection.Map[time.Time]
@@ -177,7 +177,7 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 	topic := heartbeatTopic + "." + n.ID.AsString()
 
 	if err := n.Signals.Send(ctx, topic); err != nil && ctx.Err() == nil {
-		n.Logger.WarnContext(
+		n.EngineLogger.WarnContext(
 			ctx,
 			"unable to send heartbeat",
 			xslog.Error(err),
@@ -192,7 +192,7 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined bool) {
 	nodeID, err := uuidpb.Parse(id)
 	if err != nil {
-		n.Logger.WarnContext(
+		n.EngineLogger.WarnContext(
 			ctx,
 			"ignored invalid node ID in heartbeat signal",
 			slog.String("node_id", id),
@@ -208,7 +208,7 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, joined 
 		return false, false
 	}
 
-	n.Logger.DebugContext(
+	n.EngineLogger.DebugContext(
 		ctx,
 		"node added to cluster",
 		xslog.UUID("node_id", nodeID),
@@ -230,7 +230,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 		n.heartbeats.Delete(nodeID)
 		changed = true
 
-		n.Logger.DebugContext(
+		n.EngineLogger.DebugContext(
 			ctx,
 			"node removed from cluster",
 			xslog.UUID("node_id", nodeID),

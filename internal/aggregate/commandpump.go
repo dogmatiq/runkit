@@ -56,7 +56,7 @@ func (p *CommandPump) HandleDelivery(
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
 	env *envelopepb.Envelope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
 	var commandForRouting, commandForHandling dogma.Command
 
@@ -65,7 +65,7 @@ func (p *CommandPump) HandleDelivery(
 		&commandForRouting,
 		&commandForHandling,
 	); err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to unmarshal command",
 			xslog.Error(err),
@@ -73,12 +73,12 @@ func (p *CommandPump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	instanceID, err := p.routeCommandToInstance(ctx, logger, commandForRouting)
+	instanceID, err := p.routeCommandToInstance(ctx, engineLogger, commandForRouting)
 	if err != nil {
 		return err
 	}
 
-	instanceLogger := logger.With(
+	instanceLogger := engineLogger.With(
 		slog.Group(
 			"aggregate_instance",
 			slog.String("id", instanceID),
@@ -90,7 +90,7 @@ func (p *CommandPump) HandleDelivery(
 		return err
 	}
 
-	instanceLogger = logger.With(
+	instanceLogger = engineLogger.With(
 		slog.Group(
 			"aggregate_instance",
 			slog.String("id", instanceID),
@@ -113,7 +113,7 @@ func (p *CommandPump) HandleDelivery(
 					instanceID:           instanceID,
 					root:                 root,
 					packer:               packer,
-					logger:               instanceLogger,
+					engineLogger:         instanceLogger,
 					outboundMessageTypes: p.OutboundMessageTypes,
 				},
 				commandForHandling,

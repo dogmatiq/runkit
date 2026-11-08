@@ -23,7 +23,7 @@ func TestServer(t *testing.T) {
 		server := &Server{
 			Address:                ":0",
 			EventStreamConsumerAPI: messaginggrpc.UnimplementedEventStreamConsumerAPIServer{},
-			Logger:                 spruce.NewTestLogger(t),
+			EngineLogger:           spruce.NewTestLogger(t),
 			Listen: func(network, address string) (net.Listener, error) {
 				lis, err := net.Listen(network, address)
 				if err == nil {

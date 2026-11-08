@@ -34,7 +34,8 @@ type EngineOption func(*Engine)
 // If it is not provided [slog.Default] is used.
 func WithLogger(logger *slog.Logger) EngineOption {
 	return func(e *Engine) {
-		e.logger = logger
+		e.engineLogger = logger
+		e.appLogger = logger
 	}
 }
 

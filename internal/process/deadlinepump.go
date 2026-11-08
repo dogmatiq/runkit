@@ -129,7 +129,7 @@ func (p *DeadlinePump) HandleDelivery(
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
 	env *envelopepb.Envelope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
 	var deadline dogma.Deadline
 
@@ -137,7 +137,7 @@ func (p *DeadlinePump) HandleDelivery(
 		env,
 		&deadline,
 	); err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to unmarshal deadline",
 			xslog.Error(err),
@@ -147,7 +147,7 @@ func (p *DeadlinePump) HandleDelivery(
 
 	instanceID := env.GetHeader().GetSource().GetInstanceId()
 
-	instanceLogger := logger.With(
+	instanceLogger := engineLogger.With(
 		slog.Group("process_instance", slog.String("id", instanceID)),
 	)
 
@@ -174,7 +174,7 @@ func (p *DeadlinePump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	instanceLogger = logger.With(
+	instanceLogger = engineLogger.With(
 		slog.Group(
 			"process_instance",
 			slog.String("id", instanceID),
@@ -196,7 +196,7 @@ func (p *DeadlinePump) HandleDelivery(
 				p.Identity,
 				envelope.WithInstanceID(instanceID),
 			),
-			logger:               instanceLogger,
+			engineLogger:         instanceLogger,
 			outboundMessageTypes: p.OutboundMessageTypes,
 		},
 		env.GetBody().GetScheduledFor().AsTime(),

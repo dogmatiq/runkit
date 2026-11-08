@@ -27,9 +27,9 @@ type Catalog struct {
 	// per source. It must be positive.
 	CacheSize int
 
-	// Logger is the target for log messages produced by the catalog and the
+	// EngineLogger is the target for log messages produced by the catalog and the
 	// sources added to it.
-	Logger *slog.Logger
+	EngineLogger *slog.Logger
 
 	m         sync.Mutex
 	streams   uuidcollection.Map[*catalogStream]
@@ -179,7 +179,7 @@ func (c *Catalog) Watch(
 
 	return supervisor.Run(
 		ctx,
-		c.Logger,
+		c.EngineLogger,
 		"watch event stream source",
 		func(ctx context.Context) error {
 			for {
@@ -198,7 +198,7 @@ func (c *Catalog) Watch(
 				// the source is watched again at once rather than as though it
 				// had failed.
 				if errors.Is(err, source.ErrNotContiguous) {
-					c.Logger.InfoContext(
+					c.EngineLogger.InfoContext(
 						ctx,
 						"unable to keep up with the source, watching it again",
 						xslog.Error(err),

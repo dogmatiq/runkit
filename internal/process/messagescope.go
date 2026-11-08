@@ -21,7 +21,7 @@ type messageScope struct {
 	ended                bool
 	commandPacker        *envelope.EffectPacker
 	deadlinePacker       *envelope.EffectPacker
-	logger               *slog.Logger
+	engineLogger         *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }
 
@@ -30,7 +30,7 @@ func (s *messageScope) Now() time.Time {
 }
 
 func (s *messageScope) Log(format string, args ...any) {
-	s.logger.Info(fmt.Sprintf(format, args...))
+	s.engineLogger.Info(fmt.Sprintf(format, args...))
 }
 
 func (s *messageScope) InstanceID() string {
@@ -70,7 +70,7 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 		panic(fmt.Sprintf("command of type %T is invalid: %s", c, err))
 	}
 
-	s.logger.Info(
+	s.engineLogger.Info(
 		c.MessageDescription(),
 		xslog.Envelope("command", commandEnvelope),
 	)
@@ -96,7 +96,7 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic(fmt.Sprintf("deadline of type %T is invalid: %s", d, err))
 	}
 
-	s.logger.Info(
+	s.engineLogger.Info(
 		d.MessageDescription(),
 		xslog.Envelope("deadline", deadlineEnvelope),
 	)

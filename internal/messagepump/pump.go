@@ -36,23 +36,23 @@ type MessagePump struct {
 	// not be handled is attempted again.
 	BackoffBase, BackoffCap time.Duration
 
-	// Logger is the target for log messages produced by the pump and its
+	// EngineLogger is the target for log messages produced by the pump and its
 	// supervisor.
-	Logger *slog.Logger
+	EngineLogger *slog.Logger
 }
 
 type deliveryTask struct {
-	Tx       *sql.Tx
-	Delivery Delivery
-	Envelope *envelopepb.Envelope
-	Logger   *slog.Logger
+	Tx           *sql.Tx
+	Delivery     Delivery
+	Envelope     *envelopepb.Envelope
+	EngineLogger *slog.Logger
 }
 
 // Run runs the message pump until ctx is canceled.
 //
 // It must be called at most once.
 func (p *MessagePump) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, p.Logger, "deliver messages", p.run)
+	return supervisor.Run(ctx, p.EngineLogger, "deliver messages", p.run)
 }
 
 // run starts the dispatcher and workers, and runs them until ctx is canceled
@@ -116,7 +116,7 @@ func (p *MessagePump) runDispatcher(ctx context.Context, tasks chan<- *deliveryT
 			continue
 		}
 
-		task.Logger.DebugContext(
+		task.EngineLogger.DebugContext(
 			ctx,
 			"acquired message for delivery",
 		)
@@ -146,7 +146,7 @@ func (p *MessagePump) doAcquireTask(ctx context.Context) (*deliveryTask, bool, e
 			slog.Uint64("attempt", del.Failures+1),
 		}
 
-		logger := p.Logger.With(slog.Group("delivery", attrs...))
+		logger := p.EngineLogger.With(slog.Group("delivery", attrs...))
 
 		env := &envelopepb.Envelope{}
 		err = env.UnmarshalBinary(del.EnvelopeBytes)
@@ -232,7 +232,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		task.Tx,
 		task.Delivery,
 		task.Envelope,
-		task.Logger,
+		task.EngineLogger,
 	)
 
 	var afterCommit func()
@@ -240,7 +240,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 	switch {
 	case err == nil:
 		afterCommit = func() {
-			task.Logger.DebugContext(
+			task.EngineLogger.DebugContext(
 				ctx,
 				"message delivered successfully",
 			)
@@ -260,7 +260,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		}
 
 		afterCommit = func() {
-			task.Logger.DebugContext(
+			task.EngineLogger.DebugContext(
 				ctx,
 				"postponed message delivery due to failure",
 				slog.Duration("delay", delay),
@@ -280,7 +280,7 @@ func (p *MessagePump) doHandle(ctx context.Context, task *deliveryTask) error {
 		}
 
 		afterCommit = func() {
-			task.Logger.DebugContext(
+			task.EngineLogger.DebugContext(
 				ctx,
 				"postponed message delivery due to contention",
 				slog.Duration("delay", delay),

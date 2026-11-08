@@ -1106,8 +1106,8 @@ func TestRemote(t *testing.T) {
 		calls <- openCall(nil, segment(streamA, 3, 3))
 
 		catalog := &eventstream.Catalog{
-			CacheSize: 10,
-			Logger:    spruce.NewTestLogger(t),
+			CacheSize:    10,
+			EngineLogger: spruce.NewTestLogger(t),
 		}
 
 		xtesting.GoE(
@@ -1185,8 +1185,8 @@ func TestRemote(t *testing.T) {
 			}
 
 			catalog := &eventstream.Catalog{
-				CacheSize: 10,
-				Logger:    spruce.NewTestLogger(t),
+				CacheSize:    10,
+				EngineLogger: spruce.NewTestLogger(t),
 			}
 
 			xtesting.GoE(

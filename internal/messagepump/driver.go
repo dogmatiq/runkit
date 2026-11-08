@@ -51,6 +51,6 @@ type Driver interface {
 		tx *sql.Tx,
 		del Delivery,
 		env *envelopepb.Envelope,
-		logger *slog.Logger,
+		engineLogger *slog.Logger,
 	) error
 }

@@ -32,22 +32,22 @@ func TestConsumer(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:     db,
-			Logger: logger,
+			DB:           db,
+			EngineLogger: logger,
 		}
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:       uuidpb.Generate(),
-			Signals:  signals,
-			Interval: 20 * time.Millisecond,
-			Timeout:  100 * time.Millisecond,
-			Logger:   logger,
+			ID:           uuidpb.Generate(),
+			Signals:      signals,
+			Interval:     20 * time.Millisecond,
+			Timeout:      100 * time.Millisecond,
+			EngineLogger: logger,
 		}
 
 		catalog := &Catalog{
-			CacheSize: 10,
-			Logger:    logger,
+			CacheSize:    10,
+			EngineLogger: logger,
 		}
 
 		handled := make(chan uint64, 10)
@@ -90,7 +90,7 @@ func TestConsumer(t *testing.T) {
 			Node:         node,
 			EventStreams: catalog,
 			Sink:         sink,
-			Logger:       logger,
+			EngineLogger: logger,
 		}
 
 		xtesting.GoE(t, consumer.Run)
@@ -326,8 +326,8 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 
 			logger := spruce.NewTestLogger(t)
 			catalog := &Catalog{
-				CacheSize: 10,
-				Logger:    logger,
+				CacheSize:    10,
+				EngineLogger: logger,
 			}
 			src := &source.Memory{}
 			id := uuidpb.Generate()
@@ -405,7 +405,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 			c := &Consumer{
 				EventStreams: catalog,
 				Sink:         sink,
-				Logger:       logger,
+				EngineLogger: logger,
 			}
 
 			c.Node = node
@@ -442,16 +442,16 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 
 	logger := spruce.NewTestLogger(t)
 	signals := &signal.Bus{
-		DB:     xtesting.NewDatabase(t),
-		Logger: logger,
+		DB:           xtesting.NewDatabase(t),
+		EngineLogger: logger,
 	}
 	xtesting.GoE(t, signals.Run)
 	node := &cluster.Node{
-		ID:       uuidpb.Generate(),
-		Signals:  signals,
-		Interval: 20 * time.Millisecond,
-		Timeout:  100 * time.Millisecond,
-		Logger:   logger,
+		ID:           uuidpb.Generate(),
+		Signals:      signals,
+		Interval:     20 * time.Millisecond,
+		Timeout:      100 * time.Millisecond,
+		EngineLogger: logger,
 	}
 	xtesting.GoE(t, node.Run)
 

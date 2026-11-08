@@ -49,9 +49,9 @@ type Sink struct {
 	// where consumption of a stream resumes.
 	RouteTimeout time.Duration
 
-	// Logger is the target for log messages produced by the sink and the
+	// EngineLogger is the target for log messages produced by the sink and the
 	// handler.
-	Logger *slog.Logger
+	EngineLogger *slog.Logger
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream
@@ -153,7 +153,7 @@ func (s *Sink) dispatch(
 					offset:           offset,
 					recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
 					checkpointOffset: cp,
-					logger: s.Logger.With(
+					engineLogger: s.EngineLogger.With(
 						xslog.UUID("stream_id", streamID),
 						slog.Uint64("offset", offset),
 						xslog.Envelope("message", env),

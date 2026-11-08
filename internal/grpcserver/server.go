@@ -25,8 +25,8 @@ type Server struct {
 	// Options are the options used to create the underlying gRPC server.
 	Options []grpc.ServerOption
 
-	// Logger is the target for log messages produced by the server.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the server.
+	EngineLogger *slog.Logger
 
 	// Listen opens a listener. If it is nil, [net.Listen] is used.
 	Listen func(network, address string) (net.Listener, error)
@@ -44,7 +44,7 @@ func (s *Server) ListenAddr(ctx context.Context) (net.Addr, error) {
 //
 // It must be called at most once.
 func (s *Server) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, s.Logger, "serve gRPC requests", s.serve)
+	return supervisor.Run(ctx, s.EngineLogger, "serve gRPC requests", s.serve)
 }
 
 // serve accepts connections until ctx is canceled or serving fails.
@@ -69,7 +69,7 @@ func (s *Server) serve(ctx context.Context) error {
 	defer context.AfterFunc(ctx, server.Stop)()
 	defer server.Stop()
 
-	s.Logger.DebugContext(
+	s.EngineLogger.DebugContext(
 		ctx,
 		"listening for gRPC requests",
 		slog.String("addr", lis.Addr().String()),

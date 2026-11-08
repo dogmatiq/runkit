@@ -33,8 +33,8 @@ type Local struct {
 	// created and that events have been appended to them.
 	Signals *signal.Bus
 
-	// Logger is the target for log messages produced by the source.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the source.
+	EngineLogger *slog.Logger
 
 	// SegmentSize is the maximum number of events delivered in one segment,
 	// which is also the number of events read per query. It must be positive.
@@ -88,7 +88,7 @@ func (s *Local) Run(ctx context.Context) error {
 	// streams does not stop following those already known.
 	err := supervisor.Run(
 		ctx,
-		s.Logger,
+		s.EngineLogger,
 		"discover event streams",
 		func(ctx context.Context) error {
 			return s.discover(
@@ -96,7 +96,7 @@ func (s *Local) Run(ctx context.Context) error {
 				known,
 				func(streamID *uuidpb.UUID) {
 					group.Go(
-						s.Logger.With(
+						s.EngineLogger.With(
 							xslog.UUID("stream_id", streamID),
 						),
 						"deliver event stream",
@@ -219,7 +219,7 @@ func (s *Local) discover(
 		}
 
 		for streamID := range streamIDs.Diff(known).All() {
-			s.Logger.DebugContext(
+			s.EngineLogger.DebugContext(
 				ctx,
 				"event stream discovered",
 				xslog.UUID("stream_id", streamID),

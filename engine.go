@@ -115,8 +115,11 @@ type Engine struct {
 	// remote engines.
 	remoteEngineDiscoverers []RemoteEngineDiscoverer
 
-	// logger is the structured logger used by the engine.
-	logger *slog.Logger
+	// engineLogger is the target for the engine's own log records.
+	engineLogger *slog.Logger
+
+	// appLogger is the target for the application's log records.
+	appLogger *slog.Logger
 
 	// ready is a latch that is set when the engine is ready to accept commands
 	// for execution. It is used to block ExecuteCommand() from proceeding until
@@ -186,7 +189,8 @@ func New(
 		compactTimeout:  DefaultProjectionCompactTimeout,
 		handleTimeout:   DefaultHandleTimeout,
 		routeTimeout:    DefaultRouteTimeout,
-		logger:          slog.Default(),
+		engineLogger:    slog.Default(),
+		appLogger:       slog.Default(),
 	}
 
 	for _, option := range options {
@@ -203,15 +207,23 @@ func New(
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.stopped.Set()
 
-	e.logger = e.logger.With(
-		xslog.UUID("node_id", e.nodeID),
-	)
-
 	e.appConfig = runtimeconfig.FromApplication(e.app)
 
 	if err := config.Validate(e.appConfig, config.ForExecution()); err != nil {
 		return fmt.Errorf("invalid application configuration: %w", err)
 	}
+
+	e.engineLogger = e.engineLogger.With(
+		xslog.UUID("node_id", e.nodeID),
+		xslog.Identity("application", e.appConfig.Identity()),
+		slog.String("layer", "engine"),
+	)
+
+	e.appLogger = e.appLogger.With(
+		xslog.UUID("node_id", e.nodeID),
+		xslog.Identity("application", e.appConfig.Identity()),
+		slog.String("layer", "application"),
+	)
 
 	bindCtx, cancelBind := context.WithTimeout(ctx, applicationBindTimeout)
 	defer cancelBind()
@@ -235,16 +247,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.setupCommandTypes()
 
 	e.signals = &signal.Bus{
-		DB:     e.db,
-		Logger: e.logger.With(slog.String("component", "signal.bus")),
+		DB:           e.db,
+		EngineLogger: e.engineLogger,
 	}
 
 	e.node = &cluster.Node{
-		ID:       e.nodeID,
-		Signals:  e.signals,
-		Interval: heartbeatInterval,
-		Timeout:  heartbeatTimeout,
-		Logger:   e.logger.With(slog.String("component", "cluster.node")),
+		ID:           e.nodeID,
+		Signals:      e.signals,
+		Interval:     heartbeatInterval,
+		Timeout:      heartbeatTimeout,
+		EngineLogger: e.engineLogger,
 	}
 
 	contexthook.Invoke(ctx, contexthook.Node{
@@ -252,16 +264,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	e.eventStreams = &eventstream.Catalog{
-		CacheSize: eventStreamCacheSize,
-		Logger:    e.logger.With(slog.String("component", "eventstream.catalog")),
+		CacheSize:    eventStreamCacheSize,
+		EngineLogger: e.engineLogger,
 	}
 
 	localEventStreams := &source.Local{
-		DB:          e.db,
-		Signals:     e.signals,
-		Logger:      e.logger.With(slog.String("component", "eventstream.source.local")),
-		SegmentSize: eventStreamSegmentSize,
-		BufferSize:  eventStreamBufferSize,
+		DB:           e.db,
+		Signals:      e.signals,
+		EngineLogger: e.engineLogger,
+		SegmentSize:  eventStreamSegmentSize,
+		BufferSize:   eventStreamBufferSize,
 	}
 
 	var server *grpcserver.Server
@@ -276,8 +288,8 @@ func (e *Engine) Run(ctx context.Context) error {
 				EventStreams:    localEventStreams,
 				MaxSegmentBytes: eventStreamMaxSegmentBytes,
 			},
-			Options: e.grpcOptions,
-			Logger:  e.logger.With(slog.String("component", "grpc.server")),
+			Options:      e.grpcOptions,
+			EngineLogger: e.engineLogger,
 		}
 	}
 
@@ -324,9 +336,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			Discover:     d,
 			EventStreams: e.eventStreams,
 			EventTypeIDs: eventTypeIDs,
-			Logger: e.logger.With(
-				slog.String("component", "remoteengine.connector"),
-			),
+			EngineLogger: e.engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -450,7 +460,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		pollInterval = 25 * time.Millisecond
 	)
 
-	logger := e.newLoggerForHandler(handlerConfig)
+	engineLogger := e.newLoggerForHandler(e.engineLogger, handlerConfig)
 	workers := e.workerCountForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
@@ -469,7 +479,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			PollInterval: pollInterval,
 			BackoffBase:  backoffBase,
 			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "aggregate.command-pump")),
+			EngineLogger: engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -493,7 +503,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			PollInterval: pollInterval,
 			BackoffBase:  backoffBase,
 			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "integration.command-pump")),
+			EngineLogger: engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -501,7 +511,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		})
 
 	case *config.Process:
-		consumerLogger := logger.With(slog.String("component", "process.consumer"))
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
@@ -514,9 +523,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				RouteTimeout:         e.routeTimeout,
-				Logger:               consumerLogger,
+				EngineLogger:         engineLogger,
 			},
-			Logger: consumerLogger,
+			EngineLogger: engineLogger,
 		}
 
 		deadlinePump := &messagepump.MessagePump{
@@ -534,7 +543,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			PollInterval: pollInterval,
 			BackoffBase:  backoffBase,
 			BackoffCap:   backoffCap,
-			Logger:       logger.With(slog.String("component", "process.deadline-pump")),
+			EngineLogger: engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -551,7 +560,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			handlerLock = semaphore.NewWeighted(1)
 		}
 
-		consumerLogger := logger.With(slog.String("component", "projection.consumer"))
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
@@ -563,18 +571,18 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				HandlerLock:   handlerLock,
 				HandleTimeout: e.handleTimeout,
 				RouteTimeout:  e.routeTimeout,
-				Logger:        consumerLogger,
+				EngineLogger:  engineLogger,
 			},
-			Logger: consumerLogger,
+			EngineLogger: engineLogger,
 		}
 
 		compactor := &projection.Compactor{
-			DB:       e.db,
-			Handler:  handlerConfig.Interface(),
-			Identity: handlerConfig.Identity(),
-			Interval: e.compactInterval,
-			Timeout:  e.compactTimeout,
-			Logger:   logger.With(slog.String("component", "projection.compactor")),
+			DB:           e.db,
+			Handler:      handlerConfig.Interface(),
+			Identity:     handlerConfig.Identity(),
+			Interval:     e.compactInterval,
+			Timeout:      e.compactTimeout,
+			EngineLogger: engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -590,10 +598,13 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 	}
 }
 
-// newLoggerForHandler creates a logger for the given handler with the
-// appropriate fields.
-func (e *Engine) newLoggerForHandler(handlerConfig config.Handler) *slog.Logger {
-	return e.logger.With(
+// newLoggerForHandler returns the given logger with the attributes that
+// identify the given handler.
+func (e *Engine) newLoggerForHandler(
+	logger *slog.Logger,
+	handlerConfig config.Handler,
+) *slog.Logger {
+	return logger.With(
 		xslog.Identity(
 			"handler",
 			handlerConfig.Identity(),

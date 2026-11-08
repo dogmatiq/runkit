@@ -29,8 +29,8 @@ type Bus struct {
 	// DB is the database used to send and receive signals.
 	DB *sql.DB
 
-	// Logger is the target for log messages produced by the bus.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the bus.
+	EngineLogger *slog.Logger
 
 	m           sync.Mutex
 	subscribers map[*subscriber]struct{}
@@ -119,7 +119,7 @@ func (b *Bus) Send(ctx context.Context, topic string) error {
 //
 // It must be called at most once. Watch may be called before Run.
 func (b *Bus) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, b.Logger, "listen for signals", b.run)
+	return supervisor.Run(ctx, b.EngineLogger, "listen for signals", b.run)
 }
 
 // run holds a dedicated database connection with LISTEN active on the signal
@@ -154,7 +154,7 @@ func (b *Bus) run(ctx context.Context) error {
 			return fmt.Errorf("unable to listen for signals: %w", err)
 		}
 
-		b.Logger.DebugContext(ctx, "listening for signals")
+		b.EngineLogger.DebugContext(ctx, "listening for signals")
 
 		b.wake()
 

@@ -38,14 +38,14 @@ type Connector struct {
 	// an empty set of types would deliver events of every type.
 	EventTypeIDs *uuidcollection.Set
 
-	// Logger is the target for log messages produced by the connector and its
+	// EngineLogger is the target for log messages produced by the connector and its
 	// connections to remote engines.
-	Logger *slog.Logger
+	EngineLogger *slog.Logger
 }
 
 // Run discovers remote engines until ctx is canceled.
 func (c *Connector) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.Logger, "discover remote engines", c.discover)
+	return supervisor.Run(ctx, c.EngineLogger, "discover remote engines", c.discover)
 }
 
 // discover calls Discover, watching each remote engine that it adds for event

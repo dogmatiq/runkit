@@ -33,8 +33,8 @@ type Consumer struct {
 	// Sink is the destination to which segments of each stream are dispatched.
 	Sink Sink
 
-	// Logger is the target for log messages produced by the consumer.
-	Logger *slog.Logger
+	// EngineLogger is the target for log messages produced by the consumer.
+	EngineLogger *slog.Logger
 
 	// stopStreamConsumer holds a function for each stream being consumed.
 	// Calling it cancels consumption and waits for it to stop.
@@ -113,7 +113,7 @@ func (c *Consumer) startStreamConsumer(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) {
-	logger := c.Logger.With(
+	logger := c.EngineLogger.With(
 		xslog.UUID("stream_id", streamID),
 	)
 

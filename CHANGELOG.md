@@ -66,6 +66,9 @@ events.
   - `IntegrationMessageHandler.HandleCommand()`
   - `ProjectionMessageHandler.HandleEvent()`
   - `ProjectionMessageHandler.CheckpointOffset()`
+- Added a `layer` attribute to every log record, with the value `application`
+  or `engine`, and added the application's identity. Removed the `component`
+  attribute.
 
 ## [0.2.0] - 2026-11-06
 

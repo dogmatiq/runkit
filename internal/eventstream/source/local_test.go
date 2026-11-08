@@ -31,18 +31,18 @@ func TestLocal(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:     db,
-			Logger: logger,
+			DB:           db,
+			EngineLogger: logger,
 		}
 
 		xtesting.GoE(t, signals.Run)
 
 		src := &Local{
-			DB:          db,
-			Signals:     signals,
-			Logger:      logger,
-			SegmentSize: segmentSize,
-			BufferSize:  bufferSize,
+			DB:           db,
+			Signals:      signals,
+			EngineLogger: logger,
+			SegmentSize:  segmentSize,
+			BufferSize:   bufferSize,
 		}
 
 		return src
@@ -1059,9 +1059,9 @@ func TestLocal(t *testing.T) {
 			db.SetMaxOpenConns(1)
 
 			src := &Local{
-				DB:          db,
-				Logger:      spruce.NewTestLogger(t),
-				SegmentSize: 10,
+				DB:           db,
+				EngineLogger: spruce.NewTestLogger(t),
+				SegmentSize:  10,
 			}
 
 			types := uuidcollection.NewSet(

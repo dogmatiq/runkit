@@ -58,7 +58,7 @@ func (p *CommandPump) HandleDelivery(
 	tx *sql.Tx,
 	delivery messagepump.Delivery,
 	env *envelopepb.Envelope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
 	var commandForHandling dogma.Command
 
@@ -66,7 +66,7 @@ func (p *CommandPump) HandleDelivery(
 		env,
 		&commandForHandling,
 	); err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to unmarshal command",
 			xslog.Error(err),
@@ -94,7 +94,7 @@ func (p *CommandPump) HandleDelivery(
 						ctx,
 						&commandScope{
 							packer:               packer,
-							logger:               logger,
+							engineLogger:         engineLogger,
 							outboundMessageTypes: p.OutboundMessageTypes,
 						},
 						commandForHandling,
@@ -103,7 +103,7 @@ func (p *CommandPump) HandleDelivery(
 			)
 		},
 	); err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to handle command",
 			xslog.Error(err),

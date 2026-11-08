@@ -14,8 +14,8 @@ import (
 func TestBus(t *testing.T) {
 	setup := func(t *testing.T) *Bus {
 		bus := &Bus{
-			DB:     xtesting.NewDatabase(t),
-			Logger: spruce.NewTestLogger(t),
+			DB:           xtesting.NewDatabase(t),
+			EngineLogger: spruce.NewTestLogger(t),
 		}
 
 		xtesting.GoE(t, bus.Run)
@@ -158,8 +158,8 @@ func TestBus(t *testing.T) {
 	t.Run("it sends signals to every bus", func(t *testing.T) {
 		bus := setup(t)
 		other := &Bus{
-			DB:     bus.DB,
-			Logger: bus.Logger,
+			DB:           bus.DB,
+			EngineLogger: bus.EngineLogger,
 		}
 
 		xtesting.GoE(t, other.Run)
@@ -177,8 +177,8 @@ func TestBus(t *testing.T) {
 
 	t.Run("it signals every watcher when it starts listening", func(t *testing.T) {
 		bus := &Bus{
-			DB:     xtesting.NewDatabase(t),
-			Logger: spruce.NewTestLogger(t),
+			DB:           xtesting.NewDatabase(t),
+			EngineLogger: spruce.NewTestLogger(t),
 		}
 
 		a := watch(t, bus, "a", 10)

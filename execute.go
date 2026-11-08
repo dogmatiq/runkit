@@ -90,13 +90,13 @@ func (e *Engine) ExecuteCommand(
 			}
 
 			if ok {
-				e.logger.InfoContext(
+				e.appLogger.InfoContext(
 					ctx,
 					command.MessageDescription(),
 					xslog.Envelope("command", commandEnvelope),
 				)
 			} else {
-				e.logger.DebugContext(
+				e.engineLogger.DebugContext(
 					ctx,
 					"command deduplicated",
 					xslog.Envelope("command", commandEnvelope),
