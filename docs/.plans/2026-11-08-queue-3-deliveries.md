@@ -382,7 +382,34 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 4: Close out
+### Task 4: Unify field naming and order
+
+The queue work adds many structs beside older ones, and their fields drifted
+apart along the way. This task makes the whole codebase consistent, not just
+the code the queue plans touched.
+
+**Files:**
+- Modify: any Go file whose struct fields or struct literals change, and any
+  DDL file whose columns or parameters change.
+
+- [ ] **Step 1: Take an inventory.** List every exported and unexported struct
+  that holds dependencies or configuration, with its fields in order, and every
+  table and SQL function with its columns or parameters in order. Group them by
+  role, such as handler identity, database, cluster, signals, timeouts and
+  loggers, so the differences are easy to see.
+- [ ] **Step 2: Agree the conventions with the maintainer, one at a time.** For
+  each difference the inventory shows, propose one rule, with the examples that
+  break it. Expect rules for field names, field order, which fields are
+  documented, and the order of fields in struct literals. Record each agreed
+  rule in the shared skills in [dogmatiq/agent-config][agent-config], not only
+  in the code.
+- [ ] **Step 3: Apply the rules in rename-only commits**, one rule per commit,
+  so each diff shows a single mechanical change. Run `make test` after each.
+- [ ] **Step 4: Stop for review** after each commit.
+
+---
+
+### Task 5: Close out
 
 **Files:**
 - Modify: `CHANGELOG.md`, `docs/.plans/` (delete the queue plans and the
@@ -390,7 +417,7 @@ Each one has a test in the task that owns the code.
 
 - [ ] **Step 1: Read the `[Unreleased]` section as a whole** and make its
   entries for the queue read as one change, with the stop-migrate-restart
-  note once.
+  note once, and check that it agrees with the [migration guide].
 - [ ] **Step 2: Delete the completed plans**
 - [ ] **Step 3: Stop for review**, then comment on [#100][100], [#99][99],
   [#101][101], [#102][102], [#58][58] and [#91][91] with what landed and the
@@ -412,7 +439,9 @@ Each one has a test in the task that owns the code.
 [100]: https://github.com/dogmatiq/runkit/issues/100
 [101]: https://github.com/dogmatiq/runkit/pull/101
 [102]: https://github.com/dogmatiq/runkit/pull/102
+[agent-config]: https://github.com/dogmatiq/agent-config
 [logging guide]: ../maintainers/logging.md
 [logging-plan]: 2026-11-08-logging-and-retries.md
+[migration guide]: ../MIGRATING-v0.3.0.md
 [plan-1]: 2026-11-08-queue-1-storage.md
 [plan-2]: 2026-11-08-queue-2-consumer.md

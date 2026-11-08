@@ -14,7 +14,7 @@
 CREATE OR REPLACE FUNCTION messagequeue.add_command(
     message_id      uuid,
     message_type_id uuid,
-    queue_id  uuid,
+    queue_id        uuid,
     envelope        bytea,
     idem_key        text
 )

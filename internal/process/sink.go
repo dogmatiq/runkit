@@ -38,6 +38,10 @@ type Sink struct {
 	// Packer packs commands and deadlines produced by the handler.
 	Packer *envelope.Packer
 
+	// NodeID is the ID of the local node, which is also the ID of the queue
+	// that commands and deadlines produced by the handler are added to.
+	NodeID *uuidpb.UUID
+
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
 
@@ -299,7 +303,7 @@ func (s *Sink) dispatch(
 		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, instanceID, err)
 	}
 
-	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
+	if err := addCommandsToQueue(ctx, tx, s.NodeID, scope.commandPacker); err != nil {
 		return err
 	}
 
@@ -326,7 +330,7 @@ func (s *Sink) dispatch(
 			}
 		}
 
-		if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
+		if err := persistDeadlines(ctx, tx, s.NodeID, scope.deadlinePacker); err != nil {
 			return err
 		}
 	}

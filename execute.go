@@ -79,9 +79,10 @@ func (e *Engine) ExecuteCommand(
 				`SELECT
 					actual_message_id,
 					enqueued
-				FROM commandqueue.add($1, $2, $3, $4)`,
+				FROM messagequeue.add_command($1, $2, $3, $4, $5)`,
 				xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+				xsql.UUID(e.nodeID),
 				xsql.Envelope(commandEnvelope),
 				commandEnvelope.GetBody().GetIdempotencyKey(),
 			)

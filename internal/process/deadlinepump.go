@@ -29,6 +29,7 @@ type DeadlinePump struct {
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelope.Packer
+	NodeID               *uuidpb.UUID
 	DeadlineTypeIDs      *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	HandleTimeout        time.Duration
@@ -64,7 +65,7 @@ func (p *DeadlinePump) AcquireDelivery(
 			d.message_type_id,
 			d.envelope,
 			d.failures
-		FROM process.deadlines AS d
+		FROM messagequeue.messages AS d
 		INNER JOIN process.instances AS i
 			ON i.handler_key = d.handler_key
 			AND i.instance_id = d.instance_id
@@ -110,8 +111,13 @@ func (*DeadlinePump) PostponeDelivery(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE process.deadlines SET
+		`UPDATE messagequeue.messages SET
 			failures = $2,
+			failing_since = CASE
+				WHEN $2 = 0 THEN NULL
+				WHEN failing_since IS NULL THEN clock_timestamp()
+				ELSE failing_since
+			END,
 			deliver_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
 		xsql.UUID(delivery.MessageID),
@@ -215,7 +221,7 @@ func (p *DeadlinePump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	if err := addCommandsToQueue(ctx, tx, scope.commandPacker); err != nil {
+	if err := addCommandsToQueue(ctx, tx, p.NodeID, scope.commandPacker); err != nil {
 		return err
 	}
 
@@ -245,7 +251,7 @@ func (p *DeadlinePump) HandleDelivery(
 		}
 	}
 
-	if err := persistDeadlines(ctx, tx, scope.deadlinePacker); err != nil {
+	if err := persistDeadlines(ctx, tx, p.NodeID, scope.deadlinePacker); err != nil {
 		return err
 	}
 
@@ -260,7 +266,7 @@ func (*DeadlinePump) deleteDeadline(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`DELETE FROM process.deadlines
+		`DELETE FROM messagequeue.messages
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	); err != nil {
