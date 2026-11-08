@@ -480,12 +480,15 @@ where there is one. It carries no `delivery`, stream or offset attributes.
   source again`, and watching resumes at once. `ErrInvalidSegment` also logs
   WARN `received an invalid segment from an event stream source`, with
   `xslog.Error(err)`, before it's reported as deterministic.
-- **gRPC server.** `listening for gRPC requests` moves to INFO.
+- **gRPC server.** `listening for gRPC requests` stays at DEBUG. The engine's
+  startup record says where it listens.
 - **Remote engine connector.** It logs INFO `remote engine added` when `add`
   starts watching, and `remote engine removed` when the returned function stops
   it.
-- **Engine.** It logs INFO `engine started` once its components are running,
-  and `engine stopping` when `ctx` is canceled.
+- **Engine.** It logs one INFO record, `engine started`, when it's ready. It has
+  `grpc_listen_address` when the engine listens for gRPC requests, and no
+  gRPC attributes when it doesn't. It logs INFO `engine stopped` when `Run` returns, with the
+  error, unless that's the context's own cancellation.
 
 - [ ] Implement the above. It's untested, like all logging.
 - [ ] Run `make precommit`. Expect it to pass.

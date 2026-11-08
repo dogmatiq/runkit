@@ -73,6 +73,15 @@ func (c *Connector) discover(ctx context.Context) error {
 			Client: messaginggrpc.NewEventStreamConsumerAPIClient(conn),
 		}
 
+		logger := c.EngineLogger
+		if t, ok := conn.(targetedConn); ok {
+			logger = logger.With(
+				slog.String("grpc_target", t.Target()),
+			)
+		}
+
+		logger.InfoContext(ctx, "remote engine added")
+
 		ctx, cancel := context.WithCancel(ctx)
 		var stopped cosyne.Latch
 
@@ -86,6 +95,8 @@ func (c *Connector) discover(ctx context.Context) error {
 		return func() {
 			cancel()
 			<-stopped.Chan()
+
+			logger.InfoContext(ctx, "remote engine removed")
 		}
 	}
 
@@ -98,4 +109,13 @@ func (c *Connector) discover(ctx context.Context) error {
 	}
 
 	return err
+}
+
+// targetedConn is a gRPC client connection that reports the target it was
+// created with, as [grpc.ClientConn] does.
+//
+// The connector logs the target, when there is one, to identify a remote
+// engine.
+type targetedConn interface {
+	Target() string
 }

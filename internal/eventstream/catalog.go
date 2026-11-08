@@ -198,17 +198,28 @@ func (c *Catalog) Watch(
 				// the source is watched again at once rather than as though it
 				// had failed.
 				if errors.Is(err, source.ErrNotContiguous) {
-					c.EngineLogger.InfoContext(
+					c.EngineLogger.DebugContext(
 						ctx,
-						"unable to keep up with the source, watching it again",
+						"watching event stream source again",
 						xslog.Error(err),
 					)
 					continue
 				}
 
-				// A source that does not offer event streams, or that delivers
-				// an invalid segment, is unlikely to do otherwise soon.
-				if errors.Is(err, errors.ErrUnsupported) || errors.Is(err, source.ErrInvalidSegment) {
+				// A source that does not offer event streams is unlikely to do
+				// otherwise soon.
+				if errors.Is(err, errors.ErrUnsupported) {
+					return supervisor.Deterministic(err)
+				}
+
+				// Neither is a source that delivers an invalid segment, which
+				// is also evidence that the source is misbehaving.
+				if errors.Is(err, source.ErrInvalidSegment) {
+					c.EngineLogger.WarnContext(
+						ctx,
+						"received an invalid segment from an event stream source",
+						xslog.Error(err),
+					)
 					return supervisor.Deterministic(err)
 				}
 

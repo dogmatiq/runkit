@@ -352,6 +352,8 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	if server == nil {
 		e.ready.Set()
+
+		e.engineLogger.InfoContext(ctx, "engine started")
 	} else {
 		e.group.Go(func() error {
 			return server.Run(ctx)
@@ -363,10 +365,34 @@ func (e *Engine) Run(ctx context.Context) error {
 		if addr, err := server.ListenAddr(ctx); err == nil {
 			e.listenAddr = addr
 			e.ready.Set()
+
+			e.engineLogger.InfoContext(
+				ctx,
+				"engine started",
+				slog.String("grpc_listen_address", addr.String()),
+			)
 		}
 	}
 
-	return e.group.Wait()
+	err := e.group.Wait()
+
+	// A canceled context is how the engine is asked to stop, so it isn't
+	// reported as the reason it stopped.
+	var attrs []slog.Attr
+	if !errors.Is(err, ctx.Err()) {
+		attrs = append(attrs, xslog.Error(err))
+	}
+
+	// The context may already be canceled, but the record must still be
+	// written.
+	e.engineLogger.LogAttrs(
+		context.WithoutCancel(ctx),
+		slog.LevelInfo,
+		"engine stopped",
+		attrs...,
+	)
+
+	return err
 }
 
 // Ready returns a channel that is closed when the engine is ready to accept
