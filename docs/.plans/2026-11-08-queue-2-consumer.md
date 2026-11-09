@@ -71,11 +71,11 @@ These were made with the maintainer, and aren't in [#100][100].
   call and postponement. Each is reviewable alone.
 - **Discovery is one query** that takes the queues it consumes, the routed
   message types and the active message IDs, and returns the candidate with the
-  earliest `deliver_at`, including a future one. Ties are broken arbitrarily. It
+  earliest `next_attempt_at`, including a future one. Ties are broken arbitrarily. It
   looks up each `(queue, type)` pair in the index from plan 1, so a retired
   route's rows are never read.
 - **The fallback claim is one query**, not the probe-and-savepoint sequence from
-  [#102][102]: the same shape as discovery with `deliver_at <= now` and `FOR
+  [#102][102]: the same shape as discovery with `next_attempt_at <= now` and `FOR
   UPDATE SKIP LOCKED`, limited to one row. It locks only the row it returns.
   Measuring its plan under load is listed in the validation.
 - **Handlers keep their own lock behavior for now.** The aggregate handler keeps
@@ -256,19 +256,19 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   Discovery, in `discovery.go`, is an unexported function that runs:
 
   ```sql
-  SELECT m.message_id, m.deliver_at
+  SELECT m.message_id, m.next_attempt_at
   FROM unnest($1::uuid[]) AS k(queue_id)
   CROSS JOIN unnest($2::uuid[]) AS t(message_type_id)
   CROSS JOIN LATERAL (
-      SELECT q.message_id, q.deliver_at
+      SELECT q.message_id, q.next_attempt_at
       FROM messagequeue.messages AS q
       WHERE q.queue_id = k.queue_id
         AND q.message_type_id = t.message_type_id
         AND q.message_id <> ALL($3::uuid[])
-      ORDER BY q.deliver_at
+      ORDER BY q.next_attempt_at
       LIMIT 1
   ) AS m
-  ORDER BY m.deliver_at
+  ORDER BY m.next_attempt_at
   LIMIT 1
   ```
 
@@ -310,7 +310,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
       t.Run("it attempts a future message when it becomes due", ...)
       t.Run("it attempts an earlier message queued while it waits for a later one", ...)
       t.Run("it does not attempt a message that moves to another node's queue while it waits", ...)
-      t.Run("it attempts messages in order of their delivery time", ...)     // distinct deliver_at values
+      t.Run("it attempts messages in the order in which they're due", ...)     // distinct next_attempt_at values
       t.Run("it moves on when the message it waits for is removed", ...)   // no signal; the timer fires and discovery finds the next
       t.Run("it does not attempt a message that is already being attempted", ...)
       t.Run("it attempts a message again once its attempt ends", ...)       // the stub leaves the row in place
@@ -386,7 +386,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   Discovery returns a batch rather than one message, so that a backlog isn't
   discovered one query per message. `discover` takes a limit, which is the free
   room, `Concurrency` minus the size of the active set, and returns up to that
-  many candidates in order of `deliver_at`: the inner and outer `LIMIT 1` become
+  many candidates in order of `next_attempt_at`: the inner and outer `LIMIT 1` become
   `LIMIT $4`. `dispatchDue` starts an attempt for each due candidate, and waits
   for the first one that isn't due yet. It discovers again only if the whole
   batch was due. Before it discovers, the loop receives every ended attempt
@@ -398,7 +398,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
   The attempt, in `attempt.go`, begins a transaction and claims the hint by ID
   if this node is still responsible for its queue, and it's routed, unlocked and
-  due. If not, it falls back to the discovery query with `deliver_at <= $4`, the
+  due. If not, it falls back to the discovery query with `next_attempt_at <= $4`, the
   inner `LIMIT 1` removed, and `FOR UPDATE OF q SKIP LOCKED` on the outer query
   with `LIMIT 1`. Only the loop touches the active set, so the attempt can't
   move its active ID to whatever it claimed. Decide in this task whether it
@@ -409,7 +409,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   wake-up before it discovers again. The claim loads the columns of `Message`.
   It unmarshals and validates the envelope, calls the handler for the type, and
   then removes the row with `messagequeue.remove`, or postpones it. Postponement
-  sets `deliver_at`, and for `ErrFailed` increments `failures` and sets
+  sets `next_attempt_at`, and for `ErrFailed` increments `failures` and sets
   `failing_since` if null, using a backoff of `supervisor.Jitter` over
   `min(baseDelay << failures, 5m)`; for `ErrBusy` it uses `ContentionDelay`. The
   deliveries plan replaces the backoff with a streak.

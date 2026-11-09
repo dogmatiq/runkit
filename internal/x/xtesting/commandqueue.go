@@ -161,13 +161,13 @@ func WaitForCommandToBePostponed(
 		`SELECT COUNT(*)
 		FROM messagequeue.messages
 		WHERE message_id = $1
-		AND deliver_at > scheduled_at`,
+		AND next_attempt_at > scheduled_at`,
 		xsql.UUID(messageID),
 	)
 }
 
 // EnqueuePostponedCommand inserts a command directly into a new queue with
-// deliver_at set far in the future, so it will not be picked up by the
+// next_attempt_at set far in the future, so it will not be picked up by the
 // dequeue loop. It returns the envelope of the enqueued command.
 func EnqueuePostponedCommand(
 	t testing.TB,
@@ -185,7 +185,7 @@ func EnqueuePostponedCommand(
 			message_type_id,
 			queue_id,
 			envelope,
-			deliver_at
+			next_attempt_at
 		) VALUES (
 			$1, $2, $3, $4,
 			clock_timestamp() + INTERVAL '24 hours'

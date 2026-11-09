@@ -17,16 +17,16 @@ type candidate struct {
 	// MessageID is the ID of the message.
 	MessageID *uuidpb.UUID
 
-	// DeliverAt is the earliest time that the message may be attempted.
-	DeliverAt time.Time
+	// NextAttemptAt is the earliest time that the message may be attempted.
+	NextAttemptAt time.Time
 }
 
 // IsDue returns true if the message may be attempted now.
 func (c candidate) IsDue() bool {
-	return !time.Now().Before(c.DeliverAt)
+	return !time.Now().Before(c.NextAttemptAt)
 }
 
-// discover returns the message with the earliest delivery time among the
+// discover returns the message with the earliest next attempt time among the
 // messages of the given types in the given queues, excluding the messages with
 // the given IDs. It returns false if there are no such messages.
 func discover(
@@ -48,19 +48,19 @@ func discover(
 
 	row := db.QueryRowContext(
 		ctx,
-		`SELECT m.message_id, m.deliver_at
+		`SELECT m.message_id, m.next_attempt_at
 		FROM unnest($1::uuid[]) AS k(queue_id)
 		CROSS JOIN unnest($2::uuid[]) AS t(message_type_id)
 		CROSS JOIN LATERAL (
-			SELECT q.message_id, q.deliver_at
+			SELECT q.message_id, q.next_attempt_at
 			FROM messagequeue.messages AS q
 			WHERE q.queue_id = k.queue_id
 				AND q.message_type_id = t.message_type_id
 				AND q.message_id <> ALL($3::uuid[])
-			ORDER BY q.deliver_at
+			ORDER BY q.next_attempt_at
 			LIMIT 1
 		) AS m
-		ORDER BY m.deliver_at
+		ORDER BY m.next_attempt_at
 		LIMIT 1`,
 		xsql.UUIDSeq(queueIDs.All()),
 		xsql.UUIDSeq(messageTypeIDs.All()),
@@ -69,7 +69,7 @@ func discover(
 
 	if err := row.Scan(
 		xsql.UUID(c.MessageID),
-		&c.DeliverAt,
+		&c.NextAttemptAt,
 	); err != nil {
 		// There are no such messages.
 		if errors.Is(err, sql.ErrNoRows) {

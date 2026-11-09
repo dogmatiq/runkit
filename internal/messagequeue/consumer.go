@@ -144,7 +144,7 @@ func (c *Consumer) dispatchDue(
 
 		// The message isn't due yet, so the consumer waits until it is.
 		if !next.IsDue() {
-			delay := time.Until(next.DeliverAt)
+			delay := time.Until(next.NextAttemptAt)
 			return time.After(delay)
 		}
 
