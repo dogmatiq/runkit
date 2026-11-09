@@ -622,11 +622,11 @@ Each is a small change on its own, in this order:
    on its own connection instead of through `signal.Bus`. `Node` gains a way
    to read each live node's score. This is a **[BC]** transport change.
    Heartbeats are the last users of `signal.Bus` once task 1 of [plan
-   2][plan-2] adds `Node.AttachSignal` and `cluster.Observable`. Moving them
-   onto the LISTEN connection that `cluster.Node` already owns lets this
-   follow-up delete `signal.Bus` and the `signal` package. Heartbeats are
-   also the first Go code to send a signal, so this follow-up adds a way to
-   send one, such as a cluster-wide `Signal` type.
+   2][plan-2] adds `Node.AttachSignal`. Moving them onto the LISTEN connection
+   that `cluster.Node` already owns lets this follow-up delete `signal.Bus` and
+   the `signal` package. Heartbeats are also the first Go code to send a
+   signal, so this follow-up adds a way to send one, such as a cluster-wide
+   `Signal` type.
 
    The payload also carries the heartbeat's expiry, so that nodes don't have
    to share one heartbeat interval. `Node.HeartbeatTimeout` becomes a

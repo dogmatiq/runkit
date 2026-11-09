@@ -3,9 +3,11 @@ package messagequeue_test
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -24,9 +26,19 @@ func TestCatalog(t *testing.T) {
 		}
 		xtesting.GoE(t, signals.Run)
 
+		node := &cluster.Node{
+			ID:                uuidpb.Generate(),
+			DB:                db,
+			Signals:           signals,
+			HeartbeatInterval: 20 * time.Millisecond,
+			HeartbeatTimeout:  100 * time.Millisecond,
+			EngineLogger:      logger,
+		}
+		xtesting.GoE(t, node.Run)
+
 		catalog := &Catalog{
 			DB:           db,
-			Signals:      signals,
+			Node:         node,
 			EngineLogger: logger,
 		}
 
@@ -67,7 +79,7 @@ func TestCatalog(t *testing.T) {
 			"queue IDs",
 			catalog.QueueIDs(),
 			func(got *uuidcollection.Set) bool {
-				return got != nil && got.IsEqual(uuidcollection.NewSet(want...))
+				return got.IsEqual(uuidcollection.NewSet(want...))
 			},
 		)
 	}
@@ -90,13 +102,16 @@ func TestCatalog(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
+		existing := uuidpb.Generate()
+		addMessage(t, db, existing)
+
 		xtesting.GoE(t, catalog.Run)
-		waitForQueueIDs(t, catalog)
+		waitForQueueIDs(t, catalog, existing)
 
 		q := uuidpb.Generate()
 		addMessage(t, db, q)
 
-		waitForQueueIDs(t, catalog, q)
+		waitForQueueIDs(t, catalog, existing, q)
 	})
 
 	t.Run("it includes the queue that a message moves to, not the one it moved from", func(t *testing.T) {
