@@ -226,7 +226,7 @@ Each one has a test in the task that owns the code.
   failed before the upgrade keeps its next attempt time as its scheduled time.
   The changelog says so.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   ```go
   func TestCreate_migratesQueues(t *testing.T)
@@ -244,9 +244,9 @@ Each one has a test in the task that owns the code.
 
   Extend `TestCreateAndDrop` so `Drop` removes the `messagequeue` schema.
 
-- [ ] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 2: Run `make test` to verify they fail**
 
-- [ ] **Step 3: Write the DDL**
+- [x] **Step 3: Write the DDL**
 
   `schema.Create` walks the embedded directory in name order, so
   `10-messagequeue/90-migrate.sql` runs once the `messagequeue` tables exist and
@@ -254,11 +254,11 @@ Each one has a test in the task that owns the code.
   `process.deadlines`, and adds the binding column with `ALTER TABLE … ADD
   COLUMN IF NOT EXISTS deadline_queue_id uuid`.
 
-- [ ] **Step 4: Run `make test` to verify the schema tests pass**
+- [x] **Step 4: Run `make test` to verify the schema tests pass**
 
   The engine tests fail until task 2.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 ---
 
@@ -282,7 +282,7 @@ Each one has a test in the task that owns the code.
   `execute.go`. Task 4 replaces this with `messagequeue.Router`.
 - Consumes: the `messagequeue` schema from task 1.
 
-- [ ] **Step 1: Repoint the SQL**
+- [x] **Step 1: Repoint the SQL**
 
   `commandqueue.add` → `messagequeue.add_command`. `persistDeadlines` inserts
   into `messagequeue.messages` with `deliver_at = scheduled_at`. `endInstance`
@@ -294,23 +294,23 @@ Each one has a test in the task that owns the code.
   `failing_since = COALESCE(failing_since, clock_timestamp())`. Successful
   removal is `messagequeue.remove`.
 
-- [ ] **Step 2: Update the test helpers**
+- [x] **Step 2: Update the test helpers**
 
   The `xtesting` helpers query `messagequeue.messages`.
   `EnqueuePostponedCommand` inserts with a queue ID argument.
 
-- [ ] **Step 3: Run `make test` to verify everything passes**
+- [x] **Step 3: Run `make test` to verify everything passes**
 
   No new behavior; the existing suites are the test.
 
-- [ ] **Step 4: Update `CHANGELOG.md`**
+- [x] **Step 4: Update `CHANGELOG.md`**
 
   Under `### Changed`: the schema change, that `CreateSchema()` moves pending
   commands and deadlines into the new queue and must run while every node is
   stopped, and that a previously failed deadline's original scheduled time is
   taken from its next attempt time.
 
-- [ ] **Step 5: Stop for review**
+- [x] **Step 5: Stop for review**
 
 ---
 
@@ -353,7 +353,7 @@ Each one has a test in the task that owns the code.
 
 - Consumes: the trigger from task 1.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   ```go
   func TestCatalog(t *testing.T) {
@@ -367,9 +367,9 @@ Each one has a test in the task that owns the code.
   Insert rows with a small SQL helper in the test; `xtesting` gains nothing
   here.
 
-- [ ] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 2: Run `make test` to verify they fail**
 
-- [ ] **Step 3: Implement `Catalog`**
+- [x] **Step 3: Implement `Catalog`**
 
   `Run` wraps `supervisor.Run(ctx, EngineLogger, "observe queues", …)`. The
   body watches `messagequeue` with a capacity of 1 and ignores the subtopic,
@@ -379,15 +379,15 @@ Each one has a test in the task that owns the code.
   signal when a watcher's channel is full, so reading the whole set on each
   signal means no dropped signal can leave a queue out.
 
-- [ ] **Step 4: Wire it in `engine.go`**
+- [x] **Step 4: Wire it in `engine.go`**
 
   `e.queues = &messagequeue.Catalog{…}` next to the node, run in
   the same group. Add a sentence to the doc comment of each `messagequeue`
   trigger saying that `messagequeue.Catalog` watches the signal to learn which
   queues have messages.
 
-- [ ] **Step 5: Run `make test` to verify they pass**
-- [ ] **Step 6: Stop for review**
+- [x] **Step 5: Run `make test` to verify they pass**
+- [x] **Step 6: Stop for review**
 
 ---
 
@@ -456,7 +456,7 @@ Each one has a test in the task that owns the code.
 
 - Consumes: nothing new.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   ```go
   func TestRouter(t *testing.T) {
@@ -480,11 +480,11 @@ Each one has a test in the task that owns the code.
   }
   ```
 
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement the router and the binding in `loadInstance`**
-- [ ] **Step 4: Wire the router in `engine.go`**
-- [ ] **Step 5: Run `make test` to verify they pass**
-- [ ] **Step 6: Stop for review**
+- [x] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 3: Implement the router and the binding in `loadInstance`**
+- [x] **Step 4: Wire the router in `engine.go`**
+- [x] **Step 5: Run `make test` to verify they pass**
+- [x] **Step 6: Stop for review**
 
 ---
 
@@ -520,13 +520,13 @@ constructs. Step 2 depends on the answer.
 - Delete: `internal/projection/initialize.go`
 - Create: `handler.go`, `routes.go`
 
-- [ ] **Step 1: Move the per-handler code** — `runHandler`,
+- [x] **Step 1: Move the per-handler code** — `runHandler`,
   `newLoggerForHandler` and `workerCountForHandler` — into `handler.go`,
   unchanged. Delete `initializeHandler`, `projection.InitializeHandler` and the
   startup loop that calls them. Their only effect was the `projection.handlers`
   row that the compactor locks, so the `Compactor` inserts that row itself when
   it starts.
-- [ ] **Step 2: Move the configuration views into `routes.go`** —
+- [x] **Step 2: Move the configuration views into `routes.go`** —
   `setupCommandTypes`, `aggregatesForQueueRouter`, `consumedEventTypeIDs`,
   `inboundMessageTypeIDsForHandler` and `outboundMessageTypesForHandler` — and
   make each a plain function of the `*config.Application` or `config.Handler`
@@ -535,9 +535,9 @@ constructs. Step 2 depends on the answer.
   `newLoggerForHandler` and `workerCountForHandler` in `handler.go` become
   plain functions too, since neither reads the engine. `runHandler` stays a
   method.
-- [ ] **Step 3: Run `make test`.** No behavior changes, so the existing suites
+- [x] **Step 3: Run `make test`.** No behavior changes, so the existing suites
   are the test.
-- [ ] **Step 4: Stop for review** after each step's commit, so each diff shows
+- [x] **Step 4: Stop for review** after each step's commit, so each diff shows
   one kind of change.
 
 ---
@@ -591,7 +591,7 @@ constructs. Step 2 depends on the answer.
 
 - Consumes: nothing new.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   The tests run real nodes in `node_test.go`, beside the existing
   responsibility tests.
@@ -605,10 +605,10 @@ constructs. Step 2 depends on the answer.
   }
   ```
 
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement it**
-- [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Stop for review**
+- [x] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 3: Implement it**
+- [x] **Step 4: Run `make test` to verify they pass**
+- [x] **Step 5: Stop for review**
 
 ---
 

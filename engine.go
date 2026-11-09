@@ -280,7 +280,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	localEventStreams := &source.Local{
 		DB:           e.db,
-		Signals:      e.signals,
+		Node:         e.node,
 		EngineLogger: e.engineLogger,
 		SegmentSize:  eventStreamSegmentSize,
 		BufferSize:   eventStreamBufferSize,

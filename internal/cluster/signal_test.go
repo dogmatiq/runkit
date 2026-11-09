@@ -37,29 +37,25 @@ func TestNode_AttachSignal(t *testing.T) {
 		}
 	}
 
-	// attachSignal attaches the given cluster-wide signal to a new target,
-	// consumes the notification that attaching sends straight away, and returns
-	// the target.
+	// attachSignal attaches the given cluster-wide signal to a new target, and
+	// returns the target.
 	attachSignal := func(t *testing.T, n *Node, signal string) *cosyne.Signal {
 		t.Helper()
 
 		s := &cosyne.Signal{}
 		n.AttachSignal(t.Context(), signal, s)
-		expectNotified(t, s)
 
 		return s
 	}
 
-	t.Run("it notifies the target straight away", func(t *testing.T) {
+	t.Run("it does not notify the target when it is attached", func(t *testing.T) {
 		t.Parallel()
 
 		_, newNode := setup(t)
 		n := newNode()
+		s := attachSignal(t, n, "<signal>")
 
-		s := &cosyne.Signal{}
-		n.AttachSignal(t.Context(), "<signal>", s)
-
-		expectNotified(t, s)
+		expectNotNotified(t, s)
 	})
 
 	t.Run("it notifies the target once the node is listening", func(t *testing.T) {
