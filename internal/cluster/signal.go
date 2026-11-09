@@ -22,11 +22,8 @@ const notificationChannel = "signal"
 // A cluster-wide signal is a string, such as "messagequeue". It's notified by
 // sending a PostgreSQL notification, usually from a database trigger.
 //
-// As a convenience, it notifies the target straight away. Callers usually wait
-// on the target and load the state they're interested in each time it's
-// notified, so this first notification triggers their first load. That load
-// happens after the signal is attached, so it can't miss a change made in
-// between.
+// Callers attach the signal before they first load the state they're
+// interested in, so that a change made after that load notifies the target.
 //
 // It may be called before [Node.Run].
 func (n *Node) AttachSignal(
@@ -40,7 +37,6 @@ func (n *Node) AttachSignal(
 	}
 
 	n.attach(a)
-	target.Notify()
 
 	detachOnce := sync.OnceFunc(
 		func() {

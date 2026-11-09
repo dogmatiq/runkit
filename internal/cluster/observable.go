@@ -43,12 +43,6 @@ func (o *Observable[T]) Run(ctx context.Context) error {
 	defer detach()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-wake.Chan():
-		}
-
 		v, err := o.Read(ctx)
 		if err != nil {
 			return err
@@ -56,6 +50,10 @@ func (o *Observable[T]) Run(ctx context.Context) error {
 
 		if current, _ := o.value.Load(); !v.IsEqual(current) {
 			o.value.Store(v)
+		}
+
+		if err := wake.WaitContext(ctx); err != nil {
+			return err
 		}
 	}
 }

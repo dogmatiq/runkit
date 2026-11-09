@@ -163,8 +163,7 @@ stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
   ```go
   // AttachSignal attaches the given cluster-wide signal to the given target,
   // so that the target is notified each time the cluster-wide signal is,
-  // until the returned function is called or ctx is canceled. It notifies the
-  // target straight away.
+  // until the returned function is called or ctx is canceled.
   func (n *Node) AttachSignal(ctx context.Context, signal string, target cosyne.SignalW) (detach func())
 
   // Observable is a value stored in the database that every node keeps a
@@ -213,20 +212,22 @@ stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
   that move here only wait for them. A way to send one comes with follow-up 1
   of [plan 1][plan-1], when heartbeats move off `signal.Bus`.
 
-- [ ] **Step 1: Agree the interfaces.** Agreed: `AttachSignal` as above,
+- [x] **Step 1: Agree the interfaces.** Agreed: `AttachSignal` as above,
   `Observable` takes the node and signal directly, and it compares values
   with their own `IsEqual` method rather than a separate function or `==`.
   The values it holds are `*uuidcollection.Set`, where `==` compares
   pointers, and `(*uuidcollection.Set).IsEqual` treats nil as empty.
-- [ ] **Step 2: Write the failing tests** for `Node.AttachSignal` and
+- [x] **Step 2: Write the failing tests** for `Node.AttachSignal` and
   `Observable`: a cluster-wide signal notifies the target it is attached to on
   every node, other signals don't, notifications coalesce, the target is
-  notified straight away, detaching ends delivery, and an observable
+  not notified when it's attached, detaching ends delivery, and an observable
   reloads on each notification and publishes only changes.
-- [ ] **Step 3: Implement them**
-- [ ] **Step 4: Move stream discovery, event delivery and
-  `messagequeue.Catalog`**, one commit each. The catalog's `QueueIDs()`
-  becomes a `cluster.Observable[*uuidcollection.Set]`.
+- [x] **Step 3: Implement them**
+- [ ] **Step 4: Switch stream discovery, event delivery and
+  `messagequeue.Catalog` from `signal.Bus` to `Node.AttachSignal`**, one
+  commit each. Each replaces its `Signals *signal.Bus` field with a
+  `Node *cluster.Node`. The catalog's `QueueIDs()` becomes a
+  `cluster.Observable[*uuidcollection.Set]`.
 - [ ] **Step 5: Run `make test`**
 - [ ] **Step 6: Stop for review** after each commit.
 

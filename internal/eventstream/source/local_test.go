@@ -14,6 +14,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -37,9 +38,20 @@ func TestLocal(t *testing.T) {
 
 		xtesting.GoE(t, signals.Run)
 
+		node := &cluster.Node{
+			ID:                uuidpb.Generate(),
+			DB:                db,
+			Signals:           signals,
+			HeartbeatInterval: 20 * time.Millisecond,
+			HeartbeatTimeout:  100 * time.Millisecond,
+			EngineLogger:      logger,
+		}
+
+		xtesting.GoE(t, node.Run)
+
 		src := &Local{
 			DB:           db,
-			Signals:      signals,
+			Node:         node,
 			EngineLogger: logger,
 			SegmentSize:  segmentSize,
 			BufferSize:   bufferSize,
