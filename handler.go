@@ -28,9 +28,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		pollInterval = 25 * time.Millisecond
 	)
 
-	engineLogger := e.newLoggerForHandler(e.engineLogger, handlerConfig)
-	appLogger := e.newLoggerForHandler(e.appLogger, handlerConfig)
-	workers := e.workerCountForHandler(handlerConfig)
+	engineLogger := newLoggerForHandler(e.engineLogger, handlerConfig)
+	appLogger := newLoggerForHandler(e.appLogger, handlerConfig)
+	workers := workerCountForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
@@ -40,8 +40,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				CommandTypeIDs:       inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				AppLogger:            appLogger,
 			},
 			DB:           e.db,
@@ -64,8 +64,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Identity:             handlerConfig.Identity(),
 				Concurrency:          handlerConfig.ConcurrencyPreference(),
 				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				CommandTypeIDs:       inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				AppLogger:            appLogger,
 			},
@@ -91,8 +91,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
 				QueueRouter:          e.queueRouter,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				EventTypes:           inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				RouteTimeout:         e.routeTimeout,
 				EngineLogger:         engineLogger,
@@ -108,8 +108,8 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
 				QueueRouter:          e.queueRouter,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
+				DeadlineTypeIDs:      inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				AppLogger:            appLogger,
 			},
@@ -142,7 +142,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Handler:       handlerConfig.Interface(),
 				Identity:      handlerConfig.Identity(),
 				Concurrency:   handlerConfig.ConcurrencyPreference(),
-				EventTypes:    e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
+				EventTypes:    inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 				HandlerLock:   handlerLock,
 				HandleTimeout: e.handleTimeout,
 				RouteTimeout:  e.routeTimeout,
@@ -177,7 +177,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 
 // newLoggerForHandler returns the given logger with the attributes that
 // identify the given handler.
-func (e *Engine) newLoggerForHandler(
+func newLoggerForHandler(
 	logger *slog.Logger,
 	handlerConfig config.Handler,
 ) *slog.Logger {
@@ -190,9 +190,9 @@ func (e *Engine) newLoggerForHandler(
 	)
 }
 
-// workerCountForHandler returns the number of workers goroutines to run for the
+// workerCountForHandler returns the number of worker goroutines to run for the
 // given handler's message pump.
-func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
+func workerCountForHandler(handlerConfig config.Handler) int {
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Integration:
 		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
