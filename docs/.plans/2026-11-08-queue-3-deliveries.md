@@ -232,10 +232,10 @@ Each one has a test in the task that owns the code.
   func write(ctx, tx, handlerKey, binding *uuidpb.UUID, e effects) error
   ```
 
-  `write` adds the commands to the policy's queue, ends the instance or saves
-  the state, and adds the deadlines to the instance's deadline queue. `dispatch`
-  and `Deliver` each become: load, prepare, write. A preparation error from the
-  handler or the marshal is returned wrapped with context, as
+  `write` adds the commands to the queues the router chooses, ends the instance
+  or saves the state, and adds the deadlines to the instance's deadline queue.
+  `dispatch` and `Deliver` each become: load, prepare, write. A preparation
+  error from the handler or the marshal is returned wrapped with context, as
   `messagequeue.Fail(err)` from the deadline handler and as a plain error from
   the sink, where the stream consumer's streak handles it as today.
 

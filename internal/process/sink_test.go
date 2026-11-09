@@ -14,9 +14,11 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	. "github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -155,7 +157,10 @@ func newSink(t testing.TB, db *sql.DB) *Sink {
 		Packer: &envelope.Packer{
 			Application: identitypb.New("<app>", uuidpb.Generate()),
 		},
-		NodeID:        uuidpb.Generate(),
+		QueueRouter: &messagequeue.Router{
+			NodeID:     uuidpb.Generate(),
+			Aggregates: &uuidcollection.Map[messagequeue.AggregateRoute]{},
+		},
 		HandleTimeout: time.Minute,
 		RouteTimeout:  10 * time.Second,
 		EngineLogger:  spruce.NewTestLogger(t),

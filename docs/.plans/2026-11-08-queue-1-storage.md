@@ -8,17 +8,17 @@
 > `make precommit`), never by invoking the Go toolchain directly. Tests start
 > PostgreSQL through testcontainers, so Docker must be running.
 
-**Goal:** Store commands and deadlines in one table, each in a queue whose ID
-is its rendezvous key, migrate the existing tables into it, observe the queues
-in use, name the node responsible for each queue, and bind every process
-instance to the queue its deadlines join.
+**Goal:** Store commands and deadlines in one table, each in a queue whose ID is
+its rendezvous key, migrate the existing tables into it, observe the queues in
+use, name the node responsible for each queue, and bind every process instance
+to the queue its deadlines are added to.
 
 **Architecture:** A new `messagequeue` schema holds one `messages` table and the
 idempotency keys. A statement trigger signals `messagequeue.<queue-id>` on the
 existing `signal` channel when messages are added or move between queues.
 `CreateSchema()` moves rows from the old `commandqueue.commands` and
 `process.deadlines` tables into it. A new `internal/messagequeue` package owns
-the observed set of queues and the policy that chooses each message's initial
+the observed set of queues and the router that chooses each message's initial
 queue, whose ID in this pass is always the producing node's ID. The existing
 message pumps are repointed at the new table so the engine keeps working until
 the consumer plan replaces them. `Membership.ResponsibleNode` returns the node
@@ -89,11 +89,16 @@ These were made with the maintainer, and aren't in [#100][100].
   DISTINCT queue_id` on every signal, because the signal bus drops signals
   when a watcher's channel is full. The consumer
   plan reads ownership from the same set.
-- **Every initial queue ID is the producing node's ID** in this pass. With
+- **Most initial queue IDs are the producing node's ID** in this pass. With
   self-affinity, each node delivers what it produced, and the rendezvous moves a
-  stopped node's work to a live one. `messagequeue.QueuePolicy` has a method for
-  commands and one for process instances so that the follow-ups at the end of
-  this plan can add smarter selection without touching the producers again.
+  stopped node's work to a live one. The exception is a command that an
+  aggregate handles. Its queue ID is the ID of the event stream that the
+  target instance is bound to, as [#100][100] requires, so commands for one
+  instance don't contend across nodes and the number of queues stays bounded
+  by the number of streams. An instance with no stream yet falls back to the
+  node ID. `messagequeue.Router` has a method for commands and one for deadlines,
+  so that the follow-ups at the end of this plan can add smarter
+  selection without touching the producers again.
 - **No capacity scores or capacity sharing.** Heartbeats keep their current
   transport, and nothing advertises spare capacity. The consumer bounds its
   own attempts.
@@ -146,7 +151,7 @@ Each one has a test in the task that owns the code.
    not overwritten. Task 4 has the test.
 5. Every node must name the same responsible node for a key, whatever order
    it holds its peers in, and a key equal to the ID of a node that is no
-   longer live must fall back to ordinary scoring. Task 5 has the tests.
+   longer live must fall back to ordinary scoring. Task 6 has the tests.
 
 ---
 
@@ -274,7 +279,7 @@ Each one has a test in the task that owns the code.
 - Produces: every producer passes a queue ID. In this task it is the
   node ID, through a new `NodeID *uuidpb.UUID` field on `process.Sink`,
   `process.DeadlinePump` and the integration pump, and `e.nodeID` in
-  `execute.go`. Task 4 replaces this with `QueuePolicy`.
+  `execute.go`. Task 4 replaces this with `messagequeue.Router`.
 - Consumes: the `messagequeue` schema from task 1.
 
 - [ ] **Step 1: Repoint the SQL**
@@ -352,10 +357,10 @@ Each one has a test in the task that owns the code.
 
   ```go
   func TestCatalog(t *testing.T) {
-      t.Run("it reads the queues that already have messages", ...)       // rows inserted before Run
-      t.Run("it hears a queue as a message joins it", ...)
-      t.Run("it hears a queue when a message moves to it", ...)           // UPDATE … SET queue_id
-      t.Run("it forgets a queue with no messages on the next signal", ...)
+      t.Run("it reads the queues that already have messages", ...) // rows inserted before Run
+      t.Run("it includes a queue once a message is added to it", ...)
+      t.Run("it includes the queue that a message moves to, not the one it moved from", ...) // UPDATE … SET queue_id
+      t.Run("it excludes a queue that has no messages after the next signal", ...)
   }
   ```
 
@@ -386,67 +391,150 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 4: `messagequeue.QueuePolicy` and process bindings
+### Task 4: `messagequeue.Router` and process bindings
 
 **Files:**
-- Create: `internal/messagequeue/queuepolicy.go`
+- Create: `internal/messagequeue/router.go`
 - Modify: `internal/process/instancestate.go`, `internal/process/sink.go`,
   `internal/process/deadlinepump.go`, `internal/process/commandqueue.go`,
-  `internal/integration/commandpump.go`, `execute.go`, `engine.go`
-- Test: `internal/process/instancestate_test.go`
+  `execute.go`, `engine.go`
+- Test: `internal/messagequeue/router_test.go`,
+  `internal/process/instancestate_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // QueuePolicy chooses the queue that each new message joins.
-  //
-  // It decides the initial queue only. A stored queue ID can be changed at
-  // any time, and later messages follow the stored one.
-  type QueuePolicy struct {
-      NodeID *uuidpb.UUID
+  // Router chooses the queue for each new message.
+  type Router struct {
+      NodeID     *uuidpb.UUID
+      Aggregates *uuidcollection.Map[AggregateRoute] // by command type ID
   }
 
-  // ForCommand returns the ID of the queue that the given command joins.
-  func (p *QueuePolicy) ForCommand(command dogma.Command) *uuidpb.UUID
+  // AggregateRoute is the aggregate that handles a particular command type.
+  type AggregateRoute struct {
+      Key     *uuidpb.UUID
+      Handler dogma.AggregateMessageHandler[dogma.AggregateRoot]
+  }
 
-  // ForProcessInstance returns the ID of the queue that a new process
-  // instance's deadlines join.
-  func (p *QueuePolicy) ForProcessInstance() *uuidpb.UUID
+  func (r *Router) RouteCommandToQueue(ctx context.Context, q xsql.Querier, env *envelopepb.Envelope) (*uuidpb.UUID, error)
+  func (r *Router) RouteDeadlinesToQueue(ctx context.Context, q xsql.Querier, handlerKey *uuidpb.UUID, instanceID string) (*uuidpb.UUID, error)
   ```
 
-  Both return `NodeID`. The parameter is there so that the follow-up adding
-  routing changes no caller.
+  Both methods take the caller's querier, so a caller inside a transaction
+  never needs a second pooled connection, which could stall when the
+  application caps the pool. `RouteDeadlinesToQueue` doesn't use it yet.
 
-  In `process`, `loadInstance` returns the binding as well. It selects
-  `deadline_queue_id` in its `RETURNING`, and when it is null, asks the policy
-  for one and updates the row before returning. `persistDeadlines` takes the
-  binding as the queue ID. Every producer from task 2 takes a
-  `QueuePolicy *messagequeue.QueuePolicy` field in place of its
-  `NodeID` field.
+  `RouteCommandToQueue` takes the envelope, so it can tell from the message
+  type ID whether an aggregate handles the command without unpacking it. For
+  an aggregate command, it routes the command to an instance and reads that
+  instance's `stream_id` from `aggregate.instances`, which is the queue ID.
+  If the instance doesn't exist or isn't bound to a stream, it returns the
+  node ID, since [#100][100] forbids creating or binding an aggregate just to
+  choose a queue. Any other command, or one whose routing panics or returns an
+  empty instance ID, is added to the node's queue, and delivery reports the
+  routing failure as it does today.
 
-- Consumes: nothing new. The type has no tests of its own.
+  `RouteDeadlinesToQueue` takes the handler's key and the instance ID, and
+  returns the node ID. It chooses one queue for all of an instance's
+  deadlines, rather than one for each deadline, because [#100][100] binds an
+  instance to a queue when its row is first stored, including instances that
+  never schedule a deadline, and every deadline it schedules is added to that
+  queue. Its doc says so, since the binding outlasts the router's choice.
+  Routing each deadline from its envelope alone, such as by hashing its
+  instance ID into a fixed number of queues per handler, would make binding
+  unnecessary, but it conflicts with score-based placement in follow-up 2.
+
+  `loadInstance` takes the router. Its upsert returns `deadline_queue_id`
+  along with the state. If the instance is unbound, it calls
+  `RouteDeadlinesToQueue(handlerKey, instanceID)` and stores the result with
+  an `UPDATE` under the row lock the upsert holds, so the router is only asked
+  once per instance. `persistDeadlines` takes the binding as the queue ID. The
+  process sink, the deadline pump and `execute.go` take the router in place of
+  their `NodeID` from task 2. Integration handlers never produce commands, so
+  the integration pump is unchanged.
+
+- Consumes: nothing new.
 
 - [ ] **Step 1: Write the failing tests**
 
-  In `instancestate_test.go`:
-
   ```go
-  t.Run("it binds a new instance when it is first stored", ...)             // row has a non-null deadline_queue_id after the first event
-  t.Run("it binds an existing instance when it is next loaded", ...)         // insert a row with NULL by hand; deliver an event; now non-null
-  t.Run("it adds a deadline to the instance's queue", ...)
-  t.Run("it keeps a binding that was changed by hand", ...)                  // UPDATE the column; next deadline uses the new queue
+  func TestRouter(t *testing.T) {
+      // RouteCommandToQueue
+      t.Run("it returns the ID of the event stream that the target instance is bound to", ...)
+      t.Run("it returns the node ID when the target instance isn't bound to an event stream", ...)
+      t.Run("it returns the node ID when the target instance doesn't exist", ...)
+      t.Run("it returns the node ID when only another aggregate has an instance with the target ID", ...)
+      t.Run("it returns the node ID for a command that no aggregate handles", ...)
+      t.Run("it returns the node ID when the aggregate routes the command to an empty instance ID", ...)
+      t.Run("it returns the node ID when routing the command panics", ...)
+      // RouteDeadlinesToQueue
+      t.Run("it returns the node ID", ...)
+  }
+
+  func TestInstanceState_deadlineQueue(t *testing.T) {
+      t.Run("it binds a new instance when it first handles an event", ...)
+      t.Run("it binds an existing instance when it next handles an event", ...)
+      t.Run("it adds a deadline to its instance's queue", ...)
+      t.Run("it keeps a binding that was changed by hand", ...)
+  }
   ```
 
 - [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement the policy and the binding in `loadInstance`**
-- [ ] **Step 4: Wire the policy in `engine.go`**
+- [ ] **Step 3: Implement the router and the binding in `loadInstance`**
+- [ ] **Step 4: Wire the router in `engine.go`**
 - [ ] **Step 5: Run `make test` to verify they pass**
 - [ ] **Step 6: Stop for review**
 
 ---
 
-### Task 5: `Membership.ResponsibleNode`
+### Task 5: Split `engine.go`
+
+`engine.go` holds the engine's lifecycle, the code that runs each handler, and
+several views of the application's configuration. Plan 2 rewrites the code that
+runs each handler, so splitting the file first means that rewrite lands in a
+small file of its own.
+
+**Decide first:** how the engine turns the configuration into the things it
+constructs. Step 2 depends on the answer.
+
+- **Top-down.** Each thing the engine constructs builds, or asks for, what it
+  needs from the configuration. `aggregatesForQueueRouter` is an example: the
+  router's construction makes its own pass over the handlers. Each view stays
+  next to the one thing that uses it, but the configuration is walked once for
+  each view.
+- **One pass.** The engine iterates over the configuration once, and adds the
+  relevant parts of each handler to each thing it's constructing as it goes,
+  such as an aggregate's command types to the router and its event types to
+  the projections' consumers. The configuration is walked once, but that loop
+  has to know about everything the engine constructs.
+- **Constructors in each package.** Each package exports a function that takes
+  the application's configuration, and any other inputs, and builds its own
+  type, such as one in `messagequeue` that builds a `Router`. Each package
+  knows what it needs from the configuration, and `engine.go` shrinks to
+  wiring. But each package then depends on `enginekit/config`, and its types
+  are no longer plain structs whose required fields the engine fills in.
+
+**Files:**
+- Modify: `engine.go`, `execute.go`
+- Create: `handler.go`, `routes.go`
+
+- [ ] **Step 1: Move the per-handler code** — `initializeHandler`,
+  `runHandler`, `newLoggerForHandler` and `workerCountForHandler` — into
+  `handler.go`, unchanged.
+- [ ] **Step 2: Move the configuration views into `routes.go`** —
+  `setupCommandTypes`, `aggregatesForQueueRouter`, `consumedEventTypeIDs`,
+  `inboundMessageTypeIDsForHandler` and `outboundMessageTypesForHandler` — and
+  make each a plain function of the `*config.Application` or `config.Handler`
+  it reads, rather than a method of the engine.
+- [ ] **Step 3: Run `make test`.** No behavior changes, so the existing suites
+  are the test.
+- [ ] **Step 4: Stop for review** after each step's commit, so each diff shows
+  one kind of change.
+
+---
+
+### Task 6: `Membership.ResponsibleNode`
 
 **Files:**
 - Modify: `internal/cluster/membership.go`
@@ -505,11 +593,11 @@ Each is a small change on its own, in this order:
    the LISTEN connection that `cluster.Node` already owns lets this follow-up
    delete `signal.Bus` and the `signal` package.
 2. **Score-based process binding allocation.**
-   `QueuePolicy.ForProcessInstance` implements the six-step algorithm
-   from [#100][100] using `messagequeue.Catalog` and the scores.
-3. **Producer-side command routing.** `QueuePolicy.ForCommand` routes
-   the command to its aggregate instance's stream, or an integration
-   handler's key when it minimizes concurrency.
+   `Router.RouteDeadlinesToQueue` implements the six-step algorithm from
+   [#100][100] using `messagequeue.Catalog` and the scores.
+3. **Producer-side routing for integration commands.** Task 4 routes
+   aggregate commands. `Router.RouteCommandToQueue` could also route an
+   integration command to its handler's key when that minimizes concurrency.
 4. **`WithQueueConcurrencyLimit`.**
 5. **Tuning.** Measure the 200 ms lock timeout, the 200 ms contention delay
    and the `10 × GOMAXPROCS` limit against representative load: successful

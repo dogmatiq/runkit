@@ -11,6 +11,7 @@ import (
 
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -40,16 +41,21 @@ func newRoot(
 	return root, nil
 }
 
-// loadInstance loads the process root state for the given instance.
-// It returns false if the instance has ended.
+// loadInstance loads the process root state for the given instance, and
+// returns the ID of the queue for its deadlines. It returns false if the
+// instance has ended.
+//
+// An instance that isn't yet bound to a queue is bound to the queue that the
+// given router chooses.
 func loadInstance(
 	ctx context.Context,
 	tx *sql.Tx,
+	router *messagequeue.Router,
 	handlerKey *uuidpb.UUID,
 	instanceID string,
 	root dogma.ProcessRoot,
 	logger *slog.Logger,
-) (bool, error) {
+) (*uuidpb.UUID, bool, error) {
 	// Upsert with a dummy update to acquire a row lock, guaranteeing
 	// serialized access even for brand-new instances.
 	row := tx.QueryRowContext(
@@ -63,7 +69,8 @@ func loadInstance(
 			handler_key = EXCLUDED.handler_key
 		RETURNING
 			ended,
-			state`,
+			state,
+			deadline_queue_id`,
 		xsql.UUID(handlerKey),
 		instanceID,
 	)
@@ -73,12 +80,37 @@ func loadInstance(
 		state []byte
 	)
 
-	if err := row.Scan(&ended, &state); err != nil {
-		return false, fmt.Errorf("unable to load process instance: %w", err)
+	deadlineQueueID := &uuidpb.UUID{}
+
+	if err := row.Scan(&ended, &state, xsql.UUID(deadlineQueueID)); err != nil {
+		return nil, false, fmt.Errorf("unable to load process instance: %w", err)
 	}
 
 	if ended {
-		return false, nil
+		return nil, false, nil
+	}
+
+	// A NULL deadline_queue_id scans as the nil UUID, whose bits are all zero.
+	if deadlineQueueID.Equal(nil) {
+		var err error
+		deadlineQueueID, err = router.RouteDeadlinesToQueue(ctx, tx, handlerKey, instanceID)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if err := xsql.ExecOne(
+			ctx,
+			tx,
+			`UPDATE process.instances SET
+				deadline_queue_id = $1
+			WHERE handler_key = $2
+			AND instance_id = $3`,
+			xsql.UUID(deadlineQueueID),
+			xsql.UUID(handlerKey),
+			instanceID,
+		); err != nil {
+			return nil, false, fmt.Errorf("unable to bind process instance to deadline queue: %w", err)
+		}
 	}
 
 	if state != nil {
@@ -93,11 +125,11 @@ func loadInstance(
 				xslog.Error(err),
 			)
 
-			return false, messagepump.ErrFailed
+			return nil, false, messagepump.ErrFailed
 		}
 	}
 
-	return true, nil
+	return deadlineQueueID, true, nil
 }
 
 // saveInstance persists the process root state for the given instance.

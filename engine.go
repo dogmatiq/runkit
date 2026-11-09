@@ -147,6 +147,9 @@ type Engine struct {
 	// queues keeps track of which queues have messages.
 	queues *messagequeue.Catalog
 
+	// queueRouter chooses the queue for each new message.
+	queueRouter *messagequeue.Router
+
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
 
@@ -249,6 +252,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.setupCommandTypes()
+
+	e.queueRouter = &messagequeue.Router{
+		NodeID:     e.nodeID,
+		Aggregates: e.aggregatesForQueueRouter(),
+	}
 
 	e.signals = &signal.Bus{
 		DB:           e.db,
@@ -479,6 +487,34 @@ func (e *Engine) setupCommandTypes() {
 	}
 }
 
+// aggregatesForQueueRouter returns the routes to the aggregates that the queue
+// router uses to route commands, keyed by the ID of each command type that
+// they handle.
+func (e *Engine) aggregatesForQueueRouter() *uuidcollection.Map[messagequeue.AggregateRoute] {
+	aggregates := &uuidcollection.Map[messagequeue.AggregateRoute]{}
+
+	for _, handlerConfig := range e.appConfig.Handlers() {
+		aggregate, ok := handlerConfig.(*config.Aggregate)
+		if !ok {
+			continue
+		}
+
+		commandTypeIDs := e.inboundMessageTypeIDsForHandler(aggregate, message.CommandKind)
+
+		for commandTypeID := range commandTypeIDs.All() {
+			aggregates.Set(
+				commandTypeID,
+				messagequeue.AggregateRoute{
+					Key:     aggregate.Identity().GetKey(),
+					Handler: aggregate.Interface(),
+				},
+			)
+		}
+	}
+
+	return aggregates
+}
+
 // initializeHandler initializes the engine's state for a handler.
 //
 // Even though they are not executed at runtime, it is called with
@@ -562,7 +598,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
-				NodeID:               e.nodeID,
+				QueueRouter:          e.queueRouter,
 				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
@@ -579,7 +615,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
-				NodeID:               e.nodeID,
+				QueueRouter:          e.queueRouter,
 				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
 				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,

@@ -16,6 +16,7 @@ import (
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -29,7 +30,7 @@ type DeadlinePump struct {
 	Handler              dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity             *identitypb.Identity
 	Packer               *envelope.Packer
-	NodeID               *uuidpb.UUID
+	QueueRouter          *messagequeue.Router
 	DeadlineTypeIDs      *uuidcollection.Set
 	OutboundMessageTypes map[reflect.Type]struct{}
 	HandleTimeout        time.Duration
@@ -163,9 +164,10 @@ func (p *DeadlinePump) HandleDelivery(
 		return err
 	}
 
-	ok, err := loadInstance(
+	deadlineQueueID, ok, err := loadInstance(
 		ctx,
 		tx,
+		p.QueueRouter,
 		p.Identity.GetKey(),
 		instanceID,
 		root,
@@ -221,7 +223,7 @@ func (p *DeadlinePump) HandleDelivery(
 		return messagepump.ErrFailed
 	}
 
-	if err := addCommandsToQueue(ctx, tx, p.NodeID, scope.commandPacker); err != nil {
+	if err := addCommandsToQueue(ctx, tx, p.QueueRouter, scope.commandPacker); err != nil {
 		return err
 	}
 
@@ -251,7 +253,7 @@ func (p *DeadlinePump) HandleDelivery(
 		}
 	}
 
-	if err := persistDeadlines(ctx, tx, p.NodeID, scope.deadlinePacker); err != nil {
+	if err := persistDeadlines(ctx, tx, deadlineQueueID, scope.deadlinePacker); err != nil {
 		return err
 	}
 
