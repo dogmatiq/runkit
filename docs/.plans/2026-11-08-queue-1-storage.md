@@ -207,12 +207,12 @@ Each one has a test in the task that owns the code.
 
   Two statement-level triggers, each with a function of the same name, send
   `pg_notify('signal', 'messagequeue.' || queue_id)` once per distinct queue.
-  `signal_add` fires after insert, and `signal_move` after update, signaling
-  the old and new queue of each message whose `queue_id` changed. Deletes
-  signal nothing, since every successful delivery deletes a row and every node
-  receives every signal. PostgreSQL doesn't allow transition tables on an
-  `UPDATE OF` trigger, so `signal_move` compares the rows itself. Trigger
-  functions are named for the operation, as `eventstream.signal_append` is.
+  `signal_add` fires after insert, and `signal_move` after update, signaling the
+  new queue of each message whose `queue_id` changed. Deletes signal nothing,
+  since every successful delivery deletes a row and every node receives every
+  signal. PostgreSQL doesn't allow transition tables on an `UPDATE OF` trigger,
+  so `signal_move` compares the rows itself. Trigger functions are named for the
+  operation, as `eventstream.signal_append` is.
 
   `90-migrate.sql` is a `DO` block. If `to_regclass('commandqueue.commands')` is
   not null, it inserts each row into `messagequeue.messages` with
