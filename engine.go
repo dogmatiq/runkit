@@ -256,6 +256,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.node = &cluster.Node{
 		ID:                e.nodeID,
+		DB:                e.db,
 		Signals:           e.signals,
 		HeartbeatInterval: heartbeatInterval,
 		HeartbeatTimeout:  heartbeatTimeout,
