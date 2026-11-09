@@ -18,13 +18,13 @@ import (
 
 // Consumer dispatches events from a catalog's event streams to a [Sink].
 //
-// Each stream's workload is the responsibility of one of the live nodes in the
-// cluster, chosen by rendezvous hashing. While nodes are joining or leaving,
-// more than one node may briefly consume the same stream. The sink is
-// responsible for detecting concurrent changes to its checkpoint offsets.
+// It consumes a stream only if this node is responsible for the work with the
+// key that [Sink.RendezvousKey] returns for it. While nodes are joining or
+// leaving, more than one node may briefly consume the same stream, so the sink
+// must detect concurrent changes to its checkpoint offsets.
 type Consumer struct {
-	// Node is this engine's node in the cluster. Its membership determines
-	// which streams this node consumes.
+	// Node is this engine's node in the cluster. The nodes it sees as live
+	// determine which streams this node consumes.
 	Node *cluster.Node
 
 	// EventStreams is the catalog of event streams to consume.
@@ -54,9 +54,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	for {
 		streamIDs, streamIDsChanged := c.EventStreams.StreamIDs().Load()
-		membership, membershipChanged := c.Node.Membership().Load()
+		liveNodes, liveNodesChanged := c.Node.LiveNodes().Load()
 
-		c.reconcile(ctx, streamIDs, membership)
+		c.reconcile(ctx, streamIDs, liveNodes)
 
 		select {
 		case <-ctx.Done():
@@ -66,23 +66,23 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 			return ctx.Err()
 		case <-streamIDsChanged:
-		case <-membershipChanged:
+		case <-liveNodesChanged:
 		}
 	}
 }
 
 // reconcile starts a stream consumer for each of the given streams that this
-// node is responsible for in the given membership, and stops every other
-// stream consumer.
+// node is responsible for, given the live nodes, and stops every other stream
+// consumer.
 func (c *Consumer) reconcile(
 	ctx context.Context,
 	streamIDs *uuidcollection.Set,
-	membership *cluster.Membership,
+	liveNodes *uuidcollection.Set,
 ) {
 	responsible := uuidcollection.NewSet()
 
 	for streamID := range streamIDs.All() {
-		if membership.LocalNodeIsResponsibleFor(c.Sink.Workload(streamID)) {
+		if c.Node.IsResponsibleFor(c.Sink.RendezvousKey(streamID), liveNodes) {
 			responsible.Add(streamID)
 		}
 	}

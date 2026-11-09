@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	// heartbeatTopic is the signal topic beneath which each node sends its
-	// heartbeats, on a topic named after its node ID.
+	// heartbeatTopic is the signal topic of every heartbeat. A heartbeat's
+	// subtopic is the ID of the node that sent it.
 	heartbeatTopic = "heartbeat"
 
 	// heartbeatBufferSize is the number of heartbeat signals that can be
@@ -24,32 +24,35 @@ const (
 	heartbeatBufferSize = 64
 )
 
-// Node represents this engine's node in the cluster. It sends heartbeat signals
-// on behalf of this node, and receives them from every node in the cluster to
-// build a view of the live nodes in the cluster.
+// Node represents this engine's node in the cluster.
 //
-// Heartbeat delivery is lossy. A node is only removed from the view after the
-// heartbeat timeout, which spans several heartbeats, so dropped heartbeats are
-// tolerated.
+// It sends heartbeats so that other nodes know this node is live, and listens
+// for heartbeats from every node, including itself, to keep track of which
+// nodes are live. See [Node.LiveNodes].
+//
+// Heartbeat delivery is lossy. A node is removed from the set of live nodes
+// only after the heartbeat timeout, which spans several heartbeats, so dropped
+// heartbeats are tolerated.
 type Node struct {
-	// ID is the ID of this node.
+	// ID is the ID of this node, which must be unique within the cluster.
 	ID *uuidpb.UUID
 
 	// Signals is the bus used to send and receive heartbeat signals.
 	Signals *signal.Bus
 
-	// Interval is the time between the heartbeats sent by each node.
-	Interval time.Duration
+	// HeartbeatInterval is the time between the heartbeats that this node
+	// sends.
+	HeartbeatInterval time.Duration
 
-	// Timeout is the amount of time a node can go without sending a heartbeat
-	// before it is considered offline.
-	Timeout time.Duration
+	// HeartbeatTimeout is the amount of time a node can go without sending a
+	// heartbeat before this node removes it from its live nodes.
+	HeartbeatTimeout time.Duration
 
 	// EngineLogger is the target for log messages produced by the node.
 	EngineLogger *slog.Logger
 
-	// membership is this node's view of the live nodes in the cluster.
-	membership cosyne.Observable[*Membership]
+	// liveNodes is the set of IDs of the nodes that this node sees as live.
+	liveNodes cosyne.Observable[*uuidcollection.Set]
 
 	// heartbeats maps the ID of each live node to the time its most recent
 	// heartbeat was received.
@@ -64,13 +67,22 @@ type Node struct {
 	heardOwnHeartbeatAt time.Time
 }
 
-// Membership returns an observable of this node's view of the live nodes in
-// the cluster.
+// LiveNodes returns an observable set containing the ID of each live node.
 //
-// The membership is nil until this node first hears a heartbeat, and has no
-// live nodes once this node has stopped.
-func (n *Node) Membership() cosyne.ObservableR[*Membership] {
-	return &n.membership
+// A node is live while its heartbeats keep arriving within
+// [Node.HeartbeatTimeout]. That includes this node, which is live only while
+// its own heartbeats arrive.
+//
+// The set is empty until the first heartbeat arrives, and once this node has
+// stopped. It must not be modified.
+func (n *Node) LiveNodes() cosyne.ObservableR[*uuidcollection.Set] {
+	return &n.liveNodes
+}
+
+// IsResponsibleFor returns true if, among the given live nodes, this node is
+// the one responsible for the work with the given rendezvous key.
+func (n *Node) IsResponsibleFor(key *uuidpb.UUID, liveNodes *uuidcollection.Set) bool {
+	return isResponsibleFor(n.ID, key, liveNodes)
 }
 
 // isSelf returns true if the given ID is this node's ID.
@@ -78,27 +90,26 @@ func (n *Node) isSelf(id *uuidpb.UUID) bool {
 	return id.Equal(n.ID)
 }
 
-// Run sends and receives heartbeats, and publishes the membership as it
+// Run sends and receives heartbeats, and publishes the set of live nodes as it
 // changes, until ctx is canceled.
 //
 // It must be called at most once.
 func (n *Node) Run(ctx context.Context) error {
-	if n.Interval <= 0 {
+	if n.HeartbeatInterval <= 0 {
 		panic("heartbeat interval must be positive")
 	}
 
-	if n.Timeout <= n.Interval {
+	if n.HeartbeatTimeout <= n.HeartbeatInterval {
 		panic("heartbeat timeout must be greater than the heartbeat interval")
 	}
 
-	// Once this node has stopped, it is no longer responsible for any
-	// workload.
-	defer n.membership.Store(&Membership{})
+	// Once this node has stopped, it is no longer responsible for any work.
+	defer n.liveNodes.Store(nil)
 
 	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
 	defer stop()
 
-	ticker := time.NewTicker(n.Interval)
+	ticker := time.NewTicker(n.HeartbeatInterval)
 	defer ticker.Stop()
 
 	n.sendHeartbeat(ctx)
@@ -114,7 +125,7 @@ func (n *Node) Run(ctx context.Context) error {
 			}
 
 			if n.handleHeartbeat(ctx, nodeID) {
-				n.publishMembershipChange()
+				n.publishLiveNodes()
 			}
 
 		case <-ticker.C:
@@ -130,7 +141,7 @@ func (n *Node) Run(ctx context.Context) error {
 			}
 
 			if changed {
-				n.publishMembershipChange()
+				n.publishLiveNodes()
 			}
 		}
 	}
@@ -166,7 +177,7 @@ func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
 //
 // This is not covered by tests. A node removed this way is added again by the
 // next heartbeat read, which is too soon for a test to observe reliably through
-// the membership.
+// [Node.LiveNodes].
 //
 // changed is true if the set of live nodes changed. ok is false if the channel
 // is closed.
@@ -278,7 +289,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 	now := time.Now()
 
 	for nodeID, lastBeatAt := range n.heartbeats.All() {
-		if now.Sub(lastBeatAt) <= n.Timeout {
+		if now.Sub(lastBeatAt) <= n.HeartbeatTimeout {
 			continue
 		}
 
@@ -294,7 +305,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 			n.EngineLogger.ErrorContext(
 				ctx,
 				"local node removed from cluster",
-				slog.Duration("timeout", n.Timeout),
+				slog.Duration("heartbeat_timeout", n.HeartbeatTimeout),
 				slog.Time("last_heartbeat_at", lastBeatAt),
 				xslog.Error(err),
 			)
@@ -310,21 +321,13 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 	return changed
 }
 
-// publishMembershipChange publishes the membership after the set of live
-// nodes has changed.
-func (n *Node) publishMembershipChange() {
-	m := &Membership{
-		nodeID: n.ID,
-		peers:  uuidcollection.NewSet(),
-	}
+// publishLiveNodes publishes the set of live nodes after it has changed.
+func (n *Node) publishLiveNodes() {
+	liveNodes := uuidcollection.NewSet()
 
 	for nodeID := range n.heartbeats.Keys() {
-		if n.isSelf(nodeID) {
-			m.isLive = true
-		} else {
-			m.peers.Add(nodeID)
-		}
+		liveNodes.Add(nodeID)
 	}
 
-	n.membership.Store(m)
+	n.liveNodes.Store(liveNodes)
 }

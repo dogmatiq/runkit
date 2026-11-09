@@ -10,7 +10,7 @@
 
 **Goal:** Store commands and deadlines in one table, each in a queue whose ID is
 its rendezvous key, migrate the existing tables into it, observe the queues in
-use, name the node responsible for each queue, and bind every process instance
+use, find the node responsible for each queue, and bind every process instance
 to the queue its deadlines are added to.
 
 **Architecture:** A new `messagequeue` schema holds one `messages` table and the
@@ -21,8 +21,8 @@ existing `signal` channel when messages are added or move between queues.
 the observed set of queues and the router that chooses each message's initial
 queue, whose ID in this pass is always the producing node's ID. The existing
 message pumps are repointed at the new table so the engine keeps working until
-the consumer plan replaces them. `Membership.ResponsibleNode` returns the node
-responsible for any rendezvous key, with self-affinity.
+the consumer plan replaces them. `cluster.FindResponsibleNode` returns the node
+responsible for the work with any rendezvous key, with self-affinity.
 
 **Tech stack:** Go, PostgreSQL 18, `cosyne`.
 
@@ -96,13 +96,13 @@ These were made with the maintainer, and aren't in [#100][100].
   target instance is bound to, as [#100][100] requires, so commands for one
   instance don't contend across nodes and the number of queues stays bounded
   by the number of streams. An instance with no stream yet falls back to the
-  node ID. `messagequeue.Router` has a method for commands and one for deadlines,
-  so that the follow-ups at the end of this plan can add smarter
+  node ID. `messagequeue.Router` has a method for commands and one for
+  deadlines, so that the follow-ups at the end of this plan can add smarter
   selection without touching the producers again.
 - **No capacity scores or capacity sharing.** Heartbeats keep their current
   transport, and nothing advertises spare capacity. The consumer bounds its
   own attempts.
-- **Self-affinity lives in `Membership.ResponsibleNode`.** No `rendezvous`
+- **Self-affinity lives in `cluster.FindResponsibleNode`.** No `rendezvous`
   package.
 - **The discovery index is `(queue_id, message_type_id, deliver_at)`.**
   Discovery in the consumer plan looks up each owned queue and routed type, so a
@@ -149,8 +149,8 @@ Each one has a test in the task that owns the code.
    delivery. Task 4 has the test.
 4. A binding changed by hand must be used for the instance's next deadline,
    not overwritten. Task 4 has the test.
-5. Every node must name the same responsible node for a key, whatever order
-   it holds its peers in, and a key equal to the ID of a node that is no
+5. `FindResponsibleNode` must return the same ID wherever it's called, given
+   the same set of live nodes, and a key equal to the ID of a node that is no
    longer live must fall back to ordinary scoring. Task 6 has the tests.
 
 ---
@@ -542,43 +542,68 @@ constructs. Step 2 depends on the answer.
 
 ---
 
-### Task 6: `Membership.ResponsibleNode`
+### Task 6: `cluster.FindResponsibleNode`
 
 **Files:**
-- Modify: `internal/cluster/membership.go`
-- Test: `internal/cluster/membership_test.go` (new), `node_test.go`
+- Create: `internal/cluster/rendezvous.go`
+- Delete: `internal/cluster/membership.go`
+- Modify: `internal/cluster/node.go`, the event stream consumer and sinks,
+  `internal/x/xtesting/cluster.go`
+- Test: `internal/cluster/node_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // ResponsibleNode returns the ID of the live node responsible for the given
-  // rendezvous key, or nil if no node is live.
+  // FindResponsibleNode returns the ID of the node that is responsible for the
+  // work with the given rendezvous key. It returns false if there are no live
+  // nodes.
   //
-  // A key equal to a live node's ID belongs to that node. Any other key
-  // belongs to the live node with the highest score for it.
-  func (m *Membership) ResponsibleNode(key *uuidpb.UUID) *uuidpb.UUID
+  // If the key is an exact match for the ID of a live node, that node is
+  // responsible. Otherwise, the live node with the highest score for the key
+  // is responsible.
+  func FindResponsibleNode(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb.UUID, bool)
+
+  // IsResponsibleFor returns true if, among the given live nodes, this node is
+  // the one responsible for the work with the given rendezvous key.
+  func (n *Node) IsResponsibleFor(key *uuidpb.UUID, liveNodes *uuidcollection.Set) bool
+
+  // LiveNodes returns an observable set containing the ID of each live node.
+  //
+  // A node is live while its heartbeats keep arriving within
+  // [Node.HeartbeatTimeout]. That includes this node, which is live only while
+  // its own heartbeats arrive.
+  func (n *Node) LiveNodes() cosyne.ObservableR[*uuidcollection.Set]
   ```
 
-  `LocalNodeIsResponsibleFor(key)` becomes a wrapper: false unless
-  `m.isLive`, otherwise whether `ResponsibleNode(key)` is the local node. It
-  keeps its rule that a node that can't hear itself is responsible for
-  nothing.
+  `Membership` is replaced by a plain set of live node IDs, and
+  `Node.Membership` by `Node.LiveNodes`. The set has no notion of a local
+  node, so `Membership.LocalNodeIsResponsibleFor` becomes
+  `Node.IsResponsibleFor`, which calls the unexported `isResponsibleFor` in
+  `rendezvous.go` to ask whether `FindResponsibleNode` returns the node's own
+  ID. A node that can't hear itself isn't in its own set, so it is still
+  responsible for nothing. `Membership.Peers` goes. Its only callers,
+  `xtesting.Cluster` and the cluster tests, compare the whole set instead.
+
+  A value built to pass to these functions is a rendezvous key, so
+  `eventstream.Sink.Workload` becomes `RendezvousKey`, and docs and tests
+  that called these values workloads call them rendezvous keys.
 
 - Consumes: nothing new.
 
 - [ ] **Step 1: Write the failing tests**
 
+  The tests run real nodes in `node_test.go`, beside the existing
+  responsibility tests.
+
   ```go
-  func TestMembership(t *testing.T) {
-      t.Run("it makes the node whose ID is the key responsible for it", ...)
+  func TestNode(t *testing.T) {
+      t.Run("it makes the node whose ID is the key responsible for the work with that key", ...) // four nodes
       t.Run("it scores a key normally when no live node has that ID", ...)
-      t.Run("it returns the same responsible node on every node", ...)   // two nodes; ResponsibleNode agrees with each node's LocalNodeIsResponsibleFor
-      t.Run("it names no responsible node when no node is live", ...)
+      t.Run("it returns the same responsible node on every node", ...)       // FindResponsibleNode agrees with each node's IsResponsibleFor
+      t.Run("it returns false when there are no live nodes", ...)
   }
   ```
-
-  Keep the existing responsibility tests in `node_test.go` as they are.
 
 - [ ] **Step 2: Run `make test` to verify they fail**
 - [ ] **Step 3: Implement it**
@@ -594,15 +619,24 @@ Each is a small change on its own, in this order:
 1. **Capacity scores.** A shared per-node semaphore samples its occupancy and
    waiting time over each heartbeat interval. The heartbeat gains a payload
    with the score, on its own `heartbeat` channel, and `cluster.Node` listens
-   on its own connection instead of through `signal.Bus`. `Membership` gains
-   `Score(nodeID)` and `LiveNodes()`. This is a **[BC]** transport change.
+   on its own connection instead of through `signal.Bus`. `Node` gains a way
+   to read each live node's score. This is a **[BC]** transport change.
    Heartbeats are the last users of `signal.Bus` once task 1 of [plan
    2][plan-2] adds `cluster.Signal` and `cluster.Observable`. Moving them onto
    the LISTEN connection that `cluster.Node` already owns lets this follow-up
    delete `signal.Bus` and the `signal` package.
+
+   The payload also carries the heartbeat's expiry, so that nodes don't have
+   to share one heartbeat interval. `Node.HeartbeatTimeout` becomes a
+   multiplier, such as `HeartbeatExpiryMultiplier`, that the sender applies to
+   its own interval to compute the expiry. A receiver removes a node from its
+   live nodes once that node's latest heartbeat expires.
 2. **Score-based process binding allocation.**
    `Router.RouteDeadlinesToQueue` implements the six-step algorithm from
-   [#100][100] using `messagequeue.Catalog` and the scores.
+   [#100][100] using `messagequeue.Catalog` and the scores. Revisit
+   `cluster.FindResponsibleNode`'s `ok` result once this exists. If every
+   caller that sees `ok == false` returns an error, make it an error. If every
+   such caller uses its own node, make it fall back to the local node.
 3. **Producer-side routing for integration commands.** Task 4 routes
    aggregate commands. `Router.RouteCommandToQueue` could also route an
    integration command to its handler's key when that minimizes concurrency.

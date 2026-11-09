@@ -65,9 +65,9 @@ type Sink struct {
 	AppLogger *slog.Logger
 }
 
-// Workload returns the rendezvous workload that determines which node consumes
+// RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *Sink) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
+func (s *Sink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
 }
 

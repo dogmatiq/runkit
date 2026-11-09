@@ -12,7 +12,7 @@
 node that delivers the commands and deadlines in the queues
 this node is responsible for.
 
-**Architecture:** `messagequeue.Consumer` watches the membership, the observed
+**Architecture:** `messagequeue.Consumer` watches the live nodes, the observed
 queues and the `messagequeue` signal topic. It keeps the set of queues the local
 node is responsible for, finds the earliest deliverable message across them with
 one indexed query, waits for one of its attempt slots, and runs each attempt in
@@ -30,7 +30,7 @@ decisions below.
 
 This is the second of three plans for [#100][100]. It depends on
 [plan 1][plan-1] for the `messagequeue.messages` table, its signal,
-`messagequeue.Catalog` and `Membership.ResponsibleNode`.
+`messagequeue.Catalog` and `cluster.FindResponsibleNode`.
 
 ## Reviewability
 
@@ -305,22 +305,22 @@ This task adds cluster-wide versions of `cosyne.Signal` and
   The loop registers its wake-up signal with `Node.Notify` for the topic of each
   owned queue, `messagequeue.<queue-id>`, before discovering, so no signal falls
   between them. It updates the registrations when the owned queues change. It
-  then computes the owned queues from `Node.Membership()` and
-  `Queues.QueueIDs()` and discovers. If the candidate is due, it adds its ID to
+  then computes the owned queues from `Node.LiveNodes()` and
+  `Catalog.QueueIDs()` and discovers. If the candidate is due, it adds its ID to
   the active set and starts `Attempt`; if it's in the future, it sets the timer.
-  Then it waits on the first of the membership, the queues, its wake-up signal,
+  Then it waits on the first of the live nodes, the queues, its wake-up signal,
   the timer, a completion, or ctx. A completion removes the ID from the active
   set and wakes the loop. The consumer's own failures go through
   `supervisor.Work` with the description "consume queue".
 
-- Consumes: `Membership.LocalNodeIsResponsibleFor`, `Catalog.QueueIDs`,
+- Consumes: `Node.IsResponsibleFor`, `Catalog.QueueIDs`,
   `Node.Notify` from task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
   Use rows inserted by SQL into chosen queues, and an `Attempt` stub that
-  records its calls and can block. Tests that need a particular membership
-  run one or two real `cluster.Node`s on the test database.
+  records its calls and can block. Tests that need a particular set of live
+  nodes run one or two real `cluster.Node`s on the test database.
 
   ```go
   func TestConsumer(t *testing.T) {
@@ -439,7 +439,7 @@ This task adds cluster-wide versions of `cosyne.Signal` and
   t.Run("it postpones a busy delivery without a failure", ...)
   t.Run("it postpones a message whose envelope can not be unmarshaled", ...)
   t.Run("it leaves a message for another attempt when delivery can not continue", ...)
-  t.Run("it lets an attempt finish after losing its queue", ...)              // stop the other node; membership changes mid-delivery
+  t.Run("it lets an attempt finish after losing its queue", ...)              // stop the other node; the live nodes change mid-delivery
   t.Run("it rolls back attempts in flight when it stops", ...)
   ```
 

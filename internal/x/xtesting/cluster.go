@@ -43,8 +43,7 @@ type Cluster struct {
 
 // clusterMember is a running node in a [Cluster].
 type clusterMember struct {
-	// Node is the node's membership of the cluster, which is available once it
-	// has joined.
+	// Node is the member's node, which is available once it has joined.
 	Node cosyne.Future[*cluster.Node]
 
 	// Stop stops the node's engine.
@@ -207,7 +206,7 @@ func (c *Cluster) start() *runkit.Engine {
 }
 
 // converge waits for every running node to be ready and to see exactly the
-// other running nodes as its peers.
+// running nodes, including itself, as live.
 func (c *Cluster) converge(t testing.TB) {
 	t.Helper()
 
@@ -238,14 +237,10 @@ func (c *Cluster) converge(t testing.TB) {
 	}
 
 	for _, node := range nodes {
-		want := nodeIDs.Clone()
-		want.Delete(node.ID)
-
 		for {
-			membership, changed := node.Membership().Load()
-			peers := membership.Peers()
+			liveNodes, changed := node.LiveNodes().Load()
 
-			if want.IsEqual(peers) {
+			if nodeIDs.IsEqual(liveNodes) {
 				break
 			}
 
@@ -253,7 +248,7 @@ func (c *Cluster) converge(t testing.TB) {
 			case <-c.failed.Chan():
 				return
 			case <-ctx.Done():
-				t.Fatalf("timeout waiting for nodes to see each other: node %s sees peers %s, want %s", node.ID, peers, want)
+				t.Fatalf("timeout waiting for nodes to see each other: node %s sees %s, want %s", node.ID, liveNodes, nodeIDs)
 			case <-changed:
 			}
 		}

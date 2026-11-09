@@ -255,11 +255,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.node = &cluster.Node{
-		ID:           e.nodeID,
-		Signals:      e.signals,
-		Interval:     heartbeatInterval,
-		Timeout:      heartbeatTimeout,
-		EngineLogger: e.engineLogger,
+		ID:                e.nodeID,
+		Signals:           e.signals,
+		HeartbeatInterval: heartbeatInterval,
+		HeartbeatTimeout:  heartbeatTimeout,
+		EngineLogger:      e.engineLogger,
 	}
 
 	contexthook.Invoke(ctx, contexthook.Node{

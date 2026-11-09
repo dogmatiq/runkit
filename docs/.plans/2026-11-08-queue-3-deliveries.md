@@ -388,6 +388,13 @@ The queue work adds many structs beside older ones, and their fields drifted
 apart along the way. This task makes the whole codebase consistent, not just
 the code the queue plans touched.
 
+`internal/cluster/rendezvous.go` is the reference for how the code should
+read. Above all, it models a concept from the domain as a value object
+(`scoredNode`) with methods named for what they mean there (`Outranks`).
+Each early return also has a comment giving its reason, names pair up by
+role, and zero values mean something. Where this pass touches a file, bring
+it closer to that standard.
+
 **Files:**
 - Modify: any Go file whose struct fields or struct literals change, and any
   DDL file whose columns or parameters change.
