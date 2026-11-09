@@ -516,12 +516,16 @@ constructs. Step 2 depends on the answer.
   are no longer plain structs whose required fields the engine fills in.
 
 **Files:**
-- Modify: `engine.go`, `execute.go`
+- Modify: `engine.go`, `execute.go`, `internal/projection/compactor.go`
+- Delete: `internal/projection/initialize.go`
 - Create: `handler.go`, `routes.go`
 
-- [ ] **Step 1: Move the per-handler code** — `initializeHandler`,
-  `runHandler`, `newLoggerForHandler` and `workerCountForHandler` — into
-  `handler.go`, unchanged.
+- [ ] **Step 1: Move the per-handler code** — `runHandler`,
+  `newLoggerForHandler` and `workerCountForHandler` — into `handler.go`,
+  unchanged. Delete `initializeHandler`, `projection.InitializeHandler` and the
+  startup loop that calls them. Their only effect was the `projection.handlers`
+  row that the compactor locks, so the `Compactor` inserts that row itself when
+  it starts.
 - [ ] **Step 2: Move the configuration views into `routes.go`** —
   `setupCommandTypes`, `aggregatesForQueueRouter`, `consumedEventTypeIDs`,
   `inboundMessageTypeIDsForHandler` and `outboundMessageTypesForHandler` — and

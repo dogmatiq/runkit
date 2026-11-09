@@ -64,6 +64,20 @@ func (c *Compactor) Run(ctx context.Context) error {
 // The handler is expected to compact incrementally, so a failed attempt is
 // retried without waiting for the next interval.
 func (c *Compactor) run(ctx context.Context) error {
+	// An attempt compacts only if it can lock the handler's row, so the row has
+	// to exist before the first attempt.
+	if _, err := c.DB.ExecContext(
+		ctx,
+		`INSERT INTO projection.handlers (
+			handler_key
+		)
+		VALUES ($1)
+		ON CONFLICT (handler_key) DO NOTHING`,
+		xsql.UUID(c.Identity.GetKey()),
+	); err != nil {
+		return fmt.Errorf("unable to insert handler: %w", err)
+	}
+
 	for {
 		if err := c.tryCompact(ctx); err != nil {
 			return err

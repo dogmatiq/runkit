@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
-	"runtime"
 	"time"
 
 	"github.com/dogmatiq/cosyne"
@@ -19,24 +18,18 @@ import (
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
-	"github.com/dogmatiq/runkit/internal/integration"
-	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
-	"github.com/dogmatiq/runkit/internal/process"
-	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 )
 
@@ -311,17 +304,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 
-	// Initialize handler state in the database.
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if err := e.initializeHandler(ctx, handlerConfig); err != nil {
-			return fmt.Errorf(
-				"unable to initialize handler %s: %w",
-				handlerConfig.Identity(),
-				err,
-			)
-		}
-	}
-
 	e.group, ctx = errgroup.WithContext(ctx)
 
 	e.group.Go(func() error {
@@ -513,202 +495,6 @@ func (e *Engine) aggregatesForQueueRouter() *uuidcollection.Map[messagequeue.Agg
 	}
 
 	return aggregates
-}
-
-// initializeHandler initializes the engine's state for a handler.
-//
-// Even though they are not executed at runtime, it is called with
-// configurations for disabled handlers.
-func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Handler) error {
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Projection:
-		return projection.InitializeHandler(ctx, e.db, handlerConfig)
-	default:
-		return nil
-	}
-}
-
-// runHandler runs the components that manage the given handler.
-func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
-	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 5 * time.Minute
-		pollInterval = 25 * time.Millisecond
-	)
-
-	engineLogger := e.newLoggerForHandler(e.engineLogger, handlerConfig)
-	appLogger := e.newLoggerForHandler(e.appLogger, handlerConfig)
-	workers := e.workerCountForHandler(handlerConfig)
-
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Aggregate:
-		pump := &messagepump.MessagePump{
-			Driver: &aggregate.CommandPump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
-
-	case *config.Integration:
-		pump := &messagepump.MessagePump{
-			Driver: &integration.CommandPump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Concurrency:          handlerConfig.ConcurrencyPreference(),
-				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
-
-	case *config.Process:
-		consumer := &eventstream.Consumer{
-			Node:         e.node,
-			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				QueueRouter:          e.queueRouter,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				RouteTimeout:         e.routeTimeout,
-				EngineLogger:         engineLogger,
-				AppLogger:            appLogger,
-			},
-			EngineLogger: engineLogger,
-		}
-
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				QueueRouter:          e.queueRouter,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
-		})
-
-	case *config.Projection:
-		var handlerLock *semaphore.Weighted
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			handlerLock = semaphore.NewWeighted(1)
-		}
-
-		consumer := &eventstream.Consumer{
-			Node:         e.node,
-			EventStreams: e.eventStreams,
-			Sink: &projection.Sink{
-				Handler:       handlerConfig.Interface(),
-				Identity:      handlerConfig.Identity(),
-				Concurrency:   handlerConfig.ConcurrencyPreference(),
-				EventTypes:    e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				HandlerLock:   handlerLock,
-				HandleTimeout: e.handleTimeout,
-				RouteTimeout:  e.routeTimeout,
-				EngineLogger:  engineLogger,
-				AppLogger:     appLogger,
-			},
-			EngineLogger: engineLogger,
-		}
-
-		compactor := &projection.Compactor{
-			DB:           e.db,
-			Handler:      handlerConfig.Interface(),
-			Identity:     handlerConfig.Identity(),
-			Interval:     e.compactInterval,
-			Timeout:      e.compactTimeout,
-			EngineLogger: engineLogger,
-			AppLogger:    appLogger,
-		}
-
-		e.group.Go(func() error {
-			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return compactor.Run(ctx)
-		})
-
-	default:
-		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))
-	}
-}
-
-// newLoggerForHandler returns the given logger with the attributes that
-// identify the given handler.
-func (e *Engine) newLoggerForHandler(
-	logger *slog.Logger,
-	handlerConfig config.Handler,
-) *slog.Logger {
-	return logger.With(
-		xslog.Identity(
-			"handler",
-			handlerConfig.Identity(),
-			slog.String("type", handlerConfig.HandlerType().String()),
-		),
-	)
-}
-
-// workerCountForHandler returns the number of workers goroutines to run for the
-// given handler's message pump.
-func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Integration:
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			return 1
-		}
-	}
-
-	return 10 * runtime.GOMAXPROCS(0)
 }
 
 // consumedEventTypeIDs returns the message type IDs of every event type that
