@@ -2,16 +2,20 @@ package cluster
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -26,16 +30,14 @@ const (
 
 // Node represents this engine's node in the cluster.
 //
-// It sends heartbeats so that other nodes know this node is live, and listens
-// for heartbeats from every node, including itself, to keep track of which
-// nodes are live. See [Node.LiveNodes].
-//
-// Heartbeat delivery is lossy. A node is removed from the set of live nodes
-// only after the heartbeat timeout, which spans several heartbeats, so dropped
-// heartbeats are tolerated.
+// It keeps track of which nodes are live, and delivers cluster-wide signals.
+// See [Node.LiveNodes] and [Node.AttachSignal].
 type Node struct {
 	// ID is the ID of this node, which must be unique within the cluster.
 	ID *uuidpb.UUID
+
+	// DB is the database whose signals the node listens for.
+	DB *sql.DB
 
 	// Signals is the bus used to send and receive heartbeat signals.
 	Signals *signal.Bus
@@ -46,6 +48,9 @@ type Node struct {
 
 	// HeartbeatTimeout is the amount of time a node can go without sending a
 	// heartbeat before this node removes it from its live nodes.
+	//
+	// It must be longer than [Node.HeartbeatInterval]. Heartbeats can be
+	// dropped, so it should span several intervals.
 	HeartbeatTimeout time.Duration
 
 	// EngineLogger is the target for log messages produced by the node.
@@ -53,6 +58,13 @@ type Node struct {
 
 	// liveNodes is the set of IDs of the nodes that this node sees as live.
 	liveNodes cosyne.Observable[*uuidcollection.Set]
+
+	// signalAttachmentsM guards signalAttachments.
+	signalAttachmentsM sync.Mutex
+
+	// signalAttachments maps each cluster-wide signal to the attachments that
+	// [Node.AttachSignal] made for it.
+	signalAttachments map[string]map[*signalAttachment]struct{}
 
 	// heartbeats maps the ID of each live node to the time its most recent
 	// heartbeat was received.
@@ -90,8 +102,8 @@ func (n *Node) isSelf(id *uuidpb.UUID) bool {
 	return id.Equal(n.ID)
 }
 
-// Run sends and receives heartbeats, and publishes the set of live nodes as it
-// changes, until ctx is canceled.
+// Run listens for signals, sends and receives heartbeats, and publishes the set
+// of live nodes as it changes, until ctx is canceled.
 //
 // It must be called at most once.
 func (n *Node) Run(ctx context.Context) error {
@@ -106,6 +118,27 @@ func (n *Node) Run(ctx context.Context) error {
 	// Once this node has stopped, it is no longer responsible for any work.
 	defer n.liveNodes.Store(nil)
 
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(
+		func() error {
+			return supervisor.Run(ctx, n.EngineLogger, "listen for signals", n.listen)
+		},
+	)
+
+	g.Go(
+		func() error {
+			return n.exchangeHeartbeats(ctx)
+		},
+	)
+
+	return g.Wait()
+}
+
+// exchangeHeartbeats sends this node's heartbeats, receives every node's
+// heartbeats, and publishes the set of live nodes as it changes, until ctx is
+// canceled.
+func (n *Node) exchangeHeartbeats(ctx context.Context) error {
 	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
 	defer stop()
 

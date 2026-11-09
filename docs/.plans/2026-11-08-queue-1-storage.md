@@ -622,9 +622,11 @@ Each is a small change on its own, in this order:
    on its own connection instead of through `signal.Bus`. `Node` gains a way
    to read each live node's score. This is a **[BC]** transport change.
    Heartbeats are the last users of `signal.Bus` once task 1 of [plan
-   2][plan-2] adds `cluster.Signal` and `cluster.Observable`. Moving them onto
-   the LISTEN connection that `cluster.Node` already owns lets this follow-up
-   delete `signal.Bus` and the `signal` package.
+   2][plan-2] adds `Node.AttachSignal` and `cluster.Observable`. Moving them
+   onto the LISTEN connection that `cluster.Node` already owns lets this
+   follow-up delete `signal.Bus` and the `signal` package. Heartbeats are
+   also the first Go code to send a signal, so this follow-up adds a way to
+   send one, such as a cluster-wide `Signal` type.
 
    The payload also carries the heartbeat's expiry, so that nodes don't have
    to share one heartbeat interval. `Node.HeartbeatTimeout` becomes a
@@ -645,6 +647,15 @@ Each is a small change on its own, in this order:
    and the `10 × GOMAXPROCS` limit against representative load: successful
    lock waits, postponement rate, slot and connection occupancy, and
    delivery latency.
+
+   Also measure the `messagequeue` signal. The triggers send it whenever a
+   message is added or moved, so under sustained load every node's
+   `messagequeue.Catalog` reloads its queue IDs back to back. Sending it only
+   when a queue gains its first message would cut that, but on its own it can
+   lose a queue: if the catalog reloads after the last committed message is
+   deleted but before a concurrent insert commits, that insert sees a
+   non-empty queue, sends no `messagequeue` signal, and the queue stays out of
+   the catalog. That change needs a periodic catalog reload as a backstop.
 6. **Garbage collection** of queued rows whose message types are no longer
    routed, which discovery never reads.
 7. **Drop the pre-release migrations** from `CreateSchema()`, this plan's

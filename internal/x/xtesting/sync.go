@@ -77,13 +77,21 @@ func WaitFor(
 	}
 }
 
+// Observable is a value whose changes can be waited for, such as a
+// [cosyne.Observable] or a cluster.Observable.
+type Observable[T any] interface {
+	// Load returns the current value, and a channel that is closed when that
+	// value is replaced.
+	Load() (T, <-chan struct{})
+}
+
 // WaitForObservable waits until the value of o satisfies ok. It fails the test
 // if that does not occur within [WaitTimeout], and reports the most recent
 // value.
 func WaitForObservable[T any](
 	t testing.TB,
 	description string,
-	o cosyne.ObservableR[T],
+	o Observable[T],
 	ok func(T) bool,
 ) {
 	t.Helper()

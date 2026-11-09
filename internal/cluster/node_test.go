@@ -50,6 +50,7 @@ func TestNode(t *testing.T) {
 	) *Node {
 		return &Node{
 			ID:                uuidpb.Generate(),
+			DB:                signals.DB,
 			Signals:           signals,
 			HeartbeatInterval: interval,
 			HeartbeatTimeout:  timeout,

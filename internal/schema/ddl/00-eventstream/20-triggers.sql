@@ -1,15 +1,17 @@
 --------------------------------------------------------------------------------
--- The "signal_create" trigger sends an "eventstream.create" signal through the
--- signal bus in internal/signal when an event stream is created. The local
--- event stream source in internal/eventstream/source watches for it to discover
--- new streams.
+-- The "signal_create" trigger sends the "eventstream.create" signal when event
+-- streams are created. source.Local in internal/eventstream/source waits for it
+-- to discover new streams.
+--
+-- PostgreSQL delivers identical notifications sent within one transaction only
+-- once, so a transaction that creates many streams produces a single signal.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION eventstream.signal_create()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    PERFORM pg_notify('signal', 'eventstream.create.' || id) FROM inserted;
+    PERFORM pg_notify('signal', 'eventstream.create') FROM inserted;
     RETURN NULL;
 END;
 $$;
@@ -21,10 +23,9 @@ FOR EACH STATEMENT
 EXECUTE FUNCTION eventstream.signal_create();
 
 --------------------------------------------------------------------------------
--- The "signal_append" trigger sends an "eventstream.append" signal through the
--- signal bus in internal/signal when events are appended to an event stream.
--- The signal's subtopic is the stream ID. The local event stream source in
--- internal/eventstream/source watches each stream's signal to deliver its new
+-- The "signal_append" trigger sends the "eventstream.append.<stream-id>" signal
+-- when events are appended to an event stream. source.Local in
+-- internal/eventstream/source waits for each stream's signal to deliver its new
 -- events.
 --
 -- PostgreSQL delivers identical notifications sent within one transaction only

@@ -13,13 +13,14 @@ node that delivers the commands and deadlines in the queues
 this node is responsible for.
 
 **Architecture:** `messagequeue.Consumer` watches the live nodes, the observed
-queues and the `messagequeue` signal topic. It keeps the set of queues the local
-node is responsible for, finds the earliest deliverable message across them with
-one indexed query, waits for one of its attempt slots, and runs each attempt in
-its own goroutine and transaction. An attempt claims its message with `FOR
-UPDATE SKIP LOCKED`, falling back to any other due message if the hint is gone,
-and hands it to the `messagequeue.Handler` for its message type. Ownership loss
-stops new attempts; shutdown cancels them. The `messagepump` package is removed.
+queues and the signal of each queue it's responsible for. It keeps the set of
+queues the local node is responsible for, finds the earliest deliverable message
+across them with one indexed query, waits for one of its attempt slots, and runs
+each attempt in its own goroutine and transaction. An attempt claims its message
+with `FOR UPDATE SKIP LOCKED`, falling back to any other due message if the hint
+is gone, and hands it to the `messagequeue.Handler` for its message type.
+Ownership loss stops new attempts; shutdown cancels them. The `messagepump`
+package is removed.
 
 **Tech stack:** Go, PostgreSQL, `cosyne`, `errgroup`, `testing/synctest` for
 the timer logic.
@@ -136,17 +137,19 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 1: `cluster.Signal` and `cluster.Observable`
+### Task 1: `Node.AttachSignal` and `cluster.Observable`
 
 `signal.Bus` drops a signal when a watcher's channel is full, and delivers a
 subtopic that only heartbeats read. The consumer in task 3 has to wake for any
-of a changing set of owned queues, which doesn't fit one channel per watch.
-This task adds cluster-wide versions of `cosyne.Signal` and
-`cosyne.Observable`, and moves every watcher except heartbeats onto them.
-`signal.Bus` stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
+of a changing set of owned queues, which doesn't fit one channel per watch. This
+task lets `cluster.Node` attach cluster-wide signals to `cosyne.Signal`s, called
+targets, adds `cluster.Observable`, a value that every node reads from the
+database, and moves every watcher except heartbeats onto them. `signal.Bus`
+stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
 
 **Files:**
-- Modify: `internal/cluster/node.go` (own the LISTEN connection)
+- Modify: `internal/cluster/node.go` (own the LISTEN connection), the
+  eventstream and messagequeue triggers
 - Create: `internal/cluster/signal.go`, `internal/cluster/observable.go`
 - Modify: `internal/eventstream/source/local.go`,
   `internal/messagequeue/catalog.go`, `engine.go`
@@ -155,52 +158,71 @@ This task adds cluster-wide versions of `cosyne.Signal` and
   callers that move
 
 **Interfaces:**
-- Produces, as a proposal to confirm with the maintainer before starting:
+- Produces:
 
   ```go
-  // Notify notifies the given signal straight away, and again each time a
-  // signal arrives on the given topic or a topic beneath it, until the
-  // returned function is called or ctx is canceled.
-  func (n *Node) Notify(ctx context.Context, topic string, s cosyne.SignalW) (stop func())
+  // AttachSignal attaches the given cluster-wide signal to the given target,
+  // so that the target is notified each time the cluster-wide signal is,
+  // until the returned function is called or ctx is canceled. It notifies the
+  // target straight away.
+  func (n *Node) AttachSignal(ctx context.Context, signal string, target cosyne.SignalW) (detach func())
 
-  // Signal is a signal that any node in the cluster can notify. Each
-  // notification wakes the signal on every node.
-  type Signal struct {
-      Node  *Node
-      Topic string
-      // unexported: cosyne.Signal
-  }
-
-  func (s *Signal) Notify(ctx context.Context) error
-  func (s *Signal) Chan() <-chan struct{}
-
-  // Observable is a value stored in the database that every node in the
-  // cluster can observe. Each node reads it again whenever its signal is
-  // notified, and publishes it only when it changes.
-  type Observable[T any] struct {
-      Signal *Signal
-      Load   func(ctx context.Context) (T, error)
-      Equal  func(a, b T) bool
+  // Observable is a value stored in the database that every node keeps a
+  // copy of, and reads again each time a particular cluster-wide signal is
+  // notified. It's published only when it changes.
+  type Observable[T interface{ IsEqual(T) bool }] struct {
+      Node   *Node
+      Signal string
+      Read   func(ctx context.Context) (T, error)
       // unexported: cosyne.Observable[T]
   }
 
-  func (o *Observable[T]) Observe() cosyne.ObservableR[T]
+  func (o *Observable[T]) Load() (T, <-chan struct{})
   func (o *Observable[T]) Run(ctx context.Context) error
   ```
 
-  `cluster.Node` holds the one LISTEN connection on each node, which every
-  `Notify` call shares. Notifications that arrive while one is pending
-  coalesce, as they do in `cosyne.Signal`, so none is ever dropped. The
-  consumer in task 3 calls `Node.Notify` with one `cosyne.Signal` for each
-  queue it owns, and waits on that one signal.
+  A cluster-wide signal is a string, such as `messagequeue`, and is notified by
+  a PostgreSQL notification with that string as its payload. There are no topics
+  or hierarchy, and matching is exact, so a node looks up the targets for each
+  notification in a map. Each call attaches one cluster-wide signal.
 
-- [ ] **Step 1: Agree the interfaces**, including whether `Node.Notify` is
-  exported or only used by `Signal`, and whether `Observable` takes `Equal`
-  or requires a comparable type.
-- [ ] **Step 2: Write the failing tests** for `Node.Notify`, `Signal` and
-  `Observable`: a notification wakes a signal on another node, notifications
-  coalesce, a signal is notified straight away, and an observable reloads on
-  each notification and publishes only changes.
+  `cluster.Node` holds the one LISTEN connection on each node, which every
+  `AttachSignal` call shares. Notifications that arrive while one is pending
+  coalesce, as they do in `cosyne.Signal`, so none is ever dropped.
+
+  `AttachSignal` is exported, and the caller passes in the target rather than
+  getting one back. The caller owns it, so it outlives any one call, and many
+  cluster-wide signals can be attached to one target. The consumer in task 3
+  keeps one wake-up signal for its whole life, and attaches the signal of each
+  queue it's responsible for to it.
+
+  The triggers send exact signals. `eventstream.signal_create` sends
+  `eventstream.create`, without the stream ID, since discovery reloads every
+  stream. The messagequeue triggers send `messagequeue.<queue-id>` for each
+  queue they touch, and `messagequeue` once for the catalog.
+
+  `Observable` has the same `Load` method as `cosyne.ObservableR`, rather than
+  implementing it. That interface is sealed, so nothing outside `cosyne` can
+  implement it. `xtesting.WaitForObservable` accepts any type with that
+  method. When `messagequeue.Catalog` moves, `cluster` gains its own
+  `ObservableR[T]` interface with just `Load`, for `Catalog.QueueIDs()` to
+  return.
+
+  There is no sending `Signal` type yet. Apart from heartbeats, every signal
+  comes from a database trigger, so nothing in Go sends one, and the callers
+  that move here only wait for them. A way to send one comes with follow-up 1
+  of [plan 1][plan-1], when heartbeats move off `signal.Bus`.
+
+- [ ] **Step 1: Agree the interfaces.** Agreed: `AttachSignal` as above,
+  `Observable` takes the node and signal directly, and it compares values
+  with their own `IsEqual` method rather than a separate function or `==`.
+  The values it holds are `*uuidcollection.Set`, where `==` compares
+  pointers, and `(*uuidcollection.Set).IsEqual` treats nil as empty.
+- [ ] **Step 2: Write the failing tests** for `Node.AttachSignal` and
+  `Observable`: a cluster-wide signal notifies the target it is attached to on
+  every node, other signals don't, notifications coalesce, the target is
+  notified straight away, detaching ends delivery, and an observable
+  reloads on each notification and publishes only changes.
 - [ ] **Step 3: Implement them**
 - [ ] **Step 4: Move stream discovery, event delivery and
   `messagequeue.Catalog`**, one commit each. The catalog's `QueueIDs()`
@@ -302,19 +324,20 @@ This task adds cluster-wide versions of `cosyne.Signal` and
   The routed types are a `MessageTypeIDs *uuidcollection.Set` field in this
   task, which task 4 derives from `Handlers`.
 
-  The loop registers its wake-up signal with `Node.Notify` for the topic of each
-  owned queue, `messagequeue.<queue-id>`, before discovering, so no signal falls
-  between them. It updates the registrations when the owned queues change. It
-  then computes the owned queues from `Node.LiveNodes()` and
-  `Catalog.QueueIDs()` and discovers. If the candidate is due, it adds its ID to
-  the active set and starts `Attempt`; if it's in the future, it sets the timer.
-  Then it waits on the first of the live nodes, the queues, its wake-up signal,
-  the timer, a completion, or ctx. A completion removes the ID from the active
-  set and wakes the loop. The consumer's own failures go through
-  `supervisor.Work` with the description "consume queue".
+  The loop uses `Node.AttachSignal` to attach the signal of each owned queue,
+  `messagequeue.<queue-id>`, to its wake-up signal before discovering, so no
+  signal falls between them. It keeps each attachment's detach function, so when
+  the owned queues change it attaches only to newly owned queues and detaches
+  only from those it no longer owns. It then computes the owned queues from
+  `Node.LiveNodes()` and `Catalog.QueueIDs()` and discovers. If the candidate is
+  due, it adds its ID to the active set and starts `Attempt`; if it's in the
+  future, it sets the timer. Then it waits on the first of the live nodes, the
+  queues, its wake-up signal, the timer, a completion, or ctx. A completion
+  removes the ID from the active set and wakes the loop. The consumer's own
+  failures go through `supervisor.Work` with the description "consume queue".
 
 - Consumes: `Node.IsResponsibleFor`, `Catalog.QueueIDs`,
-  `Node.Notify` from task 1.
+  `Node.AttachSignal` from task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
