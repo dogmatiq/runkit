@@ -86,7 +86,7 @@ func TestCatalog(t *testing.T) {
 		waitForQueueIDs(t, catalog, q1, q2)
 	})
 
-	t.Run("it hears a queue as a message joins it", func(t *testing.T) {
+	t.Run("it includes a queue once a message is added to it", func(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
@@ -99,7 +99,7 @@ func TestCatalog(t *testing.T) {
 		waitForQueueIDs(t, catalog, q)
 	})
 
-	t.Run("it hears a queue when a message moves to it", func(t *testing.T) {
+	t.Run("it includes the queue that a message moves to, not the one it moved from", func(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
@@ -124,7 +124,7 @@ func TestCatalog(t *testing.T) {
 		waitForQueueIDs(t, catalog, to)
 	})
 
-	t.Run("it forgets a queue with no messages on the next signal", func(t *testing.T) {
+	t.Run("it excludes a queue that has no messages after the next signal", func(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)

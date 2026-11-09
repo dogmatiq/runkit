@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
@@ -38,9 +39,9 @@ type Sink struct {
 	// Packer packs commands and deadlines produced by the handler.
 	Packer *envelope.Packer
 
-	// NodeID is the ID of the local node, which is also the ID of the queue
-	// that commands and deadlines produced by the handler are added to.
-	NodeID *uuidpb.UUID
+	// QueueRouter chooses the queues for commands and deadlines produced by the
+	// handler.
+	QueueRouter *messagequeue.Router
 
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
@@ -255,9 +256,10 @@ func (s *Sink) dispatch(
 		return err
 	}
 
-	ok, err = loadInstance(
+	deadlineQueueID, ok, err := loadInstance(
 		ctx,
 		tx,
+		s.QueueRouter,
 		s.Identity.GetKey(),
 		instanceID,
 		root,
@@ -303,7 +305,7 @@ func (s *Sink) dispatch(
 		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, instanceID, err)
 	}
 
-	if err := addCommandsToQueue(ctx, tx, s.NodeID, scope.commandPacker); err != nil {
+	if err := addCommandsToQueue(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
 		return err
 	}
 
@@ -330,7 +332,7 @@ func (s *Sink) dispatch(
 			}
 		}
 
-		if err := persistDeadlines(ctx, tx, s.NodeID, scope.deadlinePacker); err != nil {
+		if err := persistDeadlines(ctx, tx, deadlineQueueID, scope.deadlinePacker); err != nil {
 			return err
 		}
 	}

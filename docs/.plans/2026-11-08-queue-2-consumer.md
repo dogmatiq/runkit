@@ -432,7 +432,7 @@ This task adds cluster-wide versions of `cosyne.Signal` and
   t.Run("it delivers a due message", ...)
   t.Run("it removes a delivered message", ...)
   t.Run("it delivers no more messages at once than its concurrency limit", ...)
-  t.Run("it hears a signal that arrives while it waits for a slot", ...)
+  t.Run("it keeps a signal that arrives while it waits for a slot", ...)
   t.Run("it claims another due message when the hint is locked", ...)      // lock the hint in a test transaction
   t.Run("it waits for the contention delay when every due message is locked", ...)
   t.Run("it postpones a failed delivery and increments its failures", ...)

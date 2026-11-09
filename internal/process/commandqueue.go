@@ -6,16 +6,16 @@ import (
 	"fmt"
 
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// addCommandsToQueue adds any commands scheduled by the handler to the queue
-// with the given ID.
+// addCommandsToQueue adds any commands executed by the handler to the queues
+// that the given router chooses.
 func addCommandsToQueue(
 	ctx context.Context,
 	tx *sql.Tx,
-	queueID *uuidpb.UUID,
+	router *messagequeue.Router,
 	packer *envelope.EffectPacker,
 ) error {
 	commandEnvelopes, ok := packer.Seal()
@@ -24,6 +24,11 @@ func addCommandsToQueue(
 	}
 
 	for commandEnvelope := range commandEnvelopes.All() {
+		queueID, err := router.RouteCommandToQueue(ctx, tx, commandEnvelope)
+		if err != nil {
+			return err
+		}
+
 		if _, err := tx.ExecContext(
 			ctx,
 			`SELECT messagequeue.add_command($1, $2, $3, $4, $5)`,

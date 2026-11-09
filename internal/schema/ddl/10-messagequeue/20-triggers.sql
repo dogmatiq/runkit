@@ -35,8 +35,9 @@ EXECUTE FUNCTION messagequeue.signal_add();
 -- Catalog type in internal/messagequeue watches for it to learn which queues
 -- have messages.
 --
--- It sends one for both the queue each message left and the queue it joined. An
--- update that leaves a message in the same queue signals nothing.
+-- It signals each queue that a message moved to, and each queue that a message
+-- moved from, since that queue may now be empty. An update that doesn't change
+-- a message's queue signals nothing.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION messagequeue.signal_move()
 RETURNS trigger

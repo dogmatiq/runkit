@@ -363,3 +363,161 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 		),
 	)
 }
+
+// TestInstanceState_deadlineQueue verifies that each process instance is bound
+// to a queue for its deadlines.
+func TestInstanceState_deadlineQueue(t *testing.T) {
+	const handlerKey = "8f0f5b9e-27d6-4f3e-9b0a-6c1f7c1c8e44"
+
+	// handler returns a process handler that routes every event to one
+	// instance, and schedules a deadline when it handles an event of type A.
+	handler := func() dogma.HandlerRoute {
+		return dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+					)
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					m dogma.Event,
+				) error {
+					if _, ok := m.(*stubs.EventStub[stubs.TypeA]); ok {
+						s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(time.Hour))
+					}
+					return nil
+				},
+			},
+		)
+	}
+
+	// insertInstance inserts the instance before the engine starts, bound to
+	// the queue with the given ID, or unbound if it is nil.
+	insertInstance := func(t *testing.T, db *sql.DB, deadlineQueueID *uuidpb.UUID) {
+		t.Helper()
+
+		var queueID any
+		if deadlineQueueID != nil {
+			queueID = deadlineQueueID.AsString()
+		}
+
+		if _, err := db.ExecContext(
+			t.Context(),
+			`INSERT INTO process.instances (
+				handler_key,
+				instance_id,
+				deadline_queue_id
+			) VALUES ($1, '<instance>', $2)`,
+			handlerKey,
+			queueID,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("it binds a new instance when it first handles an event", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, _ *xtesting.Cluster, db *sql.DB) {
+				xtesting.AppendToNewEventStream(t, db, stubs.EventB1)
+
+				xtesting.WaitForQueryResult(
+					t,
+					"instance is bound",
+					1,
+					db,
+					`SELECT COUNT(*)
+					FROM process.instances
+					WHERE deadline_queue_id IS NOT NULL`,
+				)
+			},
+			handler(),
+		)
+	})
+
+	t.Run("it binds an existing instance when it next handles an event", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+		insertInstance(t, db, nil)
+
+		xtesting.RunEnginesWithDB(
+			t,
+			db,
+			func(t testing.TB, _ *xtesting.Cluster, db *sql.DB) {
+				xtesting.AppendToNewEventStream(t, db, stubs.EventB1)
+
+				xtesting.WaitForQueryResult(
+					t,
+					"instance is bound",
+					1,
+					db,
+					`SELECT COUNT(*)
+					FROM process.instances
+					WHERE deadline_queue_id IS NOT NULL`,
+				)
+			},
+			handler(),
+		)
+	})
+
+	t.Run("it adds a deadline to its instance's queue", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, _ *xtesting.Cluster, db *sql.DB) {
+				xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+
+				xtesting.WaitForQueryResult(
+					t,
+					"deadline is in its instance's queue",
+					1,
+					db,
+					`SELECT COUNT(*)
+					FROM messagequeue.messages AS m
+					INNER JOIN process.instances AS i
+						ON i.handler_key = m.handler_key
+						AND i.instance_id = m.instance_id
+					WHERE m.queue_id = i.deadline_queue_id`,
+				)
+			},
+			handler(),
+		)
+	})
+
+	t.Run("it keeps a binding that was changed by hand", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+		queueID := uuidpb.Generate()
+		insertInstance(t, db, queueID)
+
+		xtesting.RunEnginesWithDB(
+			t,
+			db,
+			func(t testing.TB, _ *xtesting.Cluster, db *sql.DB) {
+				xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+
+				xtesting.WaitForQueryResult(
+					t,
+					"deadline is in the queue set by hand",
+					1,
+					db,
+					`SELECT COUNT(*)
+					FROM messagequeue.messages
+					WHERE queue_id = $1`,
+					queueID.AsString(),
+				)
+			},
+			handler(),
+		)
+	})
+}
