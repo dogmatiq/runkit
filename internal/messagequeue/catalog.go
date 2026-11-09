@@ -9,21 +9,19 @@ import (
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // Catalog keeps track of which queues have messages, as seen from this node.
-//
-// It reads the whole set from the database each time a message queue signal
-// arrives, so a signal dropped by the [signal.Bus] is covered by the next.
 type Catalog struct {
 	// DB is the database that stores the message queue.
 	DB *sql.DB
 
-	// Signals is the bus on which changes to the message queue are signaled.
-	Signals *signal.Bus
+	// Node is the node that receives the cluster-wide signal sent when
+	// messages are added to queues or moved between them.
+	Node *cluster.Node
 
 	// EngineLogger is the target for the engine's records about observing
 	// the queues.
@@ -33,9 +31,10 @@ type Catalog struct {
 	queueIDs cosyne.Observable[*uuidcollection.Set]
 }
 
-// QueueIDs returns an observable of the IDs of the queues that have messages.
+// QueueIDs returns an observable set containing the ID of each queue that has
+// messages.
 //
-// The set is nil until it is first read from the database. It must not be
+// The set is empty until it is first read from the database. It must not be
 // modified.
 func (c *Catalog) QueueIDs() cosyne.ObservableR[*uuidcollection.Set] {
 	return &c.queueIDs
@@ -48,25 +47,29 @@ func (c *Catalog) Run(ctx context.Context) error {
 	return supervisor.Run(ctx, c.EngineLogger, "observe queues", c.run)
 }
 
-// run reads the set of queues each time a message queue signal arrives, and
-// publishes it whenever it changes.
+// run reads the set of queues straight away, and again each time a message is
+// added to a queue or moved between them, and publishes it whenever it
+// changes.
 func (c *Catalog) run(ctx context.Context) error {
-	signals, stop := c.Signals.Watch(ctx, "messagequeue", 1)
-	defer stop()
+	var changed cosyne.Signal
 
-	for range signals {
+	detach := c.Node.AttachSignal(ctx, "messagequeue", &changed)
+	defer detach()
+
+	for {
 		queueIDs, err := c.load(ctx)
 		if err != nil {
 			return err
 		}
 
-		current, _ := c.queueIDs.Load()
-		if current == nil || !current.IsEqual(queueIDs) {
+		if current, _ := c.queueIDs.Load(); !queueIDs.IsEqual(current) {
 			c.queueIDs.Store(queueIDs)
 		}
-	}
 
-	return ctx.Err()
+		if err := changed.WaitContext(ctx); err != nil {
+			return err
+		}
+	}
 }
 
 // load returns the IDs of the queues that have messages.

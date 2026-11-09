@@ -137,24 +137,22 @@ Each one has a test in the task that owns the code.
 
 ---
 
-### Task 1: `Node.AttachSignal` and `cluster.Observable`
+### Task 1: `Node.AttachSignal`
 
 `signal.Bus` drops a signal when a watcher's channel is full, and delivers a
 subtopic that only heartbeats read. The consumer in task 3 has to wake for any
 of a changing set of owned queues, which doesn't fit one channel per watch. This
 task lets `cluster.Node` attach cluster-wide signals to `cosyne.Signal`s, called
-targets, adds `cluster.Observable`, a value that every node reads from the
-database, and moves every watcher except heartbeats onto them. `signal.Bus`
-stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
+targets, and moves every watcher except heartbeats onto them. `signal.Bus` stays
+until heartbeats move, in follow-up 1 of [plan 1][plan-1].
 
 **Files:**
 - Modify: `internal/cluster/node.go` (own the LISTEN connection), the
   eventstream and messagequeue triggers
-- Create: `internal/cluster/signal.go`, `internal/cluster/observable.go`
+- Create: `internal/cluster/signal.go`
 - Modify: `internal/eventstream/source/local.go`,
   `internal/messagequeue/catalog.go`, `engine.go`
-- Test: `internal/cluster/signal_test.go`,
-  `internal/cluster/observable_test.go`, and the existing suites of the
+- Test: `internal/cluster/signal_test.go`, and the existing suites of the
   callers that move
 
 **Interfaces:**
@@ -165,19 +163,6 @@ stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
   // so that the target is notified each time the cluster-wide signal is,
   // until the returned function is called or ctx is canceled.
   func (n *Node) AttachSignal(ctx context.Context, signal string, target cosyne.SignalW) (detach func())
-
-  // Observable is a value stored in the database that every node keeps a
-  // copy of, and reads again each time a particular cluster-wide signal is
-  // notified. It's published only when it changes.
-  type Observable[T interface{ IsEqual(T) bool }] struct {
-      Node   *Node
-      Signal string
-      Read   func(ctx context.Context) (T, error)
-      // unexported: cosyne.Observable[T]
-  }
-
-  func (o *Observable[T]) Load() (T, <-chan struct{})
-  func (o *Observable[T]) Run(ctx context.Context) error
   ```
 
   A cluster-wide signal is a string, such as `messagequeue`, and is notified by
@@ -200,36 +185,25 @@ stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
   stream. The messagequeue triggers send `messagequeue.<queue-id>` for each
   queue they touch, and `messagequeue` once for the catalog.
 
-  `Observable` has the same `Load` method as `cosyne.ObservableR`, rather than
-  implementing it. That interface is sealed, so nothing outside `cosyne` can
-  implement it. `xtesting.WaitForObservable` accepts any type with that
-  method. When `messagequeue.Catalog` moves, `cluster` gains its own
-  `ObservableR[T]` interface with just `Load`, for `Catalog.QueueIDs()` to
-  return.
-
   There is no sending `Signal` type yet. Apart from heartbeats, every signal
   comes from a database trigger, so nothing in Go sends one, and the callers
   that move here only wait for them. A way to send one comes with follow-up 1
   of [plan 1][plan-1], when heartbeats move off `signal.Bus`.
 
-- [x] **Step 1: Agree the interfaces.** Agreed: `AttachSignal` as above,
-  `Observable` takes the node and signal directly, and it compares values
-  with their own `IsEqual` method rather than a separate function or `==`.
-  The values it holds are `*uuidcollection.Set`, where `==` compares
-  pointers, and `(*uuidcollection.Set).IsEqual` treats nil as empty.
-- [x] **Step 2: Write the failing tests** for `Node.AttachSignal` and
-  `Observable`: a cluster-wide signal notifies the target it is attached to on
-  every node, other signals don't, notifications coalesce, the target is
-  not notified when it's attached, detaching ends delivery, and an observable
-  reloads on each notification and publishes only changes.
+- [x] **Step 1: Agree the interfaces.** Agreed: `AttachSignal` as above.
+- [x] **Step 2: Write the failing tests** for `Node.AttachSignal`: a
+  cluster-wide signal notifies the target it is attached to on every node,
+  other signals don't, notifications coalesce, the target is not notified when
+  it's attached, and detaching ends delivery.
 - [x] **Step 3: Implement them**
-- [ ] **Step 4: Switch stream discovery, event delivery and
+- [x] **Step 4: Switch stream discovery, event delivery and
   `messagequeue.Catalog` from `signal.Bus` to `Node.AttachSignal`**, one
-  commit each. Each replaces its `Signals *signal.Bus` field with a
-  `Node *cluster.Node`. The catalog's `QueueIDs()` becomes a
-  `cluster.Observable[*uuidcollection.Set]`.
-- [ ] **Step 5: Run `make test`**
-- [ ] **Step 6: Stop for review** after each commit.
+  commit for `source.Local` and one for the catalog. Each replaces its
+  `Signals *signal.Bus` field with a `Node *cluster.Node`. Each keeps its own
+  loop, which loads, then waits on its target. A shared `cluster.Observable`
+  was dropped, because the catalog would have been its only user.
+- [x] **Step 5: Run `make test`**
+- [x] **Step 6: Stop for review** after each commit.
 
 ---
 
@@ -284,7 +258,6 @@ stays until heartbeats move, in follow-up 1 of [plan 1][plan-1].
       DB           *sql.DB
       Node         *cluster.Node
       Queues       *Catalog
-      Signals      *signal.Bus
       EngineLogger *slog.Logger
 
       // Attempt delivers the message with the given ID. It is called in its

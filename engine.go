@@ -269,7 +269,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.queues = &messagequeue.Catalog{
 		DB:           e.db,
-		Signals:      e.signals,
+		Node:         e.node,
 		EngineLogger: e.engineLogger,
 	}
 
