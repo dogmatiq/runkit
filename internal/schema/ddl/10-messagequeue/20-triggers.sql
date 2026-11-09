@@ -34,9 +34,12 @@ EXECUTE FUNCTION messagequeue.signal_add();
 
 --------------------------------------------------------------------------------
 -- The "signal_move" trigger sends the "messagequeue.<queue-id>" signal for each
--- queue that a message moved to, and for each queue that a message moved from,
--- since that queue may now be empty. It also sends the "messagequeue" signal
--- once. An update that doesn't change a message's queue signals nothing.
+-- queue that a message moved to, and the "messagequeue" signal once. An update
+-- that doesn't change a message's queue signals nothing.
+--
+-- As with a removal, the queue that a message moved from isn't signaled. The
+-- message leaving can only make that queue's next message later, which a
+-- consumer finds out when the moved message would have been due.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION messagequeue.signal_move()
 RETURNS trigger
@@ -46,16 +49,12 @@ BEGIN
     PERFORM pg_notify('signal', signal)
     FROM (
         WITH moved AS (
-            SELECT
-                d.queue_id AS from_queue_id,
-                i.queue_id AS to_queue_id
+            SELECT i.queue_id
             FROM deleted AS d
             INNER JOIN inserted AS i ON i.message_id = d.message_id
             WHERE i.queue_id != d.queue_id
         )
-        SELECT 'messagequeue.' || from_queue_id AS signal FROM moved
-        UNION
-        SELECT 'messagequeue.' || to_queue_id FROM moved
+        SELECT 'messagequeue.' || queue_id AS signal FROM moved
         UNION
         SELECT 'messagequeue' FROM moved
     ) AS signals;
