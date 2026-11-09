@@ -6,7 +6,7 @@ require (
 	github.com/dogmatiq/cosyne v0.3.0
 	github.com/dogmatiq/dapper v0.7.0
 	github.com/dogmatiq/dogma v0.25.0
-	github.com/dogmatiq/enginekit v0.30.0
+	github.com/dogmatiq/enginekit v0.31.0
 	github.com/dogmatiq/protobuf v0.7.0
 	github.com/dogmatiq/spruce v0.2.4
 	github.com/hexops/gotextdiff v1.0.3
