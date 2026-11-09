@@ -71,9 +71,9 @@ func (p *DeadlinePump) AcquireDelivery(
 			ON i.handler_key = d.handler_key
 			AND i.instance_id = d.instance_id
 		WHERE d.handler_key = $1
-			AND d.deliver_at <= $2
+			AND d.next_attempt_at <= $2
 			AND d.message_type_id = ANY($3)
-		ORDER BY d.deliver_at
+		ORDER BY d.next_attempt_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUID(p.Identity.GetKey()),
@@ -119,7 +119,7 @@ func (*DeadlinePump) PostponeDelivery(
 				WHEN failing_since IS NULL THEN clock_timestamp()
 				ELSE failing_since
 			END,
-			deliver_at = clock_timestamp() + $3
+			next_attempt_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
 		xsql.UUID(delivery.MessageID),
 		delivery.Failures,

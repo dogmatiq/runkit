@@ -419,7 +419,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	if _, err := db.ExecContext(
 		t.Context(),
 		`UPDATE messagequeue.messages SET
-			deliver_at = deliver_at - INTERVAL '1 second'
+			next_attempt_at = next_attempt_at - INTERVAL '1 second'
 		WHERE handler_key IS NOT NULL`,
 	); err != nil {
 		t.Fatal(err)

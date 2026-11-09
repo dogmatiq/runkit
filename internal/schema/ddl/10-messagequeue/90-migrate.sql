@@ -32,7 +32,7 @@ BEGIN
             failures,
             failing_since,
             scheduled_at,
-            deliver_at
+            next_attempt_at
         )
         SELECT
             message_id,
@@ -68,7 +68,7 @@ BEGIN
             failures,
             failing_since,
             scheduled_at,
-            deliver_at
+            next_attempt_at
         )
         SELECT
             message_id,

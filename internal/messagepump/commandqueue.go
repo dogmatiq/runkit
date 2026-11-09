@@ -29,8 +29,8 @@ func AcquireCommandDelivery(
 		FROM messagequeue.messages AS c
 		WHERE handler_key IS NULL
 		AND message_type_id = ANY($1)
-		AND deliver_at <= clock_timestamp()
-		ORDER BY deliver_at
+		AND next_attempt_at <= clock_timestamp()
+		ORDER BY next_attempt_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
 		xsql.UUIDSeq(messageTypeIDs.All()),
@@ -74,7 +74,7 @@ func PostponeCommandDelivery(
 				WHEN failing_since IS NULL THEN clock_timestamp()
 				ELSE failing_since
 			END,
-			deliver_at = clock_timestamp() + $3
+			next_attempt_at = clock_timestamp() + $3
 		WHERE message_id = $1`,
 		xsql.UUID(delivery.MessageID),
 		delivery.Failures,

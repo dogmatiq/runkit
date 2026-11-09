@@ -11,7 +11,7 @@ CREATE SCHEMA IF NOT EXISTS messagequeue;
 -- it is delivered to.
 --
 -- "scheduled_at" is when the message was meant to be delivered, and never
--- changes. "deliver_at" is the earliest time the next attempt may run, and
+-- changes. "next_attempt_at" is the earliest time the next attempt may run, and
 -- moves later each time an attempt is postponed.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS messagequeue.messages (
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS messagequeue.messages (
     failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     failing_since   timestamptz,
     scheduled_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
-    deliver_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     CHECK ((handler_key IS NULL) = (instance_id IS NULL)),
     CHECK ((failures = 0) = (failing_since IS NULL))
@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS messages_by_queue
 ON messagequeue.messages (
     queue_id,
     message_type_id,
-    deliver_at
+    next_attempt_at
 );
 
 -- Create an index for finding the deadlines of a process instance.

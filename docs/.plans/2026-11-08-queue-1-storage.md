@@ -104,11 +104,11 @@ These were made with the maintainer, and aren't in [#100][100].
   own attempts.
 - **Self-affinity lives in `cluster.FindResponsibleNode`.** No `rendezvous`
   package.
-- **The discovery index is `(queue_id, message_type_id, deliver_at)`.**
+- **The discovery index is `(queue_id, message_type_id, next_attempt_at)`.**
   Discovery in the consumer plan looks up each owned queue and routed type, so a
   retired route's rows stay outside the ranges it reads. PostgreSQL 18's skip
   scan serves `SELECT DISTINCT queue_id` from the same index. Messages with the
-  same `deliver_at` come in no particular order, so `message_id` isn't a
+  same `next_attempt_at` come in no particular order, so `message_id` isn't a
   tie-break and isn't in the index.
 
 ## Global constraints
@@ -179,14 +179,14 @@ Each one has a test in the task that owns the code.
       failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
       failing_since   timestamptz,
       scheduled_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
-      deliver_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+      next_attempt_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
 
       CHECK ((handler_key IS NULL) = (instance_id IS NULL)),
       CHECK ((failures = 0) = (failing_since IS NULL))
   );
 
   CREATE INDEX IF NOT EXISTS messages_by_queue
-  ON messagequeue.messages (queue_id, message_type_id, deliver_at);
+  ON messagequeue.messages (queue_id, message_type_id, next_attempt_at);
 
   CREATE INDEX IF NOT EXISTS messages_by_instance
   ON messagequeue.messages (handler_key, instance_id)
@@ -201,7 +201,7 @@ Each one has a test in the task that owns the code.
   ```
 
   `scheduled_at` is the original time: `enqueued_at` for a command, the
-  deadline's scheduled time for a deadline. `deliver_at` is the earliest time
+  deadline's scheduled time for a deadline. `next_attempt_at` is the earliest time
   the next attempt may run. It starts equal to `scheduled_at` and moves later
   on each postponement.
 
@@ -285,12 +285,12 @@ Each one has a test in the task that owns the code.
 - [x] **Step 1: Repoint the SQL**
 
   `commandqueue.add` → `messagequeue.add_command`. `persistDeadlines` inserts
-  into `messagequeue.messages` with `deliver_at = scheduled_at`. `endInstance`
+  into `messagequeue.messages` with `next_attempt_at = scheduled_at`. `endInstance`
   deletes from `messagequeue.messages` by handler and instance.
   `AcquireCommandDelivery` reads `messagequeue.messages WHERE handler_key IS
-  NULL AND message_type_id = ANY($1) AND deliver_at <= clock_timestamp()`. The
+  NULL AND message_type_id = ANY($1) AND next_attempt_at <= clock_timestamp()`. The
   deadline pump reads `WHERE handler_key = $1`, joining `process.instances` as
-  today. Both postponements set `deliver_at`, bump `failures`, and set
+  today. Both postponements set `next_attempt_at`, bump `failures`, and set
   `failing_since = COALESCE(failing_since, clock_timestamp())`. Successful
   removal is `messagequeue.remove`.
 

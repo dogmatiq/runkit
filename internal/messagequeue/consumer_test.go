@@ -103,7 +103,7 @@ func TestConsumer(t *testing.T) {
 		db *sql.DB,
 		queueID *uuidpb.UUID,
 		typeID *uuidpb.UUID,
-		deliverAt time.Time,
+		nextAttemptAt time.Time,
 	) *uuidpb.UUID {
 		t.Helper()
 
@@ -116,12 +116,12 @@ func TestConsumer(t *testing.T) {
 				message_type_id,
 				queue_id,
 				envelope,
-				deliver_at
+				next_attempt_at
 			) VALUES ($1, $2, $3, '\x00', $4)`,
 			xsql.UUID(messageID),
 			xsql.UUID(typeID),
 			xsql.UUID(queueID),
-			deliverAt,
+			nextAttemptAt,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -240,8 +240,8 @@ func TestConsumer(t *testing.T) {
 		db, n, _ := setup(t)
 		attemptedAt := make(chan time.Time, 1)
 
-		deliverAt := time.Now().Add(200 * time.Millisecond)
-		addMessage(t, db, n.ID, typeID, deliverAt)
+		nextAttemptAt := time.Now().Add(200 * time.Millisecond)
+		addMessage(t, db, n.ID, typeID, nextAttemptAt)
 		run(
 			t,
 			db,
@@ -256,8 +256,8 @@ func TestConsumer(t *testing.T) {
 
 		select {
 		case got := <-attemptedAt:
-			if got.Before(deliverAt) {
-				t.Fatalf("message attempted %s before it was due", deliverAt.Sub(got))
+			if got.Before(nextAttemptAt) {
+				t.Fatalf("message attempted %s before it was due", nextAttemptAt.Sub(got))
 			}
 		case <-time.After(xtesting.WaitTimeout):
 			t.Fatal("timeout waiting for the message to be attempted")
@@ -304,7 +304,7 @@ func TestConsumer(t *testing.T) {
 		expectAttempt(t, attempted, sentinel)
 	})
 
-	t.Run("it attempts messages in order of their delivery time", func(t *testing.T) {
+	t.Run("it attempts messages in the order in which they're due", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
