@@ -15,8 +15,6 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/message"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -244,11 +242,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		Application: e.appConfig.Identity(),
 	}
 
-	e.setupCommandTypes()
+	e.commandTypes = executableCommandTypes(e.appConfig)
 
 	e.queueRouter = &messagequeue.Router{
 		NodeID:     e.nodeID,
-		Aggregates: e.aggregatesForQueueRouter(),
+		Aggregates: aggregatesForQueueRouter(e.appConfig),
 	}
 
 	e.signals = &signal.Bus{
@@ -318,7 +316,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		return e.queues.Run(ctx)
 	})
 
-	eventTypeIDs := e.consumedEventTypeIDs()
+	eventTypeIDs := consumedEventTypeIDs(e.appConfig)
 
 	// The application's own streams are watched only if the catalog consumes
 	// them for projections or processes, or the gRPC server serves them remotely.
@@ -448,111 +446,4 @@ func (e *Engine) waitUntilReady(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// setupCommandTypes builds a set of command types that the engine accepts for
-// execution.
-func (e *Engine) setupCommandTypes() {
-	inboundCommandRoutes := e.appConfig.
-		RouteSet().
-		Filter(
-			config.FilterByMessageDirection(config.InboundDirection),
-			config.FilterByMessageKind(message.CommandKind),
-		).
-		Routes()
-
-	e.commandTypes = map[reflect.Type]struct{}{}
-
-	for route := range inboundCommandRoutes {
-		typ := route.MessageType.Get().ReflectType()
-		e.commandTypes[typ] = struct{}{}
-	}
-}
-
-// aggregatesForQueueRouter returns the routes to the aggregates that the queue
-// router uses to route commands, keyed by the ID of each command type that
-// they handle.
-func (e *Engine) aggregatesForQueueRouter() *uuidcollection.Map[messagequeue.AggregateRoute] {
-	aggregates := &uuidcollection.Map[messagequeue.AggregateRoute]{}
-
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		aggregate, ok := handlerConfig.(*config.Aggregate)
-		if !ok {
-			continue
-		}
-
-		commandTypeIDs := e.inboundMessageTypeIDsForHandler(aggregate, message.CommandKind)
-
-		for commandTypeID := range commandTypeIDs.All() {
-			aggregates.Set(
-				commandTypeID,
-				messagequeue.AggregateRoute{
-					Key:     aggregate.Identity().GetKey(),
-					Handler: aggregate.Interface(),
-				},
-			)
-		}
-	}
-
-	return aggregates
-}
-
-// consumedEventTypeIDs returns the message type IDs of every event type that
-// is routed to a non-disabled handler within the application.
-func (e *Engine) consumedEventTypeIDs() *uuidcollection.Set {
-	messageTypeIDs := uuidcollection.NewSet()
-
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if handlerConfig.IsDisabled() {
-			continue
-		}
-
-		eventTypeIDs := e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind)
-
-		for id := range eventTypeIDs.All() {
-			messageTypeIDs.Add(id)
-		}
-	}
-
-	return messageTypeIDs
-}
-
-// inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
-// messages routed to the given handler. It is represented as a slice of UUID
-// strings for direct use in SQL queries.
-func (*Engine) inboundMessageTypeIDsForHandler(
-	handlerConfig config.Handler,
-	messageKind message.Kind,
-) *uuidcollection.Set {
-	inboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageKind(messageKind)).
-		Filter(config.FilterByMessageDirection(config.InboundDirection)).
-		Routes()
-
-	messageTypeIDs := &uuidcollection.Set{}
-
-	for route := range inboundRoutes {
-		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
-		messageTypeIDs.Add(messageTypeID)
-	}
-
-	return messageTypeIDs
-}
-
-// outboundMessageTypesForHandler returns the reflect.Types of all outbound
-// messages of the given kind routed from the given handler.
-func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[reflect.Type]struct{} {
-	outboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
-		Routes()
-
-	types := map[reflect.Type]struct{}{}
-
-	for route := range outboundRoutes {
-		types[route.MessageType.Get().ReflectType()] = struct{}{}
-	}
-
-	return types
 }

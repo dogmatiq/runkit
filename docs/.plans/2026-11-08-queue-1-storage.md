@@ -530,7 +530,11 @@ constructs. Step 2 depends on the answer.
   `setupCommandTypes`, `aggregatesForQueueRouter`, `consumedEventTypeIDs`,
   `inboundMessageTypeIDsForHandler` and `outboundMessageTypesForHandler` — and
   make each a plain function of the `*config.Application` or `config.Handler`
-  it reads, rather than a method of the engine.
+  it reads, rather than a method of the engine. `setupCommandTypes` becomes
+  `executableCommandTypes`, which returns the set rather than storing it.
+  `newLoggerForHandler` and `workerCountForHandler` in `handler.go` become
+  plain functions too, since neither reads the engine. `runHandler` stays a
+  method.
 - [ ] **Step 3: Run `make test`.** No behavior changes, so the existing suites
   are the test.
 - [ ] **Step 4: Stop for review** after each step's commit, so each diff shows
