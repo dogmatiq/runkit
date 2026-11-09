@@ -38,11 +38,11 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:           uuidpb.Generate(),
-			Signals:      signals,
-			Interval:     20 * time.Millisecond,
-			Timeout:      100 * time.Millisecond,
-			EngineLogger: logger,
+			ID:                uuidpb.Generate(),
+			Signals:           signals,
+			HeartbeatInterval: 20 * time.Millisecond,
+			HeartbeatTimeout:  100 * time.Millisecond,
+			EngineLogger:      logger,
 		}
 
 		catalog := &Catalog{
@@ -451,11 +451,11 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 	}
 	xtesting.GoE(t, signals.Run)
 	node := &cluster.Node{
-		ID:           uuidpb.Generate(),
-		Signals:      signals,
-		Interval:     20 * time.Millisecond,
-		Timeout:      100 * time.Millisecond,
-		EngineLogger: logger,
+		ID:                uuidpb.Generate(),
+		Signals:           signals,
+		HeartbeatInterval: 20 * time.Millisecond,
+		HeartbeatTimeout:  100 * time.Millisecond,
+		EngineLogger:      logger,
 	}
 	xtesting.GoE(t, node.Run)
 

@@ -15,7 +15,7 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestSink_workload(t *testing.T) {
+func TestSink_rendezvousKey(t *testing.T) {
 	const handlerKey = "050415ad-ce90-496f-8987-40467e5415e0"
 
 	for _, preference := range []dogma.ConcurrencyPreference{
@@ -36,8 +36,8 @@ func TestSink_workload(t *testing.T) {
 				if preference == dogma.MaximizeConcurrency {
 					want = uuidpb.Derive(want, streamID.AsString())
 				}
-				if got := sink.Workload(streamID); !got.Equal(want) {
-					t.Fatalf("unexpected workload: got %s, want %s", got, want)
+				if got := sink.RendezvousKey(streamID); !got.Equal(want) {
+					t.Fatalf("unexpected rendezvous key: got %s, want %s", got, want)
 				}
 			}
 		})

@@ -28,8 +28,10 @@ type Sink struct {
 	// Identity is the identity of the projection handler.
 	Identity *identitypb.Identity
 
-	// Concurrency is the handler's concurrency preference. It determines
-	// whether streams share one rendezvous workload.
+	// Concurrency is the handler's concurrency preference.
+	//
+	// It determines whether [Sink.RendezvousKey] returns the same key for every
+	// stream.
 	Concurrency dogma.ConcurrencyPreference
 
 	// EventTypes is the set of IDs of the event types routed to the handler.
@@ -190,16 +192,16 @@ func (s *Sink) dispatch(
 	return next, nil
 }
 
-// Workload returns the rendezvous workload that determines which node consumes
+// RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *Sink) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
+func (s *Sink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 	if s.Concurrency == dogma.MinimizeConcurrency {
 		return s.Identity.GetKey()
 	}
 
 	// If the handler does not prefer to minimize concurrency, derive a unique
-	// workload from both the handler identity and the stream ID such that both
-	// handlers and streams are distributed evenly across nodes.
+	// rendezvous key from both the handler identity and the stream ID such that
+	// both handlers and streams are distributed evenly across nodes.
 	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
 }
 
