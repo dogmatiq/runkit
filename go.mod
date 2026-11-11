@@ -6,7 +6,7 @@ require (
 	github.com/dogmatiq/cosyne v0.3.0
 	github.com/dogmatiq/dapper v0.7.0
 	github.com/dogmatiq/dogma v0.25.0
-	github.com/dogmatiq/enginekit v0.30.0
+	github.com/dogmatiq/enginekit v0.31.0
 	github.com/dogmatiq/protobuf v0.7.0
 	github.com/dogmatiq/spruce v0.2.4
 	github.com/hexops/gotextdiff v1.0.3
@@ -15,7 +15,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/zeebo/xxh3 v1.1.0
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	pgregory.net/rapid v1.3.0
