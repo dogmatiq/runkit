@@ -417,8 +417,9 @@ a handoff, are accepted and documented in the code.
   postponed" record. An attempt that fails because the consumer is stopping
   writes nothing.
 
-  Rename the bare `logger` fields, parameters and variables in the aggregate
-  and process packages to name their layer, as the logging guide requires.
+  Before this task, a rename-only commit gives the bare `logger` parameters in
+  the aggregate and process packages the name `engineLogger`, as the logging
+  guide requires.
 
 - Consumes: the rollback from the previous task.
 
