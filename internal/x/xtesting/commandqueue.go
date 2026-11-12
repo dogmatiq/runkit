@@ -161,7 +161,7 @@ func WaitForCommandToBePostponed(
 		`SELECT COUNT(*)
 		FROM messagequeue.messages
 		WHERE message_id = $1
-		AND next_attempt_at > scheduled_at`,
+		AND next_attempt_at > scheduled_for`,
 		xsql.UUID(messageID),
 	)
 }
@@ -176,7 +176,7 @@ func EnqueuePostponedCommand(
 ) *envelopepb.Envelope {
 	t.Helper()
 
-	env := packTestCommand(t, command)
+	env := PackCommand(t, command)
 
 	if _, err := x.ExecContext(
 		t.Context(),
@@ -201,7 +201,9 @@ func EnqueuePostponedCommand(
 	return env
 }
 
-func packTestCommand(t testing.TB, command dogma.Command) *envelopepb.Envelope {
+// PackCommand returns a valid envelope containing the given command, from the
+// test application.
+func PackCommand(t testing.TB, command dogma.Command) *envelopepb.Envelope {
 	t.Helper()
 
 	mt, ok := dogma.RegisteredMessageTypeOf(command)

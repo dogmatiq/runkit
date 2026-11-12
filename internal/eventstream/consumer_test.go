@@ -126,7 +126,7 @@ func TestConsumer(t *testing.T) {
 		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 	})
 
-	t.Run("it consumes streams once this node is responsible for them", func(t *testing.T) {
+	t.Run("it consumes streams when this node owns their workloads", func(t *testing.T) {
 		catalog, node, handled := setup(t)
 
 		src := &source.Memory{}
@@ -136,8 +136,8 @@ func TestConsumer(t *testing.T) {
 		src.Append(newSegment(t, streamID, 0, EventA1))
 		expectStreamIDs(t, catalog, streamID)
 
-		// A node is responsible for nothing until it hears its own heartbeats,
-		// after which it is responsible for everything, being the only node.
+		// A node doesn't own any workloads until it hears its own heartbeats,
+		// after which it owns every workload, being the only node.
 		xtesting.ExpectNoReceive(t, "handled event", handled)
 
 		xtesting.GoE(t, node.Run)

@@ -10,7 +10,7 @@ CREATE SCHEMA IF NOT EXISTS messagequeue;
 -- deadline also has the handler key and instance ID of the process instance
 -- it is delivered to.
 --
--- "scheduled_at" is when the message was meant to be delivered, and never
+-- "scheduled_for" is when the message was meant to be delivered, and never
 -- changes. "next_attempt_at" is the earliest time the next attempt may run, and
 -- moves later each time an attempt is postponed.
 --------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS messagequeue.messages (
     envelope        bytea       NOT NULL,
     failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     failing_since   timestamptz,
-    scheduled_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+    scheduled_for   timestamptz NOT NULL DEFAULT clock_timestamp(),
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     CHECK ((handler_key IS NULL) = (instance_id IS NULL)),

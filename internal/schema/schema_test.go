@@ -328,7 +328,7 @@ func TestCreate_migratesQueues(t *testing.T) {
 			AND envelope = '\x01'
 			AND failures = 0
 			AND failing_since IS NULL
-			AND scheduled_at = '2100-01-01T00:00:00Z'::timestamptz
+			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:00:00Z'::timestamptz
 		FROM messagequeue.messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
@@ -341,7 +341,7 @@ func TestCreate_migratesQueues(t *testing.T) {
 		db,
 		`SELECT failures = 3
 			AND failing_since = '2100-01-01T00:05:00Z'::timestamptz
-			AND scheduled_at = '2100-01-01T00:00:00Z'::timestamptz
+			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:05:00Z'::timestamptz
 		FROM messagequeue.messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e02'`,
@@ -358,7 +358,7 @@ func TestCreate_migratesQueues(t *testing.T) {
 			AND envelope = '\x03'
 			AND failures = 0
 			AND failing_since IS NULL
-			AND scheduled_at = '2100-01-01T01:00:00Z'::timestamptz
+			AND scheduled_for = '2100-01-01T01:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:00:00Z'::timestamptz
 		FROM messagequeue.messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e03'`,
@@ -371,7 +371,7 @@ func TestCreate_migratesQueues(t *testing.T) {
 		db,
 		`SELECT failures = 2
 			AND failing_since = '2100-01-01T01:05:00Z'::timestamptz
-			AND scheduled_at = '2100-01-01T01:05:00Z'::timestamptz
+			AND scheduled_for = '2100-01-01T01:05:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:05:00Z'::timestamptz
 		FROM messagequeue.messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e04'`,

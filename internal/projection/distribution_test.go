@@ -32,8 +32,8 @@ func TestDistribution_eachEventIsHandledOnceAfterTheClusterConverges(t *testing.
 }
 
 // TestDistribution_eachEventIsHandledOnceWhenANodeJoins verifies that when a
-// node joins the cluster, the streams that it becomes responsible for are
-// handed over to it without dropping or duplicating any events.
+// node joins the cluster and comes to own the workloads of some streams, those
+// streams are handed over to it without dropping or duplicating any events.
 func TestDistribution_eachEventIsHandledOnceWhenANodeJoins(t *testing.T) {
 	t.Parallel()
 
@@ -42,8 +42,8 @@ func TestDistribution_eachEventIsHandledOnceWhenANodeJoins(t *testing.T) {
 
 	cluster := xtesting.StartCluster(t, db, handler.App(), 2)
 
-	// With 30 streams, the new node is all but certain to become responsible
-	// for at least one of them.
+	// With 30 streams, the new node is all but certain to own the workload of
+	// at least one of them.
 	streamIDs := populateStreams(t, db, 30, 3)
 	handler.ExpectHandledEventually(t, 90, xtesting.WaitTimeout)
 
@@ -56,8 +56,8 @@ func TestDistribution_eachEventIsHandledOnceWhenANodeJoins(t *testing.T) {
 }
 
 // TestDistribution_streamsOfAStoppedNodeAreConsumedByTheOthers verifies that
-// when a node stops, the streams that it was responsible for are consumed by
-// the remaining nodes once they see that it has left the cluster.
+// when a node that owns the workloads of some streams stops, the remaining nodes
+// consume those streams after they see that it has left the cluster.
 func TestDistribution_streamsOfAStoppedNodeAreConsumedByTheOthers(t *testing.T) {
 	t.Parallel()
 
@@ -66,8 +66,8 @@ func TestDistribution_streamsOfAStoppedNodeAreConsumedByTheOthers(t *testing.T) 
 
 	cluster := xtesting.StartCluster(t, db, handler.App(), 3)
 
-	// With 30 streams, the stopped node is all but certain to have been
-	// responsible for at least one of them.
+	// With 30 streams, the stopped node is all but certain to have owned the
+	// workload of at least one of them.
 	streamIDs := populateStreams(t, db, 30, 3)
 	handler.ExpectHandledEventually(t, 90, xtesting.WaitTimeout)
 

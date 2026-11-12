@@ -133,7 +133,7 @@ Each one has a test in the task that owns the code.
 **Files:**
 - Create: `internal/messagequeue/route.go`
 - Modify: `internal/messagequeue/consumer.go`,
-  `internal/messagequeue/attempt.go`, `internal/messagequeue/handler.go`
+  `internal/messagequeue/delivery.go`, `internal/messagequeue/handler.go`
 - Modify: `internal/aggregate/commandhandler.go`, `commandscope.go`,
   `internal/integration/commandhandler.go`, `commandscope.go`,
   `internal/process/deadlinehandler.go`, `messagescope.go`
@@ -157,7 +157,7 @@ Each one has a test in the task that owns the code.
   Deliver(
       ctx context.Context,
       tx *sql.Tx,
-      m Message,
+      d Delivery,
       env *envelopepb.Envelope,
       engineLogger *slog.Logger,
       appLogger *slog.Logger,
@@ -274,7 +274,8 @@ Each one has a test in the task that owns the code.
 
 **Files:**
 - Create: `internal/supervisor/streak.go`, `internal/messagequeue/fail.go`
-- Modify: `internal/messagequeue/attempt.go`, `internal/messagequeue/handler.go`
+- Modify: `internal/messagequeue/delivery.go`,
+  `internal/messagequeue/handler.go`
 - Modify: `internal/aggregate/commandhandler.go`,
   `internal/integration/commandhandler.go`,
   `internal/process/deadlinehandler.go` (return errors with context; stop
@@ -331,12 +332,12 @@ Each one has a test in the task that owns the code.
   determinism, jittered. `Work` and `Streak` share these through unexported
   functions.
 
-  The attempt builds a `Streak` from `Message.Failures` and
-  `Message.FailingSince` with the description "deliver message", calls
-  `Failed` or `FailedDeterministically` on `ErrFailed` and deterministic
-  errors, stores `failures + 1` and `since` with the delay, and calls
-  `Succeeded` after a successful commit. `ErrBusy` neither fails nor
-  succeeds the streak. Contention keeps `failing_since` as it is.
+  The attempt builds a `Streak` from `Delivery.Failures` and
+  `Delivery.FailingSince` with the description "deliver message", calls `Failed`
+  or `FailedDeterministically` on `ErrFailed` and deterministic errors, stores
+  `failures + 1` and `since` with the delay, and calls `Succeeded` after a
+  successful commit. `ErrBusy` neither fails nor succeeds the streak. Contention
+  keeps `failing_since` as it is.
 
   Handlers stop logging "unable to handle command", "unable to unmarshal
   command" and the like, and return `messagequeue.Fail(fmt.Errorf("unable to
