@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -164,7 +165,7 @@ func TestGroup(t *testing.T) {
 	t.Run("it returns a fatal error and stops the other functions", func(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 		group, ctx := WithContext(t.Context())
-		want := errors.New("<error>")
+		want := xerrors.Fatal(errors.New("<error>"))
 
 		group.Go(
 			logger,
@@ -179,7 +180,7 @@ func TestGroup(t *testing.T) {
 			logger,
 			"<work>",
 			func(context.Context) error {
-				return Fatal(want)
+				return want
 			},
 		)
 

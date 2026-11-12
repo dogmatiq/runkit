@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
@@ -213,7 +214,7 @@ func (c *Catalog) Watch(
 				// A source that does not offer event streams is unlikely to do
 				// otherwise soon.
 				if errors.Is(err, errors.ErrUnsupported) {
-					return supervisor.Deterministic(err)
+					return xerrors.Deterministic(err)
 				}
 
 				// Neither is a source that delivers an invalid segment, which
@@ -224,7 +225,7 @@ func (c *Catalog) Watch(
 						"received an invalid segment from an event stream source",
 						xslog.Error(err),
 					)
-					return supervisor.Deterministic(err)
+					return xerrors.Deterministic(err)
 				}
 
 				if err == nil && ctx.Err() == nil {

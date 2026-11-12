@@ -91,26 +91,31 @@ These were made with the maintainer, and aren't in [#100][100].
   Sinks return errors with context and don't log them, and the consumer logs
   each failure once. Because a failed attempt is rolled back, an error's
   classification affects only backoff and logging, never what's committed.
-- **A failure is deterministic if its error says so.** `supervisor` looks for
-  the first error in the chain with an `IsDeterministic() bool` method, and
-  treats the failure as transient if there's none. The packages where the
-  failures happen define those errors: `xerrors.PanicError` for every panic in
-  application code, the unmarshal errors from `xmessage`, a process instance's
-  state that can't be unmarshaled, a missing process instance, and an
-  envelope that can't be unmarshaled. `supervisor.Deterministic` stays for
-  marking errors that the code doesn't own, such as `errors.ErrUnsupported`.
+- **A failure is deterministic if its error says so.** `xerrors.IsDeterministic`
+  returns true for an error that is, or wraps, one created by
+  `xerrors.Deterministic`, or a `xerrors.PanicError`, so every panic in
+  application code is deterministic. It lives in `xerrors`, not `supervisor`, so
+  the code where a failure happens can mark it without depending on the code
+  that retries it. It recognizes only `xerrors`' own types, like
+  `xerrors.IsFatal`, so an application's error type can't change how the engine
+  retries it by accident. `xmessage` wraps an unpack failure with
+  `xerrors.Deterministic`, and the process package marks a missing instance or a
+  state that can't be unmarshaled the same way. Two consequences are accepted: a
+  handler that panics on a transient error gets the longer backoff, and a panic
+  in a remote engine discoverer is logged as an ERROR immediately, and
+  rediscovery waits up to five minutes.
 - **The streak lives on the row.** `supervisor.Streak` is a value built from
-  `Failures` and `FailingSince`. It writes the failure record at ERROR when
-  the failure is deterministic or the streak is older than `maxDebugStreak`,
-  and otherwise at DEBUG, and it returns the delay. There is no in-memory
+  `Failures` and `FailingSince`. It writes the failure record as an ERROR when
+  the failure is deterministic or the streak is older than `maxDebugStreak`, and
+  otherwise as a DEBUG record, and it returns the delay. There is no in-memory
   state, so it can't know whether an earlier attempt wrote an ERROR. Once a
   streak qualifies for an ERROR, every failed attempt writes one, which is at
-  most once per five minutes for a deterministic failure and once per 15
-  seconds for any other. The logging guide states this as an exception for
-  streaks stored outside the engine's memory. Recovery is INFO if the streak
-  is older than `maxDebugStreak`, and DEBUG otherwise. Storing whether a
-  streak has written its ERROR, in a new column, is tried in its own task
-  after the rest of this plan.
+  most once per five minutes for a deterministic failure and once per 15 seconds
+  for any other. The logging guide states this as an exception for streaks
+  stored outside the engine's memory. Recovery is INFO if the streak is older
+  than `maxDebugStreak`, and DEBUG otherwise. Storing whether a streak has
+  written its ERROR, in a new column, is tried in its own task after the rest of
+  this plan.
 - **A delivery's backoff is `Work`'s.** It doubles from 100 ms, up to 15
   seconds for a transient failure and five minutes for a deterministic one.
   It will be made configurable later, outside this plan.
@@ -347,17 +352,15 @@ a handoff, are accepted and documented in the code.
 
 **Files:**
 - Create: `internal/supervisor/streak.go`, `internal/supervisor/failure.go`
-- Modify: `internal/supervisor/work.go`, `internal/supervisor/error.go`,
-  `internal/supervisor/supervisor.go`, `internal/x/xerrors/recover.go`,
-  `internal/x/xmessage` (an unmarshal error type)
+- Modify: `internal/supervisor/work.go`
 - Modify: `internal/messagequeue/delivery.go`,
   `internal/messagequeue/sink.go`
 - Modify: `internal/aggregate/commandsink.go`, `internal/aggregate/instance.go`,
   `internal/integration/commandsink.go`, `internal/process/deadlinesink.go`,
-  `internal/process/instance.go` (return errors with context, and stop
-  logging them)
+  `internal/process/instance.go` (return errors with context, mark the
+  deterministic ones with `xerrors.Deterministic`, and stop logging them)
 - Test: `internal/supervisor/streak_test.go`,
-  `internal/supervisor/error_test.go`, `internal/messagequeue/consumer_test.go`
+  `internal/messagequeue/consumer_test.go`
 
 **Interfaces:**
 - Produces:
@@ -375,8 +378,8 @@ a handoff, are accepted and documented in the code.
 
   // Failed writes the record for a failure of the work, and returns the
   // delay before the next attempt and the time of the first failure in the
-  // streak. The failure is deterministic if err has an IsDeterministic
-  // method that returns true.
+  // streak. The failure is deterministic if xerrors.IsDeterministic returns
+  // true for err.
   func (s Streak) Failed(
       ctx context.Context,
       err error,
@@ -385,15 +388,11 @@ a handoff, are accepted and documented in the code.
   // Succeeded writes the streak's recovery record, if a streak is in
   // progress.
   func (s Streak) Succeeded(ctx context.Context)
-
-  // IsDeterministic returns true, on xerrors.PanicError and on the
-  // unmarshal and missing-instance errors.
-  func (e PanicError) IsDeterministic() bool
   ```
 
-  `Run` classifies errors by the same method. `ErrFailed` goes, and any error
-  from a sink except `ErrBusy` is a failure. The names of the new error types
-  are proposed before they're written.
+  `ErrFailed` goes, and any error from a sink except `ErrBusy` is a failure.
+  A missing process instance, or a state that can't be unmarshaled, is
+  wrapped with `xerrors.Deterministic`.
 
   The level rules are the ones in `Work.fail`, with `loggedError` replaced
   by "`Since` is older than `maxDebugStreak`": ERROR if deterministic or
@@ -417,11 +416,19 @@ a handoff, are accepted and documented in the code.
   postponed" record. An attempt that fails because the consumer is stopping
   writes nothing.
 
-  Before this task, a rename-only commit gives the bare `logger` parameters in
-  the aggregate and process packages the name `engineLogger`, as the logging
-  guide requires.
+  Before this task, two commits prepare for it. A rename-only commit gives
+  the bare `logger` parameters in the aggregate and process packages the name
+  `engineLogger`, as the logging guide requires. Another moves `Fatal` and
+  the classification of deterministic failures from `supervisor` to
+  `xerrors`, as `xerrors.Fatal`, `xerrors.IsFatal`, `xerrors.Deterministic`
+  and `xerrors.IsDeterministic`, and wraps unpack failures in `xmessage` with
+  `xerrors.Deterministic`.
 
-- Consumes: the rollback from the previous task.
+  Also replace "at <level>" with "as an ERROR", "as a DEBUG record" and so
+  on in `docs/maintainers/logging.md`, `internal/supervisor/work.go` and
+  `internal/cluster/node.go`.
+
+- Consumes: the rollback from the previous task, and `xerrors.IsDeterministic`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -436,9 +443,6 @@ a handoff, are accepted and documented in the code.
       t.Run("it starts the streak at the first failure", ...)        // since == now when Failures == 0
   }
   ```
-
-  `error_test.go`: an error with `IsDeterministic()` is deterministic, even
-  when wrapped, and the first such error in the chain decides.
 
   `consumer_test.go`:
 
@@ -522,11 +526,17 @@ Its assumptions are restated before it starts.
 - Modify: `CHANGELOG.md`, `docs/.plans/` (delete the queue plans and the
   logging plan)
 
-- [ ] **Step 1: Read the `[Unreleased]` section as a whole** and make its
+- [ ] **Step 1: Add one entry for the net change since v0.2.0 in retrying and
+  logging failures.** No commit on this branch has recorded it. An ordinary
+  projection failure now waits at most 15 seconds instead of five minutes, and
+  its streak logs one ERROR instead of one per failure. A panic, or a message
+  that can't be unpacked, is deterministic, so it's logged as an ERROR
+  immediately and waits up to five minutes.
+- [ ] **Step 2: Read the `[Unreleased]` section as a whole** and make its
   entries for the queue read as one change, with the stop-migrate-restart
   note once, and check that it agrees with the [migration guide].
-- [ ] **Step 2: Delete the completed plans**
-- [ ] **Step 3: Stop for review**, then comment on [#100][100], [#99][99],
+- [ ] **Step 3: Delete the completed plans**
+- [ ] **Step 4: Stop for review**, then comment on [#100][100], [#99][99],
   [#102][102], [#58][58] and [#91][91] with what landed and the follow-ups from
   plan 1.
 
