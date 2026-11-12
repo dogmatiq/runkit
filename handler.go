@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/runkit/internal/aggregate"
@@ -15,7 +14,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"golang.org/x/sync/semaphore"
 )
 
 // runHandler starts the components that manage the given handler, and adds
@@ -92,11 +90,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		)
 
 	case *config.Projection:
-		var handlerLock *semaphore.Weighted
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			handlerLock = semaphore.NewWeighted(1)
-		}
-
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
@@ -105,7 +98,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Identity:      handlerConfig.Identity(),
 				Concurrency:   handlerConfig.ConcurrencyPreference(),
 				EventTypes:    inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				HandlerLock:   handlerLock,
 				HandleTimeout: e.handleTimeout,
 				RouteTimeout:  e.routeTimeout,
 				EngineLogger:  engineLogger,
