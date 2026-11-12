@@ -717,13 +717,24 @@ deadlock. 0.2.0 had the same inversion.
 Not tests. Run by hand on a database with representative data, and record
 the results in [#100][100]:
 
-- `EXPLAIN (ANALYZE, BUFFERS)` for the query for the next messages with tens of
-  consumed queues, a handful of message types with handlers, a large queue, and
-  many messages being attempted.
-- Throughput and connection-pool waits with the concurrency limit
+- [ ] `EXPLAIN (ANALYZE, BUFFERS)` for the query for the next messages with
+  tens of consumed queues, a handful of message types with handlers, a large
+  queue, and many messages being attempted.
+- [ ] Throughput and connection-pool waits with the concurrency limit
   saturated.
-- Queries for the next messages per delivered message with a backlog of due
+- [ ] Queries for the next messages per delivered message with a backlog of due
   messages, which batching should keep well below one.
+
+## Work done outside the tasks
+
+Changes made on this branch during the tasks' reviews, each in its own commit:
+
+- [x] The projection sink holds its own handler lock, a `cosyne.Mutex` that it
+  takes when the handler prefers `MinimizeConcurrency`, instead of a semaphore
+  from the engine. `cosyne.Mutex` was added for this in
+  [dogmatiq/cosyne#102][cosyne-102] and released in cosyne 0.4.0. (bb7e552)
+- [x] The aggregate package has an `instance` type, like the process package's,
+  and locks or creates an instance's row in one statement. (0c1d0e5)
 
 ## Out of scope
 
@@ -741,5 +752,6 @@ the results in [#100][100]:
 [99]: https://github.com/dogmatiq/runkit/issues/99
 [100]: https://github.com/dogmatiq/runkit/issues/100
 [112]: https://github.com/dogmatiq/runkit/issues/112
+[cosyne-102]: https://github.com/dogmatiq/cosyne/pull/102
 [logging guide]: ../maintainers/logging.md
 [plan-1]: 2026-11-08-queue-1-storage.md
