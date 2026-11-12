@@ -387,6 +387,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Concurrency:     e.messageQueueConcurrency,
 		ContentionDelay: e.messageQueueContentionDelay,
 		EngineLogger:    e.engineLogger,
+		AppLogger:       e.appLogger,
 	}
 
 	e.group.Go(func() error {

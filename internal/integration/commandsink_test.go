@@ -36,11 +36,10 @@ func TestCommandSink(t *testing.T) {
 				},
 				Concurrency:   dogma.MinimizeConcurrency,
 				HandleTimeout: time.Minute,
-				EngineLogger:  spruce.NewTestLogger(t),
-				AppLogger:     spruce.NewTestLogger(t),
 			}
 
 			env := xtesting.PackCommand(t, stubs.CommandA1)
+			logger := spruce.NewTestLogger(t)
 
 			return func() error {
 				tx, err := db.BeginTx(t.Context(), nil)
@@ -54,6 +53,8 @@ func TestCommandSink(t *testing.T) {
 					tx,
 					messagequeue.Delivery{},
 					env,
+					logger,
+					logger,
 				)
 			}
 		}

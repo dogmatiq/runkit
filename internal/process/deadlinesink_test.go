@@ -49,8 +49,6 @@ func TestDeadlineSink(t *testing.T) {
 				CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
 			},
 			HandleTimeout: time.Minute,
-			EngineLogger:  spruce.NewTestLogger(t),
-			AppLogger:     spruce.NewTestLogger(t),
 		}
 
 		env := packer.
@@ -110,7 +108,14 @@ func TestDeadlineSink(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		err = sink.Deliver(ctx, tx, messagequeue.Delivery{}, env)
+		err = sink.Deliver(
+			ctx,
+			tx,
+			messagequeue.Delivery{},
+			env,
+			spruce.NewTestLogger(t),
+			spruce.NewTestLogger(t),
+		)
 
 		postponed := errors.Is(err, messagequeue.ErrBusy) || errors.Is(err, messagequeue.ErrFailed)
 

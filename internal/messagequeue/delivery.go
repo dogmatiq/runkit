@@ -56,12 +56,58 @@ func (c *Consumer) attemptDelivery(
 		return false, nil
 	}
 
+	// [Consumer.claimMessage] claims only messages of the types in c.Sinks, so
+	// there's always a sink for the message's type.
+	sink, _ := c.Sinks.Get(d.MessageTypeID)
+
 	logger := c.EngineLogger.With(
-		xslog.UUID("message_id", d.MessageID),
-		slog.Uint64("failures", d.Failures),
+		slog.Group(
+			"delivery",
+			xslog.UUID("message_id", d.MessageID),
+		),
+		sink.LogAttr(),
 	)
 
-	completed, err := c.deliverMessage(ctx, tx, d, envelopeData, logger)
+	// The application's records are held until the attempt completes the
+	// delivery and its transaction commits, so an attempt that fails or rolls
+	// back writes none.
+	appLogger, flush := xslog.Buffered(
+		c.AppLogger.With(sink.LogAttr()),
+	)
+
+	var completed bool
+
+	env := &envelopepb.Envelope{}
+	err = env.UnmarshalBinary(envelopeData)
+	if err == nil {
+		err = env.Validate()
+	}
+
+	if err != nil {
+		// The message can't be delivered without a valid envelope, so its
+		// delivery is postponed as a failure.
+		logger.DebugContext(
+			ctx,
+			"message envelope is invalid",
+			xslog.Error(err),
+		)
+
+		err = c.postponeAfterFailure(ctx, tx, d, logger)
+	} else {
+		handledMessage := xslog.Envelope("handled_message", env)
+		logger = logger.With(handledMessage)
+
+		completed, err = c.deliverMessage(
+			ctx,
+			tx,
+			d,
+			env,
+			sink,
+			logger,
+			appLogger.With(handledMessage),
+		)
+	}
+
 	if err != nil {
 		return false, err
 	}
@@ -72,6 +118,7 @@ func (c *Consumer) attemptDelivery(
 
 	if completed {
 		logger.DebugContext(ctx, "message delivery completed")
+		flush(ctx)
 	}
 
 	return completed, nil
@@ -150,49 +197,27 @@ func (c *Consumer) claimMessage(
 	return d, envelopeData, true, nil
 }
 
-// deliverMessage passes the message to its sink within tx.
+// deliverMessage passes the message in the given envelope to the given sink
+// within tx.
 //
 // It removes the message from its queue after the sink returns nil, and
-// postpones the delivery instead if the envelope is invalid, or the sink
-// returns [ErrFailed] or [ErrBusy]. It returns true if the delivery is
-// complete.
+// postpones the delivery instead if the sink returns [ErrFailed] or [ErrBusy].
+// It returns true if the delivery is complete.
 //
-// envelopeData is the binary representation of the message's envelope.
+// logger is the target for the engine's records about the delivery, both the
+// consumer's and the sink's. appLogger is passed to the sink.
 func (c *Consumer) deliverMessage(
 	ctx context.Context,
 	tx *sql.Tx,
 	d Delivery,
-	envelopeData []byte,
+	env *envelopepb.Envelope,
+	sink Sink,
 	logger *slog.Logger,
+	appLogger *slog.Logger,
 ) (bool, error) {
-	env := &envelopepb.Envelope{}
-	err := env.UnmarshalBinary(envelopeData)
-	if err == nil {
-		err = env.Validate()
-	}
-
-	// The message can't be delivered without a valid envelope, so its delivery
-	// is postponed as a failure.
-	if err != nil {
-		logger.DebugContext(
-			ctx,
-			"message envelope is invalid",
-			xslog.Error(err),
-		)
-
-		return false, c.postponeAfterFailure(ctx, tx, d, logger)
-	}
-
-	logger = logger.With(
-		xslog.Envelope("handled_message", env),
-	)
-
 	logger.DebugContext(ctx, "message delivery attempt started")
 
-	// [Consumer.claimMessage] claims only messages of the types in c.Sinks, so
-	// there's always a sink for the message's type.
-	s, _ := c.Sinks.Get(d.MessageTypeID)
-	err = s.Deliver(ctx, tx, d, env)
+	err := sink.Deliver(ctx, tx, d, env, logger, appLogger)
 
 	switch {
 	case err == nil:
@@ -249,6 +274,7 @@ func (c *Consumer) postponeAfterFailure(
 		"message delivery postponed",
 		slog.Duration("delay", delay),
 		slog.String("reason", "failure"),
+		slog.Uint64("failures", d.Failures+1),
 	)
 
 	return nil

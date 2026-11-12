@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,6 +103,7 @@ func TestConsumer(t *testing.T) {
 			Concurrency:     concurrency,
 			ContentionDelay: contentionDelay,
 			EngineLogger:    logger,
+			AppLogger:       logger,
 		}
 
 		return xtesting.GoE(t, consumer.Run)
@@ -946,6 +948,12 @@ func (f sinkFunc) Deliver(
 	tx *sql.Tx,
 	d Delivery,
 	env *envelopepb.Envelope,
+	engineLogger *slog.Logger,
+	appLogger *slog.Logger,
 ) error {
 	return f(ctx, tx, d, env)
+}
+
+func (f sinkFunc) LogAttr() slog.Attr {
+	return slog.String("sink", "test")
 }

@@ -59,11 +59,17 @@ the last one taught them, and change the plan before changing the code.
 
 These were made with the maintainer, and aren't in [#100][100].
 
-- **The consumer owns the loggers.** `Consumer.Handlers` maps each message
-  type to a `messagequeue.Route`, which pairs the handler with its engine and
-  application loggers. The consumer derives the attempt's loggers, buffers
-  the application one, and flushes it after the commit. Handlers lose their
-  `EngineLogger` and `AppLogger` fields.
+- **Loggers carry only what's true of every record, and the code that knows
+  more adds it.** The message queue consumer holds the engine's base loggers
+  and passes both to the sink on each call, so the queue sinks hold no loggers.
+  Each sink adds its handler's identity, using a shared helper, so the
+  `handler` group is the same wherever it's added. The consumer adds the
+  identity that the sink reports to its own records about a delivery.
+- **The code that decides whether handling counts buffers the application's
+  records.** The message queue consumer commits each delivery, so it buffers
+  each attempt's application records, and writes them only if the delivery
+  completed and the transaction committed. A failed or contended attempt's
+  records are discarded, as the event sinks already do.
 - **A failure is logged once, by the consumer.** Handlers return errors with
   context and don't log them. `messagequeue.Fail(err)` marks an application
   failure to postpone with a failure counted. `messagequeue.ErrBusy` marks
@@ -131,77 +137,80 @@ Each one has a test in the task that owns the code.
 
 ### Task 1: Buffered application records
 
-> **Revisit before starting.** The consumer plan gave each sink its own
-> `EngineLogger` and removed `Deliver`'s logger parameter. `Route` also collides
-> with Dogma's "route", which means a declaration made with a configurer. The
-> [logging guide] requires a `delivery` group with the delivery's ID and attempt
-> number, but there's no attempt count: the consumer and the sinks log
-> `failures` instead. Update the guide to match.
+**Decisions** (agreed before starting):
 
-**Files:**
-- Create: `internal/messagequeue/route.go`
-- Modify: `internal/messagequeue/consumer.go`,
-  `internal/messagequeue/delivery.go`, `internal/messagequeue/sink.go`
-- Modify: `internal/aggregate/commandsink.go`, `commandscope.go`,
-  `internal/integration/commandsink.go`, `commandscope.go`,
-  `internal/process/deadlinesink.go`, `messagescope.go`
-- Modify: `engine.go` (`runHandler` builds routes)
-- Test: `internal/messagequeue/consumer_test.go`, and the existing handler
-  suites
+- `messagequeue.Sink.Deliver` gains `engineLogger` and `appLogger` parameters.
+  The consumer builds `appLogger` for each attempt with `xslog.Buffered`, from
+  its base `AppLogger` with `handled_message` added, and flushes it only if the
+  delivery completed and the commit succeeded.
+- `Consumer.Sinks` stays a map of sinks. The consumer gains `AppLogger`. The
+  aggregate, integration and deadline sinks lose their `EngineLogger` and
+  `AppLogger` fields.
+- `messagequeue.Sink` gains `LogAttr() slog.Attr`: "LogAttr returns an
+  attribute that describes the sink in log records. The consumer adds it to its
+  records about deliveries to the sink." The consumer adds it from the point
+  where it looks up the sink. It doesn't add it to the loggers it passes to the
+  sink.
+- Each queue sink's `LogAttr` returns its handler's `handler` group, built with
+  `xslog.HandlerIdentity`, which replaces `newLoggerForHandler`'s body, so the
+  engine and the sinks build the group the same way. Each sink adds its own
+  `LogAttr` to the loggers it's passed, so its records and the consumer's
+  records about it carry the same attribute.
+- The aggregate and integration scopes gain an `engineLogger`, and write the
+  engine DEBUG records that the process scopes write, such as "handler recorded
+  an event".
+- The [logging guide] gains two passages and a section:
+  - in "Layers", that a logger carries only what's true of every record
+    written through it, that the code that knows more adds it, and that code
+    whose application records depend on an outcome that something else decides
+    is passed its application logger by that code;
+  - in "Application records", that the code that decides whether the handling
+    of a message counts buffers its application records, replacing "Each scope
+    buffers…";
+  - a section, "How the engine applies these rules", which says it lists some of
+    the decisions that follow from the rules, not all of them, with parts for
+    the message queue and for projection compaction. Its part for event streams
+    is added by the follow-up below, when the code matches it.
+- The engine's records about a delivery carry a `delivery` group holding only
+  `message_id`, replacing the top-level `message_id`. It identifies the
+  delivery, including on the records written before the envelope is unpacked,
+  which have no `handled_message`. A delivery can fail in only one streak,
+  because nothing resets a message's failure count and completing removes the
+  message, so `delivery.message_id` also pairs a streak's ERROR with its
+  recovery.
+- Failure and recovery records about a delivery carry the same attributes as
+  `supervisor.Work`'s, at the top level: `error`, `failing_since`, `failures`
+  and `delay` on each failure, plus `failing_for` on the ERROR, and
+  `failing_since`, `failures` and `failing_for` on recovery, without
+  `succeeding_for`. Task 3 writes them through `Streak`. Until then, the other
+  records about a delivery stop carrying `failures`.
+- The guide's "Streaks" section gains: "When the work can only fail in one
+  streak, such as delivering one message, the attributes that identify the work
+  also identify the streak." Its `delivery` row describes the group above.
 
-**Interfaces:**
-- Produces:
+**Follow-up, in the [logging plan][logging-plan]:** the event stream consumers
+and their sinks follow the same rule. Each consumer holds the base loggers and
+passes them to its sink, which adds its handler's identity. `eventstream.Sink`
+gains the same `LogAttr` method, for the consumer's own records. The projection
+compactor adds its projection's identity to base loggers. The process and
+projection event sinks keep buffering their own application records, because
+each decides whether the handling of an event counts. The guide's "How the
+engine applies these rules" section gains its part for event streams then.
 
-  ```go
-  // Route is the handler for some message types, with the loggers that
-  // identify it.
-  type Route struct {
-      Handler      Handler
-      EngineLogger *slog.Logger
-      AppLogger    *slog.Logger
-  }
+- [x] **Step 1: Agree the decisions above**
+- [x] **Step 2: Write the failing tests**
 
-  // Handler.Deliver gains an application logger:
-  Deliver(
-      ctx context.Context,
-      tx *sql.Tx,
-      d Delivery,
-      env *envelopepb.Envelope,
-      engineLogger *slog.Logger,
-      appLogger *slog.Logger,
-  ) error
-  ```
+  Logging isn't tested. The tests are structural: the consumer's test sink
+  receives the loggers, and the handler suites compile against the new
+  signature.
 
-  `Consumer.Sinks` becomes `Routes uuidcollection.Map[Route]`. For each
-  attempt, the consumer builds `engineLogger` from the route's with the
-  `attempt` group and `handled_message`, and `appLogger, flush :=
-  xslog.Buffered(route.AppLogger.With(handled_message))`. It calls `flush`
-  after a successful commit, and never otherwise. The aggregate and
-  integration handlers drop their `AppLogger` fields. Their scopes gain an
-  `engineLogger` and write the engine DEBUG records the process scopes
-  write: "handler logged a message", "handler recorded an event", with the
-  instance attribute for aggregates. The deadline scope stops writing its
-  application records at once; it shares `messageScope` with the event
-  scope, which already buffers.
-
-- Consumes: `xslog.Buffered`.
-
-- [ ] **Step 1: Write the failing tests**
-
-  Buffering isn't tested through logs. The test is structural: in
-  `consumer_test.go`, "it delivers through the route's handler" replaces the
-  stub `Handler` registration with a `Route`. The handler suites compile
-  against the new signature.
-
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement it**
-- [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Update the logging plan**
-
-  Remove the first and third items of its "After #100" section, which this
-  task finishes.
-
-- [ ] **Step 6: Stop for review**
+- [x] **Step 3: Run `make test` to verify they fail**
+- [x] **Step 4: Implement it**, and update the [logging guide]
+- [x] **Step 5: Run `make test` to verify they pass**
+- [x] **Step 6: Update the [logging plan][logging-plan]:** remove the first and
+  third items of its "After #100" section, which this task finishes, and add the
+  follow-up above.
+- [x] **Step 7: Stop for review**
 
 ---
 
