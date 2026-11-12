@@ -11,12 +11,10 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
-// Handler delivers queued messages to one of the application's message
-// handlers, such as an aggregate or a process.
+// Sink is the destination to which a [Consumer] passes queued messages.
 //
-// [Consumer.Handlers] maps each message type to the Handler that delivers the
-// messages of that type.
-type Handler interface {
+// Each sink delivers messages to one of the application's message handlers.
+type Sink interface {
 	// Deliver delivers the message in the given envelope within tx.
 	//
 	// It returns [ErrFailed] if this attempt to deliver the message failed, so
@@ -58,11 +56,11 @@ type Delivery struct {
 }
 
 var (
-	// ErrFailed is returned by [Handler.Deliver] when an attempt to deliver a
+	// ErrFailed is returned by [Sink.Deliver] when an attempt to deliver a
 	// message fails.
 	ErrFailed = errors.New("unable to deliver message")
 
-	// ErrBusy is returned by [Handler.Deliver] when the handler needs a row and
+	// ErrBusy is returned by [Sink.Deliver] when the sink needs a row and
 	// another transaction holds that row's lock.
 	ErrBusy = errors.New("delivery handler is busy")
 )

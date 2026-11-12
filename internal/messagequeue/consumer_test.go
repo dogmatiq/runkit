@@ -75,13 +75,13 @@ func TestConsumer(t *testing.T) {
 
 	// run runs a consumer of messages of typeID on the given node, with the
 	// given concurrency limit, and returns a function that stops it. The
-	// consumer delivers each message to the given handler.
+	// consumer passes each message to the given sink.
 	run := func(
 		t *testing.T,
 		db *sql.DB,
 		n *cluster.Node,
 		concurrency int,
-		h Handler,
+		s Sink,
 	) func() {
 		logger := spruce.NewTestLogger(t)
 
@@ -92,14 +92,14 @@ func TestConsumer(t *testing.T) {
 		}
 		xtesting.GoE(t, queues.Run)
 
-		var handlers uuidcollection.Map[Handler]
-		handlers.Set(typeID, h)
+		var sinks uuidcollection.Map[Sink]
+		sinks.Set(typeID, s)
 
 		consumer := &Consumer{
 			DB:              db,
 			Node:            n,
 			Queues:          queues,
-			Handlers:        handlers,
+			Sinks:           sinks,
 			Concurrency:     concurrency,
 			ContentionDelay: contentionDelay,
 			EngineLogger:    logger,
@@ -233,12 +233,12 @@ func TestConsumer(t *testing.T) {
 		)
 	}
 
-	// record returns a handler that sends the ID of each message to the
+	// record returns a sink that sends the ID of each message to the
 	// returned channel, then delivers it.
-	record := func() (Handler, <-chan *uuidpb.UUID) {
+	record := func() (Sink, <-chan *uuidpb.UUID) {
 		attempted := make(chan *uuidpb.UUID, 100)
 
-		return handlerFunc(
+		return sinkFunc(
 			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
 				select {
 				case <-ctx.Done():
@@ -250,13 +250,13 @@ func TestConsumer(t *testing.T) {
 		), attempted
 	}
 
-	// block returns a handler that sends the ID of each message to the
+	// block returns a sink that sends the ID of each message to the
 	// returned channel, then delivers it once the returned function is called.
-	block := func() (Handler, <-chan *uuidpb.UUID, func()) {
+	block := func() (Sink, <-chan *uuidpb.UUID, func()) {
 		attempted := make(chan *uuidpb.UUID, 100)
 		release := make(chan struct{})
 
-		h := handlerFunc(
+		h := sinkFunc(
 			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
 				attempted <- d.MessageID
 
@@ -362,7 +362,7 @@ func TestConsumer(t *testing.T) {
 		expectAttempt(t, attempted, sentinel)
 	})
 
-	t.Run("it ignores a message of a type it has no handler for", func(t *testing.T) {
+	t.Run("it ignores a message whose type has no sink", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
@@ -389,7 +389,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(context.Context, *sql.Tx, Delivery, *envelopepb.Envelope) error {
 					select {
 					case attemptedAt <- time.Now():
@@ -626,7 +626,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
 					if failed.CompareAndSwap(false, true) {
 						return ErrFailed
@@ -650,7 +650,7 @@ func TestConsumer(t *testing.T) {
 		)
 	})
 
-	t.Run("it postpones the delivery when a row that the handler needs is locked, without a failure", func(t *testing.T) {
+	t.Run("it postpones the delivery without a failure when the sink needs a row while another transaction holds that row's lock", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
@@ -662,7 +662,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
 					if busy.CompareAndSwap(false, true) {
 						return ErrBusy
@@ -720,7 +720,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
 					select {
 					case attempted <- d.MessageID:
@@ -809,7 +809,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(ctx context.Context, tx *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
 					if _, err := tx.ExecContext(
 						ctx,
@@ -865,7 +865,7 @@ func TestConsumer(t *testing.T) {
 			db,
 			n,
 			10,
-			handlerFunc(
+			sinkFunc(
 				func(context.Context, *sql.Tx, Delivery, *envelopepb.Envelope) error {
 					select {
 					case started <- struct{}{}:
@@ -904,16 +904,16 @@ func TestConsumer(t *testing.T) {
 	})
 }
 
-// handlerFunc is a [Handler] that delivers each message by calling a
+// sinkFunc is a [Sink] that delivers each message by calling a
 // function.
-type handlerFunc func(
+type sinkFunc func(
 	ctx context.Context,
 	tx *sql.Tx,
 	d Delivery,
 	env *envelopepb.Envelope,
 ) error
 
-func (f handlerFunc) Deliver(
+func (f sinkFunc) Deliver(
 	ctx context.Context,
 	tx *sql.Tx,
 	d Delivery,

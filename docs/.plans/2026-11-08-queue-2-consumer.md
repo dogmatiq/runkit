@@ -17,7 +17,7 @@ queues and the signal of each queue while it owns the queue's workload. It keeps
 the set of those queues, finds the earliest deliverable message across them with
 one indexed query, and runs each attempt in its own goroutine and transaction,
 up to its concurrency limit. The consumer claims each message for an attempt
-with `FOR UPDATE NOWAIT`, then passes it to the `messagequeue.Handler` for its
+with `FOR UPDATE NOWAIT`, then passes it to the `messagequeue.Sink` for its
 message type. If another transaction holds the message's lock, the consumer
 doesn't attempt it again until a contention delay has passed. When a queue's
 workload moves to another node, this node doesn't start any new attempts on its
@@ -85,7 +85,7 @@ These were made with the maintainer, and aren't in [#100][100].
   Names say "delivery" where `messagequeue` wouldn't say what's attempted:
   `deliveryAttempt` and `Consumer.attemptDelivery`.
   `Consumer.findNextMessages` returns each `message` without its envelope, and a
-  claim returns its `Delivery`, which handlers receive. [#100][100] calls
+  claim returns its `Delivery`, which sinks receive. [#100][100] calls
   finding the next messages "discovery".
 - **The consumer claims only the message that an attempt was started for.**
   [#100][100] asks for a fallback to other work that is due, because its
@@ -96,10 +96,10 @@ These were made with the maintainer, and aren't in [#100][100].
   of a queue moves to another node while an attempt is in progress, which may be
   often, since an integration may take as long as the handle timeout and
   membership can change several times in that period.
-- **Handlers keep their own lock behavior for now.** The aggregate handler keeps
-  `SKIP LOCKED` on its instance and reports `ErrBusy`. The deadline handler
-  gains the savepoint and `lock_timeout` sequence from [#100][100] in task 6.
-  The deliveries plan may unify them.
+- **Sinks keep their own lock behavior for now.** The aggregate sink keeps
+  `SKIP LOCKED` on its instance and reports `ErrBusy`. The deadline sink gains
+  the savepoint and `lock_timeout` sequence from [#100][100] in task 6. The
+  deliveries plan may unify them.
 - **An attempt's context derives from the consumer's**, not from ownership of
   its queue's workload, so when the workload moves, in-flight attempts finish,
   and shutdown cancels them.
@@ -112,12 +112,39 @@ These were made with the maintainer, and aren't in [#100][100].
   node owns a workload, never the key, the stream or the queue itself.
 - **The consumer's own failures use `supervisor.Work`** with a quiet period,
   under the description "consume queue". A failure to find the next messages, or
-  to claim one, is a failure of the consumer; a failed attempt is the handler's,
+  to claim one, is a failure of the consumer; a failed attempt is the sink's,
   reported through `ErrFailed`. The consumer's backoff stops it from starting
   attempts, but doesn't stop the attempts in flight.
-- **Integration concurrency** is a semaphore of one inside the integration
-  handler when it minimizes concurrency, since there is no longer one worker per
-  handler.
+- **A sink is where the consumer passes each message**, as `eventstream.Sink` is
+  for the event stream consumer. Task 5 renames `messagequeue.Handler` to
+  `messagequeue.Sink`, and the types that implement it are
+  `aggregate.CommandSink`, `integration.CommandSink` and `process.DeadlineSink`.
+  In Dogma, a handler is the application's message handler, so the engine's
+  types don't use the word.
+- **The consumer removes a delivered message.** When a sink returns nil, the
+  consumer deletes the message within the attempt's transaction. It doesn't
+  fail if that transaction already removed the message, which happens when a
+  deadline ends its process instance. Sinks, and the SQL functions they call,
+  don't remove the message, and `messagequeue.remove` is dropped.
+- **One node delivers the commands of an integration that minimizes
+  concurrency.** `messagequeue.Router` adds each of its commands to the queue
+  whose ID is the integration's key. The integration sink holds an
+  engine-supplied semaphore during each call to the handler, taken with
+  `TryAcquire`, and returns `ErrBusy` if another call holds it. While nodes see
+  different live nodes, two of them may briefly both deliver the commands,
+  which Dogma allows, because a concurrency preference is a hint. Waiting for
+  the semaphore, or for today's cluster-wide advisory lock, would hold a slot
+  and a connection for up to the handle timeout, so the advisory lock and
+  `internal/concurrency` go.
+- **The router keeps resolved handler values.** `messagequeue.CommandHandler`
+  holds what `RouteCommandToQueue` reads from the configuration of each command
+  type's handler, because enginekit's configuration accessors resolve and
+  validate on every call. It replaces `AggregateRoute`, whose name also
+  collided with Dogma's "route".
+- **Each sink logs to its own `EngineLogger`**, which has the handler's
+  identity, as the event sinks do, so `Sink.Deliver` takes no logger. The
+  consumer's own records don't have the handler's identity until the
+  deliveries plan.
 - **"Now" for deadlines is Go's clock**, passed to the query for the next
   messages and to the claim, for the reason in today's
   `DeadlinePump.AcquireDelivery` comment.
@@ -240,9 +267,10 @@ until heartbeats move, in follow-up 1 of [plan 1][plan-1].
 ### Task 2: Queue timing options
 
 Folded into the tasks that give each option an effect, so that neither lands
-before anything reads it. `WithQueueContentionDelay` is added in task 5, which
-builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
-`DeadlineHandler.LockTimeout`.
+before anything reads it. `WithMessageQueueContentionDelay` and
+`WithMessageQueueConcurrency` are added in task 5, which builds the consumer,
+and `WithMessageQueueLockTimeout` in task 6, which adds
+`DeadlineSink.LockTimeout`.
 
 ---
 
@@ -501,117 +529,159 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
 ---
 
-### Task 5: Handlers, wiring and removal of `messagepump`
+### Task 5: Sinks, wiring and removal of `messagepump`
+
+Two commits. The first renames `messagequeue.Handler` to `messagequeue.Sink`,
+with no behavior change. The second is the rest of this task.
 
 **Files:**
-- Rename: `internal/aggregate/commandpump.go` → `commandhandler.go`,
-  `internal/integration/commandpump.go` → `commandhandler.go`,
-  `internal/process/deadlinepump.go` → `deadlinehandler.go`
-- Delete: `internal/messagepump/`
-- Modify: `engine.go` (`runHandler`, `workerCountForHandler`, the pump
-  constants), `engineoption.go`, `internal/x/xtesting/commandqueue.go`
-- Test: the existing suites in `internal/aggregate`, `internal/integration`,
+- Rename (first commit): `internal/messagequeue/handler.go` → `sink.go`
+- Rename: `internal/aggregate/commandpump.go` → `commandsink.go`,
+  `internal/integration/commandpump.go` → `commandsink.go`,
+  `internal/process/deadlinepump.go` → `deadlinesink.go`
+- Delete: `internal/messagepump/`, `internal/concurrency/`
+- Modify: `internal/messagequeue` (`consumer.go`, `delivery.go`, `doc.go`,
+  `router.go`), `internal/process/instancestate.go`, `engine.go`,
+  `engineoption.go`, `handler.go`, `routes.go`,
+  `internal/x/xtesting/commandqueue.go`, and the SQL in
+  `internal/schema/ddl/10-messagequeue`, `20-aggregate` and `20-integration`
+- Test: `internal/messagequeue/consumer_test.go`, `router_test.go`, the
+  existing suites in `internal/aggregate`, `internal/integration`,
   `internal/process` and the root package, and `engineoption_test.go` (new)
 
 **Interfaces:**
-- Produces: `aggregate.CommandHandler`, `integration.CommandHandler` and
-  `process.DeadlineHandler`, each implementing `messagequeue.Handler`. Their
-  `AcquireDelivery` and `PostponeDelivery` methods go. `HandleDelivery` becomes
-  `Deliver` with the `messagequeue.Delivery` parameter. `messagepump.ErrFailed`
-  and `ErrBusy` references become `messagequeue.ErrFailed` and
-  `messagequeue.ErrBusy`. `integration.CommandHandler` gains an unexported
-  semaphore of one when `Concurrency` is `MinimizeConcurrency`, acquired for the
-  handler call.
-
-  In `engine.go`, `Run` builds one `messagequeue.Consumer` whose `Handlers` map
-  every command type to its handler and every deadline type to its process
-  handler, with `Concurrency` from `workerCountForHandler`'s formula, and
-  runs it in the group. `runHandler` no longer starts pumps.
-  `workerCountForHandler` and the pump constants go.
-
-  The engine sets the consumer's `ContentionDelay` from a new option:
+- Produces:
 
   ```go
-  // DefaultQueueContentionDelay is the default time the consumer waits before
-  // it attempts to deliver a message again, if another transaction held the
-  // lock on a row that its last attempt needed.
-  DefaultQueueContentionDelay = 200 * time.Millisecond
+  // Sink is the destination to which a [Consumer] passes the messages in the
+  // queues.
+  type Sink interface {
+      // Deliver delivers the message in the given envelope within tx.
+      Deliver(ctx context.Context, tx *sql.Tx, d Delivery, env *envelopepb.Envelope) error
+  }
 
-  func WithQueueContentionDelay(delay time.Duration) EngineOption
+  // CommandHandler is the handler for a particular command type, with the
+  // values that [Router.RouteCommandToQueue] reads from its configuration.
+  type CommandHandler struct {
+      Key         *uuidpb.UUID
+      Aggregate   dogma.AggregateMessageHandler[dogma.AggregateRoot] // nil unless an aggregate
+      Concurrency dogma.ConcurrencyPreference
+  }
   ```
 
-  It panics on a non-positive duration, like `WithHandleTimeout`, and the
-  engine stores it in `queueContentionDelay`.
+  `Consumer.Handlers` becomes `Sinks`, and `Router.Aggregates` becomes
+  `CommandHandlers *uuidcollection.Map[CommandHandler]`.
+  `aggregate.CommandSink`, `integration.CommandSink` and `process.DeadlineSink`
+  implement `Sink`. Their
+  `DB`, `CommandTypeIDs`, `DeadlineTypeIDs`, `AcquireDelivery` and
+  `PostponeDelivery` go, and each gains an `EngineLogger`. The integration sink
+  loses `Concurrency` and gains `HandlerLock *semaphore.Weighted`, as
+  `projection.Sink` has. `instancestate.go` returns `messagequeue.ErrFailed`.
+
+  The `complete_with_events` functions lose their `message_id` parameter and
+  their removal of the command. `aggregate.complete_without_events` loses the
+  same and keeps deleting an instance that has no event stream.
+  `integration.complete_without_events` and `messagequeue.remove` are dropped.
+  Each changed or dropped function gets `DROP FUNCTION IF EXISTS` for its old
+  signature. The consumer removes a delivered message with a plain `DELETE`.
+
+  In `engine.go`, `runHandler` adds each sink to `queueSinks`, and `Run` starts
+  one `messagequeue.Consumer` with them. A disabled handler gets no sink, as it
+  gets no pump today. `workerCountForHandler` and the pump constants go. New
+  options:
+
+  ```go
+  // DefaultMessageQueueContentionDelay is the default time that the engine
+  // waits before it attempts to deliver a command or deadline again, if the
+  // delivery needs a lock while something else holds it.
+  DefaultMessageQueueContentionDelay = 200 * time.Millisecond
+
+  func WithMessageQueueContentionDelay(delay time.Duration) EngineOption
+
+  // The default is 10 times the value that runtime.GOMAXPROCS returns.
+  func WithMessageQueueConcurrency(n int) EngineOption
+  ```
+
+  Each panics on a non-positive value, like `WithHandleTimeout`.
 
 - Consumes: `messagequeue.Consumer` and `messagequeue.Handler` from task 4.
 
-- [ ] **Step 1: Make the handlers implement `messagequeue.Handler`**
-- [ ] **Step 2: Wire the consumer and delete `messagepump`**
-
-  Add `WithQueueContentionDelay`, with a test in `package runkit_test` that it
-  panics on zero. The existing options have no tests, and the stored value is
-  covered by the consumer's tests in task 4.
+- [x] **Step 1: Rename `messagequeue.Handler` to `Sink`**, in its own commit.
+- [ ] **Step 2: Make the pumps into sinks, and change the SQL**
+- [ ] **Step 3: Route the commands of an integration that minimizes
+  concurrency to its key**
+- [ ] **Step 4: Wire the consumer and delete `messagepump`**
 
   Add a sentence to the doc comment of each trigger in
   `internal/schema/ddl/10-messagequeue/20-triggers.sql` saying that
-  `messagequeue.Consumer` watches the signal for each queue while this node owns
-  the queue's workload.
+  `messagequeue.Consumer` waits for the signal of each queue while its node
+  owns the queue's workload.
 
-- [ ] **Step 3: Run `make test`**
+- [ ] **Step 5: Run `make test`**
 
   The existing engine-level suites cover delivery of commands and deadlines.
-  Adjust any test that relied on the pump's poll interval or worker count;
-  there should be none that assert on them.
+  New tests: the router's integration case, the consumer completing a delivery
+  whose transaction already removed the message, the integration sink returning
+  `ErrBusy` while another call holds the lock, and the two options panicking on
+  zero.
 
-- [ ] **Step 4: Update `CHANGELOG.md`**
+  Until task 6, the deadline sink locks the deadline row before the instance
+  row, the reverse of `endInstance`. PostgreSQL detects the deadlocks and aborts
+  one transaction. Say so at the review stop.
 
-  Under `### Changed`: commands and deadlines are now delivered by the node that
-  owns the workload of their queue, with one per-node limit of 10 × `GOMAXPROCS`
-  attempts at once in place of a limit per handler. Under `### Added`:
-  `WithQueueContentionDelay`.
+- [ ] **Step 6: Update `CHANGELOG.md`**
 
-- [ ] **Step 5: Stop for review**
+  Under `### Added`: `WithMessageQueueConcurrency()`,
+  `WithMessageQueueContentionDelay()` and `DefaultMessageQueueContentionDelay`.
+  Under `### Changed`: the engines that share a database divide the commands
+  and deadlines between them, with one limit of 10 × `GOMAXPROCS` attempts by
+  default in place of a limit per handler; and one engine at a time delivers
+  the commands of an integration that prefers `MinimizeConcurrency`, so two may
+  briefly overlap while the cluster's membership changes.
+
+- [ ] **Step 7: Stop for review**
 
 ---
 
 ### Task 6: Claim-first deadline delivery
 
 **Files:**
-- Modify: `internal/process/deadlinehandler.go`,
+- Modify: `internal/process/deadlinesink.go`,
   `internal/process/instancestate.go` (`endInstance`), `engineoption.go`,
   `engine.go`
 - Test: `internal/process/deadlinecontention_test.go` (new),
   `internal/process/instancestate_test.go`, `engineoption_test.go`
 
 **Interfaces:**
-- Produces: `process.DeadlineHandler` gains `LockTimeout time.Duration`. Its
+- Produces: `process.DeadlineSink` gains `LockTimeout time.Duration`. Its
   `Deliver`:
   1. Opens a savepoint, reads `current_setting('lock_timeout')`, runs
      `SET LOCAL lock_timeout = $1`, and locks the instance row with
      `SELECT … FOR UPDATE`.
   2. On success, restores the setting and releases the savepoint. If the
-     instance has ended, deletes the claimed row with `messagequeue.remove` and
-     returns nil, without unmarshaling the message or creating a root.
+     instance has ended, returns nil without unmarshaling the message or
+     creating a root, and the consumer removes the claimed row.
   3. On a lock timeout (`SQLSTATE 55P03`), rolls back to the savepoint, which
      also restores the setting, and returns `messagequeue.ErrBusy`.
 
   `endInstance` deletes the instance's pending deadlines with
   `FOR UPDATE SKIP LOCKED` in a subquery, so it never waits for a row that's
-  locked by an attempt's transaction. The attempt whose transaction holds it
-  observes `ended` under the instance lock and removes it.
+  locked by an attempt's transaction. The sink in the attempt whose transaction
+  holds it observes `ended` under the instance lock, and the consumer removes
+  the row.
 
   The engine sets `LockTimeout` from a new option:
 
   ```go
-  // DefaultQueueLockTimeout is the default maximum time a delivery waits for
+  // DefaultMessageQueueLockTimeout is the default maximum time a delivery waits for
   // the lock that serializes deliveries to one instance.
-  DefaultQueueLockTimeout = 200 * time.Millisecond
+  DefaultMessageQueueLockTimeout = 200 * time.Millisecond
 
-  func WithQueueLockTimeout(timeout time.Duration) EngineOption
+  func WithMessageQueueLockTimeout(timeout time.Duration) EngineOption
   ```
 
   It panics on a non-positive duration, like `WithHandleTimeout`, and the
-  engine stores it in `queueLockTimeout`.
+  engine stores it in `messageQueueLockTimeout`.
 
 - Consumes: `messagequeue.ErrBusy`, and `ContentionDelay` from task 4, which the
   consumer applies.
@@ -619,7 +689,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 - [ ] **Step 1: Write the failing tests**
 
   ```go
-  func TestDeadlineHandler_contention(t *testing.T) {
+  func TestDeadlineSink_contention(t *testing.T) {
       t.Run("it postpones a deadline without a failure when its instance is locked", ...)
       t.Run("it restores the lock timeout after acquiring the lock", ...)      // current_setting in the same tx after Deliver
       t.Run("it restores the lock timeout after a timeout", ...)
@@ -634,8 +704,8 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   ```
 
 - [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement it**, and add `WithQueueLockTimeout`, with a test
-  in `package runkit_test` that it panics on zero.
+- [ ] **Step 3: Implement it**, and add `WithMessageQueueLockTimeout`, with a
+  test in `package runkit_test` that it panics on zero.
 - [ ] **Step 4: Run `make test` to verify they pass**
 - [ ] **Step 5: Update `CHANGELOG.md`** under `### Added`.
 - [ ] **Step 6: Stop for review**
@@ -660,8 +730,8 @@ the results in [#100][100]:
 - Buffered application records, per-delivery streaks and `failing_since`
   from a streak. The deliveries plan does those.
 - Shared process preparation and the [#99][99] fix. Same.
-- `WithQueueConcurrencyLimit`, capacity scores and capacity sharing. They
-  are follow-ups listed in [plan 1][plan-1].
+- Capacity scores and capacity sharing. They are follow-ups listed in
+  [plan 1][plan-1].
 - Instance placement.
 
 <!-- references -->

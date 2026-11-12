@@ -29,9 +29,11 @@ type Consumer struct {
 	// Queues is the catalog of the queues that have messages.
 	Queues *Catalog
 
-	// Handlers maps the ID of each message type that the consumer delivers to
-	// the handler that delivers it.
-	Handlers uuidcollection.Map[Handler]
+	// Sinks maps the ID of each message type to the sink for messages of that
+	// type.
+	//
+	// The consumer ignores queued messages of any other type.
+	Sinks uuidcollection.Map[Sink]
 
 	// Concurrency is the maximum number of messages that the consumer attempts
 	// at once.
@@ -43,7 +45,7 @@ type Consumer struct {
 	// contended delivery again.
 	//
 	// A delivery is deemed "contended" if another transaction holds the lock
-	// on the message's row, or if the message's handler needs a row and
+	// on the message's row, or if the message's sink needs a row and
 	// another transaction holds that row's lock. It must be positive.
 	ContentionDelay time.Duration
 
@@ -85,7 +87,7 @@ type Consumer struct {
 	// Calling it detaches the queue's signal from messageAdded.
 	detachQueueSignal uuidcollection.Map[func()]
 
-	// messageTypeIDs is the set of IDs of the message types in Handlers.
+	// messageTypeIDs is the set of IDs of the message types in Sinks.
 	messageTypeIDs *uuidcollection.Set
 
 	// work tracks the failures of consuming the queues.
@@ -111,7 +113,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 
 	c.messageTypeIDs = uuidcollection.NewSet()
-	for typeID := range c.Handlers.Keys() {
+	for typeID := range c.Sinks.Keys() {
 		c.messageTypeIDs.Add(typeID)
 	}
 
