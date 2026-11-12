@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
@@ -15,7 +16,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"golang.org/x/sync/semaphore"
 )
 
 // Sink dispatches segments of event streams to a projection message handler.
@@ -30,18 +30,13 @@ type Sink struct {
 
 	// Concurrency is the handler's concurrency preference.
 	//
-	// It determines whether [Sink.RendezvousKey] returns the same key for every
-	// stream.
+	// If it's [dogma.MinimizeConcurrency], [Sink.RendezvousKey] returns the
+	// same key for every stream, and the sink makes one call at a time to the
+	// handler's HandleEvent method.
 	Concurrency dogma.ConcurrencyPreference
 
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
-
-	// HandlerLock, if non-nil, is a semaphore with a weight of one that is
-	// held while handling each event, so that streams are handled one event
-	// at a time. It must be supplied when Concurrency is
-	// [dogma.MinimizeConcurrency].
-	HandlerLock *semaphore.Weighted
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// event.
@@ -57,6 +52,10 @@ type Sink struct {
 
 	// AppLogger is the target for the application's records from the handler.
 	AppLogger *slog.Logger
+
+	// handlerLock is held during each call to the handler's HandleEvent method
+	// when Concurrency is [dogma.MinimizeConcurrency].
+	handlerLock cosyne.Mutex
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream
@@ -139,13 +138,6 @@ func (s *Sink) dispatch(
 		)
 	}
 
-	if s.HandlerLock != nil {
-		if err := s.HandlerLock.Acquire(ctx, 1); err != nil {
-			return 0, err
-		}
-		defer s.HandlerLock.Release(1)
-	}
-
 	// The application's records are written only if the handler handles the
 	// event, which it reports by advancing its checkpoint past it.
 	appLogger, flush := xslog.Buffered(
@@ -154,28 +146,21 @@ func (s *Sink) dispatch(
 		),
 	)
 
-	next, err := xerrors.RecoverT(
-		func() (uint64, error) {
-			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
-			defer cancel()
-
-			return s.Handler.HandleEvent(
-				ctx,
-				&eventScope{
-					streamID:         streamID.AsString(),
-					offset:           offset,
-					recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
-					checkpointOffset: cp,
-					engineLogger: s.EngineLogger.With(
-						xslog.UUID("stream_id", streamID),
-						slog.Uint64("offset", offset),
-						xslog.Envelope("handled_message", env),
-					),
-					appLogger: appLogger,
-				},
-				event,
-			)
+	next, err := s.handleEvent(
+		ctx,
+		&eventScope{
+			streamID:         streamID.AsString(),
+			offset:           offset,
+			recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
+			checkpointOffset: cp,
+			engineLogger: s.EngineLogger.With(
+				xslog.UUID("stream_id", streamID),
+				slog.Uint64("offset", offset),
+				xslog.Envelope("handled_message", env),
+			),
+			appLogger: appLogger,
 		},
+		event,
 	)
 	if err != nil {
 		return 0, fmt.Errorf(
@@ -190,6 +175,34 @@ func (s *Sink) dispatch(
 	}
 
 	return next, nil
+}
+
+// handleEvent calls the handler's HandleEvent method, and returns the
+// handler's new checkpoint offset for the stream.
+//
+// If Concurrency is [dogma.MinimizeConcurrency], it waits until no other call
+// holds handlerLock, or until ctx is done, in which case it returns ctx's error
+// without calling the handler.
+func (s *Sink) handleEvent(
+	ctx context.Context,
+	scope *eventScope,
+	event dogma.Event,
+) (uint64, error) {
+	if s.Concurrency == dogma.MinimizeConcurrency {
+		if err := s.handlerLock.Lock(ctx); err != nil {
+			return 0, err
+		}
+		defer s.handlerLock.Unlock()
+	}
+
+	return xerrors.RecoverT(
+		func() (uint64, error) {
+			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
+			defer cancel()
+
+			return s.Handler.HandleEvent(ctx, scope, event)
+		},
+	)
 }
 
 // RendezvousKey returns the rendezvous key that determines which node consumes

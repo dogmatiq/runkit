@@ -29,8 +29,8 @@ github.com/docker/go-connections v0.7.0 h1:6SsRfJddP22WMrCkj19x9WKjEDTB+ahsdiGYf
 github.com/docker/go-connections v0.7.0/go.mod h1:no1qkHdjq7kLMGUXYAduOhYPSJxxvgWBh7ogVvptn3Q=
 github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4=
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
-github.com/dogmatiq/cosyne v0.3.0 h1:hZrAhT0nesTMd1lwAn5F3bDcjvsfQTwyfRH+RYMEdHM=
-github.com/dogmatiq/cosyne v0.3.0/go.mod h1:DdokMx3IgzRsh7MGfB2o0Yotbv+1vArWh0RYk6q2Ets=
+github.com/dogmatiq/cosyne v0.4.0 h1:oLvifGpodobSHJ8+L2NybF8Q05Q5jwVUrqMuvEyukNw=
+github.com/dogmatiq/cosyne v0.4.0/go.mod h1:DdokMx3IgzRsh7MGfB2o0Yotbv+1vArWh0RYk6q2Ets=
 github.com/dogmatiq/dapper v0.7.0 h1:8vSP/XRaP8nrQDNHVrd2h9J9L/byGy6RM1j4CDZeFzw=
 github.com/dogmatiq/dapper v0.7.0/go.mod h1:ennQpTWjcfVwwjYa+CTdYZ2FiIbCNOb1szfxBiPLOtE=
 github.com/dogmatiq/dogma v0.25.0 h1:L1NM8xBaQMyJ+oFSKSH9FWqyQyf91I50qFN/Bz4WsT0=
