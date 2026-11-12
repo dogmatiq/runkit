@@ -636,13 +636,13 @@ Each is a small change on its own, in this order:
 2. **Score-based process binding allocation.**
    `Router.RouteDeadlinesToQueue` implements the six-step algorithm from
    [#100][100] using `messagequeue.Catalog` and the scores. Revisit
-   `cluster.FindResponsibleNode`'s `ok` result once this exists. If every
+   `cluster.FindWorkloadOwner`'s `ok` result once this exists. If every
    caller that sees `ok == false` returns an error, make it an error. If every
    such caller uses its own node, make it fall back to the local node.
-3. **Producer-side routing for integration commands.** Task 4 routes
-   aggregate commands. `Router.RouteCommandToQueue` could also route an
-   integration command to its handler's key when that minimizes concurrency.
-4. **`WithQueueConcurrencyLimit`.**
+3. **Producer-side routing for integration commands.** Done in the consumer
+   plan's sinks task, for an integration that minimizes concurrency.
+4. **`WithQueueConcurrencyLimit`.** Done in the consumer plan's sinks task, as
+   `WithMessageQueueConcurrency`.
 5. **Tuning.** Measure the 200 ms lock timeout, the 200 ms contention delay
    and the `10 × GOMAXPROCS` limit against representative load: successful
    lock waits, postponement rate, slot and connection occupancy, and

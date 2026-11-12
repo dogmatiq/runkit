@@ -28,7 +28,7 @@ each failure's level and delay from those columns alone.
 section of [#100][100], and [#99][99].
 
 This is the last of three plans for [#100][100]. It depends on [plan 2][plan-2]
-for `messagequeue.Consumer`, `messagequeue.Handler` and the claim-first deadline
+for `messagequeue.Consumer`, `messagequeue.Sink` and the claim-first deadline
 delivery. Finishing it closes [#99][99], and lets [#101][101] and [#102][102]
 close as superseded.
 
@@ -130,13 +130,17 @@ Each one has a test in the task that owns the code.
 
 ### Task 1: Buffered application records
 
+> **Revisit before starting.** The consumer plan gave each sink its own
+> `EngineLogger` and removed `Deliver`'s logger parameter. `Route` also collides
+> with Dogma's "route", which means a declaration made with a configurer.
+
 **Files:**
 - Create: `internal/messagequeue/route.go`
 - Modify: `internal/messagequeue/consumer.go`,
-  `internal/messagequeue/delivery.go`, `internal/messagequeue/handler.go`
-- Modify: `internal/aggregate/commandhandler.go`, `commandscope.go`,
-  `internal/integration/commandhandler.go`, `commandscope.go`,
-  `internal/process/deadlinehandler.go`, `messagescope.go`
+  `internal/messagequeue/delivery.go`, `internal/messagequeue/sink.go`
+- Modify: `internal/aggregate/commandsink.go`, `commandscope.go`,
+  `internal/integration/commandsink.go`, `commandscope.go`,
+  `internal/process/deadlinesink.go`, `messagescope.go`
 - Modify: `engine.go` (`runHandler` builds routes)
 - Test: `internal/messagequeue/consumer_test.go`, and the existing handler
   suites
@@ -164,7 +168,7 @@ Each one has a test in the task that owns the code.
   ) error
   ```
 
-  `Consumer.Handlers` becomes `Routes uuidcollection.Map[Route]`. For each
+  `Consumer.Sinks` becomes `Routes uuidcollection.Map[Route]`. For each
   attempt, the consumer builds `engineLogger` from the route's with the
   `attempt` group and `handled_message`, and `appLogger, flush :=
   xslog.Buffered(route.AppLogger.With(handled_message))`. It calls `flush`
@@ -202,7 +206,7 @@ Each one has a test in the task that owns the code.
 **Files:**
 - Create: `internal/process/effects.go`
 - Modify: `internal/process/sink.go` (`dispatch`),
-  `internal/process/deadlinehandler.go` (`Deliver`),
+  `internal/process/deadlinesink.go` (`Deliver`),
   `internal/process/instancestate.go` (`saveInstance` splits into marshal
   and write)
 - Test: `internal/process/deadlinerouting_test.go` or a new
@@ -275,10 +279,10 @@ Each one has a test in the task that owns the code.
 **Files:**
 - Create: `internal/supervisor/streak.go`, `internal/messagequeue/fail.go`
 - Modify: `internal/messagequeue/delivery.go`,
-  `internal/messagequeue/handler.go`
-- Modify: `internal/aggregate/commandhandler.go`,
-  `internal/integration/commandhandler.go`,
-  `internal/process/deadlinehandler.go` (return errors with context; stop
+  `internal/messagequeue/sink.go`
+- Modify: `internal/aggregate/commandsink.go`,
+  `internal/integration/commandsink.go`,
+  `internal/process/deadlinesink.go` (return errors with context; stop
   logging them; `messagequeue.Fail` for application failures;
   `supervisor.Deterministic` for unmarshal failures)
 - Test: `internal/supervisor/streak_test.go`,

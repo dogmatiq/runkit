@@ -79,7 +79,7 @@ func (c *Consumer) attemptDelivery(
 
 // claimMessage locks the message with the given ID within tx.
 //
-// It claims the message only if it's due, the consumer has a handler for its
+// It claims the message only if it's due, the consumer has a sink for its
 // type, and it's in one of the given queues. It returns the message's delivery
 // and the binary representation of its envelope, or false if there's no such
 // message.
@@ -145,10 +145,10 @@ func (c *Consumer) claimMessage(
 	return d, envelopeData, true, nil
 }
 
-// deliverMessage passes the message to its handler within tx.
+// deliverMessage passes the message to its sink within tx.
 //
-// It removes the message from its queue after the handler succeeds, and
-// postpones the delivery instead if the envelope is invalid, or the handler
+// It removes the message from its queue after the sink returns nil, and
+// postpones the delivery instead if the envelope is invalid, or the sink
 // returns [ErrFailed] or [ErrBusy]. It returns true if it removed the message.
 // envelopeData is the binary representation of the message's envelope.
 func (c *Consumer) deliverMessage(
@@ -182,10 +182,10 @@ func (c *Consumer) deliverMessage(
 
 	logger.DebugContext(ctx, "message delivery attempt started")
 
-	// [Consumer.claimMessage] claims only the messages whose type has a handler, so
-	// there's always a handler.
-	h, _ := c.Handlers.Get(d.MessageTypeID)
-	err = h.Deliver(ctx, tx, d, env, logger)
+	// [Consumer.claimMessage] claims only messages of the types in c.Sinks, so
+	// there's always a sink for the message's type.
+	s, _ := c.Sinks.Get(d.MessageTypeID)
+	err = s.Deliver(ctx, tx, d, env, logger)
 
 	switch {
 	case err == nil:
@@ -243,7 +243,7 @@ func (c *Consumer) postponeAfterFailure(
 	return nil
 }
 
-// postponeAfterContention postpones the given delivery after its handler
+// postponeAfterContention postpones the given delivery after its sink
 // returned [ErrBusy], without changing its failure count.
 func (c *Consumer) postponeAfterContention(
 	ctx context.Context,
@@ -251,7 +251,7 @@ func (c *Consumer) postponeAfterContention(
 	d Delivery,
 	logger *slog.Logger,
 ) error {
-	// The contention is on a row that the handler needs. The transaction
+	// The contention is on a row that the sink needs. The transaction
 	// already holds the lock on the message's row, so this update doesn't wait
 	// for another transaction.
 	if err := xsql.ExecOne(
