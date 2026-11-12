@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
@@ -40,12 +41,26 @@ type Sink interface {
 	// It returns any other error, such as a database error, if the problem
 	// isn't specific to the message. The consumer then rolls back tx, leaves
 	// the message unchanged, and waits before it starts any more attempts.
+	//
+	// engineLogger is the target for the engine's records about the delivery,
+	// and appLogger is the target for the application's records from the
+	// handler. Both loggers already have the sink's [Sink.LogAttr], and the
+	// consumer writes the application's records only if the delivery
+	// completes.
 	Deliver(
 		ctx context.Context,
 		tx *sql.Tx,
 		d Delivery,
 		env *envelopepb.Envelope,
+		engineLogger *slog.Logger,
+		appLogger *slog.Logger,
 	) error
+
+	// LogAttr returns an attribute that describes the sink in log records.
+	//
+	// The consumer adds it to its own records about deliveries to the sink,
+	// and to the loggers that it passes to [Sink.Deliver].
+	LogAttr() slog.Attr
 }
 
 // Delivery is the job of getting a queued message to its handler.

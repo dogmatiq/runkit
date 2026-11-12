@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -49,13 +50,6 @@ type CommandSink struct {
 	// command.
 	HandleTimeout time.Duration
 
-	// EngineLogger is the target for the engine's records about the sink and
-	// the handler.
-	EngineLogger *slog.Logger
-
-	// AppLogger is the target for the application's records from the handler.
-	AppLogger *slog.Logger
-
 	// handlerLock is held during each call to the handler's HandleCommand
 	// method when Concurrency is [dogma.MinimizeConcurrency].
 	handlerLock sync.Mutex
@@ -67,11 +61,9 @@ func (s *CommandSink) Deliver(
 	tx *sql.Tx,
 	d messagequeue.Delivery,
 	env *envelopepb.Envelope,
+	engineLogger *slog.Logger,
+	appLogger *slog.Logger,
 ) error {
-	engineLogger := s.EngineLogger.With(
-		xslog.Envelope("handled_message", env),
-		slog.Uint64("failures", d.Failures),
-	)
 
 	var commandForHandling dogma.Command
 
@@ -92,7 +84,14 @@ func (s *CommandSink) Deliver(
 		s.Identity,
 	)
 
-	called, err := s.handleCommand(ctx, packer, env, commandForHandling)
+	scope := &commandScope{
+		packer:               packer,
+		engineLogger:         engineLogger,
+		appLogger:            appLogger,
+		outboundMessageTypes: s.OutboundMessageTypes,
+	}
+
+	called, err := s.handleCommand(ctx, scope, commandForHandling)
 
 	// The handler is handling another command. Waiting for it would hold this
 	// attempt's transaction and connection open for up to the handle timeout,
@@ -118,14 +117,18 @@ func (s *CommandSink) Deliver(
 	return nil
 }
 
+// LogAttr returns the attribute that identifies the handler in log records.
+func (s *CommandSink) LogAttr() slog.Attr {
+	return xslog.HandlerIdentity(s.Identity, config.IntegrationHandlerType)
+}
+
 // handleCommand calls the handler's HandleCommand method.
 //
 // If Concurrency is [dogma.MinimizeConcurrency] and another call holds
 // handlerLock, it returns false without calling the handler.
 func (s *CommandSink) handleCommand(
 	ctx context.Context,
-	packer *envelope.EffectPacker,
-	env *envelopepb.Envelope,
+	scope *commandScope,
 	command dogma.Command,
 ) (bool, error) {
 	if s.Concurrency == dogma.MinimizeConcurrency {
@@ -142,13 +145,7 @@ func (s *CommandSink) handleCommand(
 
 			return s.Handler.HandleCommand(
 				ctx,
-				&commandScope{
-					packer: packer,
-					appLogger: s.AppLogger.With(
-						xslog.Envelope("handled_message", env),
-					),
-					outboundMessageTypes: s.OutboundMessageTypes,
-				},
+				scope,
 				command,
 			)
 		},

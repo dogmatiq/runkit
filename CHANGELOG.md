@@ -100,6 +100,9 @@ events.
 
 - Fixed an error that could occur when an event ended a process instance while
   one of its deadlines was being delivered.
+- Fixed application log records being written when an attempt to handle a
+  command or deadline failed or was rolled back. They're now written only after
+  the handling succeeds and is committed.
 
 ## [0.2.0] - 2026-11-06
 

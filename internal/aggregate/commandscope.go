@@ -17,6 +17,7 @@ type commandScope struct {
 	instanceID           string
 	root                 dogma.AggregateRoot
 	packer               *envelope.EffectPacker
+	engineLogger         *slog.Logger
 	appLogger            *slog.Logger
 	outboundMessageTypes map[reflect.Type]struct{}
 }
@@ -26,10 +27,15 @@ func (s *commandScope) Now() time.Time {
 }
 
 func (s *commandScope) Log(format string, args ...any) {
-	s.appLogger.Info(
-		fmt.Sprintf(format, args...),
+	text := fmt.Sprintf(format, args...)
+
+	s.engineLogger.Debug(
+		"handler logged a message",
+		slog.String("text", text),
 		instanceLogAttr(s.instanceID, s.root),
 	)
+
+	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root))
 }
 
 func (s *commandScope) InstanceID() string {
@@ -53,6 +59,12 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 	}
 
 	s.root.ApplyEvent(event)
+
+	s.engineLogger.Debug(
+		"handler recorded an event",
+		xslog.Envelope("produced_message", eventEnvelope),
+		instanceLogAttr(s.instanceID, s.root),
+	)
 
 	s.appLogger.Info(
 		event.MessageDescription(),

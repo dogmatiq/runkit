@@ -581,16 +581,21 @@ the record is made, so a reader sees the instance change in order.
 #100 adapts to these changes and to the [logging guide]. Once it is
 implemented, this work finishes with:
 
-- Buffering the application records of message pump deliveries until commit,
-  for commands and deadlines. Once they're buffered, the aggregate and
-  integration scopes write an engine DEBUG record of each call again, as the
-  process and projection event scopes do. Until then, the process deadline
-  scope writes an engine record and an application record of each call at the
-  same time, because it shares its methods with the event scope.
 - Per-delivery streaks, including a persisted first-failure time.
 - Building instance attributes for each record in the aggregate and deadline
-  pumps, as the process sink does, without an `instanceLogger` that fixes the
+  sinks, as their scopes now do, without an `instanceLogger` that fixes the
   instance's ID when it's created.
+- Event stream consumers and their sinks follow the rule that the message
+  queue follows: a logger carries only what's true of every record, and the
+  code that knows more adds it. Each event stream consumer holds the engine's
+  base loggers and passes them to its sink, which adds its handler's identity
+  with `xslog.HandlerIdentity`. `eventstream.Sink` gains the `LogAttr` method
+  that `messagequeue.Sink` has, for the consumer's own records. The projection
+  compactor adds its projection's identity to base loggers. The process and
+  projection event sinks keep buffering their own application records, because
+  each decides whether the handling of an event counts. The [logging guide]'s
+  "How the engine applies these rules" section then gains a part for event
+  streams.
 
 ## Out of scope
 

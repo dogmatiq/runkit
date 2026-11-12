@@ -41,6 +41,17 @@ field `EngineLogger` or `AppLogger`, or `engineLogger` or `appLogger` if it's
 unexported. Never name a field `Logger` or `logger`, even on a type that has
 only one logger.
 
+A logger carries only the context that's true of every record written through
+it, such as the layer, the node and the application. Any other context, such as
+which handler or which message a record is about, is added by the code that
+knows it, at the point where it knows it. That keeps each attribute in one
+place, and lets one logger serve code that works for many handlers.
+
+When other code decides whether some work counts, such as by committing its
+transaction, the code doing the work doesn't keep an application logger of its
+own. The deciding code passes one in with each call, so that it controls when
+the records are written.
+
 ## Attributes
 
 | Attribute | Engine records | Application records |
@@ -52,7 +63,7 @@ only one logger.
 | `handled_message` | The metadata of the message being handled, on records about a delivery | The metadata of the message being handled, on records from a handler |
 | `produced_message` | The metadata of the message produced, on records about producing it | The metadata of the message produced |
 | Instance ID | The instance's ID, on records about an instance | The instance's ID, on records from an instance |
-| `delivery` group | The delivery's ID and attempt number | — |
+| `delivery` group | The ID of the message being delivered, on records about a delivery | — |
 | Stream | The stream's ID and offset, on records about a stream | — |
 
 A message is always described by its metadata, which is the attributes written
@@ -95,13 +106,17 @@ While a handler attempt runs, the two layers say different things.
 Every application record from a handler has the metadata of the message being
 handled, so a search on that message's ID finds everything it caused.
 
-Each scope buffers its application records for the attempt and writes them
-together, keeping the time of each call.
+The code that decides whether the handling of a message counts buffers the
+application records from that handling. It might decide by committing a
+transaction, or by seeing that the handler has moved its checkpoint past the
+message. It writes the records together if the handling counts, keeping the
+time of each call, and discards them if it doesn't.
 
 | Where | When the application records are written |
 | --- | --- |
-| Aggregate, integration and process handlers | After the attempt's transaction commits |
-| Projection `HandleEvent` | After `HandleEvent` returns successfully |
+| Aggregate and integration handlers, and process deadlines | After an attempt completes the delivery and its transaction commits |
+| Process events | After the attempt's transaction commits |
+| Projection `HandleEvent` | After `HandleEvent` returns successfully and moves the checkpoint past the event |
 | Projection `Compact` | Immediately, because the application compacts in its own storage, outside the engine's transaction |
 | `CommandExecutor` | After the command is in the queue |
 
@@ -200,7 +215,9 @@ A reader must be able to match a streak's ERROR record to its recovery record,
 and tell that pair apart from every other streak, including earlier streaks of
 the same work. Both records have the attributes that identify the work, plus
 one that distinguishes this streak, such as when it started or an attempt
-number. What that is depends on the work, but it must be there.
+number. What that is depends on the work, but it must be there. When the work
+can only fail in one streak, such as delivering one message, the attributes
+that identify the work also identify the streak.
 
 ### Many units failing together
 
@@ -211,6 +228,38 @@ do about their failures, so it logs the ERROR. A unit logs its own failure, at
 DEBUG, only when that adds context the coordinator's record lacks, such as
 which stream or instance failed. Where no coordinator exists, each unit logs
 its own ERROR. Don't restructure code just to create a coordinator.
+
+## How the engine applies these rules
+
+These are some of the decisions that follow from the rules above, for the
+engine's main components. They aren't a complete list. For anything not
+covered here, the rules above decide.
+
+### Message queue
+
+Each engine runs one consumer, which delivers the commands and deadlines for
+every handler.
+
+- The consumer holds the engine's base loggers. It passes a logger for each
+  layer to the sink with each call, with the delivery's attributes added, so a
+  queue sink holds no loggers of its own.
+- Each sink describes itself with a log attribute, which identifies its
+  handler. The consumer adds it to its own records about deliveries to that
+  sink, and to the loggers it passes the sink, so a sink's records carry it
+  without the sink adding it.
+- The consumer commits each attempt, so it buffers that attempt's application
+  records, and writes them only if the attempt completes the delivery and its
+  transaction commits.
+- Every record that the consumer or a sink writes about an attempt has the
+  `delivery` group. A delivery can fail in only one streak, because its message
+  is removed when it completes, so the group also identifies the streak. An
+  attempt that ends with an error the sink doesn't classify, such as a database
+  error, is logged as a failure to consume the queues instead.
+
+### Projection compaction
+
+The application compacts in its own storage, outside the engine's transaction,
+so the compactor writes its application records immediately.
 
 ## Log messages
 

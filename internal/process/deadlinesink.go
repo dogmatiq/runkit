@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -40,13 +41,6 @@ type DeadlineSink struct {
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// deadline.
 	HandleTimeout time.Duration
-
-	// EngineLogger is the target for the engine's records about the sink and
-	// the handler.
-	EngineLogger *slog.Logger
-
-	// AppLogger is the target for the application's records from the handler.
-	AppLogger *slog.Logger
 }
 
 // Deliver delivers the deadline in the given envelope to the handler.
@@ -60,11 +54,9 @@ func (s *DeadlineSink) Deliver(
 	tx *sql.Tx,
 	d messagequeue.Delivery,
 	env *envelopepb.Envelope,
+	engineLogger *slog.Logger,
+	appLogger *slog.Logger,
 ) error {
-	engineLogger := s.EngineLogger.With(
-		xslog.Envelope("handled_message", env),
-		slog.Uint64("failures", d.Failures),
-	)
 
 	instanceID := env.GetHeader().GetSource().GetInstanceId()
 
@@ -132,10 +124,8 @@ func (s *DeadlineSink) Deliver(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
-			engineLogger: engineLogger,
-			appLogger: s.AppLogger.With(
-				xslog.Envelope("handled_message", env),
-			),
+			engineLogger:         engineLogger,
+			appLogger:            appLogger,
 			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetScheduledFor().AsTime(),
@@ -173,4 +163,9 @@ func (s *DeadlineSink) Deliver(
 	}
 
 	return inst.AddDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
+}
+
+// LogAttr returns the attribute that identifies the handler in log records.
+func (s *DeadlineSink) LogAttr() slog.Attr {
+	return xslog.HandlerIdentity(s.Identity, config.ProcessHandlerType)
 }

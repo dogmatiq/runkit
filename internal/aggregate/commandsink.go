@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -35,13 +36,6 @@ type CommandSink struct {
 
 	// OutboundMessageTypes contains the types the handler is allowed to produce.
 	OutboundMessageTypes map[reflect.Type]struct{}
-
-	// EngineLogger is the target for the engine's records about the sink and
-	// the handler.
-	EngineLogger *slog.Logger
-
-	// AppLogger is the target for the application's records from the handler.
-	AppLogger *slog.Logger
 }
 
 // Deliver delivers the command in the given envelope to the handler.
@@ -50,11 +44,9 @@ func (s *CommandSink) Deliver(
 	tx *sql.Tx,
 	d messagequeue.Delivery,
 	env *envelopepb.Envelope,
+	engineLogger *slog.Logger,
+	appLogger *slog.Logger,
 ) error {
-	engineLogger := s.EngineLogger.With(
-		xslog.Envelope("handled_message", env),
-		slog.Uint64("failures", d.Failures),
-	)
 
 	var commandForRouting, commandForHandling dogma.Command
 
@@ -107,12 +99,11 @@ func (s *CommandSink) Deliver(
 			s.Handler.HandleCommand(
 				inst.Root,
 				&commandScope{
-					instanceID: inst.ID,
-					root:       inst.Root,
-					packer:     packer,
-					appLogger: s.AppLogger.With(
-						xslog.Envelope("handled_message", env),
-					),
+					instanceID:           inst.ID,
+					root:                 inst.Root,
+					packer:               packer,
+					engineLogger:         engineLogger,
+					appLogger:            appLogger,
 					outboundMessageTypes: s.OutboundMessageTypes,
 				},
 				commandForHandling,
@@ -134,6 +125,11 @@ func (s *CommandSink) Deliver(
 	}
 
 	return inst.DeleteIfNoEvents(ctx, tx)
+}
+
+// LogAttr returns the attribute that identifies the handler in log records.
+func (s *CommandSink) LogAttr() slog.Attr {
+	return xslog.HandlerIdentity(s.Identity, config.AggregateHandlerType)
 }
 
 // routeCommandToInstance routes the instance ID for the given command by

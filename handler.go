@@ -31,8 +31,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
-				EngineLogger:         engineLogger,
-				AppLogger:            appLogger,
 			},
 		)
 
@@ -46,8 +44,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				Concurrency:          handlerConfig.ConcurrencyPreference(),
 				HandleTimeout:        e.handleTimeout,
-				EngineLogger:         engineLogger,
-				AppLogger:            appLogger,
 			},
 		)
 
@@ -84,8 +80,6 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				QueueRouter:          e.queueRouter,
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
-				EngineLogger:         engineLogger,
-				AppLogger:            appLogger,
 			},
 		)
 
@@ -136,10 +130,9 @@ func newLoggerForHandler(
 	handlerConfig config.Handler,
 ) *slog.Logger {
 	return logger.With(
-		xslog.Identity(
-			"handler",
+		xslog.HandlerIdentity(
 			handlerConfig.Identity(),
-			slog.String("type", handlerConfig.HandlerType().String()),
+			handlerConfig.HandlerType(),
 		),
 	)
 }

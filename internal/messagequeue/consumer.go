@@ -49,8 +49,13 @@ type Consumer struct {
 	// must be positive.
 	ContentionDelay time.Duration
 
-	// EngineLogger is the target for log messages produced by the consumer.
+	// EngineLogger is the target for the engine's records about consuming the
+	// queues and delivering their messages.
 	EngineLogger *slog.Logger
+
+	// AppLogger is the target for the application's records from the sinks'
+	// handlers.
+	AppLogger *slog.Logger
 
 	// messageAdded is notified when a message is added to a queue that the
 	// consumer consumes, including by being moved there from another queue.
