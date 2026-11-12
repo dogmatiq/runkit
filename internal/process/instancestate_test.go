@@ -250,7 +250,7 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 // deadlines targeting the same process instance are serialized, such that each
 // handler invocation observes the cumulative state produced by all prior
 // invocations, regardless of whether they originated from the event consumer or the
-// deadline pump.
+// deadline sink.
 func TestInstanceState_writesAreSerialized(t *testing.T) {
 	const handlerKey = "d5fce239-6c7f-4153-895c-ecb047693319"
 
@@ -329,7 +329,7 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 						})
 
 						// Schedule a deadline for immediate delivery so that the
-						// deadline pump and event consumer race on the same instance.
+						// deadline sink and event consumer race on the same instance.
 						s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
 
 					case *stubs.EventStub[stubs.TypeX]:

@@ -17,28 +17,56 @@ import (
 
 func TestRouter(t *testing.T) {
 	aggregateKey := uuidpb.Generate()
+	integrationKey := uuidpb.Generate()
 
-	// setup returns a router for a node with an aggregate that handles commands
-	// of type A, and routes each one to the instance that route returns.
+	// commandTypeID returns the ID of the given command's type.
+	commandTypeID := func(c dogma.Command) *uuidpb.UUID {
+		mt, _ := dogma.RegisteredMessageTypeOf(c)
+		return uuidpb.MustParse(mt.ID())
+	}
+
+	// setup returns a router for a node with three handlers:
+	//
+	//   - an aggregate that handles commands of type A, and routes each one to
+	//     the instance that route returns
+	//   - an integration that minimizes concurrency, and handles commands of
+	//     type B
+	//   - an integration that maximizes concurrency, and handles commands of
+	//     type C
 	setup := func(t *testing.T, route func(dogma.Command) string) (*sql.DB, *Router) {
 		db := xtesting.NewDatabase(t)
 
-		aggregates := &uuidcollection.Map[AggregateRoute]{}
+		handlers := &uuidcollection.Map[CommandHandler]{}
 
-		mt, _ := dogma.RegisteredMessageTypeOf(stubs.CommandA1)
-		aggregates.Set(
-			uuidpb.MustParse(mt.ID()),
-			AggregateRoute{
+		handlers.Set(
+			commandTypeID(stubs.CommandA1),
+			CommandHandler{
 				Key: aggregateKey,
-				Handler: &stubs.AggregateMessageHandlerStub[dogma.AggregateRoot]{
+				Aggregate: &stubs.AggregateMessageHandlerStub[dogma.AggregateRoot]{
 					RouteCommandToInstanceFunc: route,
 				},
 			},
 		)
 
+		handlers.Set(
+			commandTypeID(stubs.CommandB1),
+			CommandHandler{
+				Key:         integrationKey,
+				Concurrency: dogma.MinimizeConcurrency,
+			},
+		)
+
+		handlers.Set(
+			commandTypeID(stubs.CommandC1),
+			CommandHandler{
+				Key:         uuidpb.Generate(),
+				Concurrency: dogma.MaximizeConcurrency,
+			},
+		)
+
 		router := &Router{
-			NodeID:     uuidpb.Generate(),
-			Aggregates: aggregates,
+			NodeID:          uuidpb.Generate(),
+			CommandHandlers: handlers,
 		}
 
 		return db, router
@@ -109,6 +137,21 @@ func TestRouter(t *testing.T) {
 			}
 		})
 
+		t.Run("it returns the integration's identity key if an integration that minimizes concurrency handles the command", func(t *testing.T) {
+			t.Parallel()
+
+			db, router := setup(t, routeToInstance)
+
+			got, err := router.RouteCommandToQueue(t.Context(), db, packer.PackCommand(stubs.CommandB1))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !got.Equal(integrationKey) {
+				t.Fatalf("unexpected queue ID: got %s, want %s", got, integrationKey)
+			}
+		})
+
 		cases := []struct {
 			Name    string
 			Route   func(dogma.Command) string
@@ -134,7 +177,13 @@ func TestRouter(t *testing.T) {
 				Command: stubs.CommandA1,
 			},
 			{
-				Name:    "it returns the node ID for a command that no aggregate handles",
+				Name:    "it returns the node ID if an integration that maximizes concurrency handles the command",
+				Route:   routeToInstance,
+				Setup:   func(*testing.T, *sql.DB) {},
+				Command: stubs.CommandC1,
+			},
+			{
+				Name:    "it returns the node ID for a command that no handler handles",
 				Route:   routeToInstance,
 				Setup:   func(*testing.T, *sql.DB) {},
 				Command: stubs.CommandX1,

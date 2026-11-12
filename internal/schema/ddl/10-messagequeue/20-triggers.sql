@@ -1,9 +1,10 @@
 --------------------------------------------------------------------------------
--- The "signal_add" trigger sends the "messagequeue.<queue-id>" signal for each
--- queue that messages are added to, and the "messagequeue" signal once.
--- messagequeue.Catalog waits for "messagequeue" to learn which queues have
--- messages. Each queue's own signal lets a node wait only for the queues it's
--- responsible for.
+-- The "signal_add" trigger sends the "messagequeue" signal once, and the
+-- "messagequeue.<queue-id>" signal for the queue of each message that is
+-- added. messagequeue.Catalog waits for "messagequeue" to learn which queues
+-- have messages. messagequeue.Consumer waits for the signal of each queue
+-- while its node owns the queue's workload, so messages added to other queues
+-- don't wake it.
 --
 -- PostgreSQL delivers identical notifications sent within one transaction only
 -- once, so a transaction that adds many messages sends each signal once.
@@ -33,13 +34,15 @@ FOR EACH STATEMENT
 EXECUTE FUNCTION messagequeue.signal_add();
 
 --------------------------------------------------------------------------------
--- The "signal_move" trigger sends the "messagequeue.<queue-id>" signal for each
--- queue that a message moved to, and the "messagequeue" signal once. An update
--- that doesn't change a message's queue signals nothing.
+-- The "signal_move" trigger sends the "messagequeue" signal once, and the
+-- "messagequeue.<queue-id>" signal for each message's new queue. An update
+-- that doesn't change a message's queue signals nothing. messagequeue.Consumer
+-- waits for these signals as it does for the signals of "signal_add".
 --
--- As with a removal, the queue that a message moved from isn't signaled. The
--- message leaving can only make that queue's next message later, which a
--- consumer finds out when the moved message would have been due.
+-- As with a removal, a message's old queue isn't signaled. Moving a message
+-- can only make the old queue's next message due later. A consumer that was
+-- waiting for the message wakes when the message would have been due, then
+-- finds the queue's next message.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION messagequeue.signal_move()
 RETURNS trigger

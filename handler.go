@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"runtime"
-	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
@@ -13,73 +11,47 @@ import (
 	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/integration"
-	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/process"
 	"github.com/dogmatiq/runkit/internal/projection"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/semaphore"
 )
 
-// runHandler runs the components that manage the given handler.
+// runHandler starts the components that manage the given handler, and adds
+// its sink, if it has one, to e.queueSinks for the queue consumer.
 func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
-	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 5 * time.Minute
-		pollInterval = 25 * time.Millisecond
-	)
-
 	engineLogger := newLoggerForHandler(e.engineLogger, handlerConfig)
 	appLogger := newLoggerForHandler(e.appLogger, handlerConfig)
-	workers := workerCountForHandler(handlerConfig)
 
 	switch handlerConfig := handlerConfig.(type) {
 	case *config.Aggregate:
-		pump := &messagepump.MessagePump{
-			Driver: &aggregate.CommandPump{
-				DB:                   e.db,
+		e.addQueueSink(
+			handlerConfig,
+			&aggregate.CommandSink{
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
-				CommandTypeIDs:       inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				EngineLogger:         engineLogger,
 				AppLogger:            appLogger,
 			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
+		)
 
 	case *config.Integration:
-		pump := &messagepump.MessagePump{
-			Driver: &integration.CommandPump{
-				DB:                   e.db,
+		e.addQueueSink(
+			handlerConfig,
+			&integration.CommandSink{
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
-				Concurrency:          handlerConfig.ConcurrencyPreference(),
 				Packer:               e.packer,
-				CommandTypeIDs:       inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				Concurrency:          handlerConfig.ConcurrencyPreference(),
 				HandleTimeout:        e.handleTimeout,
+				EngineLogger:         engineLogger,
 				AppLogger:            appLogger,
 			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
+		)
 
 	case *config.Process:
 		consumer := &eventstream.Consumer{
@@ -101,33 +73,23 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			EngineLogger: engineLogger,
 		}
 
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				QueueRouter:          e.queueRouter,
-				DeadlineTypeIDs:      inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
 		e.group.Go(func() error {
 			return consumer.Run(ctx)
 		})
 
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
-		})
+		e.addQueueSink(
+			handlerConfig,
+			&process.DeadlineSink{
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				Packer:               e.packer,
+				QueueRouter:          e.queueRouter,
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				HandleTimeout:        e.handleTimeout,
+				EngineLogger:         engineLogger,
+				AppLogger:            appLogger,
+			},
+		)
 
 	case *config.Projection:
 		var handlerLock *semaphore.Weighted
@@ -190,15 +152,12 @@ func newLoggerForHandler(
 	)
 }
 
-// workerCountForHandler returns the number of worker goroutines to run for the
-// given handler's message pump.
-func workerCountForHandler(handlerConfig config.Handler) int {
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Integration:
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			return 1
+// addQueueSink adds the given sink to e.queueSinks, for each command and
+// deadline type handled by the given handler.
+func (e *Engine) addQueueSink(handlerConfig config.Handler, sink messagequeue.Sink) {
+	for _, kind := range []message.Kind{message.CommandKind, message.DeadlineKind} {
+		for typeID := range inboundMessageTypeIDsForHandler(handlerConfig, kind).All() {
+			e.queueSinks.Set(typeID, sink)
 		}
 	}
-
-	return 10 * runtime.GOMAXPROCS(0)
 }

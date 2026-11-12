@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
@@ -15,20 +14,33 @@ import (
 //
 // Each sink delivers messages to one of the application's message handlers.
 type Sink interface {
-	// Deliver delivers the message in the given envelope within tx.
+	// Deliver delivers the message in the given envelope to the sink's message
+	// handler.
 	//
-	// It returns [ErrFailed] if this attempt to deliver the message failed, so
-	// that the delivery is postponed and its failure count is incremented. It
-	// returns [ErrBusy] if it needs a row and another transaction holds that
-	// row's lock, so that the delivery is postponed without a failure. Any
-	// other error ends the attempt, so tx is rolled back and the message is
-	// left for another attempt.
+	// It must make all of its changes to the database within tx. When it
+	// returns nil, the consumer removes the message within tx and commits tx,
+	// so the changes and the removal are committed together. The sink may
+	// remove the message itself. For example, when a process handler ends an
+	// instance while handling one of the instance's deadlines, the sink removes
+	// all of the instance's deadlines.
+	//
+	// It returns [ErrFailed] if it can't deliver the message because of a
+	// problem with the message or the handler, such as when the message can't
+	// be unmarshaled or the handler panics. It may return [ErrBusy] instead of
+	// waiting if it needs a lock while another transaction, or another call to
+	// [Sink.Deliver], holds that lock. After either error, the consumer
+	// postpones the delivery within tx and commits tx, which also commits any
+	// changes that the sink made, so tx must still be usable. Only [ErrFailed]
+	// increments [Delivery.Failures].
+	//
+	// It returns any other error, such as a database error, if the problem
+	// isn't specific to the message. The consumer then rolls back tx, leaves
+	// the message unchanged, and waits before it starts any more attempts.
 	Deliver(
 		ctx context.Context,
 		tx *sql.Tx,
 		d Delivery,
 		env *envelopepb.Envelope,
-		engineLogger *slog.Logger,
 	) error
 }
 
@@ -56,11 +68,11 @@ type Delivery struct {
 }
 
 var (
-	// ErrFailed is returned by [Sink.Deliver] when an attempt to deliver a
-	// message fails.
+	// ErrFailed is returned by [Sink.Deliver] when it can't deliver a message
+	// because of a problem with the message or the handler.
 	ErrFailed = errors.New("unable to deliver message")
 
-	// ErrBusy is returned by [Sink.Deliver] when the sink needs a row and
-	// another transaction holds that row's lock.
-	ErrBusy = errors.New("delivery handler is busy")
+	// ErrBusy is returned by [Sink.Deliver] when the sink needs a lock while
+	// another transaction, or another call to [Sink.Deliver], holds that lock.
+	ErrBusy = errors.New("sink is busy")
 )

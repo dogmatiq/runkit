@@ -57,24 +57,3 @@ BEGIN
     RETURN QUERY SELECT add_command.message_id, TRUE;
 END;
 $$;
-
---------------------------------------------------------------------------------
--- The "remove" function deletes a message from the queue by its ID.
---
--- It raises an exception if the message does not exist.
---------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION messagequeue.remove(
-    message_id uuid
-)
-RETURNS void
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM messagequeue.messages AS m
-    WHERE m.message_id = remove.message_id;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'message % does not exist in the queue', message_id;
-    END IF;
-END;
-$$;

@@ -578,12 +578,13 @@ with no behavior change. The second is the rest of this task.
   loses `Concurrency` and gains `HandlerLock *semaphore.Weighted`, as
   `projection.Sink` has. `instancestate.go` returns `messagequeue.ErrFailed`.
 
-  The `complete_with_events` functions lose their `message_id` parameter and
-  their removal of the command. `aggregate.complete_without_events` loses the
-  same and keeps deleting an instance that has no event stream.
-  `integration.complete_without_events` and `messagequeue.remove` are dropped.
-  Each changed or dropped function gets `DROP FUNCTION IF EXISTS` for its old
-  signature. The consumer removes a delivered message with a plain `DELETE`.
+  The aggregate's `complete_with_events` and `complete_without_events` lose
+  their `message_id` parameter and their removal of the command, and
+  `complete_without_events` keeps deleting an instance that has no event
+  stream. Both integration functions are dropped, because the integration sink
+  appends its events with `eventstream.append_any`, and so is
+  `messagequeue.remove`. Each function that 0.2.0 had gets `DROP FUNCTION IF
+  EXISTS` for its old signature. The consumer removes a delivered message with a plain `DELETE`.
 
   In `engine.go`, `runHandler` adds each sink to `queueSinks`, and `Run` starts
   one `messagequeue.Consumer` with them. A disabled handler gets no sink, as it
@@ -607,17 +608,17 @@ with no behavior change. The second is the rest of this task.
 - Consumes: `messagequeue.Consumer` and `messagequeue.Handler` from task 4.
 
 - [x] **Step 1: Rename `messagequeue.Handler` to `Sink`**, in its own commit.
-- [ ] **Step 2: Make the pumps into sinks, and change the SQL**
-- [ ] **Step 3: Route the commands of an integration that minimizes
+- [x] **Step 2: Make the pumps into sinks, and change the SQL**
+- [x] **Step 3: Route the commands of an integration that minimizes
   concurrency to its key**
-- [ ] **Step 4: Wire the consumer and delete `messagepump`**
+- [x] **Step 4: Wire the consumer and delete `messagepump`**
 
   Add a sentence to the doc comment of each trigger in
   `internal/schema/ddl/10-messagequeue/20-triggers.sql` saying that
   `messagequeue.Consumer` waits for the signal of each queue while its node
   owns the queue's workload.
 
-- [ ] **Step 5: Run `make test`**
+- [x] **Step 5: Run `make test`**
 
   The existing engine-level suites cover delivery of commands and deadlines.
   New tests: the router's integration case, the consumer completing a delivery
@@ -629,7 +630,7 @@ with no behavior change. The second is the rest of this task.
   row, the reverse of `endInstance`. PostgreSQL detects the deadlocks and aborts
   one transaction. Say so at the review stop.
 
-- [ ] **Step 6: Update `CHANGELOG.md`**
+- [x] **Step 6: Update `CHANGELOG.md`**
 
   Under `### Added`: `WithMessageQueueConcurrency()`,
   `WithMessageQueueContentionDelay()` and `DefaultMessageQueueContentionDelay`.
@@ -639,7 +640,7 @@ with no behavior change. The second is the rest of this task.
   the commands of an integration that prefers `MinimizeConcurrency`, so two may
   briefly overlap while the cluster's membership changes.
 
-- [ ] **Step 7: Stop for review**
+- [x] **Step 7: Stop for review**
 
 ---
 
@@ -732,11 +733,14 @@ the results in [#100][100]:
 - Shared process preparation and the [#99][99] fix. Same.
 - Capacity scores and capacity sharing. They are follow-ups listed in
   [plan 1][plan-1].
+- A limit on the attempts in progress for each queue, which an integration that
+  minimizes concurrency needs to drain a backlog quickly ([#112][112]).
 - Instance placement.
 
 <!-- references -->
 
 [99]: https://github.com/dogmatiq/runkit/issues/99
 [100]: https://github.com/dogmatiq/runkit/issues/100
+[112]: https://github.com/dogmatiq/runkit/issues/112
 [logging guide]: ../maintainers/logging.md
 [plan-1]: 2026-11-08-queue-1-storage.md

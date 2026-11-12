@@ -23,38 +23,66 @@ type Router struct {
 	// NodeID is the ID of the local node.
 	NodeID *uuidpb.UUID
 
-	// Aggregates maps the ID of each command type that an aggregate handles to
-	// the route to that aggregate.
-	Aggregates *uuidcollection.Map[AggregateRoute]
+	// CommandHandlers maps the ID of each command type to the handler for
+	// commands of that type.
+	CommandHandlers *uuidcollection.Map[CommandHandler]
 }
 
-// AggregateRoute is the aggregate that handles a particular command type.
-//
-// [Router.RouteCommandToQueue] uses the handler to find the instance that a
-// command targets, and the key to find that instance's event stream.
-type AggregateRoute struct {
-	// Key is the aggregate's identity key.
+// CommandHandler is the handler for a particular command type, with the values
+// that [Router.RouteCommandToQueue] reads from its configuration.
+type CommandHandler struct {
+	// Key is the handler's identity key.
 	Key *uuidpb.UUID
 
-	// Handler is the aggregate's message handler.
-	Handler dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	// Aggregate is the application's aggregate message handler, or nil if an
+	// integration handles the command type.
+	Aggregate dogma.AggregateMessageHandler[dogma.AggregateRoot]
+
+	// Concurrency is the handler's concurrency preference.
+	//
+	// It's [dogma.MaximizeConcurrency], the zero value, for an aggregate,
+	// which has no concurrency preference.
+	Concurrency dogma.ConcurrencyPreference
 }
 
 // RouteCommandToQueue returns the ID of the queue for the command in the given
 // envelope.
 //
-// A command that an aggregate handles is added to the queue whose ID is the ID
-// of the target instance's event stream, so commands for instances whose
-// events share a stream are delivered by the same node. Any other command,
-// including one for an instance that isn't bound to a stream yet, is added to
-// the local node's queue. Routing a command never creates or binds an instance.
+// The ID that it returns depends on the handler for the command's type:
+//
+//   - For an aggregate, it's the ID of the target instance's event stream, so
+//     one node delivers the commands for all of the instances whose events
+//     share that stream.
+//   - For an integration that prefers [dogma.MinimizeConcurrency], it's the
+//     integration's identity key, so one node delivers all of the
+//     integration's commands.
+//   - Otherwise, it's the ID of the local node. That includes a command for an
+//     aggregate instance that isn't bound to an event stream yet.
+//
+// While nodes see different live nodes, two of them may briefly both deliver
+// the commands in one queue, as described by [cluster.FindWorkloadOwner].
+//
+// Routing a command never creates or binds an instance.
 func (r *Router) RouteCommandToQueue(
 	ctx context.Context,
 	q xsql.Querier,
 	env *envelopepb.Envelope,
 ) (*uuidpb.UUID, error) {
-	aggregate, ok := r.Aggregates.Get(env.GetBody().GetMessage().GetTypeId())
+	handler, ok := r.CommandHandlers.Get(env.GetBody().GetMessage().GetTypeId())
+
+	// No handler is known for the command's type.
 	if !ok {
+		return r.NodeID, nil
+	}
+
+	if handler.Aggregate == nil {
+		// One node delivers all of the commands of an integration that
+		// minimizes concurrency.
+		if handler.Concurrency == dogma.MinimizeConcurrency {
+			return handler.Key, nil
+		}
+
+		// Any other integration's commands go to the local node's queue.
 		return r.NodeID, nil
 	}
 
@@ -65,7 +93,7 @@ func (r *Router) RouteCommandToQueue(
 				return "", err
 			}
 
-			return aggregate.Handler.RouteCommandToInstance(command), nil
+			return handler.Aggregate.RouteCommandToInstance(command), nil
 		},
 	)
 
@@ -86,7 +114,7 @@ func (r *Router) RouteCommandToQueue(
 		FROM aggregate.instances
 		WHERE handler_key = $1
 		AND instance_id = $2`,
-		xsql.UUID(aggregate.Key),
+		xsql.UUID(handler.Key),
 		instanceID,
 	)
 

@@ -24,6 +24,11 @@ const (
 	// handler is given to decide where a message is delivered, or where
 	// consumption of an event stream resumes.
 	DefaultRouteTimeout = 10 * time.Second
+
+	// DefaultMessageQueueContentionDelay is the default time that the engine
+	// waits before it attempts to deliver a command or deadline again, if the
+	// delivery is contended.
+	DefaultMessageQueueContentionDelay = 200 * time.Millisecond
 )
 
 // EngineOption is a function that configures an [Engine].
@@ -170,5 +175,43 @@ func WithRouteTimeout(timeout time.Duration) EngineOption {
 
 	return func(e *Engine) {
 		e.routeTimeout = timeout
+	}
+}
+
+// WithMessageQueueConcurrency is an [EngineOption] that sets the maximum
+// number of commands and deadlines that the engine attempts to deliver at
+// once, across all handlers.
+//
+// If it is not provided, the engine uses 10 times the value that
+// [runtime.GOMAXPROCS] returns. It panics if n is not positive.
+func WithMessageQueueConcurrency(n int) EngineOption {
+	if n <= 0 {
+		panic("message queue concurrency must be positive")
+	}
+
+	return func(e *Engine) {
+		e.messageQueueConcurrency = n
+	}
+}
+
+// WithMessageQueueContentionDelay is an [EngineOption] that sets how long the
+// engine waits before it attempts to deliver a command or deadline again, if
+// the delivery is contended.
+//
+// A delivery is deemed "contended" if it would have to wait for another
+// delivery to finish. For example, two commands for one aggregate instance
+// can't be handled at once, and an integration that prefers
+// [dogma.MinimizeConcurrency] handles one command at a time. The engine
+// delivers other messages in the meantime.
+//
+// If it is not provided [DefaultMessageQueueContentionDelay] is used. It
+// panics if delay is not positive.
+func WithMessageQueueContentionDelay(delay time.Duration) EngineOption {
+	if delay <= 0 {
+		panic("message queue contention delay must be positive")
+	}
+
+	return func(e *Engine) {
+		e.messageQueueContentionDelay = delay
 	}
 }

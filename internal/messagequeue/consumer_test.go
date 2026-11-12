@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -339,6 +338,35 @@ func TestConsumer(t *testing.T) {
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
 		run(t, db, n, 10, h)
 
+		expectRemoved(t, db, messageID)
+	})
+
+	t.Run("it completes a delivery if the sink removed the message within the transaction", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(
+			t,
+			db,
+			n,
+			10,
+			sinkFunc(
+				func(ctx context.Context, tx *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+					return xsql.ExecOne(
+						ctx,
+						tx,
+						`DELETE FROM messagequeue.messages
+						WHERE message_id = $1`,
+						xsql.UUID(d.MessageID),
+					)
+				},
+			),
+		)
+
+		// If the attempt ended with an error, its transaction would be rolled
+		// back, and the message would stay in its queue.
 		expectRemoved(t, db, messageID)
 	})
 
@@ -918,7 +946,6 @@ func (f sinkFunc) Deliver(
 	tx *sql.Tx,
 	d Delivery,
 	env *envelopepb.Envelope,
-	engineLogger *slog.Logger,
 ) error {
 	return f(ctx, tx, d, env)
 }

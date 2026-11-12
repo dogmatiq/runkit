@@ -45,8 +45,8 @@ type Consumer struct {
 	// contended delivery again.
 	//
 	// A delivery is deemed "contended" if another transaction holds the lock
-	// on the message's row, or if the message's sink needs a row and
-	// another transaction holds that row's lock. It must be positive.
+	// on the message's row, or if the message's sink returns [ErrBusy]. It
+	// must be positive.
 	ContentionDelay time.Duration
 
 	// EngineLogger is the target for log messages produced by the consumer.
