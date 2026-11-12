@@ -6,62 +6,64 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-// FindResponsibleNode returns the ID of the node that is responsible for the
-// work with the given rendezvous key. It returns false if there are no live
-// nodes.
+// FindWorkloadOwner returns the ID of the node that owns the workload with the
+// given key.
 //
-// If the key is an exact match for the ID of a live node, that node is
-// responsible. Otherwise, it uses [rendezvous hashing] to choose one of the
-// live nodes, so it returns the same ID wherever it's called, given the same
-// set of live nodes.
+// A workload is work that only one node should do at a time, such as consuming
+// an event stream or delivering the messages in a queue. Its owner depends on
+// the given live nodes, so while two nodes see different live nodes, they may
+// both own the same workload.
+//
+// If the key is an exact match for the ID of a live node, that node is the
+// owner. Otherwise, it uses [rendezvous hashing] to choose one of the live
+// nodes, so it returns the same ID wherever it's called, given the same set of
+// live nodes. It returns false if there are no live nodes.
 //
 // [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
-func FindResponsibleNode(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb.UUID, bool) {
+func FindWorkloadOwner(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb.UUID, bool) {
 	if liveNodes.Has(key) {
 		return key, true
 	}
 
-	var responsible scoredNode
+	var owner scoredNode
 
 	for nodeID := range liveNodes.All() {
 		node := scoreNode(key, nodeID)
 
-		if node.Outranks(responsible) {
-			responsible = node
+		if node.Outranks(owner) {
+			owner = node
 		}
 	}
 
-	return responsible.ID, responsible.ID != nil
+	return owner.ID, owner.ID != nil
 }
 
-// isResponsibleFor returns true if, among the given live nodes, the node with
-// the given ID is the one responsible for the work with the given rendezvous
-// key.
+// ownsWorkload returns true if, among the given live nodes, the node with the
+// given ID owns the workload with the given key.
 //
-// It gives the same answer as comparing the result of [FindResponsibleNode]
-// with the node's ID, but stops as soon as another node outranks it.
-func isResponsibleFor(
+// It gives the same answer as comparing the result of [FindWorkloadOwner] with
+// the node's ID, but stops as soon as another node outranks it.
+func ownsWorkload(
 	nodeID *uuidpb.UUID,
 	key *uuidpb.UUID,
 	liveNodes *uuidcollection.Set,
 ) bool {
-	// A node that isn't live is responsible for nothing.
+	// A node that isn't live doesn't own any workloads.
 	if !liveNodes.Has(nodeID) {
 		return false
 	}
 
-	// A live node is always responsible for the work with its own ID as the
-	// key.
+	// A live node always owns the workload whose key is its own ID.
 	if key.Equal(nodeID) {
 		return true
 	}
 
-	// If the key is the ID of another live node, that node is responsible.
+	// If the key is the ID of another live node, that node is the owner.
 	if liveNodes.Has(key) {
 		return false
 	}
 
-	// Otherwise, the node is responsible unless another node outranks it.
+	// Otherwise, the node is the owner unless another node outranks it.
 	self := scoreNode(key, nodeID)
 
 	for peerID := range liveNodes.All() {

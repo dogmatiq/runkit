@@ -178,7 +178,7 @@ Each one has a test in the task that owns the code.
       envelope        bytea       NOT NULL,
       failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
       failing_since   timestamptz,
-      scheduled_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+      scheduled_for   timestamptz NOT NULL DEFAULT clock_timestamp(),
       next_attempt_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
 
       CHECK ((handler_key IS NULL) = (instance_id IS NULL)),
@@ -200,10 +200,10 @@ Each one has a test in the task that owns the code.
   -- messagequeue.remove(message_id) RETURNS void, as commandqueue.remove today.
   ```
 
-  `scheduled_at` is the original time: `enqueued_at` for a command, the
-  deadline's scheduled time for a deadline. `next_attempt_at` is the earliest time
-  the next attempt may run. It starts equal to `scheduled_at` and moves later
-  on each postponement.
+  `scheduled_for` is the original time: `enqueued_at` for a command, the
+  deadline's scheduled time for a deadline. `next_attempt_at` is the earliest
+  time the next attempt may run. It starts equal to `scheduled_for` and moves
+  later on each postponement.
 
   Two statement-level triggers, each with a function of the same name, send
   `pg_notify('signal', 'messagequeue.' || queue_id)` once per distinct queue.
@@ -216,15 +216,15 @@ Each one has a test in the task that owns the code.
 
   `90-migrate.sql` is a `DO` block. If `to_regclass('commandqueue.commands')` is
   not null, it inserts each row into `messagequeue.messages` with
-  `queue_id = message_type_id`, `scheduled_at = enqueued_at` and
+  `queue_id = message_type_id`, `scheduled_for = enqueued_at` and
   `failing_since = CASE WHEN failures > 0 THEN deliver_at END`, moves
   `commandqueue.idempotency_keys` into `messagequeue.idempotency_keys`, and
   drops the `commandqueue` schema. If `to_regclass('process.deadlines')` is not
   null, it inserts each row with `queue_id = handler_key` and
-  `scheduled_at = deliver_at`, and drops the table. The scheduled time is inside
-  the protobuf envelope, which SQL can't read, so a deadline that had already
-  failed before the upgrade keeps its next attempt time as its scheduled time.
-  The changelog says so.
+  `scheduled_for = deliver_at`, and drops the table. The scheduled time is
+  inside the protobuf envelope, which SQL can't read, so a deadline that had
+  already failed before the upgrade keeps its next attempt time as its scheduled
+  time. The changelog says so.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -285,12 +285,12 @@ Each one has a test in the task that owns the code.
 - [x] **Step 1: Repoint the SQL**
 
   `commandqueue.add` → `messagequeue.add_command`. `persistDeadlines` inserts
-  into `messagequeue.messages` with `next_attempt_at = scheduled_at`. `endInstance`
-  deletes from `messagequeue.messages` by handler and instance.
+  into `messagequeue.messages` with `next_attempt_at = scheduled_for`.
+  `endInstance` deletes from `messagequeue.messages` by handler and instance.
   `AcquireCommandDelivery` reads `messagequeue.messages WHERE handler_key IS
-  NULL AND message_type_id = ANY($1) AND next_attempt_at <= clock_timestamp()`. The
-  deadline pump reads `WHERE handler_key = $1`, joining `process.instances` as
-  today. Both postponements set `next_attempt_at`, bump `failures`, and set
+  NULL AND message_type_id = ANY($1) AND next_attempt_at <= clock_timestamp()`.
+  The deadline pump reads `WHERE handler_key = $1`, joining `process.instances`
+  as today. Both postponements set `next_attempt_at`, bump `failures`, and set
   `failing_since = COALESCE(failing_since, clock_timestamp())`. Successful
   removal is `messagequeue.remove`.
 

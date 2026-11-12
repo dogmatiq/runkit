@@ -31,7 +31,7 @@ BEGIN
             envelope,
             failures,
             failing_since,
-            scheduled_at,
+            scheduled_for,
             next_attempt_at
         )
         SELECT
@@ -67,7 +67,7 @@ BEGIN
             envelope,
             failures,
             failing_since,
-            scheduled_at,
+            scheduled_for,
             next_attempt_at
         )
         SELECT

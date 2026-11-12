@@ -18,8 +18,8 @@ import (
 
 // Consumer dispatches events from a catalog's event streams to a [Sink].
 //
-// It consumes a stream only if this node is responsible for the work with the
-// key that [Sink.RendezvousKey] returns for it. While nodes are joining or
+// It consumes a stream only if this node owns the workload with the key that
+// [Sink.RendezvousKey] returns for the stream. While nodes are joining or
 // leaving, more than one node may briefly consume the same stream, so the sink
 // must detect concurrent changes to its checkpoint offsets.
 type Consumer struct {
@@ -45,18 +45,26 @@ type Consumer struct {
 	group *errgroup.Group
 }
 
-// Run consumes the event streams that this node is responsible for until ctx is
-// canceled or it is unable to continue.
+// Run consumes each event stream while this node owns the stream's workload,
+// until ctx is canceled or it is unable to continue.
 //
 // It must be called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
 	c.group, ctx = errgroup.WithContext(ctx)
 
 	for {
-		streamIDs, streamIDsChanged := c.EventStreams.StreamIDs().Load()
 		liveNodes, liveNodesChanged := c.Node.LiveNodes().Load()
+		availableStreamIDs, availableStreamIDsChanged := c.EventStreams.StreamIDs().Load()
 
-		c.reconcile(ctx, streamIDs, liveNodes)
+		streamIDs := uuidcollection.NewSet()
+		for streamID := range availableStreamIDs.All() {
+			key := c.Sink.RendezvousKey(streamID)
+			if c.Node.OwnsWorkload(key, liveNodes) {
+				streamIDs.Add(streamID)
+			}
+		}
+
+		c.consumeStreams(ctx, streamIDs)
 
 		select {
 		case <-ctx.Done():
@@ -65,34 +73,24 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 
 			return ctx.Err()
-		case <-streamIDsChanged:
 		case <-liveNodesChanged:
+		case <-availableStreamIDsChanged:
 		}
 	}
 }
 
-// reconcile starts a stream consumer for each of the given streams that this
-// node is responsible for, given the live nodes, and stops every other stream
-// consumer.
-func (c *Consumer) reconcile(
+// consumeStreams starts a stream consumer for each of the given streams that
+// doesn't have one, and stops every other stream consumer.
+func (c *Consumer) consumeStreams(
 	ctx context.Context,
 	streamIDs *uuidcollection.Set,
-	liveNodes *uuidcollection.Set,
 ) {
-	responsible := uuidcollection.NewSet()
-
-	for streamID := range streamIDs.All() {
-		if c.Node.IsResponsibleFor(c.Sink.RendezvousKey(streamID), liveNodes) {
-			responsible.Add(streamID)
-		}
-	}
-
 	// Stopping a stream consumer waits for it to return, so a stream is never
 	// consumed twice at once on this node.
 	var stopping sync.WaitGroup
 
 	for streamID, stop := range c.stopStreamConsumer.All() {
-		if !responsible.Has(streamID) {
+		if !streamIDs.Has(streamID) {
 			stopping.Go(stop)
 			c.stopStreamConsumer.Delete(streamID)
 		}
@@ -100,7 +98,7 @@ func (c *Consumer) reconcile(
 
 	stopping.Wait()
 
-	for streamID := range responsible.All() {
+	for streamID := range streamIDs.All() {
 		if !c.stopStreamConsumer.Has(streamID) {
 			c.startStreamConsumer(ctx, streamID)
 		}

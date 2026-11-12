@@ -3,10 +3,15 @@ package messagequeue_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
+	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
@@ -17,10 +22,11 @@ import (
 )
 
 func TestConsumer(t *testing.T) {
-	typeID := uuidpb.Generate()
+	typeID := stubs.MessageTypeUUID[*stubs.CommandStub[stubs.TypeA]]()
+	contentionDelay := 100 * time.Millisecond
 
 	// setup returns a database, a running node on it, and a function that
-	// returns another running node on it.
+	// returns another node on it, which isn't running.
 	setup := func(t *testing.T) (*sql.DB, *cluster.Node, func() *cluster.Node) {
 		db := xtesting.NewDatabase(t)
 
@@ -31,7 +37,7 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, signals.Run)
 
 		newNode := func() *cluster.Node {
-			n := &cluster.Node{
+			return &cluster.Node{
 				ID:                uuidpb.Generate(),
 				DB:                db,
 				Signals:           signals,
@@ -39,11 +45,12 @@ func TestConsumer(t *testing.T) {
 				HeartbeatTimeout:  1 * time.Second,
 				EngineLogger:      spruce.NewTestLogger(t),
 			}
-			xtesting.GoE(t, n.Run)
-			return n
 		}
 
-		return db, newNode(), newNode
+		n := newNode()
+		xtesting.GoE(t, n.Run)
+
+		return db, n, newNode
 	}
 
 	// waitForLiveNodes waits until each of the given nodes is in the set of
@@ -66,14 +73,15 @@ func TestConsumer(t *testing.T) {
 		)
 	}
 
-	// run runs a consumer of messages of typeID on the given node, and returns
-	// a function that stops it. The consumer calls the given function to
-	// attempt each message.
+	// run runs a consumer of messages of typeID on the given node, with the
+	// given concurrency limit, and returns a function that stops it. The
+	// consumer delivers each message to the given handler.
 	run := func(
 		t *testing.T,
 		db *sql.DB,
 		n *cluster.Node,
-		attempt func(context.Context, *uuidpb.UUID),
+		concurrency int,
+		h Handler,
 	) func() {
 		logger := spruce.NewTestLogger(t)
 
@@ -84,30 +92,34 @@ func TestConsumer(t *testing.T) {
 		}
 		xtesting.GoE(t, queues.Run)
 
+		var handlers uuidcollection.Map[Handler]
+		handlers.Set(typeID, h)
+
 		consumer := &Consumer{
-			DB:             db,
-			Node:           n,
-			Queues:         queues,
-			MessageTypeIDs: uuidcollection.NewSet(typeID),
-			Attempt:        attempt,
-			EngineLogger:   logger,
+			DB:              db,
+			Node:            n,
+			Queues:          queues,
+			Handlers:        handlers,
+			Concurrency:     concurrency,
+			ContentionDelay: contentionDelay,
+			EngineLogger:    logger,
 		}
 
 		return xtesting.GoE(t, consumer.Run)
 	}
 
-	// addMessage adds a message of the given type to the queue with the given
-	// ID, to be delivered at the given time, and returns the message's ID.
-	addMessage := func(
+	// insertMessage adds a message of the given type, with the given envelope,
+	// to the queue with the given ID, to be attempted at the given time.
+	insertMessage := func(
 		t *testing.T,
 		db *sql.DB,
+		messageID *uuidpb.UUID,
 		queueID *uuidpb.UUID,
 		typeID *uuidpb.UUID,
+		envelope []byte,
 		nextAttemptAt time.Time,
-	) *uuidpb.UUID {
+	) {
 		t.Helper()
-
-		messageID := uuidpb.Generate()
 
 		if _, err := db.ExecContext(
 			t.Context(),
@@ -117,14 +129,37 @@ func TestConsumer(t *testing.T) {
 				queue_id,
 				envelope,
 				next_attempt_at
-			) VALUES ($1, $2, $3, '\x00', $4)`,
+			) VALUES ($1, $2, $3, $4, $5)`,
 			xsql.UUID(messageID),
 			xsql.UUID(typeID),
 			xsql.UUID(queueID),
+			envelope,
 			nextAttemptAt,
 		); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	// addMessage adds a message of the given type to the queue with the given
+	// ID, to be attempted at the given time, and returns the message's ID.
+	addMessage := func(
+		t *testing.T,
+		db *sql.DB,
+		queueID *uuidpb.UUID,
+		typeID *uuidpb.UUID,
+		nextAttemptAt time.Time,
+	) *uuidpb.UUID {
+		t.Helper()
+
+		env := xtesting.PackCommand(t, stubs.CommandA1)
+		messageID := env.GetBody().GetMessageId()
+
+		data, err := env.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		insertMessage(t, db, messageID, queueID, typeID, data, nextAttemptAt)
 
 		return messageID
 	}
@@ -138,40 +173,103 @@ func TestConsumer(t *testing.T) {
 		}
 	}
 
-	// removeMessage removes the message with the given ID from its queue.
-	removeMessage := func(t *testing.T, db *sql.DB, messageID *uuidpb.UUID) {
+	// lockMessage locks the message with the given ID in a transaction, and
+	// returns a function that rolls the transaction back.
+	lockMessage := func(t *testing.T, db *sql.DB, messageID *uuidpb.UUID) func() {
 		t.Helper()
 
-		exec(
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { tx.Rollback() })
+
+		if _, err := tx.ExecContext(
+			t.Context(),
+			`SELECT 1
+			FROM messagequeue.messages
+			WHERE message_id = $1
+			FOR UPDATE`,
+			xsql.UUID(messageID),
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		return func() { tx.Rollback() }
+	}
+
+	// expectQueued fails the test unless the message with the given ID comes
+	// to satisfy the given SQL condition on its row.
+	expectQueued := func(t *testing.T, db *sql.DB, description string, messageID *uuidpb.UUID, cond string) {
+		t.Helper()
+
+		xtesting.WaitForQueryResult(
 			t,
+			description,
+			1,
 			db,
-			`DELETE FROM messagequeue.messages
+			`SELECT COUNT(*)
+			FROM messagequeue.messages
+			WHERE message_id = $1
+			AND `+cond,
+			xsql.UUID(messageID),
+		)
+	}
+
+	// expectRemoved fails the test unless the message with the given ID is
+	// removed from its queue.
+	expectRemoved := func(t *testing.T, db *sql.DB, messageID *uuidpb.UUID) {
+		t.Helper()
+
+		xtesting.WaitForQueryResult(
+			t,
+			"the delivered message to be removed",
+			0,
+			db,
+			`SELECT COUNT(*)
+			FROM messagequeue.messages
 			WHERE message_id = $1`,
 			xsql.UUID(messageID),
 		)
 	}
 
-	// deliver returns an attempt function that sends the ID of each message
-	// to the returned channel, then removes the message, as a delivery does.
-	deliver := func(t *testing.T, db *sql.DB) (func(context.Context, *uuidpb.UUID), <-chan *uuidpb.UUID) {
+	// record returns a handler that sends the ID of each message to the
+	// returned channel, then delivers it.
+	record := func() (Handler, <-chan *uuidpb.UUID) {
 		attempted := make(chan *uuidpb.UUID, 100)
 
-		return func(ctx context.Context, messageID *uuidpb.UUID) {
-			select {
-			case <-ctx.Done():
-				return
-			case attempted <- messageID:
-			}
+		return handlerFunc(
+			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case attempted <- d.MessageID:
+					return nil
+				}
+			},
+		), attempted
+	}
 
-			if _, err := db.ExecContext(
-				ctx,
-				`DELETE FROM messagequeue.messages
-				WHERE message_id = $1`,
-				xsql.UUID(messageID),
-			); err != nil && ctx.Err() == nil {
-				t.Error(err)
-			}
-		}, attempted
+	// block returns a handler that sends the ID of each message to the
+	// returned channel, then delivers it once the returned function is called.
+	block := func() (Handler, <-chan *uuidpb.UUID, func()) {
+		attempted := make(chan *uuidpb.UUID, 100)
+		release := make(chan struct{})
+
+		h := handlerFunc(
+			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+				attempted <- d.MessageID
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-release:
+					return nil
+				}
+			},
+		)
+
+		return h, attempted, func() { close(release) }
 	}
 
 	// expectAttempt fails the test unless the next message attempted is the
@@ -189,33 +287,77 @@ func TestConsumer(t *testing.T) {
 		}
 	}
 
-	t.Run("it attempts a due message in a queue it is responsible for", func(t *testing.T) {
+	// expectAttempts fails the test unless the next messages attempted are the
+	// messages with the given IDs, in any order.
+	expectAttempts := func(t *testing.T, attempted <-chan *uuidpb.UUID, want ...*uuidpb.UUID) {
+		t.Helper()
+
+		remaining := uuidcollection.NewSet(want...)
+
+		for !remaining.IsEmpty() {
+			select {
+			case got := <-attempted:
+				if !remaining.Has(got) {
+					t.Fatalf("unexpected message attempted: got %s, want one of %s", got, remaining)
+				}
+				remaining.Delete(got)
+			case <-time.After(xtesting.WaitTimeout):
+				t.Fatalf("timeout waiting for messages %s to be attempted", remaining)
+			}
+		}
+	}
+
+	// expectNoAttempt fails the test if a message is attempted soon.
+	expectNoAttempt := func(t *testing.T, attempted <-chan *uuidpb.UUID) {
+		t.Helper()
+
+		select {
+		case got := <-attempted:
+			t.Fatalf("unexpected message attempted: %s", got)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	t.Run("it attempts a message that is due, if its node owns the queue's workload", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
 		expectAttempt(t, attempted, messageID)
 	})
 
-	t.Run("it ignores a message in a queue another node is responsible for", func(t *testing.T) {
+	t.Run("it removes a delivered message", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, _ := record()
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(t, db, n, 10, h)
+
+		expectRemoved(t, db, messageID)
+	})
+
+	t.Run("it ignores a message if another node owns the queue's workload", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, newNode := setup(t)
 		other := newNode()
+		xtesting.GoE(t, other.Run)
 		waitForLiveNodes(t, n, n, other)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
-		// Self-affinity makes each live node responsible for the queue with its
-		// own ID. The ignored message is earlier, so it would be attempted
-		// first if it were in a queue that n is responsible for.
+		// Self-affinity makes each live node own the workload of the queue
+		// whose ID is the node's ID. The ignored message is earlier, so it
+		// would be attempted first if n owned the workload of its queue.
 		now := time.Now()
 		addMessage(t, db, other.ID, typeID, now.Add(-1*time.Second))
 		sentinel := addMessage(t, db, n.ID, typeID, now)
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
 		expectAttempt(t, attempted, sentinel)
 	})
@@ -224,12 +366,12 @@ func TestConsumer(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		now := time.Now()
 		addMessage(t, db, n.ID, uuidpb.Generate(), now.Add(-1*time.Second))
 		sentinel := addMessage(t, db, n.ID, typeID, now)
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
 		expectAttempt(t, attempted, sentinel)
 	})
@@ -246,12 +388,16 @@ func TestConsumer(t *testing.T) {
 			t,
 			db,
 			n,
-			func(context.Context, *uuidpb.UUID) {
-				select {
-				case attemptedAt <- time.Now():
-				default:
-				}
-			},
+			10,
+			handlerFunc(
+				func(context.Context, *sql.Tx, Delivery, *envelopepb.Envelope) error {
+					select {
+					case attemptedAt <- time.Now():
+					default:
+					}
+					return nil
+				},
+			),
 		)
 
 		select {
@@ -268,10 +414,10 @@ func TestConsumer(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		addMessage(t, db, n.ID, typeID, time.Now().Add(1*time.Hour))
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
 		earlier := addMessage(t, db, n.ID, typeID, time.Now())
 
@@ -283,13 +429,14 @@ func TestConsumer(t *testing.T) {
 
 		db, n, newNode := setup(t)
 		other := newNode()
+		xtesting.GoE(t, other.Run)
 		waitForLiveNodes(t, n, n, other)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		now := time.Now()
 		moved := addMessage(t, db, n.ID, typeID, now.Add(500*time.Millisecond))
 		sentinel := addMessage(t, db, n.ID, typeID, now.Add(700*time.Millisecond))
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
 		exec(
 			t,
@@ -308,13 +455,17 @@ func TestConsumer(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		now := time.Now()
 		third := addMessage(t, db, n.ID, typeID, now.Add(300*time.Millisecond))
 		first := addMessage(t, db, n.ID, typeID, now.Add(100*time.Millisecond))
 		second := addMessage(t, db, n.ID, typeID, now.Add(200*time.Millisecond))
-		run(t, db, n, attempt)
+
+		// With a concurrency limit of one, each attempt is made before the next
+		// begins, so the order holds even if several messages are due by the
+		// time the consumer starts.
+		run(t, db, n, 1, h)
 
 		expectAttempt(t, attempted, first)
 		expectAttempt(t, attempted, second)
@@ -325,16 +476,22 @@ func TestConsumer(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
+		h, attempted := record()
 
 		now := time.Now()
 		removed := addMessage(t, db, n.ID, typeID, now.Add(300*time.Millisecond))
 		sentinel := addMessage(t, db, n.ID, typeID, now.Add(600*time.Millisecond))
-		run(t, db, n, attempt)
+		run(t, db, n, 10, h)
 
-		// Removing a message sends no signal, so the consumer finds out when
-		// the removed message would have been due.
-		removeMessage(t, db, removed)
+		// Removing a message doesn't send a signal, so the consumer finds out
+		// when the removed message would have been due.
+		exec(
+			t,
+			db,
+			`DELETE FROM messagequeue.messages
+			WHERE message_id = $1`,
+			xsql.UUID(removed),
+		)
 
 		expectAttempt(t, attempted, sentinel)
 	})
@@ -343,18 +500,10 @@ func TestConsumer(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempted := make(chan *uuidpb.UUID, 100)
+		h, attempted, _ := block()
 
 		blocked := addMessage(t, db, n.ID, typeID, time.Now())
-		run(
-			t,
-			db,
-			n,
-			func(ctx context.Context, messageID *uuidpb.UUID) {
-				attempted <- messageID
-				<-ctx.Done()
-			},
-		)
+		run(t, db, n, 10, h)
 		expectAttempt(t, attempted, blocked)
 
 		// The sentinel's signal wakes the consumer while the blocked message
@@ -364,7 +513,202 @@ func TestConsumer(t *testing.T) {
 		expectAttempt(t, attempted, sentinel)
 	})
 
-	t.Run("it attempts a message again once its attempt ends", func(t *testing.T) {
+	t.Run("it attempts no more messages at once than its concurrency limit", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, release := block()
+
+		now := time.Now()
+		first := addMessage(t, db, n.ID, typeID, now.Add(-3*time.Second))
+		second := addMessage(t, db, n.ID, typeID, now.Add(-2*time.Second))
+		third := addMessage(t, db, n.ID, typeID, now.Add(-1*time.Second))
+		run(t, db, n, 2, h)
+
+		expectAttempts(t, attempted, first, second)
+		expectNoAttempt(t, attempted)
+
+		release()
+
+		expectAttempt(t, attempted, third)
+	})
+
+	t.Run("it keeps a signal that arrives while it is at its concurrency limit", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, release := block()
+
+		blocked := addMessage(t, db, n.ID, typeID, time.Now())
+		run(t, db, n, 1, h)
+		expectAttempt(t, attempted, blocked)
+
+		sentinel := addMessage(t, db, n.ID, typeID, time.Now())
+		release()
+
+		expectAttempt(t, attempted, sentinel)
+	})
+
+	t.Run("it uses all of the headroom that several attempts free at once", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, release := block()
+
+		now := time.Now()
+
+		var earlier, later []*uuidpb.UUID
+		for i := range 3 {
+			at := now.Add(time.Duration(i-6) * time.Second)
+			earlier = append(earlier, addMessage(t, db, n.ID, typeID, at))
+		}
+		for i := range 3 {
+			at := now.Add(time.Duration(i-3) * time.Second)
+			later = append(later, addMessage(t, db, n.ID, typeID, at))
+		}
+
+		run(t, db, n, 3, h)
+		expectAttempts(t, attempted, earlier...)
+
+		release()
+
+		expectAttempts(t, attempted, later...)
+	})
+
+	t.Run("it attempts other messages while one is locked", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted := record()
+
+		now := time.Now()
+		locked := addMessage(t, db, n.ID, typeID, now.Add(-3*time.Second))
+		first := addMessage(t, db, n.ID, typeID, now.Add(-2*time.Second))
+		second := addMessage(t, db, n.ID, typeID, now.Add(-1*time.Second))
+		unlock := lockMessage(t, db, locked)
+
+		// With a concurrency limit of one, the others can only be attempted if
+		// the locked message doesn't take the slot.
+		run(t, db, n, 1, h)
+		expectAttempt(t, attempted, first)
+		expectAttempt(t, attempted, second)
+
+		unlock()
+
+		expectAttempt(t, attempted, locked)
+	})
+
+	t.Run("it attempts a locked message again after the contention delay", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted := record()
+
+		locked := addMessage(t, db, n.ID, typeID, time.Now())
+		unlock := lockMessage(t, db, locked)
+		run(t, db, n, 1, h)
+		expectNoAttempt(t, attempted)
+
+		unlock()
+
+		expectAttempt(t, attempted, locked)
+	})
+
+	t.Run("it postpones the delivery after a failed attempt, and increments its failures", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		var failed atomic.Bool
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(
+			t,
+			db,
+			n,
+			10,
+			handlerFunc(
+				func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
+					if failed.CompareAndSwap(false, true) {
+						return ErrFailed
+					}
+
+					// Later attempts block, so that they don't change the row.
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			),
+		)
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed after a failure",
+			messageID,
+			`failures = 1
+			AND failing_since IS NOT NULL
+			AND next_attempt_at > scheduled_for`,
+		)
+	})
+
+	t.Run("it postpones the delivery when a row that the handler needs is locked, without a failure", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		var busy atomic.Bool
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(
+			t,
+			db,
+			n,
+			10,
+			handlerFunc(
+				func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
+					if busy.CompareAndSwap(false, true) {
+						return ErrBusy
+					}
+
+					// Later attempts block, so that they don't change the row.
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			),
+		)
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed without a failure",
+			messageID,
+			`failures = 0
+			AND failing_since IS NULL
+			AND next_attempt_at > scheduled_for`,
+		)
+	})
+
+	t.Run("it postpones a message whose envelope can not be unmarshaled", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted := record()
+
+		messageID := uuidpb.Generate()
+		insertMessage(t, db, messageID, n.ID, typeID, []byte{0}, time.Now())
+		run(t, db, n, 10, h)
+
+		expectQueued(
+			t,
+			db,
+			"the message to be postponed",
+			messageID,
+			`failures > 0
+			AND failing_since IS NOT NULL
+			AND next_attempt_at > scheduled_for`,
+		)
+		expectNoAttempt(t, attempted)
+	})
+
+	t.Run("it leaves a message for another attempt when an attempt ends with an error", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
@@ -375,32 +719,64 @@ func TestConsumer(t *testing.T) {
 			t,
 			db,
 			n,
-			func(ctx context.Context, messageID *uuidpb.UUID) {
-				// The message stays in its queue, as it does when a delivery
-				// can't continue.
-				select {
-				case attempted <- messageID:
-				case <-ctx.Done():
-				}
-			},
+			10,
+			handlerFunc(
+				func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+					select {
+					case attempted <- d.MessageID:
+					case <-ctx.Done():
+					}
+					return errors.New("<error>")
+				},
+			),
 		)
 
 		expectAttempt(t, attempted, messageID)
 		expectAttempt(t, attempted, messageID)
+		expectQueued(
+			t,
+			db,
+			"the message to be left without a failure",
+			messageID,
+			`failures = 0
+			AND failing_since IS NULL`,
+		)
 	})
 
-	t.Run("it keeps running when discovery fails", func(t *testing.T) {
+	t.Run("it lets an attempt finish after its queue's workload moves to another node", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, newNode := setup(t)
+		other := newNode()
+		waitForLiveNodes(t, n, n)
+		h, attempted, release := block()
+
+		// Until the other node is live, n is the only live node, so it owns
+		// the workload of the queue with the other node's ID. When the other
+		// node is live, self-affinity makes it the owner instead.
+		messageID := addMessage(t, db, other.ID, typeID, time.Now())
+		run(t, db, n, 10, h)
+		expectAttempt(t, attempted, messageID)
+
+		xtesting.GoE(t, other.Run)
+		waitForLiveNodes(t, n, n, other)
+		release()
+
+		expectRemoved(t, db, messageID)
+	})
+
+	t.Run("it keeps running when it can't find the next messages", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		attempt, attempted := deliver(t, db)
-		run(t, db, n, attempt)
+		h, attempted := record()
+		run(t, db, n, 10, h)
 
 		exec(t, db, `ALTER TABLE messagequeue.messages RENAME TO unavailable`)
 
 		// Renaming the table keeps its triggers, so adding a message wakes the
-		// consumer, and its discovery fails.
-		messageID := uuidpb.Generate()
+		// consumer, and it can't find the next messages.
+		env := xtesting.PackCommand(t, stubs.CommandA1)
 		exec(
 			t,
 			db,
@@ -409,15 +785,69 @@ func TestConsumer(t *testing.T) {
 				message_type_id,
 				queue_id,
 				envelope
-			) VALUES ($1, $2, $3, '\x00')`,
-			xsql.UUID(messageID),
+			) VALUES ($1, $2, $3, $4)`,
+			xsql.UUID(env.GetBody().GetMessageId()),
 			xsql.UUID(typeID),
 			xsql.UUID(n.ID),
+			xsql.Envelope(env),
 		)
 
 		exec(t, db, `ALTER TABLE messagequeue.unavailable RENAME TO messages`)
 
-		expectAttempt(t, attempted, messageID)
+		expectAttempt(t, attempted, env.GetBody().GetMessageId())
+	})
+
+	t.Run("it rolls back attempts in flight when it stops", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		started := make(chan struct{}, 1)
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		stop := run(
+			t,
+			db,
+			n,
+			10,
+			handlerFunc(
+				func(ctx context.Context, tx *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+					if _, err := tx.ExecContext(
+						ctx,
+						`UPDATE messagequeue.messages
+						SET failures = 99,
+							failing_since = clock_timestamp()
+						WHERE message_id = $1`,
+						xsql.UUID(d.MessageID),
+					); err != nil {
+						return err
+					}
+
+					started <- struct{}{}
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			),
+		)
+
+		select {
+		case <-started:
+		case <-time.After(xtesting.WaitTimeout):
+			t.Fatal("timeout waiting for the message to be attempted")
+		}
+
+		stop()
+
+		xtesting.ExpectQueryResult(
+			t,
+			"the attempt's changes to be rolled back",
+			1,
+			db,
+			`SELECT COUNT(*)
+			FROM messagequeue.messages
+			WHERE message_id = $1
+			AND failures = 0`,
+			xsql.UUID(messageID),
+		)
 	})
 
 	t.Run("it waits for attempts in flight when it stops", func(t *testing.T) {
@@ -434,13 +864,17 @@ func TestConsumer(t *testing.T) {
 			t,
 			db,
 			n,
-			func(context.Context, *uuidpb.UUID) {
-				select {
-				case started <- struct{}{}:
-					<-release
-				default:
-				}
-			},
+			10,
+			handlerFunc(
+				func(context.Context, *sql.Tx, Delivery, *envelopepb.Envelope) error {
+					select {
+					case started <- struct{}{}:
+						<-release
+					default:
+					}
+					return nil
+				},
+			),
 		)
 
 		select {
@@ -456,7 +890,7 @@ func TestConsumer(t *testing.T) {
 
 		select {
 		case <-stopped:
-			t.Fatal("consumer stopped before its attempt ended")
+			t.Fatal("consumer stopped before its attempt was made")
 		case <-time.After(50 * time.Millisecond):
 		}
 
@@ -468,4 +902,23 @@ func TestConsumer(t *testing.T) {
 			t.Fatal("timeout waiting for the consumer to stop")
 		}
 	})
+}
+
+// handlerFunc is a [Handler] that delivers each message by calling a
+// function.
+type handlerFunc func(
+	ctx context.Context,
+	tx *sql.Tx,
+	d Delivery,
+	env *envelopepb.Envelope,
+) error
+
+func (f handlerFunc) Deliver(
+	ctx context.Context,
+	tx *sql.Tx,
+	d Delivery,
+	env *envelopepb.Envelope,
+	engineLogger *slog.Logger,
+) error {
+	return f(ctx, tx, d, env)
 }

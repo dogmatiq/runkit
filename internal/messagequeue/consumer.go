@@ -11,10 +11,14 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Consumer delivers the messages in each queue that its node is responsible
-// for.
+// Consumer delivers the messages in each queue while its node owns the queue's
+// workload.
+//
+// The queue's ID is the workload's key, as described by
+// [cluster.FindWorkloadOwner].
 type Consumer struct {
 	// DB is the database that stores the message queue.
 	DB *sql.DB
@@ -25,14 +29,23 @@ type Consumer struct {
 	// Queues is the catalog of the queues that have messages.
 	Queues *Catalog
 
-	// MessageTypeIDs is the set of IDs of the message types that the consumer
-	// delivers.
-	MessageTypeIDs *uuidcollection.Set
+	// Handlers maps the ID of each message type that the consumer delivers to
+	// the handler that delivers it.
+	Handlers uuidcollection.Map[Handler]
 
-	// Attempt delivers the message with the given ID. It's called in its own
-	// goroutine once the message is due, and the message isn't offered again
-	// until the call returns.
-	Attempt func(ctx context.Context, messageID *uuidpb.UUID)
+	// Concurrency is the maximum number of messages that the consumer attempts
+	// at once.
+	//
+	// It must be positive.
+	Concurrency int
+
+	// ContentionDelay is how long the consumer waits before it attempts a
+	// contended delivery again.
+	//
+	// A delivery is deemed "contended" if another transaction holds the lock
+	// on the message's row, or if the message's handler needs a row and
+	// another transaction holds that row's lock. It must be positive.
+	ContentionDelay time.Duration
 
 	// EngineLogger is the target for log messages produced by the consumer.
 	EngineLogger *slog.Logger
@@ -41,185 +54,268 @@ type Consumer struct {
 	// consumer consumes, including by being moved there from another queue.
 	messageAdded cosyne.Signal
 
-	// attemptEnded receives the ID of the message of each attempt that ends.
-	attemptEnded chan *uuidpb.UUID
+	// deliveryAttempted is the channel on which each [deliveryAttempt] is sent
+	// after it has been made.
+	//
+	// Its capacity is large enough to hold every attempt that can be in
+	// progress at once, so sending never blocks.
+	deliveryAttempted chan deliveryAttempt
 
-	// active is the set of IDs of the messages being attempted.
-	active uuidcollection.Set
+	// attemptsInProgress holds the ID of the message for each attempt in
+	// progress.
+	attemptsInProgress uuidcollection.Set
+
+	// contendedMessages maps the ID of each contended message to the time at
+	// which the consumer may attempt it again.
+	//
+	// A message is deemed "contended" if another transaction holds its lock,
+	// so the consumer can't claim it for an attempt.
+	contendedMessages uuidcollection.Map[time.Time]
+
+	// backoffUntil is the end of the consumer's backoff.
+	//
+	// The backoff begins when an attempt ends with an error, such as when the
+	// database is unavailable. It doesn't begin when another transaction holds
+	// the message's lock. The consumer doesn't start any attempts until the
+	// backoff ends.
+	backoffUntil time.Time
 
 	// detachQueueSignal holds a function for each queue being consumed.
+	//
 	// Calling it detaches the queue's signal from messageAdded.
 	detachQueueSignal uuidcollection.Map[func()]
 
-	// work tracks each streak of failed discoveries.
+	// messageTypeIDs is the set of IDs of the message types in Handlers.
+	messageTypeIDs *uuidcollection.Set
+
+	// work tracks the failures of consuming the queues.
+	//
+	// The consumer records a failure in it if the consumer can't find the next
+	// messages, or if an attempt ends with an error, unless another
+	// transaction holds the message's lock. work decides how long the consumer
+	// backs off after each failure, and logs the failure.
 	work *supervisor.Work
 }
 
 // Run delivers messages until ctx is canceled.
 //
-// It returns once every attempt has ended. It must be called at most once.
+// It doesn't return until every attempt in progress has been made. It must be
+// called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
+	if c.Concurrency <= 0 {
+		panic("concurrency must be positive")
+	}
+
+	if c.ContentionDelay <= 0 {
+		panic("contention delay must be positive")
+	}
+
+	c.messageTypeIDs = uuidcollection.NewSet()
+	for typeID := range c.Handlers.Keys() {
+		c.messageTypeIDs.Add(typeID)
+	}
+
 	c.work = &supervisor.Work{
 		Description:  "consume queue",
 		EngineLogger: c.EngineLogger,
 	}
 	defer c.work.Complete()
 
-	c.attemptEnded = make(chan *uuidpb.UUID)
-	defer c.awaitAttempts()
+	c.deliveryAttempted = make(chan deliveryAttempt, c.Concurrency)
+	defer func() {
+		for !c.attemptsInProgress.IsEmpty() {
+			a := <-c.deliveryAttempted
+			c.recordAttempt(ctx, a)
+		}
+	}()
 
 	for {
-		queues, queuesChanged := c.Queues.QueueIDs().Load()
 		liveNodes, liveNodesChanged := c.Node.LiveNodes().Load()
+		availableQueues, availableQueuesChanged := c.Queues.QueueIDs().Load()
 
-		responsible := c.reconcile(ctx, queues, liveNodes)
-		nextMessageDue := c.dispatchDue(ctx, responsible)
+		queues := uuidcollection.NewSet()
+		for queueID := range availableQueues.All() {
+			if c.Node.OwnsWorkload(queueID, liveNodes) {
+				queues.Add(queueID)
+			}
+		}
 
+		c.attachQueueSignals(ctx, queues)
+
+		// Several attempts may have been made while the loop was busy.
+		// Recording them all first means that one call to startAttempts can
+		// start a new attempt in place of each of them.
+		for len(c.deliveryAttempted) > 0 {
+			a := <-c.deliveryAttempted
+			c.recordAttempt(ctx, a)
+		}
+
+		nextAttemptDue, backlogIsEmpty := c.startAttempts(ctx, queues)
+
+	wait:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-queuesChanged:
 		case <-liveNodesChanged:
+		case <-availableQueuesChanged:
 		case <-c.messageAdded.Chan():
-		case <-nextMessageDue:
-		case messageID := <-c.attemptEnded:
-			// Discovery leaves out a message while it's being attempted. Once
-			// the attempt ends, the consumer discovers again, as the message
-			// may still be due, or have been postponed, which sends no signal.
-			c.endAttempt(messageID)
+		case <-nextAttemptDue:
+		case a := <-c.deliveryAttempted:
+			c.recordAttempt(ctx, a)
+
+			if a.Delivered && backlogIsEmpty {
+				goto wait
+			}
 		}
 	}
 }
 
-// reconcile attaches the signal of each of the given queues that this node is
-// responsible for, given the live nodes, to c.messageAdded, and detaches the
-// signal of every other queue.
-//
-// It returns the IDs of the queues that this node is responsible for.
-func (c *Consumer) reconcile(
+// attachQueueSignals attaches the signal of each of the given queues to
+// c.messageAdded, and detaches the signal of every other queue.
+func (c *Consumer) attachQueueSignals(
 	ctx context.Context,
 	queues *uuidcollection.Set,
-	liveNodes *uuidcollection.Set,
-) *uuidcollection.Set {
-	responsible := uuidcollection.NewSet()
-
-	for queueID := range queues.All() {
-		if c.Node.IsResponsibleFor(queueID, liveNodes) {
-			responsible.Add(queueID)
-		}
-	}
-
+) {
 	for queueID, detach := range c.detachQueueSignal.All() {
-		if !responsible.Has(queueID) {
+		if !queues.Has(queueID) {
 			detach()
 			c.detachQueueSignal.Delete(queueID)
 		}
 	}
 
-	for queueID := range responsible.All() {
+	for queueID := range queues.All() {
 		if !c.detachQueueSignal.Has(queueID) {
-			detach := c.Node.AttachSignal(ctx, queueSignal(queueID), &c.messageAdded)
+			signal := "messagequeue." + queueID.AsString()
+			detach := c.Node.AttachSignal(ctx, signal, &c.messageAdded)
 			c.detachQueueSignal.Set(queueID, detach)
 		}
 	}
-
-	return responsible
 }
 
-// dispatchDue starts an attempt for each due message in the given queues.
+// startAttempts starts a delivery attempt for each message whose next attempt
+// is due, up to the consumer's concurrency limit.
 //
-// It returns a channel that fires when the next message becomes due, or nil if
-// there are no more messages.
-func (c *Consumer) dispatchDue(
+// It attempts only the messages in the given queues. Each attempt runs in its
+// own goroutine, and is sent to c.deliveryAttempted after it has been made. It
+// doesn't wait for any of them.
+//
+// It returns a channel on which a value is sent when the consumer should call
+// startAttempts again, such as when the next message becomes due. It returns
+// nil if there's no such time.
+//
+// It also reports whether the backlog is known to be empty. The backlog is the
+// set of messages in the given queues whose next attempt is due but that aren't
+// being attempted because there is insufficient concurrency headroom, as
+// limited by [Consumer.Concurrency].
+//
+// It might not start any attempts, such as when the consumer is backing off or
+// at its concurrency limit, or when there are no messages that are due.
+func (c *Consumer) startAttempts(
 	ctx context.Context,
 	queues *uuidcollection.Set,
-) (nextMessageDue <-chan time.Time) {
-	for {
-		next, ok := c.discoverNext(ctx, queues)
+) (nextAttemptDue <-chan time.Time, backlogIsEmpty bool) {
+	// An attempt ended with an error, so the consumer doesn't start any
+	// attempts until its backoff ends.
+	if backoff := time.Until(c.backoffUntil); backoff > 0 {
+		return time.After(backoff), false
+	}
 
-		// There are no more messages, so the consumer waits for a signal.
-		if !ok {
-			return nil
+	headroom := c.Concurrency - c.attemptsInProgress.Len()
+
+	// The consumer is at its concurrency limit, so it waits for an attempt to
+	// be made.
+	if headroom == 0 {
+		return nil, false
+	}
+
+	// next is the earliest time at which there may be another message to
+	// attempt, or zero if there's no such time.
+	var next time.Time
+
+	for messageID, retryAt := range c.contendedMessages.All() {
+		if !time.Now().Before(retryAt) {
+			c.contendedMessages.Delete(messageID)
+		} else if next.IsZero() || retryAt.Before(next) {
+			next = retryAt
+		}
+	}
+
+	messages := c.findNextMessages(ctx, queues, headroom)
+
+	// If the batch has fewer messages than the headroom, it contains every
+	// message whose next attempt is due. Otherwise, other messages may be due.
+	backlogIsEmpty = len(messages) < headroom
+
+	for _, m := range messages {
+		// The message isn't due yet, and the rest of the batch is due later
+		// still.
+		if !m.IsDue() {
+			if next.IsZero() || m.NextAttemptAt.Before(next) {
+				next = m.NextAttemptAt
+			}
+			backlogIsEmpty = true
+			break
 		}
 
-		// The message isn't due yet, so the consumer waits until it is.
-		if !next.IsDue() {
-			delay := time.Until(next.NextAttemptAt)
-			return time.After(delay)
+		c.attemptsInProgress.Add(m.ID)
+
+		a := deliveryAttempt{
+			MessageID: m.ID,
 		}
 
-		c.startAttempt(ctx, next.MessageID)
+		go func() {
+			a.Delivered, a.Err = c.attemptDelivery(ctx, queues, a.MessageID)
+			c.deliveryAttempted <- a
+		}()
+	}
+
+	// There are no contended messages, and every message in the batch is being
+	// attempted. Either the batch had as many messages as the headroom, or
+	// there are no more messages.
+	if next.IsZero() {
+		return nil, backlogIsEmpty
+	}
+
+	delay := time.Until(next)
+	return time.After(delay), backlogIsEmpty
+}
+
+// recordAttempt records that the given attempt has been made.
+func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
+	c.attemptsInProgress.Delete(a.MessageID)
+
+	switch {
+	case ctx.Err() != nil:
+		// The consumer is stopping, so an error isn't a failure of the attempt.
+	case xsql.IsLockNotAvailableError(a.Err):
+		// Another transaction holds the message's lock. Waiting for the
+		// contention delay stops the consumer from finding it locked again
+		// straight away, without the message counting toward the concurrency
+		// limit.
+		retryAt := time.Now().Add(c.ContentionDelay)
+		c.contendedMessages.Set(a.MessageID, retryAt)
+	case a.Err != nil:
+		backoff := c.work.Failed(ctx, a.Err)
+		c.backoffUntil = time.Now().Add(backoff)
+	default:
+		c.work.Succeeded(ctx)
 	}
 }
 
-// discoverNext discovers the next message in the given queues, leaving out the
-// messages being attempted. It returns false if there are no such messages.
+// deliveryAttempt is an attempt to deliver a message.
 //
-// If discovery fails, it's retried after a delay, until it succeeds or ctx is
-// canceled. It returns false if ctx is canceled.
-func (c *Consumer) discoverNext(
-	ctx context.Context,
-	queues *uuidcollection.Set,
-) (candidate, bool) {
-	for {
-		next, ok, err := discover(
-			ctx,
-			c.DB,
-			queues,
-			c.MessageTypeIDs,
-			&c.active,
-		)
+// MessageID is set when the attempt starts, and the other fields are set after
+// it has been made.
+type deliveryAttempt struct {
+	// MessageID is the ID of the message to deliver.
+	MessageID *uuidpb.UUID
 
-		// The consumer is stopping, so the error isn't a failure of discovery.
-		if ctx.Err() != nil {
-			return candidate{}, false
-		}
+	// Delivered is true if the message was delivered.
+	Delivered bool
 
-		// Discovery succeeded, which ends any streak of failures.
-		if err == nil {
-			c.work.Succeeded(ctx)
-			return next, ok
-		}
-
-		delay := c.work.Failed(ctx, err)
-
-		select {
-		case <-ctx.Done():
-			return candidate{}, false
-		case <-time.After(delay):
-		}
-	}
-}
-
-// startAttempt starts an attempt to deliver the message with the given ID.
-//
-// When the attempt ends, it sends the message's ID to c.attemptEnded.
-func (c *Consumer) startAttempt(ctx context.Context, messageID *uuidpb.UUID) {
-	c.active.Add(messageID)
-
-	go func() {
-		c.Attempt(ctx, messageID)
-		c.attemptEnded <- messageID
-	}()
-}
-
-// endAttempt records that the attempt to deliver the message with the given ID
-// has ended.
-func (c *Consumer) endAttempt(messageID *uuidpb.UUID) {
-	c.active.Delete(messageID)
-}
-
-// awaitAttempts waits until every attempt in progress has ended.
-func (c *Consumer) awaitAttempts() {
-	for !c.active.IsEmpty() {
-		messageID := <-c.attemptEnded
-		c.endAttempt(messageID)
-	}
-}
-
-// queueSignal returns the cluster-wide signal that is notified when a message
-// is added to the queue with the given ID, including by being moved there from
-// another queue.
-func queueSignal(queueID *uuidpb.UUID) string {
-	return "messagequeue." + queueID.AsString()
+	// Err is the error that ended the attempt, or nil if there wasn't one.
+	//
+	// For example, the database may be unavailable, or another transaction may
+	// hold the message's lock.
+	Err error
 }

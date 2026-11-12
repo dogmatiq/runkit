@@ -91,10 +91,10 @@ func (n *Node) LiveNodes() cosyne.ObservableR[*uuidcollection.Set] {
 	return &n.liveNodes
 }
 
-// IsResponsibleFor returns true if, among the given live nodes, this node is
-// the one responsible for the work with the given rendezvous key.
-func (n *Node) IsResponsibleFor(key *uuidpb.UUID, liveNodes *uuidcollection.Set) bool {
-	return isResponsibleFor(n.ID, key, liveNodes)
+// OwnsWorkload returns true if, among the given live nodes, this node owns the
+// workload with the given key.
+func (n *Node) OwnsWorkload(key *uuidpb.UUID, liveNodes *uuidcollection.Set) bool {
+	return ownsWorkload(n.ID, key, liveNodes)
 }
 
 // isSelf returns true if the given ID is this node's ID.
@@ -115,7 +115,7 @@ func (n *Node) Run(ctx context.Context) error {
 		panic("heartbeat timeout must be greater than the heartbeat interval")
 	}
 
-	// Once this node has stopped, it is no longer responsible for any work.
+	// After this node has stopped, it doesn't own any workloads.
 	defer n.liveNodes.Store(nil)
 
 	g, ctx := errgroup.WithContext(ctx)

@@ -237,7 +237,7 @@ func persistDeadlines(
 				handler_key,
 				instance_id,
 				envelope,
-				scheduled_at,
+				scheduled_for,
 				next_attempt_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
 			xsql.UUID(deadlineEnvelope.GetBody().GetMessageId()),

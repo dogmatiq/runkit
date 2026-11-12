@@ -8,20 +8,20 @@
 > `make precommit`), never by invoking the Go toolchain directly. Tests start
 > PostgreSQL through testcontainers, so Docker must be running.
 
-**Goal:** Replace the per-handler message pumps with one queue consumer per
-node that delivers the commands and deadlines in the queues
-this node is responsible for.
+**Goal:** Replace the per-handler message pumps with one queue consumer per node
+that delivers the commands and deadlines in each queue while this node owns the
+queue's workload.
 
 **Architecture:** `messagequeue.Consumer` watches the live nodes, the observed
-queues and the signal of each queue it's responsible for. It keeps the set of
-queues the local node is responsible for, finds the earliest deliverable message
-across them with one indexed query, and runs each attempt in its own goroutine
-and transaction, up to its concurrency limit. An attempt claims its message
-with `FOR UPDATE SKIP LOCKED`, falling back to any other due message if the hint
-is gone, and hands it to the `messagequeue.Handler` for its message type.
-Losing responsibility for a queue stops new attempts on its messages; shutdown
-cancels them. The `messagepump`
-package is removed.
+queues and the signal of each queue while it owns the queue's workload. It keeps
+the set of those queues, finds the earliest deliverable message across them with
+one indexed query, and runs each attempt in its own goroutine and transaction,
+up to its concurrency limit. The consumer claims each message for an attempt
+with `FOR UPDATE NOWAIT`, then passes it to the `messagequeue.Handler` for its
+message type. If another transaction holds the message's lock, the consumer
+doesn't attempt it again until a contention delay has passed. When a queue's
+workload moves to another node, this node doesn't start any new attempts on its
+messages; shutdown cancels them. The `messagepump` package is removed.
 
 **Tech stack:** Go, PostgreSQL, `cosyne`, `errgroup`, `testing/synctest` for
 the timer logic.
@@ -32,7 +32,8 @@ decisions below.
 
 This is the second of three plans for [#100][100]. It depends on
 [plan 1][plan-1] for the `messagequeue.messages` table, its signal,
-`messagequeue.Catalog` and `cluster.FindResponsibleNode`.
+`messagequeue.Catalog` and `cluster.FindResponsibleNode`, which task 4 renames
+to `cluster.FindWorkloadOwner`.
 
 ## Reviewability
 
@@ -60,40 +61,66 @@ the last one taught them, and change the plan before changing the code.
 
 These were made with the maintainer, and aren't in [#100][100].
 
-- **One consumer per node, not per queue or per handler.** It discovers across
-  every queue it is responsible for. Only the loop tracks the attempts in
-  progress, as a set of message IDs, and it starts no more than its
-  concurrency limit, `10 × GOMAXPROCS`. Each attempt sends its message ID on a
-  channel when it ends. Nothing is shared with other nodes.
-- **The consumer lands in two tasks.** Task 3 is ownership, discovery,
-  timers and wake-ups, dispatching to an attempt function the test supplies.
-  Task 4 is the real attempt: the concurrency limit, the claim, the handler
-  call and postponement. Each is reviewable alone.
-- **Discovery is one query** that takes the queues it consumes, the routed
-  message types and the active message IDs, and returns the candidate with the
-  earliest `next_attempt_at`, including a future one. Ties are broken arbitrarily. It
-  looks up each `(queue, type)` pair in the index from plan 1, so a retired
-  route's rows are never read.
-- **The fallback claim is one query**, not the probe-and-savepoint sequence from
-  [#102][102]: the same shape as discovery with `next_attempt_at <= now` and `FOR
-  UPDATE SKIP LOCKED`, limited to one row. It locks only the row it returns.
-  Measuring its plan under load is listed in the validation.
+- **One consumer per node, not per queue or per handler.** It looks for the next
+  messages across all of the queues while it owns their workloads. Only the loop
+  tracks the attempts in progress, as a set of message IDs, and it starts no
+  more than its concurrency limit, `10 × GOMAXPROCS`. Each attempt is sent on a
+  channel after it has been made. Nothing is shared with other nodes.
+- **The consumer lands in two tasks.** Task 3 is ownership, finding the next
+  messages, timers and wake-ups, dispatching to an attempt function the test
+  supplies. Task 4 is the real attempt: the concurrency limit, the claim, the
+  handler call and postponement. Each is reviewable alone.
+- **Finding the next messages is one query** that takes the queues it consumes,
+  the message types that have handlers and the IDs of the messages being
+  attempted, and returns the message with the earliest `next_attempt_at`,
+  including a future one. Ties are broken arbitrarily. It looks up each
+  `(queue, type)` pair in the index from plan 1, so a retired route's rows are
+  never read.
+- **A delivery is made of attempts.** A delivery is the whole job of getting a
+  message to its handler. It's complete once the message is delivered, or
+  cancelled if it's a deadline whose process instance has ended. An attempt is
+  one transaction that tries to complete it, so a delivery may take many
+  attempts. An attempt that fails postpones the delivery. The loop records each
+  attempt once it has been made, along with whether it delivered the message.
+  Names say "delivery" where `messagequeue` wouldn't say what's attempted:
+  `deliveryAttempt` and `Consumer.attemptDelivery`.
+  `Consumer.findNextMessages` returns each `message` without its envelope, and a
+  claim returns its `Delivery`, which handlers receive. [#100][100] calls
+  finding the next messages "discovery".
+- **The consumer claims only the message that an attempt was started for.**
+  [#100][100] asks for a fallback to other work that is due, because its
+  discovery returned one hint per handler, so one locked message held up the
+  whole handler. Here, a locked message isn't one of the next messages for
+  `ContentionDelay`, and it holds up no slot in the meantime. Only an attempt on
+  another node holds a message's lock for long. That happens when the workload
+  of a queue moves to another node while an attempt is in progress, which may be
+  often, since an integration may take as long as the handle timeout and
+  membership can change several times in that period.
 - **Handlers keep their own lock behavior for now.** The aggregate handler keeps
   `SKIP LOCKED` on its instance and reports `ErrBusy`. The deadline handler
   gains the savepoint and `lock_timeout` sequence from [#100][100] in task 6.
   The deliveries plan may unify them.
-- **An attempt's context derives from the consumer's**, not from responsibility
-  for its queue, so losing a queue lets in-flight attempts finish and shutdown
-  cancels them.
+- **An attempt's context derives from the consumer's**, not from ownership of
+  its queue's workload, so when the workload moves, in-flight attempts finish,
+  and shutdown cancels them.
+- **Nodes own workloads.** A workload is work that only one node should do at a
+  time, such as consuming an event stream or delivering the messages in a queue,
+  and its key is what rendezvous hashing uses. Task 4 renames
+  `cluster.FindResponsibleNode` and `Node.IsResponsibleFor` to
+  `cluster.FindWorkloadOwner` and `Node.OwnsWorkload`, because ownership has
+  words for handoffs, such as "the workload moves" and "the previous owner". A
+  node owns a workload, never the key, the stream or the queue itself.
 - **The consumer's own failures use `supervisor.Work`** with a quiet period,
-  under the description "consume queue". A failed discovery or claim is a
-  failure of the consumer; a failed delivery is the handler's, reported through
-  `ErrFailed`. In-flight attempts aren't stopped by the consumer's backoff.
+  under the description "consume queue". A failure to find the next messages, or
+  to claim one, is a failure of the consumer; a failed attempt is the handler's,
+  reported through `ErrFailed`. The consumer's backoff stops it from starting
+  attempts, but doesn't stop the attempts in flight.
 - **Integration concurrency** is a semaphore of one inside the integration
   handler when it minimizes concurrency, since there is no longer one worker per
   handler.
-- **"Now" for deadlines is Go's clock**, passed to discovery and the claim, for
-  the reason in today's `DeadlinePump.AcquireDelivery` comment.
+- **"Now" for deadlines is Go's clock**, passed to the query for the next
+  messages and to the claim, for the reason in today's
+  `DeadlinePump.AcquireDelivery` comment.
 
 ## Global constraints
 
@@ -123,19 +150,20 @@ These were made with the maintainer, and aren't in [#100][100].
 These conditions are easy to get wrong, and no existing test exercises them.
 Each one has a test in the task that owns the code.
 
-1. The consumer must start no more attempts than its concurrency limit, and
-   must start the next as soon as one ends. Task 4 has the test, which runs
+1. The consumer must start no more attempts than its concurrency limit, and must
+   start the next as soon as one has been made. Task 4 has the test, which runs
    with a limit of one.
 2. A wake-up that arrives while the consumer is at its concurrency limit must
    not be lost. Task 4 has the test.
-3. A message that moves to a queue that another node is responsible for,
-   while this node holds a future timer for it, must not be delivered here.
-   Task 3 has the test.
+3. A message must not be delivered here if it moves to a queue while another
+   node owns that queue's workload, and this node holds a future timer for the
+   message. Task 3 has the test.
 4. A deadline claimed before its instance lock times out must be postponed
    without a failure, and the transaction's `lock_timeout` restored on both
    paths. Task 6 has the tests.
 5. Shutdown with attempts in flight must roll them back and return only when
-   every attempt has ended. Task 3 tests the wait, and task 4 the rollback.
+   every attempt in progress has been made. Task 3 tests the wait, and task 4
+   the rollback.
 
 ---
 
@@ -179,8 +207,8 @@ until heartbeats move, in follow-up 1 of [plan 1][plan-1].
   `AttachSignal` is exported, and the caller passes in the target rather than
   getting one back. The caller owns it, so it outlives any one call, and many
   cluster-wide signals can be attached to one target. The consumer in task 3
-  keeps one wake-up signal for its whole life, and attaches the signal of each
-  queue it's responsible for to it.
+  keeps one wake-up signal for its whole life. While it owns the workload of a
+  queue, the queue's signal is attached to the wake-up signal.
 
   The triggers send exact signals. `eventstream.signal_create` sends
   `eventstream.create`, without the stream ID, since discovery reloads every
@@ -218,18 +246,19 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
 ---
 
-### Task 3: `messagequeue.Consumer`: ownership and discovery
+### Task 3: `messagequeue.Consumer`: ownership and the next messages
 
 **Files:**
 - Create: `internal/messagequeue/consumer.go`,
-  `internal/messagequeue/discovery.go`
+  `internal/messagequeue/message.go`
 - Test: `internal/messagequeue/consumer_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // Consumer delivers the queued messages that this node is responsible for.
+  // Consumer delivers the messages in each queue while its node owns the
+  // queue's workload.
   type Consumer struct {
       DB           *sql.DB
       Node         *cluster.Node
@@ -240,9 +269,9 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
       // own goroutine once the message is due, and the message is not
       // offered again until it returns.
       Attempt func(ctx context.Context, messageID *uuidpb.UUID)
-      // unexported: a wake-up signal, a channel of ended attempts, the
-      // active message IDs, the queue signals' detach functions, and a
-      // supervisor.Work
+      // unexported: a wake-up signal, a channel of attempts made, the
+      // IDs of the messages being attempted, the queue signals' detach
+      // functions, and a supervisor.Work
   }
 
   // Run delivers messages until ctx is canceled. It must be called at most
@@ -253,7 +282,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   `Attempt` is a field in this task so the loop can be tested with a stub.
   Task 4 makes it a method and removes the field.
 
-  Discovery, in `discovery.go`, is an unexported function that runs:
+  `nextMessages`, in `message.go`, runs:
 
   ```sql
   SELECT m.message_id, m.next_attempt_at
@@ -272,29 +301,32 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   LIMIT 1
   ```
 
-  The routed types are a `MessageTypeIDs *uuidcollection.Set` field in this
-  task, which task 4 derives from `Handlers`.
+  The message types are a `MessageTypeIDs *uuidcollection.Set` field in this
+  task. Task 4 replaces it with `Handlers`, and derives the unexported
+  `messageTypeIDs` from it.
 
   The loop computes the queues it consumes from `Node.LiveNodes()` and
   `Catalog.QueueIDs()`. It uses `Node.AttachSignal` to attach the signal of each
-  of them, `messagequeue.<queue-id>`, to its wake-up signal before discovering,
-  so no signal falls between them. It keeps each attachment's detach function,
-  so when the queues it consumes change it attaches only the new ones and
-  detaches only those it no longer consumes. It starts `Attempt` for each due
-  message, adding its ID to the active set, until discovery finds a message that
-  isn't due yet, or none. Then it waits on the first of the live nodes, the
-  queues, its wake-up signal, the next message becoming due, an ended attempt,
-  or ctx. An attempt sends its message ID on a channel when it ends, and the
-  loop removes it from the active set and discovers again. Only the loop touches
-  the active set, so it needs no lock, and on shutdown the loop receives from
-  the channel until the set is empty. A failed discovery is retried after a
-  delay, within discovery itself, so that the loop deals only with queues,
+  of them, `messagequeue.<queue-id>`, to its wake-up signal before looking for
+  the next messages, so no signal falls between them. It keeps each attachment's
+  detach function, so when the queues it consumes change it attaches only the
+  new ones and detaches only those it no longer consumes. It starts `Attempt`
+  for each message that is due, adding its ID to `attemptsInProgress`, until it
+  finds a message that isn't due yet, or none. Then it waits on the first of the
+  live nodes, the queues, its wake-up signal, the next message becoming due, an
+  attempt being made, or ctx. An attempt sends its message ID on a channel after
+  it has been made, and the loop removes it from `attemptsInProgress` and looks
+  for the next messages again. Only the loop touches `attemptsInProgress`, so it
+  needs no lock, and on shutdown the loop receives from the channel until the
+  set is empty. A failure to find the next messages is retried after a delay,
+  within `nextMessages` itself, so that the loop deals only with queues,
   messages and attempts. The retries go through `supervisor.Work` with the
-  description "consume queue". While discovery is retried, ended attempts wait
-  to report, and signals coalesce.
+  description "consume queue". While that's retried, attempts made wait in the
+  channel's buffer, which has room for every attempt in progress, and signals
+  coalesce.
 
-- Consumes: `Node.IsResponsibleFor`, `Catalog.QueueIDs`,
-  `Node.AttachSignal` from task 1.
+- Consumes: `Node.IsResponsibleFor`, renamed to `Node.OwnsWorkload` in task 4,
+  `Catalog.QueueIDs`, `Node.AttachSignal` from task 1.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -304,23 +336,23 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
   ```go
   func TestConsumer(t *testing.T) {
-      t.Run("it attempts a due message in a queue it is responsible for", ...)
-      t.Run("it ignores a message in a queue another node is responsible for", ...)
+      t.Run("it attempts a message that is due, if its node owns the queue's workload", ...)
+      t.Run("it ignores a message if another node owns the queue's workload", ...)
       t.Run("it ignores a message of a type it has no handler for", ...)
       t.Run("it attempts a future message when it becomes due", ...)
       t.Run("it attempts an earlier message queued while it waits for a later one", ...)
       t.Run("it does not attempt a message that moves to another node's queue while it waits", ...)
       t.Run("it attempts messages in the order in which they're due", ...)     // distinct next_attempt_at values
-      t.Run("it moves on when the message it waits for is removed", ...)   // no signal; the timer fires and discovery finds the next
+      t.Run("it moves on when the message it waits for is removed", ...)   // no signal; the timer fires and the loop finds the next
       t.Run("it does not attempt a message that is already being attempted", ...)
-      t.Run("it attempts a message again once its attempt ends", ...)       // the stub leaves the row in place
-      t.Run("it keeps running when discovery fails", ...)                     // drop the table mid-run; recreate; attempts resume
+      t.Run("it attempts a message again once its attempt has been made", ...)       // the stub leaves the row in place
+      t.Run("it keeps running when it can't find the next messages", ...)                     // drop the table mid-run; recreate; attempts resume
       t.Run("it waits for attempts in flight when it stops", ...)
   }
   ```
 
 - [x] **Step 2: Run `make test` to verify they fail**
-- [x] **Step 3: Implement the loop and discovery**
+- [x] **Step 3: Implement the loop and `nextMessages`**
 - [x] **Step 4: Run `make test` to verify they pass**
 - [x] **Step 5: Stop for review**
 
@@ -329,124 +361,143 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 ### Task 4: `messagequeue.Consumer`: the attempt
 
 **Files:**
-- Create: `internal/messagequeue/message.go`,
-  `internal/messagequeue/handler.go`, `internal/messagequeue/attempt.go`
-- Modify: `internal/messagequeue/consumer.go`
-- Test: `internal/messagequeue/consumer_test.go`
+- Create: `internal/messagequeue/handler.go`,
+  `internal/messagequeue/delivery.go`
+- Modify: `internal/messagequeue/consumer.go`,
+  `internal/messagequeue/doc.go`, `internal/cluster/node.go`,
+  `internal/cluster/rendezvous.go`, `internal/eventstream/consumer.go`
+- Test: `internal/messagequeue/consumer_test.go`,
+  `internal/cluster/node_test.go`, `internal/eventstream/consumer_test.go`,
+  `internal/projection/distribution_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
-  // Message is a queued message as an attempt sees it.
-  type Message struct {
-      ID            *uuidpb.UUID
-      TypeID        *uuidpb.UUID
+  // Delivery is the job of getting a queued message to its handler.
+  //
+  // A Delivery value describes the delivery at the time that the consumer
+  // claims the message for an attempt.
+  type Delivery struct {
+      MessageID     *uuidpb.UUID
+      MessageTypeID *uuidpb.UUID
       QueueID       *uuidpb.UUID
-      EnvelopeBytes []byte
       Failures      uint64
       FailingSince  time.Time   // zero if Failures is zero
-      ScheduledAt   time.Time
   }
 
   // Handler delivers the messages of some message types.
   type Handler interface {
-      // Deliver delivers the message within tx.
+      // Deliver delivers the message in the given envelope within tx.
       //
-      // It returns ErrFailed if the delivery failed and is to be postponed
-      // with its failure count incremented, ErrBusy if its target is locked
-      // and it is to be postponed without a failure, and any other error if
-      // the attempt can't continue, in which case tx is rolled back and the
-      // message is left for another attempt.
+      // It returns ErrFailed if this attempt to deliver the message failed,
+      // so that the delivery is postponed and its failure count is
+      // incremented. It returns ErrBusy if it needs a row and another
+      // transaction holds that row's lock, so that the delivery is postponed
+      // without a failure. Any other error ends the attempt, so tx is rolled
+      // back and the message is left for another attempt.
       Deliver(
           ctx context.Context,
           tx *sql.Tx,
-          m Message,
+          d Delivery,
           env *envelopepb.Envelope,
           engineLogger *slog.Logger,
       ) error
   }
 
   var (
-      ErrFailed = errors.New("delivery failed")
-      ErrBusy   = errors.New("delivery target is busy")
+      ErrFailed = errors.New("unable to deliver message")
+      ErrBusy   = errors.New("delivery handler is busy")
   )
   ```
 
-  `Consumer` gains `Concurrency int`, `Handlers uuidcollection.Map[Handler]`
-  (by message type ID, replacing `MessageTypeIDs`) and `ContentionDelay
-  time.Duration`, and loses the `Attempt` field. The loop discovers and starts
-  an attempt only while the active set holds fewer than `Concurrency` IDs.
+  `Consumer` gains `Concurrency int`, `Handlers uuidcollection.Map[Handler]` (by
+  message type ID, replacing `MessageTypeIDs`) and
+  `ContentionDelay time.Duration`, and loses the `Attempt` field. The loop finds
+  the next messages and starts an attempt only while `attemptsInProgress` holds
+  fewer than `Concurrency` IDs.
 
-  An ended attempt reports its outcome with its message ID. The loop discovers
-  again only if the message is still queued, because the delivery couldn't
-  continue or was postponed, or if the consumer was at its concurrency limit.
-  After a successful delivery below the limit, there's nothing new to discover.
+  Each attempt, once made, reports whether it delivered the message that it was
+  started for. The loop looks for the next messages again if it didn't, because
+  the message may still be due, or may have been postponed, or if the consumer
+  was at its concurrency limit. After a successful delivery below the limit,
+  there's nothing new to find.
 
-  Discovery returns a batch rather than one message, so that a backlog isn't
-  discovered one query per message. `discover` takes a limit, which is the free
-  room, `Concurrency` minus the size of the active set, and returns up to that
-  many candidates in order of `next_attempt_at`: the inner and outer `LIMIT 1` become
-  `LIMIT $4`. `dispatchDue` starts an attempt for each due candidate, and waits
-  for the first one that isn't due yet. It discovers again only if the whole
-  batch was due. Before it discovers, the loop receives every ended attempt
-  that's already waiting, without blocking, so that several attempts that ended
-  during one query free room for one batch. Batching changes how many queries
-  run, not which messages are attempted, so the tests can't observe it without
-  asserting on queries. It ships without a test of its own, with a comment
-  saying why, and the validation below measures it.
+  `findNextMessages` returns a batch rather than one message, so that a backlog
+  doesn't take one query per message. It takes a limit, which is the headroom,
+  `Concurrency` minus the size of `attemptsInProgress`, and returns up to that
+  many messages in order of `next_attempt_at`: the inner and outer `LIMIT 1`
+  become `LIMIT $5`. The query also leaves out the messages in
+  `contendedMessages`, described below, with
+  `AND q.message_id <> ALL($4::uuid[])`. `startAttempts` starts a delivery
+  attempt for each message whose next attempt is due, and waits for the first
+  one that isn't due yet. The loop looks again only if the whole batch was due.
+  Before it looks, the loop records every attempt waiting in the channel, so
+  that several attempts made during one query free headroom for one batch.
+  Batching changes how many queries run, not which messages are attempted, so
+  the tests can't observe it without asserting on queries. It ships without a
+  test of its own, and the validation below measures it.
 
-  The attempt, in `attempt.go`, begins a transaction and claims the hint by ID
-  if this node is still responsible for its queue, and it's routed, unlocked and
-  due. If not, it falls back to the discovery query with `next_attempt_at <= $4`, the
-  inner `LIMIT 1` removed, and `FOR UPDATE OF q SKIP LOCKED` on the outer query
-  with `LIMIT 1`. Only the loop touches the active set, so the attempt can't
-  move its active ID to whatever it claimed. Decide in this task whether it
-  reports the claimed ID to the loop on a channel, or whether a second attempt
-  that discovers the claimed row and then skips it as locked is acceptable. If
-  the fallback returns nothing, every due row is locked elsewhere: the attempt
-  commits nothing and ends, and the loop waits for `ContentionDelay` or a
-  wake-up before it discovers again. The claim loads the columns of `Message`.
-  It unmarshals and validates the envelope, calls the handler for the type, and
-  then removes the row with `messagequeue.remove`, or postpones it. Postponement
-  sets `next_attempt_at`, and for `ErrFailed` increments `failures` and sets
+  Each attempt, in `delivery.go`, is one transaction. In it, the consumer claims
+  the message by ID with `FOR UPDATE NOWAIT`, if it's due, the consumer has a
+  handler for its type, and this node owned the workload of its queue when the
+  attempt started. If another transaction holds the message's lock, the claim
+  returns an error that `xsql.IsLockNotAvailableError` recognizes, and the
+  attempt ends without committing anything. The loop records the message in
+  `contendedMessages`, with the time at which it may be attempted again,
+  `ContentionDelay` from now. `findNextMessages` leaves out the messages in
+  `contendedMessages`, and the loop removes each one when its time passes,
+  waking at the earliest of those times. If the message has been removed,
+  postponed or moved since it was found, the attempt ends there, and the loop
+  looks again. No test covers that case, as it needs the message to change
+  between being found and being claimed. The claim loads the message's
+  `Delivery` and the bytes of its envelope. The consumer then unmarshals and
+  validates the envelope, calls the handler for the type, and removes the row
+  with `messagequeue.remove`, or postpones it. Postponement sets
+  `next_attempt_at`, and for `ErrFailed` increments `failures` and sets
   `failing_since` if null, using a backoff of `supervisor.Jitter` over
-  `min(baseDelay << failures, 5m)`; for `ErrBusy` it uses `ContentionDelay`. The
-  deliveries plan replaces the backoff with a streak.
+  `min(100ms << failures, 5m)`, where `failures` is the count before this one,
+  from two constants in `delivery.go`; for `ErrBusy` it uses `ContentionDelay`.
+  The deliveries plan replaces the backoff with a streak. Any other error ends
+  the attempt. Its transaction is rolled back, and the loop records a failure of
+  the consumer's `supervisor.Work` and doesn't start any attempts until the
+  delay that `Work` returns has passed. Such errors are failures of the
+  consumer, such as the database being unavailable, so the whole consumer backs
+  off, rather than each attempt waiting in its own slot.
 
-  Each attempt logs at DEBUG "message delivery started", "message
-  delivered" and "message delivery postponed" (with `delay` and a `reason`
-  of `failure` or `contention`), with `handled_message` and an `attempt`
-  attribute. An envelope that can't be unmarshaled is postponed as an
-  `ErrFailed`, at DEBUG for now; the deliveries plan's streak gives it its
-  ERROR.
+  Each attempt logs at DEBUG "message delivery attempt started", "message
+  delivered" and "message delivery postponed" (with `delay` and a `reason` of
+  `failure` or `contention`), with `message_id` and `failures` attributes. The
+  handler's logger, and "message delivery attempt started", also have
+  `handled_message`. An invalid envelope is postponed as an `ErrFailed`, at
+  DEBUG for now; the deliveries plan's streak gives it its ERROR.
 
 - Consumes: task 3's loop.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   Replace the `Attempt` stub with a stub `Handler`, and add:
 
   ```go
-  t.Run("it delivers a due message", ...)
+  t.Run("it delivers a message that is due", ...)
   t.Run("it removes a delivered message", ...)
-  t.Run("it delivers no more messages at once than its concurrency limit", ...)
+  t.Run("it attempts no more messages at once than its concurrency limit", ...)
   t.Run("it keeps a signal that arrives while it is at its concurrency limit", ...)
-  t.Run("it fills all of its free room when several attempts end at once", ...)
-  t.Run("it claims another due message when the hint is locked", ...)      // lock the hint in a test transaction
-  t.Run("it waits for the contention delay when every due message is locked", ...)
-  t.Run("it postpones a failed delivery and increments its failures", ...)
-  t.Run("it postpones a busy delivery without a failure", ...)
+  t.Run("it uses all of the headroom that several attempts free at once", ...)
+  t.Run("it attempts other messages while one is locked", ...)      // lock it in a test transaction
+  t.Run("it attempts a locked message again after the contention delay", ...)
+  t.Run("it postpones the delivery after a failed attempt, and increments its failures", ...)
+  t.Run("it postpones the delivery when a row that the handler needs is locked, without a failure", ...)
   t.Run("it postpones a message whose envelope can not be unmarshaled", ...)
-  t.Run("it leaves a message for another attempt when delivery can not continue", ...)
+  t.Run("it leaves a message for another attempt when an attempt ends with an error", ...)
   t.Run("it lets an attempt finish after losing its queue", ...)              // stop the other node; the live nodes change mid-delivery
   t.Run("it rolls back attempts in flight when it stops", ...)
   ```
 
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement the attempt**
-- [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Stop for review**
+- [x] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 3: Implement the attempt**
+- [x] **Step 4: Run `make test` to verify they pass**
+- [x] **Step 5: Stop for review**
 
 ---
 
@@ -466,7 +517,7 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 - Produces: `aggregate.CommandHandler`, `integration.CommandHandler` and
   `process.DeadlineHandler`, each implementing `messagequeue.Handler`. Their
   `AcquireDelivery` and `PostponeDelivery` methods go. `HandleDelivery` becomes
-  `Deliver` with the `messagequeue.Message` parameter. `messagepump.ErrFailed`
+  `Deliver` with the `messagequeue.Delivery` parameter. `messagepump.ErrFailed`
   and `ErrBusy` references become `messagequeue.ErrFailed` and
   `messagequeue.ErrBusy`. `integration.CommandHandler` gains an unexported
   semaphore of one when `Concurrency` is `MinimizeConcurrency`, acquired for the
@@ -481,9 +532,9 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   The engine sets the consumer's `ContentionDelay` from a new option:
 
   ```go
-  // DefaultQueueContentionDelay is the default time a delivery is postponed
-  // after it is unable to acquire the lock that serializes deliveries to one
-  // instance.
+  // DefaultQueueContentionDelay is the default time the consumer waits before
+  // it attempts to deliver a message again, if another transaction held the
+  // lock on a row that its last attempt needed.
   DefaultQueueContentionDelay = 200 * time.Millisecond
 
   func WithQueueContentionDelay(delay time.Duration) EngineOption
@@ -503,9 +554,8 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
   Add a sentence to the doc comment of each trigger in
   `internal/schema/ddl/10-messagequeue/20-triggers.sql` saying that
-  `messagequeue.Consumer` watches the signal for the queues this node is
-  responsible for. Widen the package doc in `internal/messagequeue/doc.go` to
-  say that the package also delivers the messages.
+  `messagequeue.Consumer` watches the signal for each queue while this node owns
+  the queue's workload.
 
 - [ ] **Step 3: Run `make test`**
 
@@ -515,10 +565,10 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 
 - [ ] **Step 4: Update `CHANGELOG.md`**
 
-  Under `### Changed`: commands and deadlines are now delivered by the node
-  responsible for their queue, with one per-node limit of
-  10 × `GOMAXPROCS` attempts at once in place of a limit per handler. Under
-  `### Added`: `WithQueueContentionDelay`.
+  Under `### Changed`: commands and deadlines are now delivered by the node that
+  owns the workload of their queue, with one per-node limit of 10 × `GOMAXPROCS`
+  attempts at once in place of a limit per handler. Under `### Added`:
+  `WithQueueContentionDelay`.
 
 - [ ] **Step 5: Stop for review**
 
@@ -545,10 +595,10 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
   3. On a lock timeout (`SQLSTATE 55P03`), rolls back to the savepoint, which
      also restores the setting, and returns `messagequeue.ErrBusy`.
 
-  `endInstance` deletes the instance's pending deadlines with `FOR UPDATE
-  SKIP LOCKED` in a subquery, so it never waits for a row an attempt has
-  claimed. The attempt that holds it observes `ended` under the instance lock
-  and removes it.
+  `endInstance` deletes the instance's pending deadlines with
+  `FOR UPDATE SKIP LOCKED` in a subquery, so it never waits for a row that's
+  locked by an attempt's transaction. The attempt whose transaction holds it
+  observes `ended` under the instance lock and removes it.
 
   The engine sets `LockTimeout` from a new option:
 
@@ -597,13 +647,13 @@ builds the consumer, and `WithQueueLockTimeout` in task 6, which adds
 Not tests. Run by hand on a database with representative data, and record
 the results in [#100][100]:
 
-- `EXPLAIN (ANALYZE, BUFFERS)` for the discovery and fallback queries with
-  tens of consumed queues, a handful of routed types, a large queue, and a long
-  active-ID list.
+- `EXPLAIN (ANALYZE, BUFFERS)` for the query for the next messages with tens of
+  consumed queues, a handful of message types with handlers, a large queue, and
+  many messages being attempted.
 - Throughput and connection-pool waits with the concurrency limit
   saturated.
-- Discovery queries per delivered message with a backlog of due messages,
-  which batching should keep well below one.
+- Queries for the next messages per delivered message with a backlog of due
+  messages, which batching should keep well below one.
 
 ## Out of scope
 
@@ -618,6 +668,5 @@ the results in [#100][100]:
 
 [99]: https://github.com/dogmatiq/runkit/issues/99
 [100]: https://github.com/dogmatiq/runkit/issues/100
-[102]: https://github.com/dogmatiq/runkit/pull/102
 [logging guide]: ../maintainers/logging.md
 [plan-1]: 2026-11-08-queue-1-storage.md
