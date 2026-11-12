@@ -36,10 +36,11 @@ Every record carries a `layer` attribute, with the value `application` or
 one base that carries `node_id` and the application's identity, and each
 logger adds its own `layer`.
 
-The name of a field that holds a logger includes the logger's layer. Name the
-field `EngineLogger` or `AppLogger`, or `engineLogger` or `appLogger` if it's
-unexported. Never name a field `Logger` or `logger`, even on a type that has
-only one logger.
+The name of a field, parameter or variable that holds a logger includes the
+logger's layer. Name a field `EngineLogger` or `AppLogger`, or `engineLogger`
+or `appLogger` if it's unexported, and name a parameter or variable
+`engineLogger` or `appLogger`. Never use the name `Logger` or `logger`, even
+where only one logger is in scope.
 
 A logger carries only the context that's true of every record written through
 it, such as the layer, the node and the application. Any other context, such as

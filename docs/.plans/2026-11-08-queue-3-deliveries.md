@@ -70,21 +70,53 @@ These were made with the maintainer, and aren't in [#100][100].
   each attempt's application records, and writes them only if the delivery
   completed and the transaction committed. A failed or contended attempt's
   records are discarded, as the event sinks already do.
-- **A failure is logged once, by the consumer.** Handlers return errors with
-  context and don't log them. `messagequeue.Fail(err)` marks an application
-  failure to postpone with a failure counted. `messagequeue.ErrBusy` marks
-  contention. `supervisor.Deterministic` marks one that retrying can't clear.
-  Any other error rolls the attempt back and leaves the row for another attempt.
+- **A failed attempt commits nothing that the sink wrote.** On any outcome
+  other than delivery, the consumer rolls back the attempt's transaction, then
+  postpones the delivery with one statement outside it. Committing a failed
+  attempt's writes was the [#99][99] bug, and this makes it impossible
+  whatever error a sink returns, instead of relying on each sink to fail
+  before it writes. A savepoint would have kept the row's lock throughout, but
+  it cost about 9% of throughput with the integration sink, and 19% with a
+  sink that does nothing, so successful deliveries pay nothing extra instead.
+- **The postponement may find the message taken over.** Once the attempt rolls
+  back, the row's lock is released. The postponement locks the row with
+  `SKIP LOCKED` and updates it only if `failures` is unchanged. If another
+  transaction holds the lock, the row is gone, or `failures` has changed,
+  another attempt has taken over the message, and the postponement writes
+  nothing. That isn't an error. This node can't attempt the message in
+  between, because the attempt is still in progress until the postponement
+  returns.
+- **Any error from a sink is a failure.** `messagequeue.ErrBusy` is the only
+  other signal, for contention. There's no failure sentinel and no `Fail`.
+  Sinks return errors with context and don't log them, and the consumer logs
+  each failure once. Because a failed attempt is rolled back, an error's
+  classification affects only backoff and logging, never what's committed.
+- **A failure is deterministic if its error says so.** `supervisor` looks for
+  the first error in the chain with an `IsDeterministic() bool` method, and
+  treats the failure as transient if there's none. The packages where the
+  failures happen define those errors: `xerrors.PanicError` for every panic in
+  application code, the unmarshal errors from `xmessage`, a process instance's
+  state that can't be unmarshaled, a missing process instance, and an
+  envelope that can't be unmarshaled. `supervisor.Deterministic` stays for
+  marking errors that the code doesn't own, such as `errors.ErrUnsupported`.
 - **The streak lives on the row.** `supervisor.Streak` is a value built from
   `Failures` and `FailingSince`. It writes the failure record at ERROR when
   the failure is deterministic or the streak is older than `maxDebugStreak`,
   and otherwise at DEBUG, and it returns the delay. There is no in-memory
-  state, so it can't know whether an earlier attempt wrote an ERROR; it
-  infers it from the streak's age, and writes the recovery at INFO when the
-  streak was old enough to have, and at DEBUG otherwise. A deterministic
-  failure's ERROR repeats on each attempt, which is at most once per five
-  minutes, because nothing can carry "already logged" across attempts
-  without another column. That is accepted for now.
+  state, so it can't know whether an earlier attempt wrote an ERROR. Once a
+  streak qualifies for an ERROR, every failed attempt writes one, which is at
+  most once per five minutes for a deterministic failure and once per 15
+  seconds for any other. The logging guide states this as an exception for
+  streaks stored outside the engine's memory. Recovery is INFO if the streak
+  is older than `maxDebugStreak`, and DEBUG otherwise. Storing whether a
+  streak has written its ERROR, in a new column, is tried in its own task
+  after the rest of this plan.
+- **A delivery's backoff is `Work`'s.** It doubles from 100 ms, up to 15
+  seconds for a transient failure and five minutes for a deterministic one.
+  It will be made configurable later, outside this plan.
+- **A delivery's times come from Go's clock.** The consumer stores the start
+  of the streak that `Streak` returns, and sets `next_attempt_at` from Go's
+  clock, as it already compares `next_attempt_at` with Go's clock.
 - **Process preparation is one function** used by the event sink and the
   deadline handler. It runs the handler, marshals the state, and seals the
   packers, and returns a value the write step persists. The [#99][99] bug is
@@ -126,12 +158,12 @@ Each one has a test in the task that owns the code.
 2. An attempt whose commit fails after its handler succeeded must write no
    application records. Task 1 covers it by construction, because the flush
    runs only on the commit's success path.
-3. A message whose first failure was more than `maxDebugStreak` ago must get
-   exactly one ERROR per attempt, not one per retry of the same attempt.
-   Task 3 has the test.
+3. A delivery whose streak began before this attempt must keep the stored
+   start of the streak, not restart it at the attempt's time. Task 4 has the
+   test.
 4. A migrated row with `failures > 0` and `failing_since` equal to its old
    `deliver_at` must be treated as a streak in progress, not a fresh one.
-   Task 3 has the test.
+   Task 4 has the test.
 
 ---
 
@@ -182,7 +214,7 @@ Each one has a test in the task that owns the code.
   `supervisor.Work`'s, at the top level: `error`, `failing_since`, `failures`
   and `delay` on each failure, plus `failing_for` on the ERROR, and
   `failing_since`, `failures` and `failing_for` on recovery, without
-  `succeeding_for`. Task 3 writes them through `Streak`. Until then, the other
+  `succeeding_for`. Task 4 writes them through `Streak`. Until then, the other
   records about a delivery stop carrying `failures`.
 - The guide's "Streaks" section gains: "When the work can only fail in one
   streak, such as delivering one message, the attributes that identify the work
@@ -237,8 +269,7 @@ transaction on any error, so it isn't affected.
 - `writeEffects` encodes the order once: it calls `instance.Save`, then
   `addCommandsToQueues`. Both sinks call only `writeEffects`. The commands
   aren't the instance's, so they aren't written by an `instance` method.
-- Until task 3 adds `messagequeue.Fail`, a marshaling failure is
-  `messagequeue.ErrFailed`.
+- Until task 4, a marshaling failure is `messagequeue.ErrFailed`.
 
 **Files:**
 - Modify: `internal/process/instance.go`, `internal/process/deadlinesink.go`,
@@ -273,82 +304,123 @@ transaction on any error, so it isn't affected.
 
 ---
 
-### Task 3: Per-delivery streaks
+### Task 3: Roll back a failed attempt's writes
+
+Nothing that a sink writes is committed unless the delivery completes. See "A
+failed attempt commits nothing that the sink wrote" and "The postponement may
+find the message taken over" above. The postponement finding the message locked
+or changed isn't tested. Nothing controls whether the postponement or another
+transaction reaches the row first after the rollback, so a test would sometimes
+pass with broken code. The statement is covered by review instead. The two rare
+consequences of not waiting for the lock and comparing only the failure count, a
+failure that goes uncounted and a contention postponement that's replaced during
+a handoff, are accepted and documented in the code.
 
 **Files:**
-- Create: `internal/supervisor/streak.go`, `internal/messagequeue/fail.go`
+- Modify: `internal/messagequeue/delivery.go`, `internal/messagequeue/sink.go`
+  (the sink's changes are discarded after an error, so tx needn't stay
+  usable), `internal/process/instance.go` (the comment in `writeEffects`
+  that relies on `Save` failing before any write)
+- Test: `internal/messagequeue/consumer_test.go`
+
+- [x] **Step 1: Measure the savepoint's cost.** Rebuild plan 2's throughput
+  load, without committing it, and compare deliveries per second with and
+  without the savepoint. Record the result on [#100][100]. If it costs more
+  than a few percent, stop and revisit rolling back and postponing in a new
+  transaction instead. It cost about 9% with the integration sink, so the
+  postponement uses a new transaction.
+- [x] **Step 2: Write the failing tests**
+
+  ```go
+  t.Run("it discards the sink's changes after a failed attempt", ...)
+  t.Run("it discards the sink's changes when the sink is busy", ...)
+  ```
+
+- [x] **Step 3: Run `make test` to verify they fail**
+- [x] **Step 4: Implement it**
+- [x] **Step 5: Run `make test` to verify they pass**
+- [x] **Step 6: Stop for review**
+
+---
+
+### Task 4: Per-delivery streaks
+
+**Files:**
+- Create: `internal/supervisor/streak.go`, `internal/supervisor/failure.go`
+- Modify: `internal/supervisor/work.go`, `internal/supervisor/error.go`,
+  `internal/supervisor/supervisor.go`, `internal/x/xerrors/recover.go`,
+  `internal/x/xmessage` (an unmarshal error type)
 - Modify: `internal/messagequeue/delivery.go`,
   `internal/messagequeue/sink.go`
-- Modify: `internal/aggregate/commandsink.go`,
-  `internal/integration/commandsink.go`,
-  `internal/process/deadlinesink.go` (return errors with context; stop
-  logging them; `messagequeue.Fail` for application failures;
-  `supervisor.Deterministic` for unmarshal failures)
+- Modify: `internal/aggregate/commandsink.go`, `internal/aggregate/instance.go`,
+  `internal/integration/commandsink.go`, `internal/process/deadlinesink.go`,
+  `internal/process/instance.go` (return errors with context, and stop
+  logging them)
 - Test: `internal/supervisor/streak_test.go`,
-  `internal/messagequeue/consumer_test.go`
+  `internal/supervisor/error_test.go`, `internal/messagequeue/consumer_test.go`
 
 **Interfaces:**
 - Produces:
 
   ```go
   // Streak is a streak of consecutive failures of one piece of work whose
-  // state is stored elsewhere, such as a queued message's row.
-  //
-  // Unlike Work, it holds no state between calls. The caller stores
-  // Failures and Since, and builds a new Streak from them for each attempt.
+  // failures are stored outside the engine's memory, such as in a queued
+  // message's row.
   type Streak struct {
       Description  string
       EngineLogger *slog.Logger
-      Failures     uint64      // before this attempt
-      Since        time.Time   // zero if Failures is zero
+      Failures     uint64    // before this attempt
+      Since        time.Time // zero if Failures is zero
   }
 
-  // Failed writes the record for a failure of the work and returns the delay
-  // before the next attempt, and the time the streak began.
+  // Failed writes the record for a failure of the work, and returns the
+  // delay before the next attempt and the time of the first failure in the
+  // streak. The failure is deterministic if err has an IsDeterministic
+  // method that returns true.
   func (s Streak) Failed(
       ctx context.Context,
       err error,
   ) (delay time.Duration, since time.Time)
 
-  // FailedDeterministically does the same for a deterministic failure.
-  func (s Streak) FailedDeterministically(
-      ctx context.Context,
-      err error,
-  ) (delay time.Duration, since time.Time)
-
-  // Succeeded writes the recovery record if a streak was in progress.
+  // Succeeded writes the streak's recovery record, if a streak is in
+  // progress.
   func (s Streak) Succeeded(ctx context.Context)
 
-  // In messagequeue:
-  // Fail marks err as a failure of the delivery itself, to be postponed with
-  // its failure count incremented.
-  func Fail(err error) error
-  var ErrFailed  // what Fail's result wraps; replaces the bare sentinel use
+  // IsDeterministic returns true, on xerrors.PanicError and on the
+  // unmarshal and missing-instance errors.
+  func (e PanicError) IsDeterministic() bool
   ```
+
+  `Run` classifies errors by the same method. `ErrFailed` goes, and any error
+  from a sink except `ErrBusy` is a failure. The names of the new error types
+  are proposed before they're written.
 
   The level rules are the ones in `Work.fail`, with `loggedError` replaced
   by "`Since` is older than `maxDebugStreak`": ERROR if deterministic or
   the streak is older than that; else DEBUG. Recovery is INFO if the streak
-  was older than `maxDebugStreak`, else DEBUG. The attributes match `Work`'s.
-  The backoff is `Work`'s, computed from `Failures` without a stored
-  `backoff`: `min(baseDelay << Failures, limit)`, with `limit` by
-  determinism, jittered. `Work` and `Streak` share these through unexported
-  functions.
+  is older than `maxDebugStreak`, else DEBUG. The attributes match `Work`'s.
+  `Streak`'s backoff is `min(baseDelay << Failures, limit)`, with `limit` by
+  determinism, jittered. `Work` keeps its own backoff, which doubles from the
+  previous delay, because a deterministic failure after transient ones grows
+  from the transient limit. `Work` and `Streak` share the level rule and the
+  failure record through unexported functions.
 
   The attempt builds a `Streak` from `Delivery.Failures` and
-  `Delivery.FailingSince` with the description "deliver message", calls `Failed`
-  or `FailedDeterministically` on `ErrFailed` and deterministic errors, stores
-  `failures + 1` and `since` with the delay, and calls `Succeeded` after a
-  successful commit. `ErrBusy` neither fails nor succeeds the streak. Contention
-  keeps `failing_since` as it is.
+  `Delivery.FailingSince` with the description "deliver message", calls
+  `Failed` on any error except `ErrBusy`, stores `failures + 1` and `since`,
+  sets `next_attempt_at` to Go's time plus the delay, and calls `Succeeded`
+  after a successful commit. It writes the failure record only once the
+  postponement commits, so that an outage doesn't log a failure for every
+  message attempted. The streak's failure record replaces "message delivery
+  postponed" for failures. `ErrBusy` neither fails nor succeeds the streak.
+  Contention keeps `failing_since` as it is, and keeps its "message delivery
+  postponed" record. An attempt that fails because the consumer is stopping
+  writes nothing.
 
-  Handlers stop logging "unable to handle command", "unable to unmarshal
-  command" and the like, and return `messagequeue.Fail(fmt.Errorf("unable to
-  handle command %s: %w", id, err))`, or `supervisor.Deterministic(...)` for
-  an envelope or message that can't be unmarshaled. The consumer's attempt
-  logs each failure once through the streak, with `handled_message`.
+  Rename the bare `logger` fields, parameters and variables in the aggregate
+  and process packages to name their layer, as the logging guide requires.
 
-- Consumes: `supervisor.Work`'s unexported helpers, `maxDebugStreak`.
+- Consumes: the rollback from the previous task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -364,29 +436,36 @@ transaction on any error, so it isn't affected.
   }
   ```
 
+  `error_test.go`: an error with `IsDeterministic()` is deterministic, even
+  when wrapped, and the first such error in the chain decides.
+
   `consumer_test.go`:
 
   ```go
   t.Run("it stores the start of the streak on the first failure", ...)
   t.Run("it keeps the start of the streak on later failures", ...)
-  t.Run("it keeps the start of the streak through contention", ...)
-  t.Run("it clears the streak when the message is removed", ...)    // trivially, by removal
-  t.Run("it postpones a deterministic failure by the longer limit", ...)
+  t.Run("it keeps the streak through contention", ...)
+  t.Run("it postpones a deterministic failure by up to the deterministic limit", ...)
+  t.Run("it postpones any other failure by up to the transient limit", ...)
   ```
 
 - [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement `Streak`, `Fail`, and the handler changes**
+- [ ] **Step 3: Implement `Streak`, the deterministic errors, and the sink
+  changes**
 - [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Update the logging plan**
+- [ ] **Step 5: Update the logging guide and the logging plan**
 
-  Remove its "After #100" section, now empty, and note in "Out of scope"
-  that `Work` and `Streak` could later share a type.
+  In the guide, state the exception for streaks stored outside the engine's
+  memory: each failed attempt writes an ERROR once the streak qualifies for
+  one. In the logging plan, remove the per-delivery streaks from "After
+  #100", and note in "Out of scope" that `Work` and `Streak` could later
+  share a type. The section's other items stay.
 
 - [ ] **Step 6: Stop for review**
 
 ---
 
-### Task 4: Unify field naming and order
+### Task 5: Unify field naming and order
 
 The queue work adds many structs beside older ones, and their fields drifted
 apart along the way. This task makes the whole codebase consistent, not just
@@ -402,6 +481,9 @@ it closer to that standard.
 **Files:**
 - Modify: any Go file whose struct fields or struct literals change, and any
   DDL file whose columns or parameters change.
+
+Rename the bare `logger` names in the event stream package to name their
+layer, as the logging guide requires.
 
 - [ ] **Step 1: Take an inventory.** List every exported and unexported struct
   that holds dependencies or configuration, with its fields in order, and every
@@ -420,7 +502,20 @@ it closer to that standard.
 
 ---
 
-### Task 5: Close out
+### Task 6: Store whether a delivery's streak has written its ERROR
+
+Tried after the rest of this plan, so that a long or deterministic streak
+writes one ERROR, as the logging guide requires, instead of one per attempt.
+Its assumptions are restated before it starts.
+
+- [ ] **Step 1: Restate the assumptions**, including the column's name and
+  whether it joins the 0.3.0 migration.
+- [ ] **Step 2: Implement, removing the exception from the logging guide**
+- [ ] **Step 3: Stop for review**
+
+---
+
+### Task 7: Close out
 
 **Files:**
 - Modify: `CHANGELOG.md`, `docs/.plans/` (delete the queue plans and the
@@ -440,6 +535,7 @@ it closer to that standard.
 
 - The follow-ups in [plan 1][plan-1].
 - Factoring `supervisor.Run` away, and merging `Work` and `Streak`.
+- Making the delivery backoff configurable.
 - Instance placement.
 
 <!-- references -->

@@ -201,7 +201,16 @@ func TestConsumer(t *testing.T) {
 
 	// expectQueued fails the test unless the message with the given ID comes
 	// to satisfy the given SQL condition on its row.
-	expectQueued := func(t *testing.T, db *sql.DB, description string, messageID *uuidpb.UUID, cond string) {
+	//
+	// The condition refers to the given arguments as $2, $3, and so on.
+	expectQueued := func(
+		t *testing.T,
+		db *sql.DB,
+		description string,
+		messageID *uuidpb.UUID,
+		cond string,
+		args ...any,
+	) {
 		t.Helper()
 
 		xtesting.WaitForQueryResult(
@@ -213,7 +222,7 @@ func TestConsumer(t *testing.T) {
 			FROM messagequeue.messages
 			WHERE message_id = $1
 			AND `+cond,
-			xsql.UUID(messageID),
+			append([]any{xsql.UUID(messageID)}, args...)...,
 		)
 	}
 
@@ -713,6 +722,79 @@ func TestConsumer(t *testing.T) {
 			`failures = 0
 			AND failing_since IS NULL
 			AND next_attempt_at > scheduled_for`,
+		)
+	})
+
+	// returnAfterWriting returns a sink that writes to the message's row
+	// within the attempt's transaction, then returns the given error. Later
+	// attempts block until the consumer stops, so that they don't change the
+	// message's row.
+	returnAfterWriting := func(result error) Sink {
+		var returned atomic.Bool
+
+		return sinkFunc(
+			func(ctx context.Context, tx *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+				if !returned.CompareAndSwap(false, true) {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+
+				if _, err := tx.ExecContext(
+					ctx,
+					`UPDATE messagequeue.messages
+					SET failures = 99,
+						failing_since = clock_timestamp()
+					WHERE message_id = $1`,
+					xsql.UUID(d.MessageID),
+				); err != nil {
+					return err
+				}
+
+				return result
+			},
+		)
+	}
+
+	t.Run("it discards the sink's changes after a failed attempt", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(t, db, n, 10, returnAfterWriting(ErrFailed))
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed without the sink's changes",
+			messageID,
+			`failures = 1`,
+		)
+	})
+
+	t.Run("it discards the sink's changes when the sink is busy", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		// The database stores times to the microsecond, so start is stored as
+		// it is.
+		start := time.Now().Truncate(time.Microsecond)
+
+		messageID := addMessage(t, db, n.ID, typeID, start)
+		run(t, db, n, 10, returnAfterWriting(ErrBusy))
+
+		// The message was due at start, so its next attempt is after start
+		// only once the delivery has been postponed.
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed without the sink's changes",
+			messageID,
+			`failures = 0
+			AND failing_since IS NULL
+			AND next_attempt_at > $2`,
+			start,
 		)
 	})
 
