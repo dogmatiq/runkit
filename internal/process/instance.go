@@ -77,8 +77,53 @@ func (i *instance) BindToDeadlineQueue(
 	return nil
 }
 
-// Save stores the instance's state, marshaled from its root.
-func (i *instance) Save(ctx context.Context, tx *sql.Tx, logger *slog.Logger) error {
+// Save writes the instance's changes from handling a message, within tx.
+//
+// It ends the instance, if the handler ended it. Otherwise, it stores the
+// instance's state, if the handler mutated the root, and adds the deadlines
+// that the handler scheduled to the instance's deadline queue.
+//
+// If it returns [messagequeue.ErrFailed], because the root can't be marshaled,
+// it has written nothing.
+func (i *instance) Save(
+	ctx context.Context,
+	tx *sql.Tx,
+	scope *messageScope,
+	logger *slog.Logger,
+) error {
+	if scope.ended {
+		return i.end(ctx, tx)
+	}
+
+	if scope.mutated {
+		state, err := i.marshalRoot(ctx, logger)
+		if err != nil {
+			return err
+		}
+
+		if err := xsql.ExecOne(
+			ctx,
+			tx,
+			`UPDATE process.instances SET
+				state = $1
+			WHERE handler_key = $2
+			AND instance_id = $3`,
+			state,
+			xsql.UUID(i.HandlerKey),
+			i.ID,
+		); err != nil {
+			return fmt.Errorf("unable to save process instance: %w", err)
+		}
+	}
+
+	return i.addDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
+}
+
+// marshalRoot returns the binary form of the instance's root, from its
+// MarshalBinary method.
+//
+// It returns [messagequeue.ErrFailed] if the root can't be marshaled.
+func (i *instance) marshalRoot(ctx context.Context, logger *slog.Logger) ([]byte, error) {
 	data, err := xerrors.RecoverT(
 		func() ([]byte, error) {
 			return i.Root.MarshalBinary()
@@ -91,33 +136,19 @@ func (i *instance) Save(ctx context.Context, tx *sql.Tx, logger *slog.Logger) er
 			xslog.Error(err),
 		)
 
-		return messagequeue.ErrFailed
+		return nil, messagequeue.ErrFailed
 	}
 
-	if err := xsql.ExecOne(
-		ctx,
-		tx,
-		`UPDATE process.instances SET
-			state = $1
-		WHERE handler_key = $2
-		AND instance_id = $3`,
-		data,
-		xsql.UUID(i.HandlerKey),
-		i.ID,
-	); err != nil {
-		return fmt.Errorf("unable to save process instance: %w", err)
-	}
-
-	return nil
+	return data, nil
 }
 
-// End marks the instance as ended, clears its state and deletes its deadlines,
+// end marks the instance as ended, clears its state and deletes its deadlines,
 // except those that another transaction has locked.
 //
 // A deadline that it doesn't delete is still canceled. Before the deadline sink
 // delivers a deadline, it checks whether the deadline's instance has ended. If
 // it has, the consumer removes the deadline without delivering it.
-func (i *instance) End(ctx context.Context, tx *sql.Tx) error {
+func (i *instance) end(ctx context.Context, tx *sql.Tx) error {
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
@@ -158,9 +189,9 @@ func (i *instance) End(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-// AddDeadlinesToQueue adds the deadlines in the given packer to the instance's
+// addDeadlinesToQueue adds the deadlines in the given packer to the instance's
 // deadline queue. The instance must be bound to a queue.
-func (i *instance) AddDeadlinesToQueue(
+func (i *instance) addDeadlinesToQueue(
 	ctx context.Context,
 	tx *sql.Tx,
 	packer *envelope.EffectPacker,
@@ -380,6 +411,28 @@ func tryLockInstance(
 	inst.Root = root
 
 	return inst, true, nil
+}
+
+// writeEffects writes the effects of handling a message within tx: the
+// instance's changes, then the commands that the handler executed.
+//
+// If it returns [messagequeue.ErrFailed], it has written nothing.
+func writeEffects(
+	ctx context.Context,
+	tx *sql.Tx,
+	router *messagequeue.Router,
+	inst *instance,
+	scope *messageScope,
+	logger *slog.Logger,
+) error {
+	// Only Save can return ErrFailed. The message queue consumer commits tx
+	// after ErrFailed, to postpone the delivery, so Save runs before anything
+	// else writes to tx.
+	if err := inst.Save(ctx, tx, scope, logger); err != nil {
+		return err
+	}
+
+	return addCommandsToQueues(ctx, tx, router, scope.commandPacker)
 }
 
 // newRoot creates a new process root by calling the handler's New() method, and

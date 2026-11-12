@@ -148,21 +148,14 @@ func (s *DeadlineSink) Deliver(
 		return messagequeue.ErrFailed
 	}
 
-	if err := addCommandsToQueues(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
-		return err
-	}
-
-	if scope.ended {
-		return inst.End(ctx, tx)
-	}
-
-	if scope.mutated {
-		if err := inst.Save(ctx, tx, instanceLogger); err != nil {
-			return err
-		}
-	}
-
-	return inst.AddDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
+	return writeEffects(
+		ctx,
+		tx,
+		s.QueueRouter,
+		inst,
+		&scope.messageScope,
+		instanceLogger,
+	)
 }
 
 // LogAttr returns the attribute that identifies the handler in log records.
