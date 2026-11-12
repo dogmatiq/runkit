@@ -182,6 +182,9 @@ func WithRouteTimeout(timeout time.Duration) EngineOption {
 // number of commands and deadlines that the engine attempts to deliver at
 // once, across all handlers.
 //
+// Each attempt uses one of the database's connections. See [New] for how to
+// configure the connection pool.
+//
 // If it is not provided, the engine uses 10 times the value that
 // [runtime.GOMAXPROCS] returns. It panics if n is not positive.
 func WithMessageQueueConcurrency(n int) EngineOption {

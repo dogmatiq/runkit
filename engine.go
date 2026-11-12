@@ -177,6 +177,13 @@ type Engine struct {
 // sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db is nil or uses any
 // other driver.
 //
+// The engine uses many of db's connections at once. Each attempt to deliver a
+// command or deadline uses one, up to the limit that
+// [WithMessageQueueConcurrency] sets. By default, db keeps only two idle
+// connections and closes any others when they're returned, so the engine would
+// open a new connection for most deliveries. Call [sql.DB.SetMaxIdleConns]
+// with the same value as [sql.DB.SetMaxOpenConns].
+//
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
 	app dogma.Application,

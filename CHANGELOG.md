@@ -62,6 +62,9 @@ events.
   - `WithMessageQueueConcurrency()`, which defaults to 10 × `GOMAXPROCS`
   - `WithMessageQueueContentionDelay()`, which defaults to
     `DefaultMessageQueueContentionDelay`
+- Documented that the database passed to `New()` should keep as many idle
+  connections as it allows open. Its default of two idle connections can make
+  delivering commands and deadlines more than ten times slower.
 
 ### Changed
 
