@@ -45,11 +45,11 @@ type instance struct {
 func (i *instance) RecordEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 ) error {
 	var snapshotArg any
-	if data, ok := i.marshalSnapshot(ctx, logger); ok {
+	if data, ok := i.marshalSnapshot(ctx, engineLogger); ok {
 		snapshotArg = data
 	}
 
@@ -123,7 +123,7 @@ func (i *instance) DeleteIfNoEvents(ctx context.Context, tx *sql.Tx) error {
 func (i *instance) ApplyHistoricalEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	offset uint64,
 ) error {
 	rows, err := tx.QueryContext(
@@ -171,7 +171,7 @@ func (i *instance) ApplyHistoricalEvents(
 			eventEnvelope,
 			&eventForApply,
 		); err != nil {
-			logger.ErrorContext(
+			engineLogger.ErrorContext(
 				ctx,
 				"unable to unmarshal event",
 				slog.Group(
@@ -190,7 +190,7 @@ func (i *instance) ApplyHistoricalEvents(
 				return nil
 			},
 		); err != nil {
-			logger.ErrorContext(
+			engineLogger.ErrorContext(
 				ctx,
 				"unable to apply event to aggregate root",
 				slog.Group(
@@ -216,7 +216,7 @@ func (i *instance) ApplyHistoricalEvents(
 // snapshot.
 func (i *instance) ApplySnapshot(
 	ctx context.Context,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	snap snapshot,
 ) bool {
 	if err := xerrors.Recover(
@@ -225,7 +225,7 @@ func (i *instance) ApplySnapshot(
 		},
 	); err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			logger.ErrorContext(
+			engineLogger.ErrorContext(
 				ctx,
 				"unable to unmarshal snapshot",
 				xslog.Error(err),
@@ -243,7 +243,7 @@ func (i *instance) ApplySnapshot(
 // support snapshots, or can't be marshaled.
 func (i *instance) marshalSnapshot(
 	ctx context.Context,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) ([]byte, bool) {
 	data, err := xerrors.RecoverT(
 		func() ([]byte, error) {
@@ -252,7 +252,7 @@ func (i *instance) marshalSnapshot(
 	)
 	if err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			logger.ErrorContext(
+			engineLogger.ErrorContext(
 				ctx,
 				"unable to marshal snapshot",
 				xslog.Error(err),

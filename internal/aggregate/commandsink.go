@@ -136,7 +136,7 @@ func (s *CommandSink) LogAttr() slog.Attr {
 // calling the handler's RouteCommandToInstance() method.
 func (s *CommandSink) routeCommandToInstance(
 	ctx context.Context,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	commandForRouting dogma.Command,
 ) (string, error) {
 	instanceID, err := xerrors.RecoverT(
@@ -149,7 +149,7 @@ func (s *CommandSink) routeCommandToInstance(
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to route command to instance",
 			xslog.Error(err),
@@ -171,7 +171,7 @@ func (s *CommandSink) routeCommandToInstance(
 func (s *CommandSink) tryLockInstance(
 	ctx context.Context,
 	tx *sql.Tx,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	instanceID string,
 ) (*instance, error) {
 	// Lock or create the instance's row and fetch its data in one round-trip.
@@ -248,7 +248,7 @@ func (s *CommandSink) tryLockInstance(
 	); err != nil {
 		// Another transaction holds the lock on the existing row.
 		if errors.Is(err, sql.ErrNoRows) {
-			logger.DebugContext(
+			engineLogger.DebugContext(
 				ctx,
 				"instance is locked by another transaction",
 			)
@@ -263,7 +263,7 @@ func (s *CommandSink) tryLockInstance(
 		inst.StreamID = nil
 	}
 
-	root, err := s.newRoot(ctx, logger)
+	root, err := s.newRoot(ctx, engineLogger)
 	if err != nil {
 		return nil, err
 	}
@@ -275,11 +275,11 @@ func (s *CommandSink) tryLockInstance(
 	}
 
 	if snap.NextOffset != 0 {
-		if !inst.ApplySnapshot(ctx, logger, snap) {
+		if !inst.ApplySnapshot(ctx, engineLogger, snap) {
 			// The snapshot can't be unmarshaled, so the instance's events are
 			// applied to a new root from the start of its history instead.
 			snap.NextOffset = 0
-			inst.Root, err = s.newRoot(ctx, logger)
+			inst.Root, err = s.newRoot(ctx, engineLogger)
 			if err != nil {
 				return nil, err
 			}
@@ -287,7 +287,7 @@ func (s *CommandSink) tryLockInstance(
 	}
 
 	// Apply the events that were recorded after the snapshot was taken.
-	if err := inst.ApplyHistoricalEvents(ctx, tx, logger, snap.NextOffset); err != nil {
+	if err := inst.ApplyHistoricalEvents(ctx, tx, engineLogger, snap.NextOffset); err != nil {
 		return nil, err
 	}
 
@@ -297,7 +297,7 @@ func (s *CommandSink) tryLockInstance(
 // newRoot creates a new aggregate root by calling the handler's New() method.
 func (s *CommandSink) newRoot(
 	ctx context.Context,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) (dogma.AggregateRoot, error) {
 	root, err := xerrors.RecoverT(
 		func() (dogma.AggregateRoot, error) {
@@ -305,7 +305,7 @@ func (s *CommandSink) newRoot(
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to create aggregate root",
 			xslog.Error(err),

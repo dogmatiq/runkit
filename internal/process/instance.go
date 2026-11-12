@@ -86,14 +86,14 @@ func (i *instance) Save(
 	ctx context.Context,
 	tx *sql.Tx,
 	scope *messageScope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
 	if scope.Ended {
 		return i.end(ctx, tx)
 	}
 
 	if scope.Mutated {
-		state, err := i.marshalRoot(ctx, logger)
+		state, err := i.marshalRoot(ctx, engineLogger)
 		if err != nil {
 			return err
 		}
@@ -120,14 +120,14 @@ func (i *instance) Save(
 // MarshalBinary method.
 //
 // It returns [messagequeue.ErrFailed] if the root can't be marshaled.
-func (i *instance) marshalRoot(ctx context.Context, logger *slog.Logger) ([]byte, error) {
+func (i *instance) marshalRoot(ctx context.Context, engineLogger *slog.Logger) ([]byte, error) {
 	data, err := xerrors.RecoverT(
 		func() ([]byte, error) {
 			return i.Root.MarshalBinary()
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to marshal process instance state",
 			xslog.Error(err),
@@ -246,7 +246,7 @@ func lockInstance(
 	router *messagequeue.Router,
 	handlerKey *uuidpb.UUID,
 	instanceID string,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) (*instance, error) {
 	// Upsert with a dummy update to acquire a row lock, guaranteeing
 	// serialized access even for brand-new instances.
@@ -291,7 +291,7 @@ func lockInstance(
 		return nil, err
 	}
 
-	root, err := newRoot(ctx, handler, state, logger)
+	root, err := newRoot(ctx, handler, state, engineLogger)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +315,7 @@ func tryLockInstance(
 	router *messagequeue.Router,
 	handlerKey *uuidpb.UUID,
 	instanceID string,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) (*instance, bool, error) {
 	// Try to lock the instance and fetch its data in a single round-trip. The
 	// data is loaded from the CTE that attempts to acquire the lock with FOR
@@ -385,7 +385,7 @@ func tryLockInstance(
 
 	// SKIP LOCKED skipped the row, so another transaction holds its lock.
 	if !locked {
-		logger.DebugContext(
+		engineLogger.DebugContext(
 			ctx,
 			"instance is locked by another transaction",
 		)
@@ -401,7 +401,7 @@ func tryLockInstance(
 		return nil, true, err
 	}
 
-	root, err := newRoot(ctx, handler, state, logger)
+	root, err := newRoot(ctx, handler, state, engineLogger)
 	if err != nil {
 		return nil, true, err
 	}
@@ -418,9 +418,9 @@ func writeEffects(
 	router *messagequeue.Router,
 	inst *instance,
 	scope *messageScope,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
-	if err := inst.Save(ctx, tx, scope, logger); err != nil {
+	if err := inst.Save(ctx, tx, scope, engineLogger); err != nil {
 		return err
 	}
 
@@ -435,7 +435,7 @@ func newRoot(
 	ctx context.Context,
 	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
 	state []byte,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) (dogma.ProcessRoot, error) {
 	root, err := xerrors.RecoverT(
 		func() (dogma.ProcessRoot, error) {
@@ -443,7 +443,7 @@ func newRoot(
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to create process root",
 			xslog.Error(err),
@@ -461,7 +461,7 @@ func newRoot(
 			return root.UnmarshalBinary(state)
 		},
 	); err != nil {
-		logger.ErrorContext(
+		engineLogger.ErrorContext(
 			ctx,
 			"unable to unmarshal process instance state",
 			xslog.Error(err),
