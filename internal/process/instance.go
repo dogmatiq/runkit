@@ -82,9 +82,6 @@ func (i *instance) BindToDeadlineQueue(
 // It ends the instance, if the handler ended it. Otherwise, it stores the
 // instance's state, if the handler mutated the root, and adds the deadlines
 // that the handler scheduled to the instance's deadline queue.
-//
-// If it returns [messagequeue.ErrFailed], because the root can't be marshaled,
-// it has written nothing.
 func (i *instance) Save(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -415,8 +412,6 @@ func tryLockInstance(
 
 // writeEffects writes the effects of handling a message within tx: the
 // instance's changes, then the commands that the handler executed.
-//
-// If it returns [messagequeue.ErrFailed], it has written nothing.
 func writeEffects(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -425,9 +420,6 @@ func writeEffects(
 	scope *messageScope,
 	logger *slog.Logger,
 ) error {
-	// Only Save can return ErrFailed. The message queue consumer commits tx
-	// after ErrFailed, to postpone the delivery, so Save runs before anything
-	// else writes to tx.
 	if err := inst.Save(ctx, tx, scope, logger); err != nil {
 		return err
 	}

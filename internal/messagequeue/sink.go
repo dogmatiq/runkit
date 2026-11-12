@@ -33,10 +33,9 @@ type Sink interface {
 	// problem with the message or the handler, such as when the message can't
 	// be unmarshaled or the handler panics. It may return [ErrBusy] instead of
 	// waiting if it needs a lock while another transaction, or another call to
-	// [Sink.Deliver], holds that lock. After either error, the consumer
-	// postpones the delivery within tx and commits tx, which also commits any
-	// changes that the sink made, so tx must still be usable. Only [ErrFailed]
-	// increments [Delivery.Failures].
+	// [Sink.Deliver], holds that lock. After either error, the consumer rolls
+	// back tx, which discards any changes that the sink made, then postpones
+	// the delivery. Only [ErrFailed] increments [Delivery.Failures].
 	//
 	// It returns any other error, such as a database error, if the problem
 	// isn't specific to the message. The consumer then rolls back tx, leaves

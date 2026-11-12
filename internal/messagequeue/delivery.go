@@ -27,12 +27,18 @@ const (
 	failureBackoffMax = 5 * time.Minute
 )
 
-// attemptDelivery makes an attempt to deliver the message with the given ID,
-// within one transaction.
+// attemptDelivery makes an attempt to deliver the message with the given ID.
 //
 // It doesn't deliver the message unless the message is in one of the given
-// queues. It returns true if the attempt completed the delivery, and the error
-// that ended the attempt, if there was one. When another transaction holds the
+// queues.
+//
+// If the attempt doesn't complete the delivery, it rolls back the attempt's
+// transaction, which discards everything that the sink wrote. It then postpones
+// the delivery if the attempt failed because of a problem with the message or
+// its handler, or because the sink was busy.
+//
+// It returns true if the attempt completed the delivery, and the error that
+// ended the attempt, if there was one. When another transaction holds the
 // message's lock, [xsql.IsLockNotAvailableError] returns true for that error.
 func (c *Consumer) attemptDelivery(
 	ctx context.Context,
@@ -60,7 +66,7 @@ func (c *Consumer) attemptDelivery(
 	// there's always a sink for the message's type.
 	sink, _ := c.Sinks.Get(d.MessageTypeID)
 
-	logger := c.EngineLogger.With(
+	engineLogger := c.EngineLogger.With(
 		slog.Group(
 			"delivery",
 			xslog.UUID("message_id", d.MessageID),
@@ -75,8 +81,6 @@ func (c *Consumer) attemptDelivery(
 		c.AppLogger.With(sink.LogAttr()),
 	)
 
-	var completed bool
-
 	env := &envelopepb.Envelope{}
 	err = env.UnmarshalBinary(envelopeData)
 	if err == nil {
@@ -86,42 +90,53 @@ func (c *Consumer) attemptDelivery(
 	if err != nil {
 		// The message can't be delivered without a valid envelope, so its
 		// delivery is postponed as a failure.
-		logger.DebugContext(
+		engineLogger.DebugContext(
 			ctx,
 			"message envelope is invalid",
 			xslog.Error(err),
 		)
 
-		err = c.postponeAfterFailure(ctx, tx, d, logger)
+		err = ErrFailed
 	} else {
 		handledMessage := xslog.Envelope("handled_message", env)
-		logger = logger.With(handledMessage)
+		engineLogger = engineLogger.With(handledMessage)
 
-		completed, err = c.deliverMessage(
+		err = c.deliverMessage(
 			ctx,
 			tx,
 			d,
 			env,
 			sink,
-			logger,
+			engineLogger,
 			appLogger.With(handledMessage),
 		)
 	}
 
 	if err != nil {
-		return false, err
+		// tx holds the message's lock, which the postponement must acquire, so
+		// it's rolled back first.
+		if err := tx.Rollback(); err != nil {
+			return false, fmt.Errorf("unable to roll back transaction: %w", err)
+		}
+
+		switch {
+		case errors.Is(err, ErrFailed):
+			return false, c.postponeAfterFailure(ctx, d, engineLogger)
+		case errors.Is(err, ErrBusy):
+			return false, c.postponeAfterContention(ctx, d, engineLogger)
+		default:
+			return false, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("unable to commit transaction: %w", err)
 	}
 
-	if completed {
-		logger.DebugContext(ctx, "message delivery completed")
-		flush(ctx)
-	}
+	engineLogger.DebugContext(ctx, "message delivery completed")
+	flush(ctx)
 
-	return completed, nil
+	return true, nil
 }
 
 // claimMessage locks the message with the given ID within tx.
@@ -200,76 +215,107 @@ func (c *Consumer) claimMessage(
 // deliverMessage passes the message in the given envelope to the given sink
 // within tx.
 //
-// It removes the message from its queue after the sink returns nil, and
-// postpones the delivery instead if the sink returns [ErrFailed] or [ErrBusy].
-// It returns true if the delivery is complete.
+// It removes the message from its queue after the sink returns nil. Otherwise,
+// it returns the sink's error.
 //
-// logger is the target for the engine's records about the delivery, both the
-// consumer's and the sink's. appLogger is passed to the sink.
+// engineLogger is the target for the engine's records about the delivery, both
+// the consumer's and the sink's. appLogger is passed to the sink.
 func (c *Consumer) deliverMessage(
 	ctx context.Context,
 	tx *sql.Tx,
 	d Delivery,
 	env *envelopepb.Envelope,
 	sink Sink,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 	appLogger *slog.Logger,
-) (bool, error) {
-	logger.DebugContext(ctx, "message delivery attempt started")
+) error {
+	engineLogger.DebugContext(ctx, "message delivery attempt started")
 
-	err := sink.Deliver(ctx, tx, d, env, logger, appLogger)
-
-	switch {
-	case err == nil:
-		// The sink may already have removed the message within tx, such as
-		// when the handler ends the process instance while handling a
-		// deadline, which removes the instance's deadlines.
-		if _, err := tx.ExecContext(
-			ctx,
-			`DELETE FROM messagequeue.messages
-			WHERE message_id = $1`,
-			xsql.UUID(d.MessageID),
-		); err != nil {
-			return false, fmt.Errorf("unable to remove message: %w", err)
-		}
-		return true, nil
-	case errors.Is(err, ErrFailed):
-		return false, c.postponeAfterFailure(ctx, tx, d, logger)
-	case errors.Is(err, ErrBusy):
-		return false, c.postponeAfterContention(ctx, tx, d, logger)
-	default:
-		return false, err
+	if err := sink.Deliver(ctx, tx, d, env, engineLogger, appLogger); err != nil {
+		return err
 	}
+
+	// The sink may already have removed the message within tx, such as when
+	// the handler ends the process instance while handling a deadline, which
+	// removes the instance's deadlines.
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM messagequeue.messages
+		WHERE message_id = $1`,
+		xsql.UUID(d.MessageID),
+	); err != nil {
+		return fmt.Errorf("unable to remove message: %w", err)
+	}
+
+	return nil
 }
 
 // postponeAfterFailure postpones the given delivery after a failed attempt,
 // and increments its failure count.
+//
+// It's called after the attempt's transaction has been rolled back. It writes
+// nothing if another transaction holds the message's lock, the message has
+// been removed, or the message's failure count has changed since the attempt
+// claimed it.
 func (c *Consumer) postponeAfterFailure(
 	ctx context.Context,
-	tx *sql.Tx,
 	d Delivery,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
 	// The delay reaches its maximum long before the shift would overflow.
 	doublings := min(d.Failures, 32)
 	backoff := min(failureBackoffBase<<doublings, failureBackoffMax)
 	delay := supervisor.Jitter(backoff)
 
-	if err := xsql.ExecOne(
+	// The statement doesn't wait for the message's lock, and it compares only
+	// the failure count to tell whether the message has changed. Together,
+	// these have two rare consequences. In both, the message stays in its
+	// queue and is attempted again:
+	//
+	//   - A transaction that isn't a delivery attempt can hold the lock, such
+	//     as one that ends a process instance and deletes its deadlines. If
+	//     that transaction leaves the message in its queue, this failure isn't
+	//     counted, and the next attempt isn't delayed by a failure backoff.
+	//
+	//   - While ownership of a queue's workload moves between nodes, both
+	//     nodes can attempt the message. If the other node postponed it after
+	//     contention, which doesn't change its failure count, this statement
+	//     replaces that postponement.
+	err := xsql.ExecOne(
 		ctx,
-		tx,
+		c.DB,
 		`UPDATE messagequeue.messages SET
 			failures = failures + 1,
 			failing_since = COALESCE(failing_since, clock_timestamp()),
-			next_attempt_at = clock_timestamp() + $2
-		WHERE message_id = $1`,
+			next_attempt_at = clock_timestamp() + $3
+		WHERE message_id = (
+			SELECT message_id
+			FROM messagequeue.messages
+			WHERE message_id = $1
+				AND failures = $2
+			FOR UPDATE SKIP LOCKED
+		)`,
 		xsql.UUID(d.MessageID),
+		d.Failures,
 		delay,
-	); err != nil {
+	)
+
+	// Another transaction holds the message's lock, or the message has been
+	// removed or its failure count has changed since the attempt claimed it.
+	if errors.Is(err, sql.ErrNoRows) {
+		engineLogger.DebugContext(
+			ctx,
+			"message delivery not postponed because the message is locked or has changed",
+			slog.String("reason", "failure"),
+		)
+		return nil
+	}
+
+	if err != nil {
 		return fmt.Errorf("unable to postpone message: %w", err)
 	}
 
-	logger.DebugContext(
+	engineLogger.DebugContext(
 		ctx,
 		"message delivery postponed",
 		slog.Duration("delay", delay),
@@ -282,28 +328,51 @@ func (c *Consumer) postponeAfterFailure(
 
 // postponeAfterContention postpones the given delivery after its sink
 // returned [ErrBusy], without changing its failure count.
+//
+// It's called after the attempt's transaction has been rolled back. It writes
+// nothing in the same cases as [Consumer.postponeAfterFailure].
 func (c *Consumer) postponeAfterContention(
 	ctx context.Context,
-	tx *sql.Tx,
 	d Delivery,
-	logger *slog.Logger,
+	engineLogger *slog.Logger,
 ) error {
-	// The sink returned [ErrBusy], so the contention isn't on the message's
-	// row. The transaction holds the lock on that row, so this update doesn't
-	// wait for another transaction.
-	if err := xsql.ExecOne(
+	// As in [Consumer.postponeAfterFailure], a transaction that isn't a
+	// delivery attempt can hold the message's lock. If that transaction leaves
+	// the message in its queue, the message can be attempted again before the
+	// contention delay has passed.
+	err := xsql.ExecOne(
 		ctx,
-		tx,
+		c.DB,
 		`UPDATE messagequeue.messages SET
-			next_attempt_at = clock_timestamp() + $2
-		WHERE message_id = $1`,
+			next_attempt_at = clock_timestamp() + $3
+		WHERE message_id = (
+			SELECT message_id
+			FROM messagequeue.messages
+			WHERE message_id = $1
+				AND failures = $2
+			FOR UPDATE SKIP LOCKED
+		)`,
 		xsql.UUID(d.MessageID),
+		d.Failures,
 		c.ContentionDelay,
-	); err != nil {
+	)
+
+	// Another transaction holds the message's lock, or the message has been
+	// removed or its failure count has changed since the attempt claimed it.
+	if errors.Is(err, sql.ErrNoRows) {
+		engineLogger.DebugContext(
+			ctx,
+			"message delivery not postponed because the message is locked or has changed",
+			slog.String("reason", "contention"),
+		)
+		return nil
+	}
+
+	if err != nil {
 		return fmt.Errorf("unable to postpone message: %w", err)
 	}
 
-	logger.DebugContext(
+	engineLogger.DebugContext(
 		ctx,
 		"message delivery postponed",
 		slog.Duration("delay", c.ContentionDelay),

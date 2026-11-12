@@ -2,10 +2,13 @@ package xsql
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
 // ExecOne executes a query and asserts that exactly one row was affected.
+//
+// If no row was affected, the error wraps [sql.ErrNoRows].
 func ExecOne(
 	ctx context.Context,
 	x Executor,
@@ -20,6 +23,10 @@ func ExecOne(
 	n, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("unable to determine number of rows affected: %w", err)
+	}
+
+	if n == 0 {
+		return fmt.Errorf("expected exactly one row to be affected: %w", sql.ErrNoRows)
 	}
 
 	if n != 1 {
