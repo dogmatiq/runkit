@@ -93,6 +93,11 @@ events.
   `StaticRemoteEngines()` describes each remote engine by its connection's
   target.
 
+### Fixed
+
+- Fixed an error that could occur when an event ended a process instance while
+  one of its deadlines was being delivered.
+
 ## [0.2.0] - 2026-11-06
 
 This release introduces clustering. Several engines could already run against

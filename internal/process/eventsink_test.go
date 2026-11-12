@@ -24,12 +24,13 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-// TestSink_filteredEventsAdvanceCheckpoint verifies that ranges without owned
-// events are durably consumed, including streams absent from the local database.
-func TestSink_filteredEventsAdvanceCheckpoint(t *testing.T) {
+// TestEventSink_filteredEventsAdvanceCheckpoint verifies that ranges without
+// owned events are durably consumed, including streams absent from the local
+// database.
+func TestEventSink_filteredEventsAdvanceCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	s := newSink(t, xtesting.NewDatabase(t))
+	s := newEventSink(t, xtesting.NewDatabase(t))
 	streamID := uuidpb.Generate()
 	cp, err := s.CheckpointOffset(t.Context(), streamID)
 	if err != nil || cp != 0 {
@@ -50,13 +51,14 @@ func TestSink_filteredEventsAdvanceCheckpoint(t *testing.T) {
 	}
 }
 
-// TestSink_overlappingConsumers verifies that competing consumers cannot commit
-// the effects of the same event twice, even when no checkpoint exists yet.
-func TestSink_overlappingConsumers(t *testing.T) {
+// TestEventSink_overlappingConsumers verifies that competing consumers cannot
+// commit the effects of the same event twice, even when no checkpoint exists
+// yet.
+func TestEventSink_overlappingConsumers(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	s := newSink(t, db)
+	s := newEventSink(t, db)
 	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
 	var calls int
 	s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleEventFunc = func(
@@ -89,13 +91,14 @@ func TestSink_overlappingConsumers(t *testing.T) {
 	}
 }
 
-// TestSink_failureRollsBack verifies that a failed attempt leaves no instance
-// state or checkpoint progress, and can be retried from the same segment.
-func TestSink_failureRollsBack(t *testing.T) {
+// TestEventSink_failureRollsBack verifies that a failed attempt leaves no
+// instance state or checkpoint progress, and can be retried from the same
+// segment.
+func TestEventSink_failureRollsBack(t *testing.T) {
 	for _, failure := range []string{"error", "panic"} {
 		t.Run(failure, func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
-			s := newSink(t, db)
+			s := newEventSink(t, db)
 			streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
 			seg := eventstream.Segment{StreamID: streamID, End: 1, Envelopes: envs}
 			handler := s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
@@ -141,11 +144,12 @@ func TestSink_failureRollsBack(t *testing.T) {
 	}
 }
 
-// newSink returns a sink whose handler routes every event to the same instance.
-func newSink(t testing.TB, db *sql.DB) *Sink {
+// newEventSink returns a sink whose handler routes every event to the same
+// instance.
+func newEventSink(t testing.TB, db *sql.DB) *EventSink {
 	t.Helper()
 
-	return &Sink{
+	return &EventSink{
 		DB: db,
 		Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
 			NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
@@ -168,13 +172,14 @@ func newSink(t testing.TB, db *sql.DB) *Sink {
 	}
 }
 
-// TestSink_routingRejectionsAdvancePastTrailingEvents verifies that routing
-// rejections and filtered events at the end of a segment both advance progress.
-func TestSink_routingRejectionsAdvancePastTrailingEvents(t *testing.T) {
+// TestEventSink_routingRejectionsAdvancePastTrailingEvents verifies that
+// routing rejections and filtered events at the end of a segment both advance
+// progress.
+func TestEventSink_routingRejectionsAdvancePastTrailingEvents(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
-	s := newSink(t, db)
+	s := newEventSink(t, db)
 	s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).RouteEventToInstanceFunc = func(context.Context, dogma.Event) (string, bool, error) {
 		return "", false, nil
 	}
@@ -202,16 +207,16 @@ func TestSink_routingRejectionsAdvancePastTrailingEvents(t *testing.T) {
 	)
 }
 
-// TestSink_checkpointFailureRollsBackEffects verifies that commands, deadlines,
-// instance state, and checkpoint progress commit together.
-func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
+// TestEventSink_checkpointFailureRollsBackEffects verifies that commands,
+// deadlines, instance state, and checkpoint progress commit together.
+func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	t.Parallel()
 
 	var fail atomic.Bool
 	db := xtesting.NewDatabaseWithFailingQueries(t, func(query string, _ []any) bool {
 		return fail.Load() && strings.Contains(query, "UPDATE eventstream.handler_checkpoints")
 	})
-	s := newSink(t, db)
+	s := newEventSink(t, db)
 	s.OutboundMessageTypes = map[reflect.Type]struct{}{
 		reflect.TypeOf(stubs.CommandX1):  {},
 		reflect.TypeOf(stubs.DeadlineA1): {},
@@ -274,13 +279,13 @@ func TestSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	}
 }
 
-// TestSink_handlerDeadlines verifies that the process sink applies the engine's
-// routing and handling time limits when it invokes application code.
-func TestSink_handlerDeadlines(t *testing.T) {
+// TestEventSink_handlerDeadlines verifies that the event sink applies the
+// engine's routing and handling time limits when it invokes application code.
+func TestEventSink_handlerDeadlines(t *testing.T) {
 	for _, operation := range []string{"route", "handle"} {
 		t.Run(operation, func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
-			s := newSink(t, db)
+			s := newEventSink(t, db)
 			handler := s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
 
 			if operation == "route" {

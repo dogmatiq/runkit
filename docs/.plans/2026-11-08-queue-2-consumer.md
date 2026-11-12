@@ -78,7 +78,7 @@ These were made with the maintainer, and aren't in [#100][100].
   never read.
 - **A delivery is made of attempts.** A delivery is the whole job of getting a
   message to its handler. It's complete once the message is delivered, or
-  cancelled if it's a deadline whose process instance has ended. An attempt is
+  canceled if it's a deadline whose process instance has ended. An attempt is
   one transaction that tries to complete it, so a delivery may take many
   attempts. An attempt that fails postpones the delivery. The loop records each
   attempt once it has been made, along with whether it delivered the message.
@@ -96,10 +96,14 @@ These were made with the maintainer, and aren't in [#100][100].
   of a queue moves to another node while an attempt is in progress, which may be
   often, since an integration may take as long as the handle timeout and
   membership can change several times in that period.
-- **Sinks keep their own lock behavior for now.** The aggregate sink keeps
-  `SKIP LOCKED` on its instance and reports `ErrBusy`. The deadline sink gains
-  the savepoint and `lock_timeout` sequence from [#100][100] in task 6. The
-  deliveries plan may unify them.
+- **No sink waits for a lock.** A sink that finds its instance, or its
+  handler, busy returns `ErrBusy` at once, and the consumer postpones the
+  delivery by the contention delay. The aggregate sink locks its instance with
+  `SKIP LOCKED`, and the deadline sink does the same in task 6. `NOWAIT` would
+  abort the transaction, which the consumer needs to postpone the delivery. The
+  bounded `lock_timeout` wait from [#100][100] isn't needed to prevent
+  deadlocks, only to reduce latency, so it's left to the deliveries plan, as one
+  setting for every kind of message if measurements show it's worth having.
 - **An attempt's context derives from the consumer's**, not from ownership of
   its queue's workload, so when the workload moves, in-flight attempts finish,
   and shutdown cancels them.
@@ -185,9 +189,9 @@ Each one has a test in the task that owns the code.
 3. A message must not be delivered here if it moves to a queue while another
    node owns that queue's workload, and this node holds a future timer for the
    message. Task 3 has the test.
-4. A deadline claimed before its instance lock times out must be postponed
-   without a failure, and the transaction's `lock_timeout` restored on both
-   paths. Task 6 has the tests.
+4. A deadline whose process instance is locked must be postponed without a
+   failure, and ending an instance must not wait for a deadline that an attempt
+   has claimed. Task 6 has the tests.
 5. Shutdown with attempts in flight must roll them back and return only when
    every attempt in progress has been made. Task 3 tests the wait, and task 4
    the rollback.
@@ -268,9 +272,9 @@ until heartbeats move, in follow-up 1 of [plan 1][plan-1].
 
 Folded into the tasks that give each option an effect, so that neither lands
 before anything reads it. `WithMessageQueueContentionDelay` and
-`WithMessageQueueConcurrency` are added in task 5, which builds the consumer,
-and `WithMessageQueueLockTimeout` in task 6, which adds
-`DeadlineSink.LockTimeout`.
+`WithMessageQueueConcurrency` are added in task 5, which builds the consumer.
+`WithMessageQueueLockTimeout` was dropped, because no sink waits for a lock
+(see the decisions).
 
 ---
 
@@ -646,70 +650,65 @@ with no behavior change. The second is the rest of this task.
 
 ### Task 6: Claim-first deadline delivery
 
+The consumer locks a deadline's row when it claims it, and the deadline sink
+then locks the process instance. Handling an event locks the instance first,
+and if the handler ends the instance, deletes the instance's deadlines, which
+locks their rows. The two take the locks in opposite orders, so they can
+deadlock. 0.2.0 had the same inversion.
+
 **Files:**
 - Modify: `internal/process/deadlinesink.go`,
-  `internal/process/instancestate.go` (`endInstance`), `engineoption.go`,
-  `engine.go`
-- Test: `internal/process/deadlinecontention_test.go` (new),
-  `internal/process/instancestate_test.go`, `engineoption_test.go`
+  `internal/process/instance.go` (renamed from `instancestate.go`),
+  `internal/process/eventsink.go` (renamed from `sink.go`, with `process.Sink`
+  renamed to `EventSink`, and `projection.Sink` likewise),
+  `internal/messagequeue/sink.go`, `internal/messagequeue/delivery.go`,
+  `CHANGELOG.md`
+- Test: `internal/process/deadlinesink_test.go` (new),
+  `internal/process/instance_test.go` (renamed from `instancestate_test.go`)
 
-**Interfaces:**
-- Produces: `process.DeadlineSink` gains `LockTimeout time.Duration`. Its
-  `Deliver`:
-  1. Opens a savepoint, reads `current_setting('lock_timeout')`, runs
-     `SET LOCAL lock_timeout = $1`, and locks the instance row with
-     `SELECT … FOR UPDATE`.
-  2. On success, restores the setting and releases the savepoint. If the
-     instance has ended, returns nil without unmarshaling the message or
-     creating a root, and the consumer removes the claimed row.
-  3. On a lock timeout (`SQLSTATE 55P03`), rolls back to the savepoint, which
-     also restores the setting, and returns `messagequeue.ErrBusy`.
+**Decisions:**
+- A deadline whose process instance has ended is deemed "canceled". Its
+  delivery is complete without the handler being called. A delivery is
+  complete when its message is delivered or canceled.
+- `DeadlineSink.Deliver` locks the process instance with
+  `FOR UPDATE SKIP LOCKED` before it unmarshals the deadline. If another transaction holds the lock, it
+  returns `messagequeue.ErrBusy`. If the instance has ended, it returns nil
+  without calling the handler, and the consumer removes the deadline.
+- Ending an instance deletes only the deadlines that no attempt has claimed,
+  using `FOR UPDATE SKIP LOCKED` in a subquery, so it never waits for a message
+  row. If an attempt has claimed one, the sink in that attempt finds the
+  instance ended, and the consumer removes the deadline.
+- No new option, and no `lock_timeout`.
+- `instance` is the engine's model of a process instance: its handler key, ID,
+  whether it has ended, its stored state, its deadline queue ID and its root.
+  `lockInstance` (the event path, which may create the instance and waits) and
+  `tryLockInstance` (the deadline path, which never creates or waits) both
+  return one, and binding, restoring the root, saving and ending are its
+  methods. Deadline delivery stays at one round trip.
 
-  `endInstance` deletes the instance's pending deadlines with
-  `FOR UPDATE SKIP LOCKED` in a subquery, so it never waits for a row that's
-  locked by an attempt's transaction. The sink in the attempt whose transaction
-  holds it observes `ended` under the instance lock, and the consumer removes
-  the row.
-
-  The engine sets `LockTimeout` from a new option:
-
-  ```go
-  // DefaultMessageQueueLockTimeout is the default maximum time a delivery waits for
-  // the lock that serializes deliveries to one instance.
-  DefaultMessageQueueLockTimeout = 200 * time.Millisecond
-
-  func WithMessageQueueLockTimeout(timeout time.Duration) EngineOption
-  ```
-
-  It panics on a non-positive duration, like `WithHandleTimeout`, and the
-  engine stores it in `messageQueueLockTimeout`.
-
-- Consumes: `messagequeue.ErrBusy`, and `ContentionDelay` from task 4, which the
-  consumer applies.
-
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   ```go
-  func TestDeadlineSink_contention(t *testing.T) {
-      t.Run("it postpones a deadline without a failure when its instance is locked", ...)
-      t.Run("it restores the lock timeout after acquiring the lock", ...)      // current_setting in the same tx after Deliver
-      t.Run("it restores the lock timeout after a timeout", ...)
-      t.Run("it discards a claimed deadline whose instance has ended", ...)   // claim in tx A; end the instance in tx B; A proceeds
+  func TestDeadlineSink(t *testing.T) {
+      t.Run("when another transaction holds the lock on the process instance", ...)
+          t.Run("it returns ErrBusy without calling the handler", ...)
+      t.Run("when the process instance has ended", ...)
+          t.Run("it returns nil without calling the handler", ...)
   }
   ```
 
-  In `instancestate_test.go`:
+  In `instance_test.go`:
 
   ```go
-  t.Run("it ends an instance while one of its deadlines is claimed", ...)   // ending doesn't block on the claimed row
+  t.Run("it ends an instance without waiting for a deadline that another transaction has locked", ...)
   ```
 
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement it**, and add `WithMessageQueueLockTimeout`, with a
-  test in `package runkit_test` that it panics on zero.
-- [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Update `CHANGELOG.md`** under `### Added`.
-- [ ] **Step 6: Stop for review**
+- [x] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 3: Implement it**, and update the docs of `Sink.Deliver`,
+  `Delivery` and `deliverMessage` for canceled deadlines.
+- [x] **Step 4: Run `make test` to verify they pass**
+- [x] **Step 5: Update `CHANGELOG.md`** under `### Fixed`.
+- [x] **Step 6: Stop for review**
 
 ---
 

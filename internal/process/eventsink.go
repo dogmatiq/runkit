@@ -23,10 +23,12 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// Sink dispatches segments of event streams to a process message handler.
-// It implements [eventstream.Sink], committing each event's effects and
-// checkpoint offset in the same database transaction.
-type Sink struct {
+// EventSink is an [eventstream.Sink] that dispatches events to a
+// [dogma.ProcessMessageHandler].
+//
+// It commits each event's effects and checkpoint offset in the same database
+// transaction.
+type EventSink struct {
 	// DB is the database that stores process state and checkpoint offsets.
 	DB *sql.DB
 
@@ -67,18 +69,18 @@ type Sink struct {
 
 // RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *Sink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
+func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
 }
 
 // EventTypeIDs returns the event types routed to the process.
-func (s *Sink) EventTypeIDs() *uuidcollection.Set {
+func (s *EventSink) EventTypeIDs() *uuidcollection.Set {
 	return s.EventTypes
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream.
 // Streams without a checkpoint are consumed from the beginning.
-func (s *Sink) CheckpointOffset(
+func (s *EventSink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) (uint64, error) {
@@ -102,7 +104,7 @@ func (s *Sink) CheckpointOffset(
 // ConsumeSegment dispatches events in offset order, committing their effects
 // individually. It returns false if another consumer has advanced the checkpoint.
 // Events excluded by routing or message type still advance the checkpoint.
-func (s *Sink) ConsumeSegment(
+func (s *EventSink) ConsumeSegment(
 	ctx context.Context,
 	cp uint64,
 	seg eventstream.Segment,
@@ -131,7 +133,7 @@ func (s *Sink) ConsumeSegment(
 
 // consume locks the handler's checkpoint before applying an event's effects.
 // A nil envelope advances past a range with no events routed to the handler.
-func (s *Sink) consume(
+func (s *EventSink) consume(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	cp, next uint64,
@@ -214,7 +216,7 @@ func (s *Sink) consume(
 }
 
 // dispatch routes an event to its instance and applies its effects within tx.
-func (s *Sink) dispatch(
+func (s *EventSink) dispatch(
 	ctx context.Context,
 	tx *sql.Tx,
 	env *envelopepb.Envelope,
@@ -245,47 +247,44 @@ func (s *Sink) dispatch(
 		return nil
 	}
 
-	// Until the instance is loaded, a record can identify it only by its ID.
+	// Until the instance's root exists, a record can identify the instance only
+	// by its ID.
 	instanceIDAttr := slog.Group(
 		"process_instance",
 		slog.String("id", instanceID),
 	)
 
-	root, err := newRoot(ctx, s.Handler, engineLogger.With(instanceIDAttr))
-	if err != nil {
-		return err
-	}
-
-	deadlineQueueID, ok, err := loadInstance(
+	inst, err := lockInstance(
 		ctx,
 		tx,
+		s.Handler,
 		s.QueueRouter,
 		s.Identity.GetKey(),
 		instanceID,
-		root,
 		engineLogger.With(instanceIDAttr),
 	)
 	if err != nil {
 		return err
 	}
 
-	if !ok {
+	// An ended instance doesn't handle any more events.
+	if inst.Ended {
 		return nil
 	}
 
 	scope := &eventScope{
 		messageScope{
-			instanceID: instanceID,
-			root:       root,
+			instanceID: inst.ID,
+			root:       inst.Root,
 			commandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
-				envelope.WithInstanceID(instanceID),
+				envelope.WithInstanceID(inst.ID),
 			),
 			deadlinePacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
-				envelope.WithInstanceID(instanceID),
+				envelope.WithInstanceID(inst.ID),
 			),
 			engineLogger:         engineLogger,
 			appLogger:            appLogger,
@@ -299,50 +298,36 @@ func (s *Sink) dispatch(
 			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
 			defer cancel()
 
-			return s.Handler.HandleEvent(ctx, root, scope, event)
+			return s.Handler.HandleEvent(ctx, inst.Root, scope, event)
 		},
 	); err != nil {
-		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, instanceID, err)
+		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, inst.ID, err)
 	}
 
-	if err := addCommandsToQueue(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
+	if err := addCommandsToQueues(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
 		return err
 	}
 
 	if scope.ended {
-		if err := endInstance(
+		return inst.End(ctx, tx)
+	}
+
+	if scope.mutated {
+		if err := inst.Save(
 			ctx,
 			tx,
-			s.Identity.GetKey(),
-			instanceID,
+			engineLogger.With(instanceLogAttr(inst.ID, inst.Root, scope.ended)),
 		); err != nil {
-			return err
-		}
-	} else {
-		if scope.mutated {
-			if err := saveInstance(
-				ctx,
-				tx,
-				s.Identity.GetKey(),
-				instanceID,
-				root,
-				engineLogger.With(instanceLogAttr(instanceID, root, scope.ended)),
-			); err != nil {
-				return err
-			}
-		}
-
-		if err := persistDeadlines(ctx, tx, deadlineQueueID, scope.deadlinePacker); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return inst.AddDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
 }
 
 // routeEventToInstance routes the event to a process instance by calling the
 // handler's RouteEventToInstance() method.
-func (s *Sink) routeEventToInstance(
+func (s *EventSink) routeEventToInstance(
 	ctx context.Context,
 	event dogma.Event,
 ) (string, bool, error) {

@@ -208,7 +208,7 @@ Each one has a test in the task that owns the code.
 
 **Files:**
 - Create: `internal/process/effects.go`
-- Modify: `internal/process/sink.go` (`dispatch`),
+- Modify: `internal/process/eventsink.go` (`dispatch`),
   `internal/process/deadlinesink.go` (`Deliver`),
   `internal/process/instancestate.go` (`saveInstance` splits into marshal
   and write)

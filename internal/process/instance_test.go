@@ -3,6 +3,7 @@ package process_test
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,13 +11,15 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
-// TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed verifies that the
+// TestInstance_stateIsNotPersistedIfMutateIsNotUsed verifies that the
 // process instance state is not persisted if the [dogma.ProcessScope].Mutate()
 // method is not called.
-func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
+func TestInstance_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 	var done cosyne.Latch
 
 	xtesting.RunEngines(
@@ -81,9 +84,9 @@ func TestInstanceState_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 	)
 }
 
-// TestInstanceState_stateIsPersisted verifies that the process instance state
+// TestInstance_stateIsPersisted verifies that the process instance state
 // is correctly persisted across multiple events that target that instance.
-func TestInstanceState_stateIsPersisted(t *testing.T) {
+func TestInstance_stateIsPersisted(t *testing.T) {
 	var done cosyne.Latch
 
 	xtesting.RunEngines(
@@ -156,9 +159,9 @@ func TestInstanceState_stateIsPersisted(t *testing.T) {
 	)
 }
 
-// TestInstanceState_instancesAreIsolated verifies that the state of one
+// TestInstance_instancesAreIsolated verifies that the state of one
 // instance is not affected by events handled by another instance.
-func TestInstanceState_instancesAreIsolated(t *testing.T) {
+func TestInstance_instancesAreIsolated(t *testing.T) {
 	var (
 		instanceAChecked cosyne.Latch
 		instanceBChecked cosyne.Latch
@@ -246,12 +249,12 @@ func TestInstanceState_instancesAreIsolated(t *testing.T) {
 	)
 }
 
-// TestInstanceState_writesAreSerialized verifies that concurrent events and
+// TestInstance_writesAreSerialized verifies that concurrent events and
 // deadlines targeting the same process instance are serialized, such that each
 // handler invocation observes the cumulative state produced by all prior
 // invocations, regardless of whether they originated from the event consumer or the
 // deadline sink.
-func TestInstanceState_writesAreSerialized(t *testing.T) {
+func TestInstance_writesAreSerialized(t *testing.T) {
 	const handlerKey = "d5fce239-6c7f-4153-895c-ecb047693319"
 
 	const (
@@ -364,9 +367,9 @@ func TestInstanceState_writesAreSerialized(t *testing.T) {
 	)
 }
 
-// TestInstanceState_deadlineQueue verifies that each process instance is bound
+// TestInstance_deadlineQueue verifies that each process instance is bound
 // to a queue for its deadlines.
-func TestInstanceState_deadlineQueue(t *testing.T) {
+func TestInstance_deadlineQueue(t *testing.T) {
 	const handlerKey = "8f0f5b9e-27d6-4f3e-9b0a-6c1f7c1c8e44"
 
 	// handler returns a process handler that routes every event to one
@@ -519,5 +522,105 @@ func TestInstanceState_deadlineQueue(t *testing.T) {
 			},
 			handler(),
 		)
+	})
+}
+
+// TestInstance_end verifies how a process instance is ended.
+func TestInstance_end(t *testing.T) {
+	t.Run("it ends an instance without waiting for a deadline that another transaction has locked", func(t *testing.T) {
+		t.Parallel()
+
+		db := xtesting.NewDatabase(t)
+		sink := newEventSink(t, db)
+		sink.OutboundMessageTypes = map[reflect.Type]struct{}{
+			reflect.TypeFor[*stubs.DeadlineStub[stubs.TypeA]](): {},
+		}
+
+		handler := sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
+		handler.HandleEventFunc = func(
+			_ context.Context,
+			_ dogma.ProcessRoot,
+			s dogma.ProcessEventScope[dogma.ProcessRoot],
+			e dogma.Event,
+		) error {
+			switch e.(type) {
+			case *stubs.EventStub[stubs.TypeA]:
+				s.ScheduleDeadline(stubs.DeadlineA1, time.Now().Add(time.Hour))
+			case *stubs.EventStub[stubs.TypeB]:
+				s.End()
+			}
+			return nil
+		}
+
+		streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1, stubs.EventB1)
+
+		// Handle the first event, which schedules a deadline.
+		if _, _, err := sink.ConsumeSegment(
+			t.Context(),
+			0,
+			eventstream.Segment{
+				StreamID:  streamID,
+				End:       1,
+				Envelopes: envs[:1],
+			},
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// Lock the deadline's row, as the consumer does when it claims the
+		// deadline for an attempt.
+		lockHolder, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lockHolder.Rollback()
+
+		if err := xsql.ExecOne(
+			t.Context(),
+			lockHolder,
+			`SELECT 1
+			FROM messagequeue.messages
+			WHERE handler_key = $1
+			AND instance_id = '<instance>'
+			FOR UPDATE`,
+			xsql.UUID(sink.Identity.GetKey()),
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// Handle the second event, which ends the instance. If ending the
+		// instance waits for the locked row, the context's deadline fails the
+		// call instead of letting the test hang.
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		if _, _, err := sink.ConsumeSegment(
+			ctx,
+			1,
+			eventstream.Segment{
+				StreamID:  streamID,
+				Begin:     1,
+				End:       2,
+				Envelopes: envs[1:],
+			},
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		var ended bool
+		if err := db.QueryRowContext(
+			t.Context(),
+			`SELECT ended
+			FROM process.instances
+			WHERE handler_key = $1
+			AND instance_id = '<instance>'`,
+			xsql.UUID(sink.Identity.GetKey()),
+		).Scan(&ended); err != nil {
+			t.Fatal(err)
+		}
+
+		if !ended {
+			t.Fatal("expected the instance to be ended")
+		}
 	})
 }

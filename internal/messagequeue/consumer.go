@@ -165,7 +165,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		case a := <-c.deliveryAttempted:
 			c.recordAttempt(ctx, a)
 
-			if a.Delivered && backlogIsEmpty {
+			if a.Completed && backlogIsEmpty {
 				goto wait
 			}
 		}
@@ -266,7 +266,7 @@ func (c *Consumer) startAttempts(
 		}
 
 		go func() {
-			a.Delivered, a.Err = c.attemptDelivery(ctx, queues, a.MessageID)
+			a.Completed, a.Err = c.attemptDelivery(ctx, queues, a.MessageID)
 			c.deliveryAttempted <- a
 		}()
 	}
@@ -312,8 +312,8 @@ type deliveryAttempt struct {
 	// MessageID is the ID of the message to deliver.
 	MessageID *uuidpb.UUID
 
-	// Delivered is true if the message was delivered.
-	Delivered bool
+	// Completed is true if the attempt completed the delivery.
+	Completed bool
 
 	// Err is the error that ended the attempt, or nil if there wasn't one.
 	//
