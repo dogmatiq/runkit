@@ -304,25 +304,14 @@ func (s *EventSink) dispatch(
 		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, inst.ID, err)
 	}
 
-	if err := addCommandsToQueues(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
-		return err
-	}
-
-	if scope.ended {
-		return inst.End(ctx, tx)
-	}
-
-	if scope.mutated {
-		if err := inst.Save(
-			ctx,
-			tx,
-			engineLogger.With(instanceLogAttr(inst.ID, inst.Root, scope.ended)),
-		); err != nil {
-			return err
-		}
-	}
-
-	return inst.AddDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
+	return writeEffects(
+		ctx,
+		tx,
+		s.QueueRouter,
+		inst,
+		&scope.messageScope,
+		engineLogger.With(instanceIDAttr),
+	)
 }
 
 // routeEventToInstance routes the event to a process instance by calling the

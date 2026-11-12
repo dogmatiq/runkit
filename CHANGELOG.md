@@ -98,11 +98,14 @@ events.
 
 ### Fixed
 
-- Fixed an error that could occur when an event ended a process instance while
-  one of its deadlines was being delivered.
-- Fixed application log records being written when an attempt to handle a
-  command or deadline failed or was rolled back. They're now written only after
-  the handling succeeds and is committed.
+- Ending a process instance while one of its deadlines is being delivered no
+  longer causes an error.
+- Application log records from handling a command or deadline are written only
+  after the handling commits.
+- If a process root's `MarshalBinary()` method failed after handling a
+  deadline, the commands that the process executed were queued without its
+  other effects, and duplicated on each retry. Now they're queued only if the
+  other effects are saved too.
 
 ## [0.2.0] - 2026-11-06
 

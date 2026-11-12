@@ -214,52 +214,38 @@ engine applies these rules" section gains its part for event streams then.
 
 ---
 
-### Task 2: Shared process preparation
+### Task 2: Marshal process state before writing anything
+
+**The bug ([#99][99]).** After a deadline's handler returns, the deadline sink
+adds the commands it executed to their queues, then saves the instance's
+state. If marshaling the root fails, `Save` returns `ErrFailed`, and the
+consumer commits the attempt's transaction to postpone the delivery, which
+commits those commands too. The deadline is attempted again from the old state,
+and executes the same commands again. The event sink rolls back its own
+transaction on any error, so it isn't affected.
+
+**Decisions** (agreed before starting):
+
+- Marshaling the root is the only step after the handler that can fail because
+  of the application's code, so it happens before anything is written. There is
+  no `effects` type or `prepare` function: the scope already holds the commands,
+  the deadlines, `ended` and `mutated`.
+- `instance.Save` saves the instance's own changes: it ends the instance, or
+  stores its state, if mutated, and adds the new deadlines to its deadline
+  queue. It marshals the root before it writes anything, so if it returns
+  `messagequeue.ErrFailed`, it has written nothing.
+- `writeEffects` encodes the order once: it calls `instance.Save`, then
+  `addCommandsToQueues`. Both sinks call only `writeEffects`. The commands
+  aren't the instance's, so they aren't written by an `instance` method.
+- Until task 3 adds `messagequeue.Fail`, a marshaling failure is
+  `messagequeue.ErrFailed`.
 
 **Files:**
-- Create: `internal/process/effects.go`
-- Modify: `internal/process/eventsink.go` (`dispatch`),
-  `internal/process/deadlinesink.go` (`Deliver`),
-  `internal/process/instancestate.go` (`saveInstance` splits into marshal
-  and write)
-- Test: `internal/process/deadlinerouting_test.go` or a new
-  `internal/process/effects_test.go`, through the engine API
+- Modify: `internal/process/instance.go`, `internal/process/deadlinesink.go`,
+  `internal/process/eventsink.go`, `CHANGELOG.md`
+- Test: `internal/process/instance_test.go`, through the engine API
 
-**Interfaces:**
-- Produces, unexported in `process`:
-
-  ```go
-  // effects is everything a handler's call changed, ready to write.
-  type effects struct {
-      instanceID string
-      ended      bool
-      state      []byte                    // nil if not mutated or ended
-      commands   *envelopepb.MultiEnvelope // nil if none
-      deadlines  *envelopepb.MultiEnvelope // nil if none or ended
-  }
-
-  // prepare runs fn, which calls the handler with the given scope, and
-  // returns its effects.
-  //
-  // It returns an error, and no effects, if fn fails or the state can't be
-  // marshaled.
-  func prepare(ctx, scope *messageScope, fn func() error) (effects, error)
-
-  // write persists the effects within tx.
-  func write(ctx, tx, handlerKey, binding *uuidpb.UUID, e effects) error
-  ```
-
-  `write` adds the commands to the queues the router chooses, ends the instance
-  or saves the state, and adds the deadlines to the instance's deadline queue.
-  `dispatch` and `Deliver` each become: load, prepare, write. A preparation
-  error from the handler or the marshal is returned wrapped with context, as
-  `messagequeue.Fail(err)` from the deadline handler and as a plain error from
-  the sink, where the stream consumer's streak handles it as today.
-
-- Consumes: `messagequeue.Fail` from task 3, or `messagequeue.ErrFailed` if task
-  3 hasn't landed; do task 3 first if that's awkward.
-
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   Through the engine API, with a process handler whose root's
   `MarshalBinary` can be made to fail:
@@ -275,15 +261,15 @@ engine applies these rules" section gains its part for event streams then.
   the stored state is unchanged, and the original deadline remains with
   `failures = 1`, using the `xtesting` queue helpers.
 
-- [ ] **Step 2: Run `make test` to verify they fail**
-- [ ] **Step 3: Implement `prepare` and `write`, and use them in both paths**
-- [ ] **Step 4: Run `make test` to verify they pass**
-- [ ] **Step 5: Update `CHANGELOG.md`**
+- [x] **Step 2: Run `make test` to verify they fail**
+- [x] **Step 3: Implement `instance.Save` and `writeEffects`, and use them in both sinks**
+- [x] **Step 4: Run `make test` to verify they pass**
+- [x] **Step 5: Update `CHANGELOG.md`**
 
   Under `### Fixed`: a deadline whose handler's state couldn't be
   serialized no longer commits the commands it produced.
 
-- [ ] **Step 6: Stop for review**
+- [x] **Step 6: Stop for review**
 
 ---
 

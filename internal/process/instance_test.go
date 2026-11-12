@@ -3,7 +3,10 @@ package process_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -622,5 +625,285 @@ func TestInstance_end(t *testing.T) {
 		if !ended {
 			t.Fatal("expected the instance to be ended")
 		}
+	})
+}
+
+// TestInstance_marshalingFailure verifies that none of the effects of handling
+// a message are committed when the instance's root can't be marshaled, and
+// that they're committed once it can be.
+func TestInstance_marshalingFailure(t *testing.T) {
+	const handlerKey = "5d3a8f4c-1e2b-4c7d-9a6e-0f8b2c4d6e1a"
+
+	commandTypeID := stubs.MessageTypeUUID[*stubs.CommandStub[stubs.TypeX]]()
+	originalDeadlineTypeID := stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeA]]()
+	successorDeadlineTypeID := stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeB]]()
+
+	const (
+		marshalSucceeds = iota
+		marshalFails
+		marshalPanics
+	)
+
+	// handler returns a process handler for one instance. Handling an event of
+	// type A schedules a deadline of type A, due at once. Handling that
+	// deadline, or an event of type B, mutates the root, executes a command
+	// and, for the deadline, schedules a deadline of type B.
+	//
+	// While mode is marshalFails or marshalPanics, the root can't be marshaled
+	// once it has been mutated by anything but an event of type A.
+	handler := func(mode *atomic.Int32, eventsHandled *atomic.Int32) dogma.HandlerRoute {
+		return dogma.ViaProcess(
+			&stubs.ProcessMessageHandlerStub[*stubs.ProcessRootStub]{
+				ConfigureFunc: func(c dogma.ProcessConfigurer) {
+					c.Identity("<handler>", handlerKey)
+					c.Routes(
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.HandlesEvent[*stubs.EventStub[stubs.TypeB]](),
+						dogma.ExecutesCommand[*stubs.CommandStub[stubs.TypeX]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeA]](),
+						dogma.SchedulesDeadline[*stubs.DeadlineStub[stubs.TypeB]](),
+					)
+				},
+				NewFunc: func() *stubs.ProcessRootStub {
+					r := &stubs.ProcessRootStub{}
+					r.MarshalBinaryFunc = func() ([]byte, error) {
+						if r.Value != "mutated by event A" {
+							switch mode.Load() {
+							case marshalFails:
+								return nil, errors.New("<marshal error>")
+							case marshalPanics:
+								panic("<marshal panic>")
+							}
+						}
+						return json.Marshal(r)
+					}
+					return r
+				},
+				RouteEventToInstanceFunc: func(
+					context.Context,
+					dogma.Event,
+				) (string, bool, error) {
+					return "<instance>", true, nil
+				},
+				HandleEventFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessEventScope[*stubs.ProcessRootStub],
+					e dogma.Event,
+				) error {
+					eventsHandled.Add(1)
+
+					switch e.(type) {
+					case *stubs.EventStub[stubs.TypeA]:
+						s.Mutate(func(r *stubs.ProcessRootStub) {
+							r.Value = "mutated by event A"
+						})
+						s.ScheduleDeadline(stubs.DeadlineA1, time.Now())
+					case *stubs.EventStub[stubs.TypeB]:
+						s.Mutate(func(r *stubs.ProcessRootStub) {
+							r.Value = "mutated by event B"
+						})
+						s.ExecuteCommand(stubs.CommandX1)
+					default:
+						panic(dogma.UnexpectedMessage)
+					}
+
+					return nil
+				},
+				HandleDeadlineFunc: func(
+					_ context.Context,
+					_ *stubs.ProcessRootStub,
+					s dogma.ProcessDeadlineScope[*stubs.ProcessRootStub],
+					_ dogma.Deadline,
+				) error {
+					s.Mutate(func(r *stubs.ProcessRootStub) {
+						r.Value = "mutated by deadline"
+					})
+					s.ExecuteCommand(stubs.CommandX1)
+					s.ScheduleDeadline(stubs.DeadlineB1, time.Now().Add(time.Hour))
+					return nil
+				},
+			},
+		)
+	}
+
+	// expectQueued checks the number of queued messages of the given type.
+	expectQueued := func(t testing.TB, db *sql.DB, description string, typeID *uuidpb.UUID, want int) {
+		t.Helper()
+
+		xtesting.ExpectQueryResult(
+			t,
+			description,
+			want,
+			db,
+			`SELECT count(*)
+			FROM messagequeue.messages
+			WHERE message_type_id = $1`,
+			xsql.UUID(typeID),
+		)
+	}
+
+	// waitForDeadlineToFail waits until the deadline of type A has failed at
+	// least once.
+	waitForDeadlineToFail := func(t testing.TB, db *sql.DB) {
+		t.Helper()
+
+		xtesting.WaitForQueryResult(
+			t,
+			"the deadline to fail",
+			true,
+			db,
+			`SELECT EXISTS (
+				SELECT 1
+				FROM messagequeue.messages
+				WHERE message_type_id = $1
+				AND failures >= 1
+			)`,
+			xsql.UUID(originalDeadlineTypeID),
+		)
+	}
+
+	// storedValue returns the Value of the instance's stored root, or nil if
+	// the instance has no stored state.
+	storedValue := func(t testing.TB, db *sql.DB) any {
+		t.Helper()
+
+		var state []byte
+		err := db.QueryRowContext(
+			t.Context(),
+			`SELECT state
+			FROM process.instances
+			WHERE handler_key = $1
+			AND instance_id = '<instance>'`,
+			handlerKey,
+		).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state == nil {
+			return nil
+		}
+
+		var r stubs.ProcessRootStub
+		if err := json.Unmarshal(state, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r.Value
+	}
+
+	for _, c := range []struct {
+		Name string
+		Mode int32
+	}{
+		{"returns an error", marshalFails},
+		{"panics", marshalPanics},
+	} {
+		t.Run("it commits none of a deadline's effects when marshaling the state "+c.Name, func(t *testing.T) {
+			var mode, eventsHandled atomic.Int32
+			mode.Store(c.Mode)
+
+			xtesting.RunEngines(
+				t,
+				func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+					xtesting.PopulateEventStreams(
+						t,
+						db,
+						func(*uuidpb.UUID, uint64) dogma.Event {
+							return stubs.EventA1
+						},
+						1,
+					)
+
+					waitForDeadlineToFail(t, db)
+
+					expectQueued(t, db, "commands", commandTypeID, 0)
+					expectQueued(t, db, "successor deadlines", successorDeadlineTypeID, 0)
+
+					if got, want := storedValue(t, db), "mutated by event A"; got != want {
+						t.Fatalf("unexpected stored state: got %v, want %v", got, want)
+					}
+				},
+				handler(&mode, &eventsHandled),
+			)
+		})
+	}
+
+	t.Run("it commits a deadline's effects once marshaling succeeds on a later attempt", func(t *testing.T) {
+		var mode, eventsHandled atomic.Int32
+		mode.Store(marshalFails)
+
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				xtesting.PopulateEventStreams(
+					t,
+					db,
+					func(*uuidpb.UUID, uint64) dogma.Event {
+						return stubs.EventA1
+					},
+					1,
+				)
+
+				waitForDeadlineToFail(t, db)
+
+				mode.Store(marshalSucceeds)
+
+				xtesting.WaitForQueryResult(
+					t,
+					"the deadline to be delivered",
+					0,
+					db,
+					`SELECT count(*)
+					FROM messagequeue.messages
+					WHERE message_type_id = $1`,
+					xsql.UUID(originalDeadlineTypeID),
+				)
+
+				expectQueued(t, db, "commands", commandTypeID, 1)
+				expectQueued(t, db, "successor deadlines", successorDeadlineTypeID, 1)
+
+				if got, want := storedValue(t, db), "mutated by deadline"; got != want {
+					t.Fatalf("unexpected stored state: got %v, want %v", got, want)
+				}
+			},
+			handler(&mode, &eventsHandled),
+		)
+	})
+
+	t.Run("it commits none of an event's effects when marshaling the state fails", func(t *testing.T) {
+		var mode, eventsHandled atomic.Int32
+		mode.Store(marshalFails)
+
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				xtesting.PopulateEventStreams(
+					t,
+					db,
+					func(*uuidpb.UUID, uint64) dogma.Event {
+						return stubs.EventB1
+					},
+					1,
+				)
+
+				// The event is handled again after each failure, so a second
+				// call means that the first attempt has ended.
+				xtesting.WaitFor(
+					t,
+					"the event to be handled again",
+					func() bool { return eventsHandled.Load() >= 2 },
+				)
+
+				expectQueued(t, db, "commands", commandTypeID, 0)
+
+				if got := storedValue(t, db); got != nil {
+					t.Fatalf("unexpected stored state: got %v, want none", got)
+				}
+			},
+			handler(&mode, &eventsHandled),
+		)
 	})
 }
