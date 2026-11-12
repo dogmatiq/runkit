@@ -10,7 +10,6 @@ import (
 	"github.com/dogmatiq/enginekit/envelope"
 
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/messagepump"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -35,7 +34,7 @@ func newRoot(
 			xslog.Error(err),
 		)
 
-		return nil, messagepump.ErrFailed
+		return nil, messagequeue.ErrFailed
 	}
 
 	return root, nil
@@ -125,7 +124,7 @@ func loadInstance(
 				xslog.Error(err),
 			)
 
-			return nil, false, messagepump.ErrFailed
+			return nil, false, messagequeue.ErrFailed
 		}
 	}
 
@@ -153,7 +152,7 @@ func saveInstance(
 			xslog.Error(err),
 		)
 
-		return messagepump.ErrFailed
+		return messagequeue.ErrFailed
 	}
 
 	if err := xsql.ExecOne(

@@ -8,57 +8,55 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/messagepump"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// CommandPump is a [messagepump.Driver] that delivers pending commands to an
-// aggregate message handler of a specific type.
-type CommandPump struct {
-	DB                   *sql.DB
-	Handler              dogma.AggregateMessageHandler[dogma.AggregateRoot]
-	Identity             *identitypb.Identity
-	Packer               *envelope.Packer
-	CommandTypeIDs       *uuidcollection.Set
+// CommandSink is a [messagequeue.Sink] that delivers commands to a
+// [dogma.AggregateMessageHandler].
+type CommandSink struct {
+	// Handler is the aggregate message handler to which commands are
+	// delivered.
+	Handler dogma.AggregateMessageHandler[dogma.AggregateRoot]
+
+	// Identity is the identity of the aggregate handler.
+	Identity *identitypb.Identity
+
+	// Packer packs events produced by the handler.
+	Packer *envelope.Packer
+
+	// OutboundMessageTypes contains the types the handler is allowed to produce.
 	OutboundMessageTypes map[reflect.Type]struct{}
-	AppLogger            *slog.Logger
+
+	// EngineLogger is the target for the engine's records about the sink and
+	// the handler.
+	EngineLogger *slog.Logger
+
+	// AppLogger is the target for the application's records from the handler.
+	AppLogger *slog.Logger
 }
 
-// AcquireDelivery attempts to acquire the next pending command for an
-// aggregate handler of one of the configured types.
-func (p *CommandPump) AcquireDelivery(ctx context.Context, tx *sql.Tx) (messagepump.Delivery, bool, error) {
-	return messagepump.AcquireCommandDelivery(ctx, tx, p.CommandTypeIDs)
-}
-
-// PostponeDelivery reschedules the command for redelivery after delay.
-func (p *CommandPump) PostponeDelivery(
+// Deliver delivers the command in the given envelope to the handler.
+func (s *CommandSink) Deliver(
 	ctx context.Context,
 	tx *sql.Tx,
-	delivery messagepump.Delivery,
-	delay time.Duration,
-) error {
-	return messagepump.PostponeCommandDelivery(ctx, tx, delivery, delay)
-}
-
-// HandleDelivery dispatches a command to the aggregate handler.
-func (p *CommandPump) HandleDelivery(
-	ctx context.Context,
-	tx *sql.Tx,
-	delivery messagepump.Delivery,
+	d messagequeue.Delivery,
 	env *envelopepb.Envelope,
-	engineLogger *slog.Logger,
 ) error {
+	engineLogger := s.EngineLogger.With(
+		xslog.Envelope("handled_message", env),
+		slog.Uint64("failures", d.Failures),
+	)
+
 	var commandForRouting, commandForHandling dogma.Command
 
 	if err := xmessage.UnpackMessage(
@@ -71,10 +69,10 @@ func (p *CommandPump) HandleDelivery(
 			"unable to unmarshal command",
 			xslog.Error(err),
 		)
-		return messagepump.ErrFailed
+		return messagequeue.ErrFailed
 	}
 
-	instanceID, err := p.routeCommandToInstance(ctx, engineLogger, commandForRouting)
+	instanceID, err := s.routeCommandToInstance(ctx, engineLogger, commandForRouting)
 	if err != nil {
 		return err
 	}
@@ -86,7 +84,7 @@ func (p *CommandPump) HandleDelivery(
 		),
 	)
 
-	root, streamID, err := p.loadInstance(ctx, tx, instanceLogger, instanceID)
+	root, streamID, err := s.loadInstance(ctx, tx, instanceLogger, instanceID)
 	if err != nil {
 		return err
 	}
@@ -99,24 +97,24 @@ func (p *CommandPump) HandleDelivery(
 		),
 	)
 
-	packer := p.Packer.PackEffects(
+	packer := s.Packer.PackEffects(
 		env,
-		p.Identity,
+		s.Identity,
 		envelope.WithInstanceID(instanceID),
 	)
 
 	if err := xerrors.Recover(
 		func() error {
-			p.Handler.HandleCommand(
+			s.Handler.HandleCommand(
 				root,
 				&commandScope{
 					instanceID: instanceID,
 					root:       root,
 					packer:     packer,
-					appLogger: p.AppLogger.With(
+					appLogger: s.AppLogger.With(
 						xslog.Envelope("handled_message", env),
 					),
-					outboundMessageTypes: p.OutboundMessageTypes,
+					outboundMessageTypes: s.OutboundMessageTypes,
 				},
 				commandForHandling,
 			)
@@ -129,26 +127,26 @@ func (p *CommandPump) HandleDelivery(
 			xslog.Error(err),
 		)
 
-		return messagepump.ErrFailed
+		return messagequeue.ErrFailed
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
-		return p.completeWithEvents(ctx, tx, delivery.MessageID, instanceLogger, instanceID, streamID, eventEnvelopes, root)
+		return s.completeWithEvents(ctx, tx, instanceLogger, instanceID, streamID, eventEnvelopes, root)
 	}
 
-	return p.completeWithoutEvents(ctx, tx, delivery.MessageID, instanceID)
+	return s.completeWithoutEvents(ctx, tx, instanceID)
 }
 
 // routeCommandToInstance routes the instance ID for the given command by
 // calling the handler's RouteCommandToInstance() method.
-func (p *CommandPump) routeCommandToInstance(
+func (s *CommandSink) routeCommandToInstance(
 	ctx context.Context,
 	logger *slog.Logger,
 	commandForRouting dogma.Command,
 ) (string, error) {
 	instanceID, err := xerrors.RecoverT(
 		func() (string, error) {
-			instanceID := p.Handler.RouteCommandToInstance(commandForRouting)
+			instanceID := s.Handler.RouteCommandToInstance(commandForRouting)
 			if instanceID == "" {
 				return "", errors.New("handler returned an empty instance ID")
 			}
@@ -162,7 +160,7 @@ func (p *CommandPump) routeCommandToInstance(
 			xslog.Error(err),
 		)
 
-		return "", messagepump.ErrFailed
+		return "", messagequeue.ErrFailed
 	}
 
 	return instanceID, nil
@@ -171,7 +169,7 @@ func (p *CommandPump) routeCommandToInstance(
 // loadInstance loads the aggregate instance with the given ID and returns its
 // aggregate root and the ID of the event stream to which new events must be
 // appended.
-func (p *CommandPump) loadInstance(
+func (s *CommandSink) loadInstance(
 	ctx context.Context,
 	tx *sql.Tx,
 	logger *slog.Logger,
@@ -181,19 +179,19 @@ func (p *CommandPump) loadInstance(
 	streamID *uuidpb.UUID,
 	err error,
 ) {
-	streamID, nextOffset, snapshot, exists, err := p.tryLockInstance(ctx, tx, logger, instanceID)
+	streamID, nextOffset, snapshot, exists, err := s.tryLockInstance(ctx, tx, logger, instanceID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if !exists {
-		streamID, nextOffset, snapshot, err = p.tryCreateInstance(ctx, tx, instanceID)
+		streamID, nextOffset, snapshot, err = s.tryCreateInstance(ctx, tx, instanceID)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
-	root, err = p.newRoot(ctx, logger)
+	root, err = s.newRoot(ctx, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -205,11 +203,11 @@ func (p *CommandPump) loadInstance(
 
 	// If the instance has a snapshot, attempt to unmarshal it.
 	if nextOffset != 0 {
-		if !p.applySnapshot(ctx, logger, root, snapshot) {
+		if !s.applySnapshot(ctx, logger, root, snapshot) {
 			// We couldn't unmarshal the snapshot, so we just create a fresh root
 			// and replay all of the instance's historical events.
 			nextOffset = 0
-			root, err = p.newRoot(ctx, logger)
+			root, err = s.newRoot(ctx, logger)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -217,7 +215,7 @@ func (p *CommandPump) loadInstance(
 	}
 
 	// Load events that were recorded after the snapshot was taken.
-	if err := p.applyHistoricalEvents(
+	if err := s.applyHistoricalEvents(
 		ctx,
 		tx,
 		logger,
@@ -233,13 +231,13 @@ func (p *CommandPump) loadInstance(
 }
 
 // newRoot creates a new aggregate root by calling the handler's New() method.
-func (p *CommandPump) newRoot(
+func (s *CommandSink) newRoot(
 	ctx context.Context,
 	logger *slog.Logger,
 ) (dogma.AggregateRoot, error) {
 	root, err := xerrors.RecoverT(
 		func() (dogma.AggregateRoot, error) {
-			return p.Handler.New(), nil
+			return s.Handler.New(), nil
 		},
 	)
 	if err != nil {
@@ -249,7 +247,7 @@ func (p *CommandPump) newRoot(
 			xslog.Error(err),
 		)
 
-		return nil, messagepump.ErrFailed
+		return nil, messagequeue.ErrFailed
 	}
 
 	return root, nil
@@ -259,7 +257,7 @@ func (p *CommandPump) newRoot(
 // given ID.
 //
 // The instance may or may not already exist.
-func (p *CommandPump) tryLockInstance(
+func (s *CommandSink) tryLockInstance(
 	ctx context.Context,
 	tx *sql.Tx,
 	logger *slog.Logger,
@@ -303,7 +301,7 @@ func (p *CommandPump) tryLockInstance(
 		FROM exists
 		LEFT JOIN locked
 			ON true`,
-		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey()),
 		instanceID,
 	)
 
@@ -325,7 +323,7 @@ func (p *CommandPump) tryLockInstance(
 			ctx,
 			"instance is locked by another transaction",
 		)
-		return nil, 0, nil, true, messagepump.ErrBusy
+		return nil, 0, nil, true, messagequeue.ErrBusy
 	}
 
 	if streamID.Validate() != nil {
@@ -337,7 +335,7 @@ func (p *CommandPump) tryLockInstance(
 
 // tryCreateInstance attempts to create a new aggregate instance. If it already
 // exists it returns the existing instance's data.
-func (p *CommandPump) tryCreateInstance(
+func (s *CommandSink) tryCreateInstance(
 	ctx context.Context,
 	tx *sql.Tx,
 	instanceID string,
@@ -363,7 +361,7 @@ func (p *CommandPump) tryCreateInstance(
 			stream_id,
 			COALESCE(snapshot_offset + 1, 0),
 			snapshot`,
-		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey()),
 		instanceID,
 	)
 
@@ -386,7 +384,7 @@ func (p *CommandPump) tryCreateInstance(
 
 // applyHistoricalEvents applies all events recorded by the aggregate instance
 // to the aggregate root starting at the given offset.
-func (p *CommandPump) applyHistoricalEvents(
+func (s *CommandSink) applyHistoricalEvents(
 	ctx context.Context,
 	tx *sql.Tx,
 	logger *slog.Logger,
@@ -408,7 +406,7 @@ func (p *CommandPump) applyHistoricalEvents(
 		ORDER BY e.stream_offset`,
 		xsql.UUID(streamID),
 		offset,
-		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey()),
 		instanceID,
 	)
 	if err != nil {
@@ -450,7 +448,7 @@ func (p *CommandPump) applyHistoricalEvents(
 				xslog.Error(err),
 			)
 
-			return messagepump.ErrFailed
+			return messagequeue.ErrFailed
 		}
 
 		if err := xerrors.Recover(
@@ -469,7 +467,7 @@ func (p *CommandPump) applyHistoricalEvents(
 				xslog.Error(err),
 			)
 
-			return messagepump.ErrFailed
+			return messagequeue.ErrFailed
 		}
 	}
 
@@ -480,7 +478,7 @@ func (p *CommandPump) applyHistoricalEvents(
 	return nil
 }
 
-func (p *CommandPump) applySnapshot(
+func (s *CommandSink) applySnapshot(
 	ctx context.Context,
 	logger *slog.Logger,
 	root dogma.AggregateRoot,
@@ -505,20 +503,17 @@ func (p *CommandPump) applySnapshot(
 	return true
 }
 
-// completeWithoutEvents removes the command from the queue when no events were
-// recorded during handling. It deletes the aggregate instance if there are no
-// prior events.
-func (p *CommandPump) completeWithoutEvents(
+// completeWithoutEvents deletes the aggregate instance after handling a
+// command that recorded no events, if the instance has no event stream.
+func (s *CommandSink) completeWithoutEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	messageID *uuidpb.UUID,
 	instanceID string,
 ) error {
 	if _, err := tx.ExecContext(
 		ctx,
-		`SELECT aggregate.complete_without_events($1, $2, $3)`,
-		xsql.UUID(messageID),
-		xsql.UUID(p.Identity.GetKey()),
+		`SELECT aggregate.complete_without_events($1, $2)`,
+		xsql.UUID(s.Identity.GetKey()),
 		instanceID,
 	); err != nil {
 		return fmt.Errorf("unable to complete command handling: %w", err)
@@ -527,20 +522,18 @@ func (p *CommandPump) completeWithoutEvents(
 	return nil
 }
 
-// completeWithEvents appends events to the aggregate's event stream, optionally
-// persists a snapshot, and removes the command from the queue in a single
-// database round-trip.
-func (p *CommandPump) completeWithEvents(
+// completeWithEvents appends events to the aggregate's event stream, and
+// optionally persists a snapshot, in a single database round-trip.
+func (s *CommandSink) completeWithEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	messageID *uuidpb.UUID,
 	logger *slog.Logger,
 	instanceID string,
 	streamID *uuidpb.UUID,
 	eventEnvelopes *envelopepb.MultiEnvelope,
 	root dogma.AggregateRoot,
 ) error {
-	snapshot, hasSnapshot := p.marshalSnapshot(ctx, logger, root)
+	snapshot, hasSnapshot := s.marshalSnapshot(ctx, logger, root)
 
 	var (
 		query strings.Builder
@@ -554,15 +547,14 @@ func (p *CommandPump) completeWithEvents(
 
 	args = append(
 		args,
-		xsql.UUID(messageID),
-		xsql.UUID(p.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey()),
 		instanceID,
 		xsql.UUID(streamID),
 		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
 		snapshotArg,
 	)
 
-	query.WriteString(`SELECT aggregate.complete_with_events($1, $2, $3, $4, $5, $6, ARRAY[`)
+	query.WriteString(`SELECT aggregate.complete_with_events($1, $2, $3, $4, $5, ARRAY[`)
 
 	first := true
 	for eventEnvelope := range eventEnvelopes.All() {
@@ -598,7 +590,7 @@ func (p *CommandPump) completeWithEvents(
 
 // marshalSnapshot attempts to marshal the aggregate root's state as a binary
 // snapshot. It returns false if marshaling is not supported or fails.
-func (p *CommandPump) marshalSnapshot(
+func (s *CommandSink) marshalSnapshot(
 	ctx context.Context,
 	logger *slog.Logger,
 	root dogma.AggregateRoot,

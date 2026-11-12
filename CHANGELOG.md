@@ -16,14 +16,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
-This release extends remote event consumption to process handlers, and stores
-commands and deadlines in a single queue table.
+This release extends remote event consumption to process handlers, and changes
+how engines deliver commands and deadlines.
 
 > [!IMPORTANT]
-> Upgrading from 0.2.0 or earlier requires downtime. Stop every engine that
-> uses the database before calling `CreateSchema()`, and back up the database
-> first, since the upgrade drops the old tables. See the [0.3.0 migration
-> guide].
+> Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
+> stop every engine that uses it before calling `CreateSchema()`. See the [0.3.0
+> migration guide].
 
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
@@ -53,24 +52,30 @@ events.
 
 ### Added
 
-- Added support for process handlers consuming events from remote applications.
-- Added `WithHandleTimeout()`, `WithRouteTimeout()` and
-  `WithProjectionCompactTimeout()`, which limit how long the engine waits for
-  calls to application message handlers.
-- Added `DefaultHandleTimeout`, `DefaultRouteTimeout` and
-  `DefaultProjectionCompactTimeout`, which are the defaults for those options.
+- Added the ability for process handlers to consume events from remote
+  applications.
+- Added these engine options:
+  - `WithHandleTimeout()`, which defaults to `DefaultHandleTimeout`
+  - `WithRouteTimeout()`, which defaults to `DefaultRouteTimeout`
+  - `WithProjectionCompactTimeout()`, which defaults to
+    `DefaultProjectionCompactTimeout`
+  - `WithMessageQueueConcurrency()`, which defaults to 10 × `GOMAXPROCS`
+  - `WithMessageQueueContentionDelay()`, which defaults to
+    `DefaultMessageQueueContentionDelay`
 
 ### Changed
 
-- **[BC]** Process handlers added to an application now consume historical events.
-- The database schema has changed. Call `CreateSchema()` before running this
-  version. If the schema already exists, it applies the required modifications
-  while preserving existing data.
-- Commands and deadlines are now stored in a single queue table.
-  `CreateSchema()` moves pending commands and deadlines from a database
-  created by an earlier version into it, and every engine must be stopped while
-  it does. See the [0.3.0
-  migration guide].
+- **[BC]** Process handlers added to an application now consume historical
+  events, instead of only new events.
+- **[BC]** The database schema has changed. Call `CreateSchema()` to migrate the
+  database before running this version.
+- Changed how commands and deadlines are delivered:
+  - By default, each engine now delivers at most 10 × `GOMAXPROCS` of them at
+    once across all handlers. That limit used to apply to each handler, so it's
+    now lower for an engine with more than one aggregate, integration or
+    process handler. Use `WithMessageQueueConcurrency()` to raise it.
+  - An integration handler that prefers `MinimizeConcurrency` may briefly
+    handle two commands at once while engines join or leave a cluster.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`

@@ -92,6 +92,11 @@ func (c *Consumer) claimMessage(
 	queues *uuidcollection.Set,
 	messageID *uuidpb.UUID,
 ) (Delivery, []byte, bool, error) {
+	// The time compared with next_attempt_at comes from Go's clock, not the
+	// database's, because [dogma.ProcessDeadlineScope.Now] reads Go's clock
+	// too. A deadline is claimed only after Go's clock reaches its scheduled
+	// time, so Now never returns an earlier time, whatever the offset between
+	// the two clocks.
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT
@@ -149,7 +154,9 @@ func (c *Consumer) claimMessage(
 //
 // It removes the message from its queue after the sink returns nil, and
 // postpones the delivery instead if the envelope is invalid, or the sink
-// returns [ErrFailed] or [ErrBusy]. It returns true if it removed the message.
+// returns [ErrFailed] or [ErrBusy]. It returns true if the sink delivered the
+// message.
+//
 // envelopeData is the binary representation of the message's envelope.
 func (c *Consumer) deliverMessage(
 	ctx context.Context,
@@ -185,13 +192,17 @@ func (c *Consumer) deliverMessage(
 	// [Consumer.claimMessage] claims only messages of the types in c.Sinks, so
 	// there's always a sink for the message's type.
 	s, _ := c.Sinks.Get(d.MessageTypeID)
-	err = s.Deliver(ctx, tx, d, env, logger)
+	err = s.Deliver(ctx, tx, d, env)
 
 	switch {
 	case err == nil:
+		// The sink may already have removed the message within tx, such as
+		// when the handler ends the process instance while handling a
+		// deadline, which removes the instance's deadlines.
 		if _, err := tx.ExecContext(
 			ctx,
-			`SELECT messagequeue.remove($1)`,
+			`DELETE FROM messagequeue.messages
+			WHERE message_id = $1`,
 			xsql.UUID(d.MessageID),
 		); err != nil {
 			return false, fmt.Errorf("unable to remove message: %w", err)
@@ -251,9 +262,9 @@ func (c *Consumer) postponeAfterContention(
 	d Delivery,
 	logger *slog.Logger,
 ) error {
-	// The contention is on a row that the sink needs. The transaction
-	// already holds the lock on the message's row, so this update doesn't wait
-	// for another transaction.
+	// The sink returned [ErrBusy], so the contention isn't on the message's
+	// row. The transaction holds the lock on that row, so this update doesn't
+	// wait for another transaction.
 	if err := xsql.ExecOne(
 		ctx,
 		tx,

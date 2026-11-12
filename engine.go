@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"runtime"
 	"time"
 
 	"github.com/dogmatiq/cosyne"
@@ -15,6 +16,7 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -96,6 +98,15 @@ type Engine struct {
 	// event stream resumes.
 	routeTimeout time.Duration
 
+	// messageQueueConcurrency is the maximum number of commands and deadlines
+	// that the engine attempts to deliver at once.
+	messageQueueConcurrency int
+
+	// messageQueueContentionDelay is how long the engine waits before it
+	// attempts to deliver a command or deadline again, if the delivery needs a
+	// lock while something else holds it.
+	messageQueueContentionDelay time.Duration
+
 	// listenAddress is the address to listen on for gRPC requests from other
 	// engines. If it is empty, the engine does not listen for gRPC requests.
 	listenAddress string
@@ -140,6 +151,10 @@ type Engine struct {
 
 	// queueRouter chooses the queue for each new message.
 	queueRouter *messagequeue.Router
+
+	// queueSinks maps the ID of each command and deadline type to the sink for
+	// messages of that type.
+	queueSinks uuidcollection.Map[messagequeue.Sink]
 
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
@@ -187,8 +202,12 @@ func New(
 		compactTimeout:  DefaultProjectionCompactTimeout,
 		handleTimeout:   DefaultHandleTimeout,
 		routeTimeout:    DefaultRouteTimeout,
-		engineLogger:    slog.Default(),
-		appLogger:       slog.Default(),
+
+		messageQueueConcurrency:     10 * runtime.GOMAXPROCS(0),
+		messageQueueContentionDelay: DefaultMessageQueueContentionDelay,
+
+		engineLogger: slog.Default(),
+		appLogger:    slog.Default(),
 	}
 
 	for _, option := range options {
@@ -245,8 +264,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.commandTypes = executableCommandTypes(e.appConfig)
 
 	e.queueRouter = &messagequeue.Router{
-		NodeID:     e.nodeID,
-		Aggregates: aggregatesForQueueRouter(e.appConfig),
+		NodeID:          e.nodeID,
+		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
 	}
 
 	e.signals = &signal.Bus{
@@ -352,6 +371,20 @@ func (e *Engine) Run(ctx context.Context) error {
 			e.runHandler(ctx, handlerConfig)
 		}
 	}
+
+	queueConsumer := &messagequeue.Consumer{
+		DB:              e.db,
+		Node:            e.node,
+		Queues:          e.queues,
+		Sinks:           e.queueSinks,
+		Concurrency:     e.messageQueueConcurrency,
+		ContentionDelay: e.messageQueueContentionDelay,
+		EngineLogger:    e.engineLogger,
+	}
+
+	e.group.Go(func() error {
+		return queueConsumer.Run(ctx)
+	})
 
 	if server == nil {
 		e.ready.Set()

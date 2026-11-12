@@ -158,8 +158,8 @@ func newSink(t testing.TB, db *sql.DB) *Sink {
 			Application: identitypb.New("<app>", uuidpb.Generate()),
 		},
 		QueueRouter: &messagequeue.Router{
-			NodeID:     uuidpb.Generate(),
-			Aggregates: &uuidcollection.Map[messagequeue.AggregateRoute]{},
+			NodeID:          uuidpb.Generate(),
+			CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
 		},
 		HandleTimeout: time.Minute,
 		RouteTimeout:  10 * time.Second,

@@ -73,8 +73,8 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
-			// Force creation of multiple event streams so that the message pump
-			// doesn't just create a single stream and use it continuously.
+			// Force creation of multiple event streams so that the sink doesn't
+			// just create a single stream and use it continuously.
 			xtesting.CreateEventStreams(t, db, 3)
 
 			// Send commands sequentially, waiting between each so that each

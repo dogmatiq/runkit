@@ -167,8 +167,8 @@ func WaitForCommandToBePostponed(
 }
 
 // EnqueuePostponedCommand inserts a command directly into a new queue with
-// next_attempt_at set far in the future, so it will not be picked up by the
-// dequeue loop. It returns the envelope of the enqueued command.
+// next_attempt_at set far in the future, so the consumer doesn't attempt it.
+// It returns the envelope of the enqueued command.
 func EnqueuePostponedCommand(
 	t testing.TB,
 	x xsql.Executor,

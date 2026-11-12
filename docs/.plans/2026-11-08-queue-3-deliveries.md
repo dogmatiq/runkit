@@ -132,7 +132,10 @@ Each one has a test in the task that owns the code.
 
 > **Revisit before starting.** The consumer plan gave each sink its own
 > `EngineLogger` and removed `Deliver`'s logger parameter. `Route` also collides
-> with Dogma's "route", which means a declaration made with a configurer.
+> with Dogma's "route", which means a declaration made with a configurer. The
+> [logging guide] requires a `delivery` group with the delivery's ID and attempt
+> number, but there's no attempt count: the consumer and the sinks log
+> `failures` instead. Update the guide to match.
 
 **Files:**
 - Create: `internal/messagequeue/route.go`

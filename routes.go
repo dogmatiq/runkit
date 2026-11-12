@@ -31,32 +31,38 @@ func executableCommandTypes(appConfig *config.Application) map[reflect.Type]stru
 	return types
 }
 
-// aggregatesForQueueRouter returns the routes to the aggregates that the queue
-// router uses to route commands, keyed by the ID of each command type that
-// they handle.
-func aggregatesForQueueRouter(appConfig *config.Application) *uuidcollection.Map[messagequeue.AggregateRoute] {
-	aggregates := &uuidcollection.Map[messagequeue.AggregateRoute]{}
+// commandHandlersForQueueRouter returns the handler of each command type,
+// keyed by the type's ID, for [messagequeue.Router] to choose the queue for
+// each command.
+func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollection.Map[messagequeue.CommandHandler] {
+	handlers := &uuidcollection.Map[messagequeue.CommandHandler]{}
 
 	for _, handlerConfig := range appConfig.Handlers() {
-		aggregate, ok := handlerConfig.(*config.Aggregate)
-		if !ok {
+		var handler messagequeue.CommandHandler
+
+		switch handlerConfig := handlerConfig.(type) {
+		case *config.Aggregate:
+			handler = messagequeue.CommandHandler{
+				Key:       handlerConfig.Identity().GetKey(),
+				Aggregate: handlerConfig.Interface(),
+			}
+		case *config.Integration:
+			handler = messagequeue.CommandHandler{
+				Key:         handlerConfig.Identity().GetKey(),
+				Concurrency: handlerConfig.ConcurrencyPreference(),
+			}
+		default:
 			continue
 		}
 
-		commandTypeIDs := inboundMessageTypeIDsForHandler(aggregate, message.CommandKind)
+		commandTypeIDs := inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind)
 
 		for commandTypeID := range commandTypeIDs.All() {
-			aggregates.Set(
-				commandTypeID,
-				messagequeue.AggregateRoute{
-					Key:     aggregate.Identity().GetKey(),
-					Handler: aggregate.Interface(),
-				},
-			)
+			handlers.Set(commandTypeID, handler)
 		}
 	}
 
-	return aggregates
+	return handlers
 }
 
 // consumedEventTypeIDs returns the message type IDs of every event type that
