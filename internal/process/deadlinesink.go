@@ -114,12 +114,12 @@ func (s *DeadlineSink) Deliver(
 		messageScope{
 			instanceID: inst.ID,
 			root:       inst.Root,
-			commandPacker: s.Packer.PackEffects(
+			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
-			deadlinePacker: s.Packer.PackEffects(
+			DeadlinePacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),

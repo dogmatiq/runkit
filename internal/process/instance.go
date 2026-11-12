@@ -91,11 +91,11 @@ func (i *instance) Save(
 	scope *messageScope,
 	logger *slog.Logger,
 ) error {
-	if scope.ended {
+	if scope.Ended {
 		return i.end(ctx, tx)
 	}
 
-	if scope.mutated {
+	if scope.Mutated {
 		state, err := i.marshalRoot(ctx, logger)
 		if err != nil {
 			return err
@@ -116,7 +116,7 @@ func (i *instance) Save(
 		}
 	}
 
-	return i.addDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
+	return i.addDeadlinesToQueue(ctx, tx, scope.DeadlinePacker)
 }
 
 // marshalRoot returns the binary form of the instance's root, from its
@@ -432,7 +432,7 @@ func writeEffects(
 		return err
 	}
 
-	return addCommandsToQueues(ctx, tx, router, scope.commandPacker)
+	return addCommandsToQueues(ctx, tx, router, scope.CommandPacker)
 }
 
 // newRoot creates a new process root by calling the handler's New() method, and
