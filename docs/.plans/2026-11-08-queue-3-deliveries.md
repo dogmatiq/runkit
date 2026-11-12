@@ -29,8 +29,9 @@ section of [#100][100], and [#99][99].
 
 This is the last of three plans for [#100][100]. It depends on [plan 2][plan-2]
 for `messagequeue.Consumer`, `messagequeue.Sink` and the claim-first deadline
-delivery. Finishing it closes [#99][99], and lets [#101][101] and [#102][102]
-close as superseded.
+delivery. Finishing it closes [#99][99], and lets [#102][102] close as
+superseded. [#101][101], the hotfix for [#99][99] on `main`, is already closed
+as superseded.
 
 ## Reviewability
 
@@ -435,8 +436,8 @@ it closer to that standard.
   note once, and check that it agrees with the [migration guide].
 - [ ] **Step 2: Delete the completed plans**
 - [ ] **Step 3: Stop for review**, then comment on [#100][100], [#99][99],
-  [#101][101], [#102][102], [#58][58] and [#91][91] with what landed and the
-  follow-ups from plan 1.
+  [#102][102], [#58][58] and [#91][91] with what landed and the follow-ups from
+  plan 1.
 
 ---
 

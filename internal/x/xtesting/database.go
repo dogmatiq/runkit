@@ -92,6 +92,7 @@ func openDatabase(t testing.TB, tracer pgx.QueryTracer) *sql.DB {
 
 	db := stdlib.OpenDB(*config)
 	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(100)
 
 	t.Cleanup(func() {
 		db.Close()

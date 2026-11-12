@@ -717,13 +717,19 @@ deadlock. 0.2.0 had the same inversion.
 Not tests. Run by hand on a database with representative data, and record
 the results in [#100][100]:
 
-- [ ] `EXPLAIN (ANALYZE, BUFFERS)` for the query for the next messages with
+- [x] `EXPLAIN (ANALYZE, BUFFERS)` for the query for the next messages with
   tens of consumed queues, a handful of message types with handlers, a large
   queue, and many messages being attempted.
-- [ ] Throughput and connection-pool waits with the concurrency limit
+- [x] Throughput and connection-pool waits with the concurrency limit
   saturated.
-- [ ] Queries for the next messages per delivered message with a backlog of due
+- [x] Queries for the next messages per delivered message with a backlog of due
   messages, which batching should keep well below one.
+
+The results are in [a comment on #100][validation]. The query plan uses only
+index scans, and queries for the next messages stay below 0.03 per delivered
+message. The default idle limit of `database/sql`, two connections, cut
+throughput by more than ten times, so `New()` now documents that the idle limit
+should match the open limit.
 
 ## Work done outside the tasks
 
@@ -755,3 +761,4 @@ Changes made on this branch during the tasks' reviews, each in its own commit:
 [cosyne-102]: https://github.com/dogmatiq/cosyne/pull/102
 [logging guide]: ../maintainers/logging.md
 [plan-1]: 2026-11-08-queue-1-storage.md
+[validation]: https://github.com/dogmatiq/runkit/issues/100#issuecomment-6820484041
