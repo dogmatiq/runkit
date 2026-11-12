@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
 )
 
@@ -102,7 +103,7 @@ func (s *Server) listen() (lis net.Listener, err error) {
 	} else {
 		lis, err = listen("tcp", s.Address)
 		if err != nil {
-			return nil, supervisor.Fatal(err)
+			return nil, xerrors.Fatal(err)
 		}
 
 		s.addr.Store(lis.Addr())

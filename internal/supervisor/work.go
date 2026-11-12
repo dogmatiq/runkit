@@ -25,7 +25,7 @@ type Work struct {
 	// Description describes the work as a verb phrase in its base form, such
 	// as "consume event stream".
 	//
-	// It completes the log messages "attempt to … failed" and "attempt to …
+	// It completes the log messages "attempt to ... failed" and "attempt to ...
 	// succeeded after failures". EngineLogger's attributes identify which
 	// instance of the work it is.
 	Description string

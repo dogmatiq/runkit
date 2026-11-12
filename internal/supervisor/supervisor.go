@@ -4,10 +4,10 @@ package supervisor
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -30,17 +30,22 @@ const (
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //
-// A nil return from fn is success. An error created by [Fatal] or [Fatalf] is
-// returned to the caller without retrying. Any other error is recorded as a
-// failure of a [Work] with the given description, and fn is called again
-// after the delay that the [Work] decides. Once ctx is canceled, fn is not
-// called again regardless of what it returned.
+// A nil return from fn is success. Once ctx is canceled, fn is not called again
+// regardless of what it returned.
 //
-// An error created by [Deterministic] or [Deterministicf] is recorded as a
-// deterministic failure. [Run] can't see whether fn is making progress, so a
-// streak of failures ends once fn has run for the quiet period without
-// failing. If fn returns nil during a streak, the streak ends without a
-// recovery record.
+// A fatal error is returned to the caller without retrying, and is still a
+// fatal error to that caller.
+//
+// Any other error is recorded as a failure of a [Work] with the given
+// description, and fn is called again after the delay that the [Work] decides.
+// A deterministic error is logged as an ERROR immediately, and [Run] waits
+// longer before calling fn again than after any other failure.
+//
+// [Run] can't see whether fn is making progress, so a streak of failures ends
+// once fn has run for the quiet period without failing. If fn returns nil
+// during a streak, the streak ends without a recovery record.
+//
+// See [xerrors.IsFatal] and [xerrors.IsDeterministic].
 func Run(
 	ctx context.Context,
 	engineLogger *slog.Logger,
@@ -66,14 +71,14 @@ func Run(
 			return nil
 		}
 
-		if fatal, ok := errors.AsType[fatalError](err); ok {
-			return fatal.err
+		if xerrors.IsFatal(err) {
+			return err
 		}
 
 		xsql.PanicOnDeadlock(err)
 
 		var delay time.Duration
-		if _, ok := errors.AsType[deterministicError](err); ok {
+		if xerrors.IsDeterministic(err) {
 			delay = work.FailedDeterministically(ctx, err)
 		} else {
 			delay = work.Failed(ctx, err)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -16,7 +17,7 @@ func TestRun(t *testing.T) {
 	t.Run("it returns a fatal error without retrying", func(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
-		want := errors.New("<error>")
+		want := xerrors.Fatal(errors.New("<error>"))
 		var calls atomic.Int32
 
 		err := Run(
@@ -25,7 +26,7 @@ func TestRun(t *testing.T) {
 			"<work>",
 			func(context.Context) error {
 				calls.Add(1)
-				return Fatal(want)
+				return want
 			},
 		)
 
@@ -110,7 +111,7 @@ func TestRun_backoff(t *testing.T) {
 				t,
 				15,
 				func(int) error {
-					return Deterministic(errors.New("<error>"))
+					return xerrors.Deterministic(errors.New("<error>"))
 				},
 			)
 
@@ -128,6 +129,24 @@ func TestRun_backoff(t *testing.T) {
 		})
 	})
 
+	t.Run("it allows a longer delay after a panic", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			got := delays(
+				t,
+				15,
+				func(int) error {
+					return xerrors.PanicError{
+						Value: "<panic>",
+					}
+				},
+			)
+
+			if last := got[len(got)-1]; last < 150*time.Second {
+				t.Fatalf("expected the final delay to reach the deterministic cap, got %s", last)
+			}
+		})
+	})
+
 	t.Run("it grows the delay from the transient cap after a deterministic failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			got := delays(
@@ -137,7 +156,7 @@ func TestRun_backoff(t *testing.T) {
 					if call < 15 {
 						return errors.New("<error>")
 					}
-					return Deterministic(errors.New("<error>"))
+					return xerrors.Deterministic(errors.New("<error>"))
 				},
 			)
 

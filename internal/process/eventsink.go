@@ -16,7 +16,6 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
-	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -227,15 +226,11 @@ func (s *EventSink) dispatch(
 
 	var event dogma.Event
 
-	// An event that can't be unmarshaled fails the same way however often it's
-	// retried.
 	if err := xmessage.UnpackMessage(
 		env,
 		&event,
 	); err != nil {
-		return supervisor.Deterministic(
-			fmt.Errorf("unable to unmarshal event %s: %w", messageID, err),
-		)
+		return fmt.Errorf("unable to unmarshal event %s: %w", messageID, err)
 	}
 
 	instanceID, ok, err := s.routeEventToInstance(ctx, event)
