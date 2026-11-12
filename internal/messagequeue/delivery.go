@@ -31,9 +31,9 @@ const (
 // within one transaction.
 //
 // It doesn't deliver the message unless the message is in one of the given
-// queues. It returns true if it delivered the message, and the error that ended
-// the attempt, if there was one. When another transaction holds the message's
-// lock, [xsql.IsLockNotAvailableError] returns true for that error.
+// queues. It returns true if the attempt completed the delivery, and the error
+// that ended the attempt, if there was one. When another transaction holds the
+// message's lock, [xsql.IsLockNotAvailableError] returns true for that error.
 func (c *Consumer) attemptDelivery(
 	ctx context.Context,
 	queues *uuidcollection.Set,
@@ -61,7 +61,7 @@ func (c *Consumer) attemptDelivery(
 		slog.Uint64("failures", d.Failures),
 	)
 
-	delivered, err := c.deliverMessage(ctx, tx, d, envelopeData, logger)
+	completed, err := c.deliverMessage(ctx, tx, d, envelopeData, logger)
 	if err != nil {
 		return false, err
 	}
@@ -70,11 +70,11 @@ func (c *Consumer) attemptDelivery(
 		return false, fmt.Errorf("unable to commit transaction: %w", err)
 	}
 
-	if delivered {
-		logger.DebugContext(ctx, "message delivered")
+	if completed {
+		logger.DebugContext(ctx, "message delivery completed")
 	}
 
-	return delivered, nil
+	return completed, nil
 }
 
 // claimMessage locks the message with the given ID within tx.
@@ -154,8 +154,8 @@ func (c *Consumer) claimMessage(
 //
 // It removes the message from its queue after the sink returns nil, and
 // postpones the delivery instead if the envelope is invalid, or the sink
-// returns [ErrFailed] or [ErrBusy]. It returns true if the sink delivered the
-// message.
+// returns [ErrFailed] or [ErrBusy]. It returns true if the delivery is
+// complete.
 //
 // envelopeData is the binary representation of the message's envelope.
 func (c *Consumer) deliverMessage(

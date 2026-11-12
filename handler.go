@@ -55,7 +55,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
+			Sink: &process.EventSink{
 				DB:                   e.db,
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
@@ -93,7 +93,7 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		consumer := &eventstream.Consumer{
 			Node:         e.node,
 			EventStreams: e.eventStreams,
-			Sink: &projection.Sink{
+			Sink: &projection.EventSink{
 				Handler:       handlerConfig.Interface(),
 				Identity:      handlerConfig.Identity(),
 				Concurrency:   handlerConfig.ConcurrencyPreference(),

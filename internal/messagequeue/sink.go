@@ -17,12 +17,16 @@ type Sink interface {
 	// Deliver delivers the message in the given envelope to the sink's message
 	// handler.
 	//
+	// A message that no longer needs to be delivered, such as a deadline whose
+	// process instance has ended, is deemed "canceled". It returns nil for a
+	// canceled message without calling the handler.
+	//
 	// It must make all of its changes to the database within tx. When it
 	// returns nil, the consumer removes the message within tx and commits tx,
 	// so the changes and the removal are committed together. The sink may
 	// remove the message itself. For example, when a process handler ends an
 	// instance while handling one of the instance's deadlines, the sink removes
-	// all of the instance's deadlines.
+	// that deadline itself.
 	//
 	// It returns [ErrFailed] if it can't deliver the message because of a
 	// problem with the message or the handler, such as when the message can't
@@ -47,8 +51,8 @@ type Sink interface {
 // Delivery is the job of getting a queued message to its handler.
 //
 // A delivery may take many attempts, and is complete when the message is
-// delivered. A Delivery value describes the delivery at the time that the
-// consumer claims the message for an attempt.
+// delivered or canceled. A Delivery value describes the delivery at the time
+// that the consumer claims the message for an attempt.
 type Delivery struct {
 	// MessageID is the ID of the message being delivered.
 	MessageID *uuidpb.UUID

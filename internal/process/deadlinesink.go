@@ -50,6 +50,11 @@ type DeadlineSink struct {
 }
 
 // Deliver delivers the deadline in the given envelope to the handler.
+//
+// It returns [messagequeue.ErrBusy] without calling the handler if another
+// transaction holds the lock on the deadline's process instance. It returns nil
+// without calling the handler if the instance has ended, because ending an
+// instance cancels its deadlines.
 func (s *DeadlineSink) Deliver(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -60,6 +65,44 @@ func (s *DeadlineSink) Deliver(
 		xslog.Envelope("handled_message", env),
 		slog.Uint64("failures", d.Failures),
 	)
+
+	instanceID := env.GetHeader().GetSource().GetInstanceId()
+
+	instanceLogger := engineLogger.With(
+		slog.Group("process_instance", slog.String("id", instanceID)),
+	)
+
+	inst, exists, err := tryLockInstance(
+		ctx,
+		tx,
+		s.Handler,
+		s.QueueRouter,
+		s.Identity.GetKey(),
+		instanceID,
+		instanceLogger,
+	)
+	if err != nil {
+		return err
+	}
+
+	// The event sink stores the instance's row in the same transaction as any
+	// deadlines that the handler schedules for it, and nothing deletes the row,
+	// so it always exists.
+	if !exists {
+		instanceLogger.ErrorContext(ctx, "process instance not found")
+		return messagequeue.ErrFailed
+	}
+
+	// The instance has ended, so the deadline is canceled. Ending the instance
+	// didn't remove this deadline, because an attempt had claimed it, so the
+	// consumer removes it when Deliver returns nil.
+	if inst.Ended {
+		instanceLogger.DebugContext(
+			ctx,
+			"deadline canceled because the process instance has ended",
+		)
+		return nil
+	}
 
 	var deadline dogma.Deadline
 
@@ -75,49 +118,19 @@ func (s *DeadlineSink) Deliver(
 		return messagequeue.ErrFailed
 	}
 
-	instanceID := env.GetHeader().GetSource().GetInstanceId()
-
-	instanceLogger := engineLogger.With(
-		slog.Group("process_instance", slog.String("id", instanceID)),
-	)
-
-	root, err := newRoot(ctx, s.Handler, instanceLogger)
-	if err != nil {
-		return err
-	}
-
-	deadlineQueueID, ok, err := loadInstance(
-		ctx,
-		tx,
-		s.QueueRouter,
-		s.Identity.GetKey(),
-		instanceID,
-		root,
-		instanceLogger,
-	)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// This _should_ be unreachable code because deadlines are deleted when
-		// process instances are ended.
-		instanceLogger.ErrorContext(ctx, "process instance has ended")
-		return messagequeue.ErrFailed
-	}
-
 	scope := &deadlineScope{
 		messageScope{
-			instanceID: instanceID,
-			root:       root,
+			instanceID: inst.ID,
+			root:       inst.Root,
 			commandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
-				envelope.WithInstanceID(instanceID),
+				envelope.WithInstanceID(inst.ID),
 			),
 			deadlinePacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
-				envelope.WithInstanceID(instanceID),
+				envelope.WithInstanceID(inst.ID),
 			),
 			engineLogger: engineLogger,
 			appLogger: s.AppLogger.With(
@@ -133,7 +146,7 @@ func (s *DeadlineSink) Deliver(
 			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
 			defer cancel()
 
-			return s.Handler.HandleDeadline(ctx, root, scope, deadline)
+			return s.Handler.HandleDeadline(ctx, inst.Root, scope, deadline)
 		},
 	); err != nil {
 		instanceLogger.ErrorContext(
@@ -145,35 +158,19 @@ func (s *DeadlineSink) Deliver(
 		return messagequeue.ErrFailed
 	}
 
-	if err := addCommandsToQueue(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
+	if err := addCommandsToQueues(ctx, tx, s.QueueRouter, scope.commandPacker); err != nil {
 		return err
 	}
 
 	if scope.ended {
-		if err := endInstance(
-			ctx,
-			tx,
-			s.Identity.GetKey(),
-			instanceID,
-		); err != nil {
-			return err
-		}
-
-		return nil
+		return inst.End(ctx, tx)
 	}
 
 	if scope.mutated {
-		if err := saveInstance(
-			ctx,
-			tx,
-			s.Identity.GetKey(),
-			instanceID,
-			root,
-			instanceLogger,
-		); err != nil {
+		if err := inst.Save(ctx, tx, instanceLogger); err != nil {
 			return err
 		}
 	}
 
-	return persistDeadlines(ctx, tx, deadlineQueueID, scope.deadlinePacker)
+	return inst.AddDeadlinesToQueue(ctx, tx, scope.deadlinePacker)
 }

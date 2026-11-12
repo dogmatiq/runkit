@@ -10,9 +10,9 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// addCommandsToQueue adds any commands executed by the handler to the queues
+// addCommandsToQueues adds any commands executed by the handler to the queues
 // that the given router chooses.
-func addCommandsToQueue(
+func addCommandsToQueues(
 	ctx context.Context,
 	tx *sql.Tx,
 	router *messagequeue.Router,

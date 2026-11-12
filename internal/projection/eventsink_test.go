@@ -15,7 +15,7 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
-func TestSink_rendezvousKey(t *testing.T) {
+func TestEventSink_rendezvousKey(t *testing.T) {
 	const handlerKey = "050415ad-ce90-496f-8987-40467e5415e0"
 
 	for _, preference := range []dogma.ConcurrencyPreference{
@@ -23,7 +23,7 @@ func TestSink_rendezvousKey(t *testing.T) {
 		dogma.MaximizeConcurrency,
 	} {
 		t.Run(fmt.Sprint(preference), func(t *testing.T) {
-			sink := &Sink{
+			sink := &EventSink{
 				Identity: identitypb.NewIdentityBuilder().
 					WithKey(uuidpb.MustParse(handlerKey)).
 					Build(),
@@ -44,15 +44,16 @@ func TestSink_rendezvousKey(t *testing.T) {
 	}
 }
 
-// TestSink_emptySegmentDoesNotAdvanceCheckpoint verifies that catalog progress
-// across filtered events does not become the projection's checkpoint offset.
-func TestSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
+// TestEventSink_emptySegmentDoesNotAdvanceCheckpoint verifies that catalog
+// progress across filtered events does not become the projection's checkpoint
+// offset.
+func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	handler := &ProjectionMessageHandlerStub{
 		CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
 			return 4, nil
 		},
 	}
-	sink := &Sink{
+	sink := &EventSink{
 		Handler:      handler,
 		RouteTimeout: time.Minute,
 		EngineLogger: spruce.NewTestLogger(t),

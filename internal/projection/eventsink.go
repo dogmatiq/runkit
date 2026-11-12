@@ -18,9 +18,12 @@ import (
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
-// Sink dispatches segments of event streams to a projection message handler.
-// It implements [eventstream.Sink] using the handler's checkpoint offsets.
-type Sink struct {
+// EventSink is an [eventstream.Sink] that dispatches events to a
+// [dogma.ProjectionMessageHandler].
+//
+// It reports the handler's checkpoint offset for each stream, and consumption of
+// the stream resumes from that offset.
+type EventSink struct {
 	// Handler is the projection message handler to which events are
 	// dispatched.
 	Handler dogma.ProjectionMessageHandler
@@ -30,7 +33,7 @@ type Sink struct {
 
 	// Concurrency is the handler's concurrency preference.
 	//
-	// If it's [dogma.MinimizeConcurrency], [Sink.RendezvousKey] returns the
+	// If it's [dogma.MinimizeConcurrency], [EventSink.RendezvousKey] returns the
 	// same key for every stream, and the sink makes one call at a time to the
 	// handler's HandleEvent method.
 	Concurrency dogma.ConcurrencyPreference
@@ -61,7 +64,7 @@ type Sink struct {
 // CheckpointOffset returns the handler's checkpoint offset for the stream
 // with the given ID. An error or panic from the handler stops the current
 // consumption attempt.
-func (s *Sink) CheckpointOffset(
+func (s *EventSink) CheckpointOffset(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) (uint64, error) {
@@ -89,7 +92,7 @@ func (s *Sink) CheckpointOffset(
 //
 // cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (s *Sink) ConsumeSegment(
+func (s *EventSink) ConsumeSegment(
 	ctx context.Context,
 	cp uint64,
 	seg eventstream.Segment,
@@ -123,7 +126,7 @@ func (s *Sink) ConsumeSegment(
 //
 // cp is the offset from which the handler last said it would resume
 // handling events from the stream.
-func (s *Sink) dispatch(
+func (s *EventSink) dispatch(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 	offset, cp uint64,
@@ -183,7 +186,7 @@ func (s *Sink) dispatch(
 // If Concurrency is [dogma.MinimizeConcurrency], it waits until no other call
 // holds handlerLock, or until ctx is done, in which case it returns ctx's error
 // without calling the handler.
-func (s *Sink) handleEvent(
+func (s *EventSink) handleEvent(
 	ctx context.Context,
 	scope *eventScope,
 	event dogma.Event,
@@ -207,7 +210,7 @@ func (s *Sink) handleEvent(
 
 // RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *Sink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
+func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 	if s.Concurrency == dogma.MinimizeConcurrency {
 		return s.Identity.GetKey()
 	}
@@ -219,6 +222,6 @@ func (s *Sink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 }
 
 // EventTypeIDs returns the event types routed to the projection.
-func (s *Sink) EventTypeIDs() *uuidcollection.Set {
+func (s *EventSink) EventTypeIDs() *uuidcollection.Set {
 	return s.EventTypes
 }
