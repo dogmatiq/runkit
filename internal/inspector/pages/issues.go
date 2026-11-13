@@ -7,11 +7,25 @@ import (
 	"github.com/dogmatiq/runkit/internal/inspector/observe"
 )
 
+// severity is how urgently a person should look at an issue. Its value is the
+// CSS class that shows it.
+type severity string
+
+const (
+	// broken is the severity of something that has stopped working.
+	broken severity = "bad"
+
+	// atRisk is the severity of something that may stop working.
+	atRisk severity = "warn"
+
+	// inProgress is the severity of work that the engine has not finished yet.
+	inProgress severity = "info"
+)
+
 // issue is something that a person watching the cluster should look at.
 type issue struct {
-	// Severity is "bad" for something that is broken, "warn" for something
-	// that may become a problem, or "info" for work in progress.
-	Severity string
+	// Severity is how urgently a person should look at the issue.
+	Severity severity
 
 	// Text describes the issue.
 	Text string
@@ -21,87 +35,94 @@ type issue struct {
 	Link string
 }
 
+// IsBroken returns true if the issue is something that has stopped working.
+func (i issue) IsBroken() bool {
+	return i.Severity == broken
+}
+
 // findIssues returns the issues in an observation, the most severe first.
 func findIssues(app *observe.Application, obs *observe.Observation, now time.Time) []issue {
-	var bad, warn, info []issue
-
 	if obs.Err != nil {
 		return []issue{
 			{
-				Severity: "bad",
+				Severity: broken,
 				Text:     obs.Err.Error(),
 			},
 		}
 	}
 
+	var issues []issue
+
+	add := func(s severity, link, format string, args ...any) {
+		issues = append(
+			issues,
+			issue{
+				Severity: s,
+				Text:     fmt.Sprintf(format, args...),
+				Link:     link,
+			},
+		)
+	}
+
 	switch {
-	case !obs.Membership.Known:
-		warn = append(warn, issue{
-			Severity: "warn",
-			Text:     fmt.Sprintf("The live nodes are not known yet: %s.", obs.Membership.Reason),
-			Link:     "nodes",
-		})
-	case len(obs.Membership.Nodes) == 0:
-		bad = append(bad, issue{
-			Severity: "bad",
-			Text:     "There are no live nodes, so no messages are delivered and no event streams are consumed.",
-			Link:     "nodes",
-		})
+	case !obs.LiveNodes.Known:
+		add(atRisk, "nodes", "The live nodes are not known yet: %s.", obs.LiveNodes.Reason)
+	case len(obs.LiveNodes.Nodes) == 0:
+		add(broken, "nodes", "There are no live nodes, so no messages are delivered and no event streams are consumed.")
 	}
 
 	switch {
 	case obs.BoundApplication == nil:
-		warn = append(warn, issue{
-			Severity: "warn",
-			Text:     "The database is not bound to an application. No engine has run against it yet.",
-		})
+		add(atRisk, "", "The database is not bound to an application. No engine has run against it yet.")
 	case !obs.BoundApplication.GetKey().Equal(app.Identity.GetKey()):
-		bad = append(bad, issue{
-			Severity: "bad",
-			Text: fmt.Sprintf(
-				"The database is bound to the application %q, but the inspector is linked with %q.",
-				obs.BoundApplication.GetName(),
-				app.Identity.GetName(),
-			),
-		})
+		add(
+			broken,
+			"",
+			"The database is bound to the application %q, but the inspector is linked with %q.",
+			obs.BoundApplication.GetName(),
+			app.Identity.GetName(),
+		)
 	}
 
 	for _, err := range []error{obs.QueuesErr, obs.EventStreamsErr} {
 		if err != nil {
-			bad = append(bad, issue{
-				Severity: "bad",
-				Text:     err.Error(),
-			})
+			add(broken, "", "%s", err)
 		}
+	}
+
+	if obs.IsQueuesTruncated {
+		n := formatNumber(len(obs.Queues))
+		add(atRisk, "queues", "There are more than %s queues. The inspector shows the %s with the most messages, and its totals count only those.", n, n)
+	}
+
+	if obs.IsEventStreamsTruncated {
+		n := formatNumber(len(obs.EventStreams))
+		add(atRisk, "streams", "There are more than %s event streams. The inspector shows the first %s, and its totals count only those.", n, n)
 	}
 
 	for _, q := range obs.Queues {
 		link := "queues/" + q.ID.AsString()
 
 		if q.IsStalled(now) {
-			bad = append(bad, issue{
-				Severity: "bad",
-				Text: fmt.Sprintf(
-					"Queue %s has %s that are due, and the oldest has been due for %s.",
-					shortID(q.ID),
-					countOf(q.Due, "message", "messages"),
-					formatDuration(q.LongestWait(now)),
-				),
-				Link: link,
-			})
+			add(
+				broken,
+				link,
+				"Queue %s has %s that are due, and the oldest has been due for %s.",
+				shortID(q.ID),
+				countOf(q.Due, "message", "messages"),
+				formatDuration(q.LongestWait(now)),
+			)
 		}
 
 		if q.Failing > 0 {
-			warn = append(warn, issue{
-				Severity: "warn",
-				Text: fmt.Sprintf(
-					"Queue %s has %s whose most recent attempt failed. The most failures in a row is %s.",
-					shortID(q.ID),
-					countOf(q.Failing, "message", "messages"),
-					formatNumber(q.MostFailures),
-				),
-				Link: link,
-			})
+			add(
+				atRisk,
+				link,
+				"Queue %s has %s whose most recent attempt failed. The most failures in a row is %s.",
+				shortID(q.ID),
+				countOf(q.Failing, "message", "messages"),
+				formatNumber(q.MostFailures),
+			)
 		}
 	}
 
@@ -110,26 +131,36 @@ func findIssues(app *observe.Application, obs *observe.Observation, now time.Tim
 
 		for _, err := range []error{s.InstancesErr, s.ProgressErr, s.CompactionErr} {
 			if err != nil {
-				bad = append(bad, issue{
-					Severity: "bad",
-					Text:     err.Error(),
-					Link:     link,
-				})
+				add(broken, link, "%s", err)
 			}
 		}
 
 		if n := s.Unhandled(); n > 0 {
-			info = append(info, issue{
-				Severity: "info",
-				Text: fmt.Sprintf(
-					"%s has %s to handle.",
-					s.Handler.Name,
-					countOf(n, "event", "events"),
-				),
-				Link: link,
-			})
+			add(
+				inProgress,
+				link,
+				"%s has %s to handle.",
+				s.Handler.Name,
+				countOf(n, "event", "events"),
+			)
 		}
 	}
 
-	return append(append(bad, warn...), info...)
+	return sortBySeverity(issues)
+}
+
+// sortBySeverity returns the given issues with the broken ones first and the
+// ones in progress last, keeping the order of issues with the same severity.
+func sortBySeverity(issues []issue) []issue {
+	var sorted []issue
+
+	for _, s := range []severity{broken, atRisk, inProgress} {
+		for _, i := range issues {
+			if i.Severity == s {
+				sorted = append(sorted, i)
+			}
+		}
+	}
+
+	return sorted
 }

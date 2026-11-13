@@ -2,9 +2,9 @@
 <p class="lede">
   A queue holds commands and deadlines that have not yet been delivered. Its ID
   is the key of the workload of delivering its messages, so one node delivers
-  them. A message that is due has reached its next attempt time. A message that
-  is failing has failed at least once in a row. The error text of a failure is
-  in the engine's log, not in the database.
+  them. A message that is due has reached the time of its next delivery
+  attempt. A message that is failing is one whose most recent attempt failed.
+  The error text of a failure is in the engine's log, not in the database.
 </p>
 {{if not .Obs}}{{template "waiting" .}}{{else}}
 {{template "error" .Obs.QueuesErr}}
@@ -23,7 +23,7 @@
       <td>{{if .Due}}<span class="{{if .IsStalled $.Now}}tag bad{{end}}">{{dur (.LongestWait $.Now)}}</span>{{else}}<span class="muted">-</span>{{end}}</td>
       <td class="num">{{if .Failing}}<span class="tag bad" data-watch="qf-{{id .ID}}">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
       <td>{{if .Failing}}{{rel $.Now .FirstFailedAt}}{{else}}<span class="muted">-</span>{{end}}</td>
-      <td>{{template "owner" .Owner}}</td>
+      <td>{{template "owner" .DeliveredBy}}</td>
     </tr>
   {{else}}
     <tr><td colspan="8" class="empty-row">Every queue is empty. A queue exists only while it holds messages.</td></tr>

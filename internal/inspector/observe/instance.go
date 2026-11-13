@@ -3,7 +3,6 @@ package observe
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/dogmatiq/dogma"
@@ -324,20 +323,24 @@ func ProcessRoot(h *Handler, inst ProcessInstance) (dogma.ProcessRoot, error) {
 	)
 }
 
-// RootDescription returns the description of an aggregate or process root, as
-// returned by its description method. It returns an error if the method
-// panics.
-func RootDescription(root any, hasEnded bool) (string, error) {
+// AggregateRootDescription returns the description of the given aggregate
+// root, as returned by its AggregateInstanceDescription method. It returns an
+// error if the method panics.
+func AggregateRootDescription(root dogma.AggregateRoot) (string, error) {
 	return xerrors.RecoverT(
 		func() (string, error) {
-			switch root := root.(type) {
-			case dogma.AggregateRoot:
-				return root.AggregateInstanceDescription(), nil
-			case dogma.ProcessRoot:
-				return root.ProcessInstanceDescription(hasEnded), nil
-			default:
-				return "", errors.New("not an aggregate or process root")
-			}
+			return root.AggregateInstanceDescription(), nil
+		},
+	)
+}
+
+// ProcessRootDescription returns the description of the given process root,
+// as returned by its ProcessInstanceDescription method. It returns an error
+// if the method panics.
+func ProcessRootDescription(root dogma.ProcessRoot, hasEnded bool) (string, error) {
+	return xerrors.RecoverT(
+		func() (string, error) {
+			return root.ProcessInstanceDescription(hasEnded), nil
 		},
 	)
 }

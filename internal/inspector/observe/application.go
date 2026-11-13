@@ -79,19 +79,6 @@ func (a *Application) Handler(key *uuidpb.UUID) (*Handler, bool) {
 	return a.handlers.Get(key)
 }
 
-// HandlersOfType returns the application's handlers of the given type.
-func (a *Application) HandlersOfType(t config.HandlerType) []*Handler {
-	var handlers []*Handler
-
-	for _, h := range a.Handlers {
-		if h.Type == t {
-			handlers = append(handlers, h)
-		}
-	}
-
-	return handlers
-}
-
 // MessageType returns the message type with the given ID.
 //
 // If the application does not route the type, it looks for the type in
@@ -162,6 +149,59 @@ type Handler struct {
 	Projection dogma.ProjectionMessageHandler
 }
 
+// MessageTypeIDs returns the IDs of the message types that the handler
+// receives through routes of the given type.
+func (h *Handler) MessageTypeIDs(t config.RouteType) []*uuidpb.UUID {
+	var ids []*uuidpb.UUID
+
+	for _, r := range h.Routes {
+		if r.Type == t {
+			ids = append(ids, r.MessageType.ID)
+		}
+	}
+
+	return ids
+}
+
+// HasInstances returns true if the handler has instances, which is true of
+// aggregate and process handlers.
+func (h *Handler) HasInstances() bool {
+	return h.Type == config.AggregateHandlerType || h.Type == config.ProcessHandlerType
+}
+
+// MinimizesConcurrency returns true if the handler prefers to minimize
+// concurrency, which only integration and projection handlers can prefer.
+func (h *Handler) MinimizesConcurrency() bool {
+	return h.Concurrency == dogma.MinimizeConcurrency
+}
+
+// HandlesCommands returns true if the handler handles commands, which is true
+// of aggregate and integration handlers.
+func (h *Handler) HandlesCommands() bool {
+	return h.Type == config.AggregateHandlerType || h.Type == config.IntegrationHandlerType
+}
+
+// HandlesEvents returns true if the engine dispatches events from event
+// streams to the handler, which is true of process and projection handlers.
+func (h *Handler) HandlesEvents() bool {
+	return h.Type == config.ProcessHandlerType || h.Type == config.ProjectionHandlerType
+}
+
+// StreamWorkloadKey returns the rendezvous key of the workload of consuming
+// the event stream with the given ID on behalf of the handler.
+//
+// It matches the keys that the engine's process and projection event sinks
+// use.
+func (h *Handler) StreamWorkloadKey(streamID *uuidpb.UUID) *uuidpb.UUID {
+	// A projection that minimizes concurrency consumes every stream on one
+	// node.
+	if h.Type == config.ProjectionHandlerType && h.MinimizesConcurrency() {
+		return h.Key
+	}
+
+	return uuidpb.Derive(h.Key, streamID.AsString())
+}
+
 // newHandler returns the handler that the given configuration describes, and
 // adds the message types of its routes to types.
 func newHandler(
@@ -216,53 +256,6 @@ func newHandler(
 	)
 
 	return h
-}
-
-// MessageTypeIDs returns the IDs of the message types that the handler
-// receives through routes of the given type.
-func (h *Handler) MessageTypeIDs(t config.RouteType) []*uuidpb.UUID {
-	var ids []*uuidpb.UUID
-
-	for _, r := range h.Routes {
-		if r.Type == t {
-			ids = append(ids, r.MessageType.ID)
-		}
-	}
-
-	return ids
-}
-
-// HasInstances returns true if the handler has instances, which is true of
-// aggregate and process handlers.
-func (h *Handler) HasInstances() bool {
-	return h.Type == config.AggregateHandlerType || h.Type == config.ProcessHandlerType
-}
-
-// MinimizesConcurrency returns true if the handler prefers to minimize
-// concurrency, which only integration and projection handlers can prefer.
-func (h *Handler) MinimizesConcurrency() bool {
-	return h.Concurrency == dogma.MinimizeConcurrency
-}
-
-// ConsumesEventStreams returns true if the engine dispatches events from event
-// streams to the handler, which is true of process and projection handlers.
-func (h *Handler) ConsumesEventStreams() bool {
-	return h.Type == config.ProcessHandlerType || h.Type == config.ProjectionHandlerType
-}
-
-// StreamWorkloadKey returns the rendezvous key of the workload of consuming
-// the event stream with the given ID on behalf of the handler.
-//
-// It matches the keys that the engine's process and projection event sinks
-// use.
-func (h *Handler) StreamWorkloadKey(streamID *uuidpb.UUID) *uuidpb.UUID {
-	// A projection that minimizes concurrency consumes every stream on one
-	// node.
-	if h.Type == config.ProjectionHandlerType && h.MinimizesConcurrency() {
-		return h.Key
-	}
-
-	return uuidpb.Derive(h.Key, streamID.AsString())
 }
 
 // Route is a message route of a handler.

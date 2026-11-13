@@ -4,10 +4,10 @@
   <dt>Type</dt><dd><span class="htype htype-{{htype $h.Type}}">{{htype $h.Type}}</span>{{if $h.IsDisabled}} <span class="tag">disabled</span>{{end}}</dd>
   <dt>Key</dt><dd><code>{{id $h.Key}}</code></dd>
   {{if $h.HasInstances}}<dt>Instances</dt><dd data-watch="instances">{{template "count" .Summary.Instances}}</dd>{{end}}
-  {{if $h.ConsumesEventStreams}}<dt>To handle</dt><dd data-watch="todo">{{if .Summary.Unhandled}}<span class="tag warn">{{plural .Summary.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
+  {{if $h.HandlesEvents}}<dt>To handle</dt><dd data-watch="todo">{{if .Summary.Unhandled}}<span class="tag warn">{{plural .Summary.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
   {{if $h.Projection}}
-    <dt>Compacted</dt><dd>{{rel .Now .Summary.LastCompactedAt}}</dd>
-    <dt>Concurrency</dt><dd>{{if $h.MinimizesConcurrency}}minimized, so one node consumes every event stream{{else}}one node per event stream{{end}}</dd>
+    <dt>Last compacted</dt><dd>{{rel .Now .Summary.LastCompactedAt}} <span class="muted">or first run, before its first compaction</span></dd>
+    <dt>Concurrency</dt><dd>{{if $h.MinimizesConcurrency}}minimized, so one node consumes every event stream for it{{else}}not minimized, so rendezvous hashing chooses the node that consumes each event stream for it{{end}}</dd>
   {{end}}
   {{if eq (htype $h.Type) "integration"}}
     <dt>Concurrency</dt><dd>{{if $h.MinimizesConcurrency}}minimized, so its commands go to queue <a href="{{.Root}}queues/{{id $h.Key}}"><code>{{short $h.Key}}</code></a>, delivered by {{template "owner" .HandlerQueueOwner}}{{else}}not minimized{{end}}</dd>
@@ -18,7 +18,7 @@
 {{template "error" .Summary.ProgressErr}}
 {{template "error" .Summary.CompactionErr}}
 
-{{if $h.ConsumesEventStreams}}
+{{if $h.HandlesEvents}}
 <h2>Event streams{{if $h.Projection}} <span class="muted">checkpoint offsets from the projection's own storage</span>{{end}}</h2>
 {{template "progress" (list . .Progress)}}
 {{end}}
@@ -71,7 +71,7 @@
 {{template "messages" (list . .Deadlines)}}
 {{end}}
 
-{{if .Commands}}
+{{if $h.HandlesCommands}}
 <h2>Queued commands <span class="muted">in the order that they become due</span></h2>
 {{template "error" .CommandsErr}}
 {{template "messages" (list . .Commands)}}

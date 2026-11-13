@@ -23,7 +23,7 @@ import (
 )
 
 func TestInspector(t *testing.T) {
-	t.Run("it serves every page as a role that may only read, without sending a notification", func(t *testing.T) {
+	t.Run("it serves every page as a role that may only read", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 
 		app := &demoapp.App{
@@ -31,37 +31,48 @@ func TestInspector(t *testing.T) {
 			MailerFailureRate: 0.5,
 		}
 
-		runBank(t, db, app)
+		cluster := runBank(t, db, app)
 
-		readerDB := openReader(t, db)
+		server := serveInspector(t, app, openReader(t, db))
 
-		insp, err := New(app, readerDB)
-		if err != nil {
-			t.Fatal(err)
+		// Wait until the inspector knows the live nodes, so that the pages
+		// show the node that owns each workload.
+		xtesting.WaitFor(
+			t,
+			"the inspector to show the live nodes",
+			func() bool {
+				return strings.Contains(get(t, server.URL+"/nodes").Body, `class="card node-card"`)
+			},
+		)
+
+		pages := crawl(t, server.URL+"/")
+
+		if len(pages) < 10 {
+			t.Fatalf("expected to visit at least 10 pages, visited %d", len(pages))
 		}
 
-		xtesting.GoE(t, insp.Run)
+		cluster.Stop()
+	})
 
-		server := httptest.NewServer(insp)
-		defer server.Close()
+	t.Run("it sends no notification", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+
+		app := &demoapp.App{
+			StatementInterval: 50 * time.Millisecond,
+			MailerFailureRate: 0.5,
+		}
+
+		// The nodes send heartbeats, so they must stop before the test
+		// listens for notifications.
+		runBank(t, db, app).Stop()
+
+		server := serveInspector(t, app, openReader(t, db))
 
 		expectNoNotifications(
 			t,
 			db,
 			func() {
-				xtesting.WaitFor(
-					t,
-					"the first observation",
-					func() bool {
-						return strings.Contains(get(t, server.URL+"/").Body, "Busiest queues")
-					},
-				)
-
-				pages := crawl(t, server.URL+"/")
-
-				if len(pages) < 10 {
-					t.Fatalf("expected to visit at least 10 pages, visited %d", len(pages))
-				}
+				crawl(t, server.URL+"/")
 			},
 		)
 	})
@@ -88,8 +99,8 @@ func TestInspector(t *testing.T) {
 }
 
 // runBank runs the bank application on a cluster until it has opened some
-// accounts and sent some statements, then stops the cluster.
-func runBank(t *testing.T, db *sql.DB, app *demoapp.App) {
+// accounts, and returns the cluster, which is still running.
+func runBank(t *testing.T, db *sql.DB, app *demoapp.App) *xtesting.Cluster {
 	t.Helper()
 
 	cluster := xtesting.StartCluster(t, db, app, 2)
@@ -132,7 +143,33 @@ func runBank(t *testing.T, db *sql.DB, app *demoapp.App) {
 		},
 	)
 
-	cluster.Stop()
+	return cluster
+}
+
+// serveInspector starts an inspector for app that reads through db, and
+// returns a test server that serves it.
+func serveInspector(t *testing.T, app *demoapp.App, db *sql.DB) *httptest.Server {
+	t.Helper()
+
+	insp, err := New(app, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.GoE(t, insp.Run)
+
+	server := httptest.NewServer(insp)
+	t.Cleanup(server.Close)
+
+	xtesting.WaitFor(
+		t,
+		"the first observation",
+		func() bool {
+			return strings.Contains(get(t, server.URL+"/").Body, "Busiest queues")
+		},
+	)
+
+	return server
 }
 
 // openReader returns a connection pool for a new role that may only read the
@@ -197,14 +234,21 @@ func connConfig(t *testing.T, db *sql.DB) *pgx.ConnConfig {
 	}
 	defer conn.Close()
 
-	var config *pgx.ConnConfig
+	var dsn string
 
 	if err := conn.Raw(
 		func(raw any) error {
-			config = raw.(*stdlib.Conn).Conn().Config().Copy()
+			dsn = raw.(*stdlib.Conn).Conn().Config().ConnString()
 			return nil
 		},
 	); err != nil {
+		t.Fatal(err)
+	}
+
+	// A copy of a live connection's configuration would keep that
+	// connection's callbacks, so parse a new one.
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
 		t.Fatal(err)
 	}
 

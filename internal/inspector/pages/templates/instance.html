@@ -12,7 +12,7 @@
   {{end}}
   {{if $h.Process}}
     <dt>Status</dt><dd>{{if .Process.HasEnded}}<span class="tag">ended</span>{{else}}<span class="tag ok">active</span>{{end}}</dd>
-    <dt>Deadlines delivered by</dt><dd>{{with .Process.DeadlineQueueID}}<a href="{{$.Root}}queues/{{id .}}"><code>{{short .}}</code></a> {{template "owner" ($.Owner .)}}{{else}}<span class="muted">no deadlines yet</span>{{end}}</dd>
+    <dt>Deadlines delivered by</dt><dd>{{with .Process.DeadlineQueueID}}<a href="{{$.Root}}queues/{{id .}}"><code>{{short .}}</code></a> {{template "owner" ($.Owner .)}}{{else}}<span class="muted">not bound to a queue yet</span>{{end}}</dd>
   {{end}}
 </dl>
 
@@ -36,7 +36,7 @@
 {{else if not .Err}}
 <div class="empty">
   <p>{{$h.Name}} has no instance with the ID <code>{{.ID}}</code>.</p>
-  {{if $h.Aggregate}}<p class="muted">The engine deletes an aggregate instance that handles a command without recording an event.</p>{{end}}
+  {{if $h.Aggregate}}<p class="muted">The engine stores an aggregate instance only once it has recorded an event.</p>{{end}}
 </div>
 {{end}}
 {{template "bottom" .}}{{end}}

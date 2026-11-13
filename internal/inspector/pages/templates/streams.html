@@ -1,9 +1,11 @@
 {{define "streams.html"}}{{template "top" .}}
 <p class="lede">
-  An event stream is an ordered list of events. Aggregate and integration
-  handlers append the events that they record. Process and projection handlers
-  consume every event stream, and each keeps a checkpoint offset for each one,
-  which is the offset of the next event that it expects to handle.
+  An event stream is an ordered list of events. The engine appends the events
+  that aggregate and integration handlers record. For each process and
+  projection handler, a node consumes each event stream, which means that it
+  dispatches the stream's events to the handler. Each of those handlers has a
+  checkpoint offset for each event stream, which is the offset of the next
+  event that it expects to handle.
 </p>
 {{if not .Obs}}{{template "waiting" .}}{{else}}
 {{template "error" .Obs.EventStreamsErr}}

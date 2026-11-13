@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -45,12 +46,11 @@ type Listener struct {
 	// connection fails.
 	RetryDelay time.Duration
 
-	// OnHeartbeat, if non-nil, is called with the ID of the node that sent
-	// each heartbeat.
+	// OnHeartbeat is called with the ID of the node that sent each
+	// heartbeat.
 	OnHeartbeat func(nodeID *uuidpb.UUID)
 
-	// OnChange, if non-nil, is called for each signal other than a
-	// heartbeat. Such a signal means that the engine has added messages to a
+	// OnChange is called for each signal other than a heartbeat. Such a signal means that the engine has added messages to a
 	// queue, created an event stream or appended to one.
 	OnChange func()
 
@@ -69,15 +69,20 @@ type Listener struct {
 	heartbeats uuidcollection.Map[time.Time]
 }
 
-// Membership returns the nodes that the listener considers live at the given
+// LiveNodes returns the nodes that the listener considers live at the given
 // time.
-func (l *Listener) Membership(now time.Time) Membership {
+func (l *Listener) LiveNodes(now time.Time) LiveNodes {
 	l.m.Lock()
 	defer l.m.Unlock()
 
 	if l.listeningSince.IsZero() {
-		return Membership{
-			Reason: l.listenErr,
+		reason := l.listenErr
+		if reason == nil {
+			reason = errors.New("not listening for heartbeats yet")
+		}
+
+		return LiveNodes{
+			Reason: reason,
 		}
 	}
 
@@ -85,14 +90,14 @@ func (l *Listener) Membership(now time.Time) Membership {
 	// began listening, so the set is not complete until a whole timeout has
 	// passed.
 	if now.Sub(l.listeningSince) < l.HeartbeatTimeout {
-		return Membership{
+		return LiveNodes{
 			Reason: fmt.Errorf("listening for heartbeats for less than %s", l.HeartbeatTimeout),
 		}
 	}
 
-	m := Membership{
-		Known:     true,
-		liveNodes: &uuidcollection.Set{},
+	live := LiveNodes{
+		Known: true,
+		set:   &uuidcollection.Set{},
 	}
 
 	for id, at := range l.heartbeats.All() {
@@ -101,24 +106,24 @@ func (l *Listener) Membership(now time.Time) Membership {
 			continue
 		}
 
-		m.Nodes = append(
-			m.Nodes,
+		live.Nodes = append(
+			live.Nodes,
 			LiveNode{
 				ID:              id,
 				LastHeartbeatAt: at,
 			},
 		)
-		m.liveNodes.Add(id)
+		live.set.Add(id)
 	}
 
 	slices.SortFunc(
-		m.Nodes,
+		live.Nodes,
 		func(a, b LiveNode) int {
 			return cmp.Compare(a.ID.AsString(), b.ID.AsString())
 		},
 	)
 
-	return m
+	return live
 }
 
 // Run listens for signals until ctx is canceled. If the connection fails, it
@@ -130,6 +135,10 @@ func (l *Listener) Run(ctx context.Context) error {
 
 	if l.RetryDelay <= 0 {
 		panic("retry delay must be positive")
+	}
+
+	if l.OnHeartbeat == nil || l.OnChange == nil {
+		panic("heartbeat and change callbacks must not be nil")
 	}
 
 	for {
@@ -194,9 +203,7 @@ func (l *Listener) listen(ctx context.Context) error {
 func (l *Listener) receive(signal string) {
 	idText, ok := strings.CutPrefix(signal, heartbeatPrefix)
 	if !ok {
-		if l.OnChange != nil {
-			l.OnChange()
-		}
+		l.OnChange()
 		return
 	}
 
@@ -207,9 +214,7 @@ func (l *Listener) receive(signal string) {
 
 	l.recordHeartbeat(nodeID)
 
-	if l.OnHeartbeat != nil {
-		l.OnHeartbeat(nodeID)
-	}
+	l.OnHeartbeat(nodeID)
 }
 
 func (l *Listener) recordHeartbeat(nodeID *uuidpb.UUID) {
@@ -236,9 +241,9 @@ func (l *Listener) stopListening(err error) {
 	l.heartbeats.Clear()
 }
 
-// Membership is the set of nodes that the listener considers live at one
+// LiveNodes is the set of nodes that the listener considers live at one
 // time.
-type Membership struct {
+type LiveNodes struct {
 	// Known is false if the listener can not tell which nodes are live, either
 	// because it is not listening, or because it has not listened for long
 	// enough.
@@ -250,8 +255,8 @@ type Membership struct {
 	// Nodes is the live nodes, ordered by ID.
 	Nodes []LiveNode
 
-	// liveNodes is the set of the IDs in Nodes.
-	liveNodes *uuidcollection.Set
+	// set is the set of the IDs in Nodes.
+	set *uuidcollection.Set
 }
 
 // FindWorkloadOwner returns the ID of the node that owns the workload with the
@@ -260,17 +265,12 @@ type Membership struct {
 //
 // It chooses the owner the same way that every node does, so it agrees with
 // the nodes while they all see the same live nodes.
-func (m Membership) FindWorkloadOwner(key *uuidpb.UUID) (*uuidpb.UUID, bool) {
-	if !m.Known {
+func (l LiveNodes) FindWorkloadOwner(key *uuidpb.UUID) (*uuidpb.UUID, bool) {
+	if !l.Known {
 		return nil, false
 	}
 
-	return cluster.FindWorkloadOwner(key, m.liveNodes)
-}
-
-// IsLive returns true if the node with the given ID is live.
-func (m Membership) IsLive(nodeID *uuidpb.UUID) bool {
-	return m.Known && m.liveNodes.Has(nodeID)
+	return cluster.FindWorkloadOwner(key, l.set)
 }
 
 // LiveNode is a node that has sent a heartbeat within the heartbeat timeout.

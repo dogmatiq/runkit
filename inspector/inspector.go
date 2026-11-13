@@ -30,16 +30,20 @@
 //
 // The inspector is linked with the application, because the database holds
 // only the keys of handlers and the IDs of message types. It calls these
-// methods of application code, none of which changes anything outside the
-// inspector:
+// methods of application code:
 //
 //   - Configure, on the application and on each handler
 //   - New, on aggregate and process handlers, to make a root
 //   - UnmarshalBinary, on messages and roots, to show their content
 //   - ApplyEvent, on an aggregate root, to show the root's current state
 //   - AggregateInstanceDescription and ProcessInstanceDescription, on roots
-//   - CheckpointOffset, on projection handlers, which reads the projection's
-//     own storage
+//   - CheckpointOffset, on projection handlers
+//
+// The inspector relies on these methods having no effect outside the values
+// that they return, which is how Dogma applications usually implement them.
+// The guarantees above cover only the inspector's own queries. In particular,
+// CheckpointOffset reads the projection's own storage, with whatever access
+// the application was built with.
 //
 // # Access
 //
@@ -67,8 +71,8 @@ const (
 	statementTimeout = 5 * time.Second
 
 	// heartbeatTimeout is the amount of time a node can go without sending a
-	// heartbeat before the inspector no longer considers it live. It matches
-	// the engine's own timeout.
+	// heartbeat before the inspector no longer considers it live. It must
+	// equal the engine's heartbeat timeout, which is not configurable.
 	heartbeatTimeout = 5 * time.Second
 
 	// listenRetryDelay is the time to wait before listening again after the
@@ -87,14 +91,17 @@ const (
 	// parts that cost the most to read.
 	slowObserveInterval = 5 * time.Second
 
-	// checkpointTimeout is the time allowed for each call to a projection
-	// handler's CheckpointOffset method. It matches the engine's own timeout
-	// for the same call.
+	// checkpointTimeout is the time allowed for all of the calls to one
+	// projection handler's CheckpointOffset method in one reading.
 	checkpointTimeout = 10 * time.Second
 
 	// pageTTL is how long a rendered page is reused before the queries behind
 	// it run again.
 	pageTTL = 1 * time.Second
+
+	// renderTimeout is the time allowed to render one page, including the
+	// queries behind it.
+	renderTimeout = 30 * time.Second
 )
 
 // Inspector is a website that shows what a runkit engine cluster is doing.
@@ -155,11 +162,12 @@ func New(app dogma.Application, db *sql.DB) (*Inspector, error) {
 		listener: listener,
 		observer: observer,
 		server: &pages.Server{
-			Application: application,
-			Database:    database,
-			Observer:    observer,
-			Broadcaster: broadcaster,
-			PageTTL:     pageTTL,
+			Application:   application,
+			Database:      database,
+			Observer:      observer,
+			Broadcaster:   broadcaster,
+			PageTTL:       pageTTL,
+			RenderTimeout: renderTimeout,
 		},
 	}, nil
 }

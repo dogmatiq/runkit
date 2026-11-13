@@ -30,20 +30,20 @@ type OpenAccount struct {
 }
 
 // MessageDescription returns a description of the command.
-func (c *OpenAccount) MessageDescription() string {
-	return fmt.Sprintf("opening account %s for %s", c.AccountID, c.Name)
+func (o *OpenAccount) MessageDescription() string {
+	return fmt.Sprintf("opening account %s for %s", o.AccountID, o.Name)
 }
 
 // Validate returns an error if the command is invalid.
-func (c *OpenAccount) Validate(dogma.CommandValidationScope) error {
-	return validateAccountID(c.AccountID)
+func (o *OpenAccount) Validate(dogma.CommandValidationScope) error {
+	return validateAccountID(o.AccountID)
 }
 
 // MarshalBinary returns the command's JSON representation.
-func (c *OpenAccount) MarshalBinary() ([]byte, error) { return json.Marshal(c) }
+func (o *OpenAccount) MarshalBinary() ([]byte, error) { return json.Marshal(o) }
 
 // UnmarshalBinary populates the command from its JSON representation.
-func (c *OpenAccount) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, c) }
+func (o *OpenAccount) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, o) }
 
 // Deposit is a command to add funds to an account.
 type Deposit struct {
@@ -52,20 +52,20 @@ type Deposit struct {
 }
 
 // MessageDescription returns a description of the command.
-func (c *Deposit) MessageDescription() string {
-	return fmt.Sprintf("depositing %s into account %s", formatCents(c.Amount), c.AccountID)
+func (d *Deposit) MessageDescription() string {
+	return fmt.Sprintf("depositing %s into account %s", formatCents(d.Amount), d.AccountID)
 }
 
 // Validate returns an error if the command is invalid.
-func (c *Deposit) Validate(dogma.CommandValidationScope) error {
-	return validateAccountID(c.AccountID)
+func (d *Deposit) Validate(dogma.CommandValidationScope) error {
+	return validateAccountID(d.AccountID)
 }
 
 // MarshalBinary returns the command's JSON representation.
-func (c *Deposit) MarshalBinary() ([]byte, error) { return json.Marshal(c) }
+func (d *Deposit) MarshalBinary() ([]byte, error) { return json.Marshal(d) }
 
 // UnmarshalBinary populates the command from its JSON representation.
-func (c *Deposit) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, c) }
+func (d *Deposit) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, d) }
 
 // Withdraw is a command to remove funds from an account.
 type Withdraw struct {
@@ -74,20 +74,20 @@ type Withdraw struct {
 }
 
 // MessageDescription returns a description of the command.
-func (c *Withdraw) MessageDescription() string {
-	return fmt.Sprintf("withdrawing %s from account %s", formatCents(c.Amount), c.AccountID)
+func (w *Withdraw) MessageDescription() string {
+	return fmt.Sprintf("withdrawing %s from account %s", formatCents(w.Amount), w.AccountID)
 }
 
 // Validate returns an error if the command is invalid.
-func (c *Withdraw) Validate(dogma.CommandValidationScope) error {
-	return validateAccountID(c.AccountID)
+func (w *Withdraw) Validate(dogma.CommandValidationScope) error {
+	return validateAccountID(w.AccountID)
 }
 
 // MarshalBinary returns the command's JSON representation.
-func (c *Withdraw) MarshalBinary() ([]byte, error) { return json.Marshal(c) }
+func (w *Withdraw) MarshalBinary() ([]byte, error) { return json.Marshal(w) }
 
 // UnmarshalBinary populates the command from its JSON representation.
-func (c *Withdraw) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, c) }
+func (w *Withdraw) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, w) }
 
 // SendStatement is a command to send an account statement to its holder.
 type SendStatement struct {
@@ -96,20 +96,20 @@ type SendStatement struct {
 }
 
 // MessageDescription returns a description of the command.
-func (c *SendStatement) MessageDescription() string {
-	return fmt.Sprintf("sending statement #%d for account %s", c.Number, c.AccountID)
+func (s *SendStatement) MessageDescription() string {
+	return fmt.Sprintf("sending statement #%d for account %s", s.Number, s.AccountID)
 }
 
 // Validate returns an error if the command is invalid.
-func (c *SendStatement) Validate(dogma.CommandValidationScope) error {
-	return validateAccountID(c.AccountID)
+func (s *SendStatement) Validate(dogma.CommandValidationScope) error {
+	return validateAccountID(s.AccountID)
 }
 
 // MarshalBinary returns the command's JSON representation.
-func (c *SendStatement) MarshalBinary() ([]byte, error) { return json.Marshal(c) }
+func (s *SendStatement) MarshalBinary() ([]byte, error) { return json.Marshal(s) }
 
 // UnmarshalBinary populates the command from its JSON representation.
-func (c *SendStatement) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, c) }
+func (s *SendStatement) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, s) }
 
 // AccountOpened is an event that indicates that an account was opened.
 type AccountOpened struct {
@@ -118,20 +118,20 @@ type AccountOpened struct {
 }
 
 // MessageDescription returns a description of the event.
-func (e *AccountOpened) MessageDescription() string {
-	return fmt.Sprintf("opened account %s for %s", e.AccountID, e.Name)
+func (a *AccountOpened) MessageDescription() string {
+	return fmt.Sprintf("opened account %s for %s", a.AccountID, a.Name)
 }
 
 // Validate returns an error if the event is invalid.
-func (e *AccountOpened) Validate(dogma.EventValidationScope) error {
-	return validateAccountID(e.AccountID)
+func (a *AccountOpened) Validate(dogma.EventValidationScope) error {
+	return validateAccountID(a.AccountID)
 }
 
 // MarshalBinary returns the event's JSON representation.
-func (e *AccountOpened) MarshalBinary() ([]byte, error) { return json.Marshal(e) }
+func (a *AccountOpened) MarshalBinary() ([]byte, error) { return json.Marshal(a) }
 
 // UnmarshalBinary populates the event from its JSON representation.
-func (e *AccountOpened) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, e) }
+func (a *AccountOpened) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, a) }
 
 // FundsDeposited is an event that indicates that funds were added to an
 // account.
@@ -141,20 +141,20 @@ type FundsDeposited struct {
 }
 
 // MessageDescription returns a description of the event.
-func (e *FundsDeposited) MessageDescription() string {
-	return fmt.Sprintf("deposited %s into account %s", formatCents(e.Amount), e.AccountID)
+func (f *FundsDeposited) MessageDescription() string {
+	return fmt.Sprintf("deposited %s into account %s", formatCents(f.Amount), f.AccountID)
 }
 
 // Validate returns an error if the event is invalid.
-func (e *FundsDeposited) Validate(dogma.EventValidationScope) error {
-	return validateAccountID(e.AccountID)
+func (f *FundsDeposited) Validate(dogma.EventValidationScope) error {
+	return validateAccountID(f.AccountID)
 }
 
 // MarshalBinary returns the event's JSON representation.
-func (e *FundsDeposited) MarshalBinary() ([]byte, error) { return json.Marshal(e) }
+func (f *FundsDeposited) MarshalBinary() ([]byte, error) { return json.Marshal(f) }
 
 // UnmarshalBinary populates the event from its JSON representation.
-func (e *FundsDeposited) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, e) }
+func (f *FundsDeposited) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, f) }
 
 // FundsWithdrawn is an event that indicates that funds were removed from an
 // account.
@@ -164,20 +164,20 @@ type FundsWithdrawn struct {
 }
 
 // MessageDescription returns a description of the event.
-func (e *FundsWithdrawn) MessageDescription() string {
-	return fmt.Sprintf("withdrew %s from account %s", formatCents(e.Amount), e.AccountID)
+func (f *FundsWithdrawn) MessageDescription() string {
+	return fmt.Sprintf("withdrew %s from account %s", formatCents(f.Amount), f.AccountID)
 }
 
 // Validate returns an error if the event is invalid.
-func (e *FundsWithdrawn) Validate(dogma.EventValidationScope) error {
-	return validateAccountID(e.AccountID)
+func (f *FundsWithdrawn) Validate(dogma.EventValidationScope) error {
+	return validateAccountID(f.AccountID)
 }
 
 // MarshalBinary returns the event's JSON representation.
-func (e *FundsWithdrawn) MarshalBinary() ([]byte, error) { return json.Marshal(e) }
+func (f *FundsWithdrawn) MarshalBinary() ([]byte, error) { return json.Marshal(f) }
 
 // UnmarshalBinary populates the event from its JSON representation.
-func (e *FundsWithdrawn) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, e) }
+func (f *FundsWithdrawn) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, f) }
 
 // WithdrawalDeclined is an event that indicates that a withdrawal was declined
 // because the account did not hold enough funds.
@@ -188,25 +188,25 @@ type WithdrawalDeclined struct {
 }
 
 // MessageDescription returns a description of the event.
-func (e *WithdrawalDeclined) MessageDescription() string {
+func (w *WithdrawalDeclined) MessageDescription() string {
 	return fmt.Sprintf(
 		"declined withdrawal of %s from account %s, which holds %s",
-		formatCents(e.Amount),
-		e.AccountID,
-		formatCents(e.Balance),
+		formatCents(w.Amount),
+		w.AccountID,
+		formatCents(w.Balance),
 	)
 }
 
 // Validate returns an error if the event is invalid.
-func (e *WithdrawalDeclined) Validate(dogma.EventValidationScope) error {
-	return validateAccountID(e.AccountID)
+func (w *WithdrawalDeclined) Validate(dogma.EventValidationScope) error {
+	return validateAccountID(w.AccountID)
 }
 
 // MarshalBinary returns the event's JSON representation.
-func (e *WithdrawalDeclined) MarshalBinary() ([]byte, error) { return json.Marshal(e) }
+func (w *WithdrawalDeclined) MarshalBinary() ([]byte, error) { return json.Marshal(w) }
 
 // UnmarshalBinary populates the event from its JSON representation.
-func (e *WithdrawalDeclined) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, e) }
+func (w *WithdrawalDeclined) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, w) }
 
 // StatementSent is an event that indicates that an account statement was sent
 // to the account's holder.
@@ -216,20 +216,20 @@ type StatementSent struct {
 }
 
 // MessageDescription returns a description of the event.
-func (e *StatementSent) MessageDescription() string {
-	return fmt.Sprintf("sent statement #%d for account %s", e.Number, e.AccountID)
+func (s *StatementSent) MessageDescription() string {
+	return fmt.Sprintf("sent statement #%d for account %s", s.Number, s.AccountID)
 }
 
 // Validate returns an error if the event is invalid.
-func (e *StatementSent) Validate(dogma.EventValidationScope) error {
-	return validateAccountID(e.AccountID)
+func (s *StatementSent) Validate(dogma.EventValidationScope) error {
+	return validateAccountID(s.AccountID)
 }
 
 // MarshalBinary returns the event's JSON representation.
-func (e *StatementSent) MarshalBinary() ([]byte, error) { return json.Marshal(e) }
+func (s *StatementSent) MarshalBinary() ([]byte, error) { return json.Marshal(s) }
 
 // UnmarshalBinary populates the event from its JSON representation.
-func (e *StatementSent) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, e) }
+func (s *StatementSent) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, s) }
 
 // StatementDue is a deadline that is reached when an account's next statement
 // should be sent.
@@ -239,20 +239,20 @@ type StatementDue struct {
 }
 
 // MessageDescription returns a description of the deadline.
-func (d *StatementDue) MessageDescription() string {
-	return fmt.Sprintf("statement #%d for account %s is now due", d.Number, d.AccountID)
+func (s *StatementDue) MessageDescription() string {
+	return fmt.Sprintf("statement #%d for account %s is now due", s.Number, s.AccountID)
 }
 
 // Validate returns an error if the deadline is invalid.
-func (d *StatementDue) Validate(dogma.DeadlineValidationScope) error {
-	return validateAccountID(d.AccountID)
+func (s *StatementDue) Validate(dogma.DeadlineValidationScope) error {
+	return validateAccountID(s.AccountID)
 }
 
 // MarshalBinary returns the deadline's JSON representation.
-func (d *StatementDue) MarshalBinary() ([]byte, error) { return json.Marshal(d) }
+func (s *StatementDue) MarshalBinary() ([]byte, error) { return json.Marshal(s) }
 
 // UnmarshalBinary populates the deadline from its JSON representation.
-func (d *StatementDue) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, d) }
+func (s *StatementDue) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, s) }
 
 // validateAccountID returns an error if id is not a valid account ID.
 func validateAccountID(id string) error {

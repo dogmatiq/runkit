@@ -49,4 +49,4 @@
 </html>
 {{- end}}
 
-{{define "badge"}}{{$bad := 0}}{{range .Issues}}{{if eq .Severity "bad"}}{{$bad = add $bad 1}}{{end}}{{end}}{{if $bad}} <span class="count bad" data-watch="issues">{{$bad}}</span>{{end}}{{end}}
+{{define "badge"}}{{$bad := 0}}{{range .Issues}}{{if .IsBroken}}{{$bad = add $bad 1}}{{end}}{{end}}{{if $bad}} <span class="count bad" data-watch="issues">{{$bad}}</span>{{end}}{{end}}

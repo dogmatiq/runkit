@@ -8,7 +8,7 @@
   stops, its workloads move to the others.
 </p>
 {{if not .Obs}}{{template "waiting" .}}
-{{else if not .Obs.Membership.Known}}{{template "notknown" .}}
+{{else if not .Obs.LiveNodes.Known}}{{template "notknown" .}}
 {{else}}
 <div class="cards">
 {{range .Nodes}}
@@ -27,13 +27,13 @@
       {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a> <span class="muted">{{.Label}}</span> <span class="tag">{{num .Messages}}</span>{{if .Failing}} <span class="tag bad">{{num .Failing}} failing</span>{{end}}</li>{{end}}
     </ul>
     {{end}}
-    {{if .Consumers}}
+    {{if .ConsumedStreams}}
     <h3>Consumes event streams for</h3>
     <ul class="list">
-      {{range .Consumers}}<li><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a> <span class="tag">{{plural .EventStreams "event stream" "event streams"}}</span></li>{{end}}
+      {{range .ConsumedStreams}}<li><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a> <span class="tag">{{plural .EventStreams "event stream" "event streams"}}</span></li>{{end}}
     </ul>
     {{end}}
-    {{if and (not .Queues) (not .Consumers)}}<p class="muted">Owns no workloads right now.</p>{{end}}
+    {{if and (not .Queues) (not .ConsumedStreams)}}<p class="muted">Owns no workloads right now.</p>{{end}}
   </article>
 {{else}}
   <div class="empty bad"><p>There are no live nodes. No messages are delivered and no event streams are consumed until a node starts.</p></div>

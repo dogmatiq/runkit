@@ -18,7 +18,7 @@
 {{define "notknown" -}}
 <div class="empty">
   <p>The live nodes are not known yet.</p>
-  {{with .Obs}}{{with .Membership.Reason}}<p class="muted"><code>{{.Error}}</code></p>{{end}}{{end}}
+  {{with .Obs}}{{with .LiveNodes.Reason}}<p class="muted"><code>{{.Error}}</code></p>{{end}}{{end}}
   <p class="muted">The inspector learns which nodes are live by listening for their heartbeats. It knows the live nodes once it has listened for one whole heartbeat timeout. It can not listen on a read-only replica.</p>
 </div>
 {{- end}}
@@ -96,7 +96,7 @@
       <td class="num" data-watch="cp-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.CheckpointOffset}}</td>
       <td class="num">{{if .Progress.IsRemote}}<span class="muted" title="The engine does not store the length of another engine's event stream">not known</span>{{else}}<span data-watch="len-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Length}}</span>{{end}}</td>
       <td class="num">{{if .Progress.IsRemote}}<span class="muted">-</span>{{else if .Progress.IsBehind}}<span class="tag warn" data-watch="todo-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}</td>
-      <td>{{template "owner" .Owner}}</td>
+      <td>{{template "owner" .ConsumedBy}}</td>
     </tr>
   {{else}}
     <tr><td colspan="6" class="empty-row">No event streams.</td></tr>

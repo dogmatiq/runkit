@@ -43,8 +43,8 @@ type Observation struct {
 	// is bound to, or nil if it is not bound to one.
 	BoundApplication *identitypb.Identity
 
-	// Membership is the live nodes, according to the listener.
-	Membership Membership
+	// LiveNodes is the live nodes, according to the listener.
+	LiveNodes LiveNodes
 
 	// Queues is the queues that hold at least one message, with the most
 	// messages first.
@@ -53,53 +53,23 @@ type Observation struct {
 	// QueuesErr explains why Queues could not be read.
 	QueuesErr error
 
+	// IsQueuesTruncated is true if there are more queues than the
+	// observation reads, so totals over Queues are too low.
+	IsQueuesTruncated bool
+
 	// EventStreams is the engine's event streams, ordered by ID.
 	EventStreams []EventStream
 
 	// EventStreamsErr explains why EventStreams could not be read.
 	EventStreamsErr error
 
+	// IsEventStreamsTruncated is true if there are more event streams than
+	// the observation reads, so totals over EventStreams are too low.
+	IsEventStreamsTruncated bool
+
 	// Handlers is a summary of each of the application's handlers, in the
 	// order of [Application.Handlers].
 	Handlers []HandlerSummary
-}
-
-// HandlerSummary is what an observation read about one handler.
-type HandlerSummary struct {
-	// Handler is the handler.
-	Handler *Handler
-
-	// Instances is the number of instances, for an aggregate or process
-	// handler.
-	Instances InstanceCount
-
-	// InstancesErr explains why Instances could not be counted.
-	InstancesErr error
-
-	// Progress is how far the handler has got through each event stream, for
-	// a process or projection handler.
-	Progress []StreamProgress
-
-	// ProgressErr explains why Progress could not be read.
-	ProgressErr error
-
-	// LastCompactedAt is the time that the engine stored as the projection's
-	// most recent compaction, for a projection handler. It is zero if the
-	// engine has stored none.
-	LastCompactedAt time.Time
-
-	// CompactionErr explains why LastCompactedAt could not be read.
-	CompactionErr error
-}
-
-// Unhandled returns the total number of events that the handler has not yet
-// handled, across every local event stream.
-func (s HandlerSummary) Unhandled() int {
-	n := 0
-	for _, p := range s.Progress {
-		n += p.Unhandled
-	}
-	return n
 }
 
 // Events returns the total number of events on the observed event streams.
@@ -154,6 +124,45 @@ func (o *Observation) Handler(key *uuidpb.UUID) (HandlerSummary, bool) {
 	return HandlerSummary{}, false
 }
 
+// HandlerSummary is what an observation read about one handler.
+type HandlerSummary struct {
+	// Handler is the handler.
+	Handler *Handler
+
+	// Instances is the number of instances, for an aggregate or process
+	// handler.
+	Instances InstanceCount
+
+	// InstancesErr explains why Instances could not be counted.
+	InstancesErr error
+
+	// Progress is how far the handler has got through each event stream, for
+	// a process or projection handler.
+	Progress []StreamProgress
+
+	// ProgressErr explains why Progress could not be read.
+	ProgressErr error
+
+	// LastCompactedAt is the time that the engine stores as the projection's
+	// most recent compaction, for a projection handler. Before the first
+	// compaction, it is the time that an engine first ran the handler. It is
+	// zero if no engine has run the handler.
+	LastCompactedAt time.Time
+
+	// CompactionErr explains why LastCompactedAt could not be read.
+	CompactionErr error
+}
+
+// Unhandled returns the total number of events that the handler has not yet
+// handled, across every local event stream.
+func (h HandlerSummary) Unhandled() int {
+	n := 0
+	for _, p := range h.Progress {
+		n += p.Unhandled
+	}
+	return n
+}
+
 // Sample is a few totals from one observation, kept to show how they change
 // over time.
 type Sample struct {
@@ -195,38 +204,46 @@ type Observer struct {
 	MaxInterval time.Duration
 
 	// SlowInterval is the shortest time between two readings of the parts of
-	// an observation that cost the most to read, such as the number of
-	// instances of each handler, and the checkpoint offsets of projection
-	// handlers.
+	// an observation that cost the most to read. Those are the number of
+	// instances of each handler, and how far each process and projection
+	// handler has got through each event stream.
 	SlowInterval time.Duration
 
-	// CheckpointTimeout is the time allowed for each call to a projection
-	// handler's CheckpointOffset method.
+	// CheckpointTimeout is the time allowed for all of the calls to one
+	// projection handler's CheckpointOffset method in one reading.
 	CheckpointTimeout time.Duration
 
-	// OnObserve, if non-nil, is called after each observation.
+	// OnObserve is called after each observation.
 	OnObserve func(*Observation)
 
-	// m guards the fields below it.
-	m       sync.Mutex
-	latest  *Observation
+	// m guards latest and history.
+	m sync.Mutex
+
+	// latest is the most recent observation, or nil.
+	latest *Observation
+
+	// history is the samples from the recent observations, oldest first.
 	history []Sample
+
+	// changedOnce guards the creation of changed.
+	changedOnce sync.Once
 
 	// changed is notified when the engine signals that something has changed.
 	changed chan struct{}
 
 	// slowAt is the time that the slow parts of an observation were last
-	// read, and slow is what was read. Only the Run goroutine uses them.
+	// read. Only the Run goroutine uses it.
 	slowAt time.Time
-	slow   map[string]HandlerSummary
+
+	// slow is what was read at slowAt, keyed by handler key. Only the Run
+	// goroutine uses it.
+	slow map[string]HandlerSummary
 }
 
 // Changed tells the observer that something in the database has changed.
 func (o *Observer) Changed() {
-	o.init()
-
 	select {
-	case o.changed <- struct{}{}:
+	case o.changedSignal() <- struct{}{}:
 	default:
 	}
 }
@@ -266,7 +283,11 @@ func (o *Observer) Run(ctx context.Context) error {
 		panic("checkpoint timeout must be positive")
 	}
 
-	o.init()
+	if o.OnObserve == nil {
+		panic("observe callback must not be nil")
+	}
+
+	changed := o.changedSignal()
 
 	for {
 		obs := o.observe(ctx)
@@ -275,10 +296,7 @@ func (o *Observer) Run(ctx context.Context) error {
 		}
 
 		o.publish(obs)
-
-		if o.OnObserve != nil {
-			o.OnObserve(obs)
-		}
+		o.OnObserve(obs)
 
 		// Wait at least the minimum interval, so that a busy engine's signals
 		// don't set the rate of reads.
@@ -291,19 +309,19 @@ func (o *Observer) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-o.changed:
+		case <-changed:
 		case <-time.After(o.MaxInterval - o.MinInterval):
 		}
 	}
 }
 
-func (o *Observer) init() {
-	o.m.Lock()
-	defer o.m.Unlock()
-
-	if o.changed == nil {
+// changedSignal returns the channel that [Observer.Changed] notifies.
+func (o *Observer) changedSignal() chan struct{} {
+	o.changedOnce.Do(func() {
 		o.changed = make(chan struct{}, 1)
-	}
+	})
+
+	return o.changed
 }
 
 func (o *Observer) publish(obs *Observation) {
@@ -336,7 +354,7 @@ func (o *Observer) publish(obs *Observation) {
 // observe reads one observation.
 func (o *Observer) observe(ctx context.Context) *Observation {
 	obs := &Observation{
-		Membership: o.Listener.Membership(time.Now()),
+		LiveNodes: o.Listener.LiveNodes(time.Now()),
 	}
 
 	at, bound, err := o.Database.boundApplication(ctx)
@@ -348,8 +366,18 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 	obs.At = at
 	obs.ReadAt = time.Now()
 	obs.BoundApplication = bound
-	obs.Queues, obs.QueuesErr = o.Database.queues(ctx, listLimit)
-	obs.EventStreams, obs.EventStreamsErr = o.Database.eventStreams(ctx, listLimit)
+
+	obs.Queues, obs.QueuesErr = o.Database.queues(ctx, listLimit+1)
+	if len(obs.Queues) > listLimit {
+		obs.Queues = obs.Queues[:listLimit]
+		obs.IsQueuesTruncated = true
+	}
+
+	obs.EventStreams, obs.EventStreamsErr = o.Database.eventStreams(ctx, listLimit+1)
+	if len(obs.EventStreams) > listLimit {
+		obs.EventStreams = obs.EventStreams[:listLimit]
+		obs.IsEventStreamsTruncated = true
+	}
 
 	if time.Since(o.slowAt) >= o.SlowInterval {
 		o.slow = o.observeSlowParts(ctx, obs)
@@ -362,10 +390,7 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 		s := o.slow[h.Key.AsString()]
 		s.Handler = h
 
-		switch h.Type {
-		case config.ProcessHandlerType:
-			s.Progress, s.ProgressErr = o.Database.processProgress(ctx, h, listLimit)
-		case config.ProjectionHandlerType:
+		if h.Type == config.ProjectionHandlerType {
 			s.LastCompactedAt = compactions[h.Key.AsString()]
 			s.CompactionErr = compactionsErr
 		}
@@ -387,19 +412,23 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 		switch h.Type {
 		case config.AggregateHandlerType:
 			s.Instances, s.InstancesErr = o.Database.CountAggregateInstances(ctx, h.Key)
+
 		case config.ProcessHandlerType:
 			s.Instances, s.InstancesErr = o.Database.CountProcessInstances(ctx, h.Key)
+			s.Progress, s.ProgressErr = o.Database.processProgress(ctx, h, listLimit)
+
 		case config.ProjectionHandlerType:
 			if obs.EventStreamsErr != nil {
 				s.ProgressErr = obs.EventStreamsErr
-			} else {
-				s.Progress, s.ProgressErr = o.Database.projectionProgress(
-					ctx,
-					h,
-					obs.EventStreams,
-					o.CheckpointTimeout,
-				)
+				break
 			}
+
+			s.Progress, s.ProgressErr = o.Database.projectionProgress(
+				ctx,
+				h,
+				obs.EventStreams,
+				o.CheckpointTimeout,
+			)
 		}
 
 		slow[h.Key.AsString()] = s
@@ -444,8 +473,8 @@ func (d *Database) boundApplication(ctx context.Context) (time.Time, *identitypb
 	return at, identitypb.New(name.V, k), nil
 }
 
-// compactions returns the time that the engine last finished compacting each
-// projection, keyed by handler key.
+// compactions returns the time that the engine stores as each projection's
+// most recent compaction, keyed by handler key.
 func (d *Database) compactions(ctx context.Context) (map[string]time.Time, error) {
 	compactions := map[string]time.Time{}
 

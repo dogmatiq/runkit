@@ -51,7 +51,7 @@ func (a *App) Configure(c dogma.ApplicationConfigurer) {
 // accountHandler is the aggregate message handler for bank accounts.
 type accountHandler struct{}
 
-func (h *accountHandler) Configure(c dogma.AggregateConfigurer) {
+func (a *accountHandler) Configure(c dogma.AggregateConfigurer) {
 	c.Identity("account", "23b6d1c5-a4d0-4b15-8424-3557e59f962e")
 	c.Routes(
 		dogma.HandlesCommand[*OpenAccount](),
@@ -64,11 +64,11 @@ func (h *accountHandler) Configure(c dogma.AggregateConfigurer) {
 	)
 }
 
-func (h *accountHandler) New() *account {
+func (a *accountHandler) New() *account {
 	return &account{}
 }
 
-func (h *accountHandler) RouteCommandToInstance(c dogma.Command) string {
+func (a *accountHandler) RouteCommandToInstance(c dogma.Command) string {
 	switch c := c.(type) {
 	case *OpenAccount:
 		return c.AccountID
@@ -81,7 +81,7 @@ func (h *accountHandler) RouteCommandToInstance(c dogma.Command) string {
 	}
 }
 
-func (h *accountHandler) HandleCommand(
+func (a *accountHandler) HandleCommand(
 	r *account,
 	s dogma.AggregateCommandScope[*account],
 	c dogma.Command,
@@ -133,28 +133,28 @@ type account struct {
 	Balance int64
 }
 
-func (r *account) AggregateInstanceDescription() string {
-	if !r.Opened {
+func (a *account) AggregateInstanceDescription() string {
+	if !a.Opened {
 		return ""
 	}
-	return fmt.Sprintf("held by %s, balance %s", r.Name, formatCents(r.Balance))
+	return fmt.Sprintf("held by %s, balance %s", a.Name, formatCents(a.Balance))
 }
 
-func (r *account) ApplyEvent(e dogma.Event) {
+func (a *account) ApplyEvent(e dogma.Event) {
 	switch e := e.(type) {
 	case *AccountOpened:
-		r.Name = e.Name
-		r.Opened = true
+		a.Name = e.Name
+		a.Opened = true
 	case *FundsDeposited:
-		r.Balance += e.Amount
+		a.Balance += e.Amount
 	case *FundsWithdrawn:
-		r.Balance -= e.Amount
+		a.Balance -= e.Amount
 	}
 }
 
-func (r *account) MarshalBinary() ([]byte, error) { return json.Marshal(r) }
+func (a *account) MarshalBinary() ([]byte, error) { return json.Marshal(a) }
 
-func (r *account) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, r) }
+func (a *account) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, a) }
 
 // statementHandler is the process message handler that schedules the
 // statements of each account.
@@ -264,16 +264,16 @@ type statementSchedule struct {
 	Sent      int
 }
 
-func (r *statementSchedule) ProcessInstanceDescription(ended bool) string {
+func (s *statementSchedule) ProcessInstanceDescription(ended bool) string {
 	if ended {
-		return fmt.Sprintf("sent all %d statements", r.Sent)
+		return fmt.Sprintf("sent all %d statements", s.Sent)
 	}
-	return fmt.Sprintf("sent %d of %d statements", r.Sent, statementsPerAccount)
+	return fmt.Sprintf("sent %d of %d statements", s.Sent, statementsPerAccount)
 }
 
-func (r *statementSchedule) MarshalBinary() ([]byte, error) { return json.Marshal(r) }
+func (s *statementSchedule) MarshalBinary() ([]byte, error) { return json.Marshal(s) }
 
-func (r *statementSchedule) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, r) }
+func (s *statementSchedule) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, s) }
 
 // mailerHandler is the integration message handler that sends statements.
 type mailerHandler struct {
@@ -282,7 +282,7 @@ type mailerHandler struct {
 	FailureRate float64
 }
 
-func (h *mailerHandler) Configure(c dogma.IntegrationConfigurer) {
+func (m *mailerHandler) Configure(c dogma.IntegrationConfigurer) {
 	c.Identity("mailer", "7e958523-aef2-4ef4-bbff-a7c000ed4df5")
 	c.ConcurrencyPreference(dogma.MinimizeConcurrency)
 	c.Routes(
@@ -291,14 +291,14 @@ func (h *mailerHandler) Configure(c dogma.IntegrationConfigurer) {
 	)
 }
 
-func (h *mailerHandler) HandleCommand(
+func (m *mailerHandler) HandleCommand(
 	_ context.Context,
 	s dogma.IntegrationCommandScope,
 	c dogma.Command,
 ) error {
 	send := c.(*SendStatement)
 
-	if rand.Float64() < h.FailureRate {
+	if rand.Float64() < m.FailureRate {
 		return errors.New("mail server refused the connection")
 	}
 
@@ -324,7 +324,7 @@ type BalanceProjection struct {
 }
 
 // Configure declares the handler's configuration.
-func (p *BalanceProjection) Configure(c dogma.ProjectionConfigurer) {
+func (b *BalanceProjection) Configure(c dogma.ProjectionConfigurer) {
 	c.Identity("balances", "92be8333-ca3b-4b3f-8ba9-d0d1efae25cc")
 	c.Routes(
 		dogma.HandlesEvent[*FundsDeposited](),
@@ -333,42 +333,42 @@ func (p *BalanceProjection) Configure(c dogma.ProjectionConfigurer) {
 }
 
 // HandleEvent updates the balance of the event's account.
-func (p *BalanceProjection) HandleEvent(
+func (b *BalanceProjection) HandleEvent(
 	_ context.Context,
 	s dogma.ProjectionEventScope,
 	e dogma.Event,
 ) (uint64, error) {
-	p.m.Lock()
-	defer p.m.Unlock()
+	b.m.Lock()
+	defer b.m.Unlock()
 
-	if p.offsets == nil {
-		p.offsets = map[string]uint64{}
-		p.balances = map[string]int64{}
+	if b.offsets == nil {
+		b.offsets = map[string]uint64{}
+		b.balances = map[string]int64{}
 	}
 
-	cp := p.offsets[s.StreamID()]
+	cp := b.offsets[s.StreamID()]
 	if cp != s.CheckpointOffset() {
 		return cp, nil
 	}
 
 	switch e := e.(type) {
 	case *FundsDeposited:
-		p.balances[e.AccountID] += e.Amount
+		b.balances[e.AccountID] += e.Amount
 	case *FundsWithdrawn:
-		p.balances[e.AccountID] -= e.Amount
+		b.balances[e.AccountID] -= e.Amount
 	}
 
 	cp = s.Offset() + 1
-	p.offsets[s.StreamID()] = cp
+	b.offsets[s.StreamID()] = cp
 
 	return cp, nil
 }
 
 // CheckpointOffset returns the offset at which the projection resumes handling
 // events from the stream with the given ID.
-func (p *BalanceProjection) CheckpointOffset(_ context.Context, id string) (uint64, error) {
-	p.m.Lock()
-	defer p.m.Unlock()
+func (b *BalanceProjection) CheckpointOffset(_ context.Context, id string) (uint64, error) {
+	b.m.Lock()
+	defer b.m.Unlock()
 
-	return p.offsets[id], nil
+	return b.offsets[id], nil
 }

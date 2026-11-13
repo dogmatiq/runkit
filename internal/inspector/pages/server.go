@@ -2,6 +2,7 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -10,11 +11,14 @@ import (
 	"github.com/dogmatiq/runkit/internal/inspector/observe"
 )
 
-// contentSecurityPolicy allows the page to load scripts only from the
-// inspector itself and from the CDN that serves htmx, and everything else
-// only from the inspector.
+// htmxURL is the URL of the htmx script that every page loads. The layout
+// template has the same URL, with the script's integrity hash.
+const htmxURL = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
+
+// contentSecurityPolicy allows the page to load the htmx script from its CDN,
+// and everything else only from the inspector.
 const contentSecurityPolicy = "default-src 'none'; " +
-	"script-src 'self' https://cdn.jsdelivr.net; " +
+	"script-src 'self' " + htmxURL + "; " +
 	"style-src 'self'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
@@ -42,8 +46,17 @@ type Server struct {
 	// it run again.
 	PageTTL time.Duration
 
-	once  sync.Once
-	mux   *http.ServeMux
+	// RenderTimeout is the time allowed to render one page, including the
+	// queries behind it.
+	RenderTimeout time.Duration
+
+	// once guards the initialization of mux and cache.
+	once sync.Once
+
+	// mux routes each request to its handler.
+	mux *http.ServeMux
+
+	// cache holds the rendered pages.
 	cache pageCache
 }
 
@@ -69,6 +82,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) init() {
 	if s.PageTTL <= 0 {
 		panic("page TTL must be positive")
+	}
+
+	if s.RenderTimeout <= 0 {
+		panic("render timeout must be positive")
 	}
 
 	s.cache.TTL = s.PageTTL
@@ -99,6 +116,15 @@ func (s *Server) page(pattern string, fn func(http.ResponseWriter, *http.Request
 			p := s.cache.Get(
 				r.URL.RequestURI(),
 				func(w http.ResponseWriter) {
+					// Other viewers may wait for this render, so it must not
+					// fail because the viewer who started it went away.
+					ctx, cancel := context.WithTimeout(
+						context.WithoutCancel(r.Context()),
+						s.RenderTimeout,
+					)
+					defer cancel()
+
+					r := r.WithContext(ctx)
 					fn(w, r, s.frame(r))
 				},
 			)
@@ -123,46 +149,10 @@ func staticHandler() http.Handler {
 	)
 }
 
-// frame is what every page needs to render its layout.
-type frame struct {
-	// Title is the page's title.
-	Title string
-
-	// Section is the navigation link that the page belongs to.
-	Section string
-
-	// Root is the relative URL of the inspector's root, ending in a slash.
-	// Every link on the page starts with it, so the inspector works wherever
-	// it is mounted.
-	Root string
-
-	// Self is the relative URL of the page itself, which the page fetches
-	// again when an update arrives.
-	Self string
-
-	// App is the application that the inspector is linked with.
-	App *observe.Application
-
-	// Obs is the most recent observation, or nil if there has not been one
-	// yet.
-	Obs *observe.Observation
-
-	// Now is the database's clock, estimated from the most recent
-	// observation.
-	Now time.Time
-
-	// LocalNow is the inspector's clock. Heartbeat times come from it.
-	LocalNow time.Time
-
-	// Issues is the things that need attention, from the most recent
-	// observation.
-	Issues []issue
-}
-
 // frame returns the frame for the given request.
 func (s *Server) frame(r *http.Request) frame {
 	f := frame{
-		Root: rootOf(r.URL.Path),
+		Root: rootOf(r.URL.EscapedPath()),
 		App:  s.Application,
 		Obs:  s.Observer.Latest(),
 	}

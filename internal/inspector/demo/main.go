@@ -36,6 +36,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/inspector/demoapp"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -121,27 +122,58 @@ func run(ctx context.Context, serverDSN string) error {
 	fmt.Printf("database %q, read by role %q\n", name, name)
 	fmt.Printf("inspector: http://%s/\n", listener.Addr())
 
-	go http.Serve(listener, insp)
-	go insp.Run(ctx)
-
-	cluster := &cluster{
-		App: app,
-		DB:  engineDB,
+	httpServer := &http.Server{
+		Handler: insp,
 	}
 
-	go cluster.Run(ctx)
-	go executeCommands(ctx, cluster)
+	cluster := &cluster{
+		app: app,
+		db:  engineDB,
+	}
 
-	<-ctx.Done()
-	return ctx.Err()
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return insp.Run(ctx)
+	})
+
+	g.Go(func() error {
+		if err := httpServer.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return ctx.Err()
+	})
+
+	g.Go(func() error {
+		<-ctx.Done()
+		return httpServer.Close()
+	})
+
+	g.Go(func() error {
+		cluster.Run(ctx)
+		return ctx.Err()
+	})
+
+	g.Go(func() error {
+		executeCommands(ctx, cluster)
+		return ctx.Err()
+	})
+
+	return g.Wait()
 }
 
 // cluster runs the demo's engine nodes in this process.
 type cluster struct {
-	App dogma.Application
-	DB  *sql.DB
+	// app is the application that every node runs.
+	app dogma.Application
 
-	m     sync.Mutex
+	// db is the engine's database.
+	db *sql.DB
+
+	// m guards nodes.
+	m sync.Mutex
+
+	// nodes is the running nodes, oldest first.
 	nodes []node
 }
 
@@ -188,8 +220,8 @@ func (c *cluster) start(ctx context.Context) {
 	nodeCtx, stop := context.WithCancel(ctx)
 
 	e := runkit.New(
-		c.App,
-		c.DB,
+		c.app,
+		c.db,
 		runkit.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 

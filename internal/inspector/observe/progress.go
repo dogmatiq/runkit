@@ -168,8 +168,8 @@ func (d *Database) processProgress(
 // through each of the given local event streams.
 //
 // A projection handler stores its checkpoint offsets in its own storage, so
-// it calls the handler's CheckpointOffset method for each stream, with the
-// given timeout. That method only reads.
+// it calls the handler's CheckpointOffset method for each stream. The given
+// timeout applies to all of the calls together.
 func (d *Database) projectionProgress(
 	ctx context.Context,
 	h *Handler,
@@ -180,15 +180,15 @@ func (d *Database) projectionProgress(
 		return nil, fmt.Errorf("%s is not a projection handler", h.Name)
 	}
 
+	checkpointCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	var progress []StreamProgress
 
 	for _, s := range streams {
 		cp, err := xerrors.RecoverT(
 			func() (uint64, error) {
-				ctx, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-
-				return h.Projection.CheckpointOffset(ctx, s.ID.AsString())
+				return h.Projection.CheckpointOffset(checkpointCtx, s.ID.AsString())
 			},
 		)
 		if err != nil {

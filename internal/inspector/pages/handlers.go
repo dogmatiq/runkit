@@ -1,6 +1,8 @@
 package pages
 
 import (
+	"context"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -59,8 +61,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 	// The rate between two observations is noisy, so the current rate is the
 	// average of the most recent few.
 	recent := data.EventRate[max(0, len(data.EventRate)-rateSmoothing):]
-	for _, r := range recent {
-		data.CurrentRate += r / float64(len(recent))
+	for _, eventRate := range recent {
+		data.CurrentRate += eventRate / float64(len(recent))
 	}
 
 	render(w, http.StatusOK, "overview.html", data)
@@ -72,9 +74,9 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
 
 	// nodeWorkloads is the workloads that one node owns.
 	type nodeWorkloads struct {
-		Node      observe.LiveNode
-		Queues    []queueView
-		Consumers []streamConsumers
+		Node            observe.LiveNode
+		Queues          []queueView
+		ConsumedStreams []consumedStreams
 	}
 
 	var nodes []*nodeWorkloads
@@ -82,41 +84,41 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
 	if f.Obs != nil {
 		byID := map[string]*nodeWorkloads{}
 
-		for _, n := range f.Obs.Membership.Nodes {
-			w := &nodeWorkloads{
+		for _, n := range f.Obs.LiveNodes.Nodes {
+			workloads := &nodeWorkloads{
 				Node: n,
 			}
-			nodes = append(nodes, w)
-			byID[n.ID.AsString()] = w
+			nodes = append(nodes, workloads)
+			byID[n.ID.AsString()] = workloads
 		}
 
 		for _, q := range f.Obs.Queues {
 			v := f.QueueView(q)
-			if v.Owner.ID == nil {
+			if v.DeliveredBy.ID == nil {
 				continue
 			}
-			if w, ok := byID[v.Owner.ID.AsString()]; ok {
-				w.Queues = append(w.Queues, v)
+			if workloads, ok := byID[v.DeliveredBy.ID.AsString()]; ok {
+				workloads.Queues = append(workloads.Queues, v)
 			}
 		}
 
 		for _, h := range s.Application.Handlers {
-			if !h.ConsumesEventStreams() {
+			if !h.HandlesEvents() {
 				continue
 			}
 
 			counts := map[string]int{}
 			for _, es := range f.Obs.EventStreams {
-				if id, ok := f.Obs.Membership.FindWorkloadOwner(h.StreamWorkloadKey(es.ID)); ok {
+				if id, ok := f.Obs.LiveNodes.FindWorkloadOwner(h.StreamWorkloadKey(es.ID)); ok {
 					counts[id.AsString()]++
 				}
 			}
 
 			for id, n := range counts {
-				if w, ok := byID[id]; ok {
-					w.Consumers = append(
-						w.Consumers,
-						streamConsumers{
+				if workloads, ok := byID[id]; ok {
+					workloads.ConsumedStreams = append(
+						workloads.ConsumedStreams,
+						consumedStreams{
 							Handler:      h,
 							EventStreams: n,
 						},
@@ -140,9 +142,9 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
 	)
 }
 
-// streamConsumers is the number of event streams that one node consumes on
-// behalf of one handler.
-type streamConsumers struct {
+// consumedStreams is the number of event streams that one node consumes for
+// one handler.
+type consumedStreams struct {
 	Handler      *observe.Handler
 	EventStreams int
 }
@@ -186,18 +188,18 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request, f frame) {
 		frame
 		ID          *uuidpb.UUID
 		Label       string
-		Owner       ownerView
+		DeliveredBy ownerView
 		Queue       observe.Queue
 		HasMessages bool
 		Messages    []observe.QueuedMessage
 		Err         error
 		Limit       int
 	}{
-		frame: f,
-		ID:    id,
-		Label: f.QueueLabel(id),
-		Owner: f.Owner(id),
-		Limit: pageSize * 2,
+		frame:       f,
+		ID:          id,
+		Label:       f.QueueLabel(id),
+		DeliveredBy: f.Owner(id),
+		Limit:       pageSize * 2,
 	}
 
 	if f.Obs != nil {
@@ -238,7 +240,8 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request, f frame) {
 	}
 
 	status := http.StatusOK
-	if data.Err == nil && !data.IsQueued && !data.IsEvent {
+	isMissing := !data.IsQueued && !data.IsEvent
+	if data.Err == nil && isMissing {
 		status = http.StatusNotFound
 	}
 
@@ -282,18 +285,15 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request, f frame) {
 		data.Stream, data.IsKnown = f.Obs.EventStream(id)
 	}
 
-	data.Before = data.Stream.Length
+	// The newest page reads from the end of the stream, which may be past
+	// its length in the most recent observation. Offsets are stored as
+	// bigint, so no offset is larger than math.MaxInt64.
+	data.Before = math.MaxInt64
 	data.IsNewest = true
 
 	if b, err := strconv.ParseUint(r.URL.Query().Get("before"), 10, 64); err == nil {
-		data.Before = b
+		data.Before = min(b, math.MaxInt64)
 		data.IsNewest = false
-	}
-
-	if !data.IsKnown && data.IsNewest {
-		// The stream was not in the observation, perhaps because it is past
-		// the observation's limit, so read from its end.
-		data.Before = ^uint64(0)
 	}
 
 	data.Events, data.Err = s.Database.EventStreamEvents(r.Context(), id, data.Before, pageSize)
@@ -310,9 +310,9 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request, f frame) {
 					data.Progress = append(
 						data.Progress,
 						streamProgressView{
-							Handler:  summary.Handler,
-							Progress: p,
-							Owner:    f.Owner(summary.Handler.StreamWorkloadKey(id)),
+							Handler:    summary.Handler,
+							Progress:   p,
+							ConsumedBy: f.Owner(summary.Handler.StreamWorkloadKey(id)),
 						},
 					)
 				}
@@ -326,9 +326,9 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request, f frame) {
 // streamProgressView is how far a handler has got through an event stream,
 // as a page shows it.
 type streamProgressView struct {
-	Handler  *observe.Handler
-	Progress observe.StreamProgress
-	Owner    ownerView
+	Handler    *observe.Handler
+	Progress   observe.StreamProgress
+	ConsumedBy ownerView
 }
 
 func (s *Server) handlers(w http.ResponseWriter, r *http.Request, f frame) {
@@ -383,9 +383,9 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request, f frame) {
 			data.Progress = append(
 				data.Progress,
 				streamProgressView{
-					Handler:  h,
-					Progress: p,
-					Owner:    f.Owner(h.StreamWorkloadKey(p.StreamID)),
+					Handler:    h,
+					Progress:   p,
+					ConsumedBy: f.Owner(h.StreamWorkloadKey(p.StreamID)),
 				},
 			)
 		}
@@ -426,7 +426,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request, f frame) {
 			}
 
 			if root, err := observe.ProcessRoot(h, inst); err == nil {
-				row.Description, row.DescriptionErr = observe.RootDescription(root, inst.HasEnded)
+				row.Description, row.DescriptionErr = observe.ProcessRootDescription(root, inst.HasEnded)
 			} else {
 				row.DescriptionErr = err
 			}
@@ -438,7 +438,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request, f frame) {
 	}
 
 	if commandTypes := h.MessageTypeIDs(config.HandlesCommandRouteType); len(commandTypes) > 0 {
-		data.Commands, data.CommandsErr = s.Database.QueuedCommands(ctx, commandTypes, pageSize)
+		data.Commands, data.CommandsErr = s.queuedCommands(ctx, f, commandTypes)
 	}
 
 	if lastID != "" {
@@ -502,7 +502,7 @@ func (s *Server) instance(w http.ResponseWriter, r *http.Request, f frame) {
 			root, err := s.Database.AggregateRoot(ctx, s.Application, h, data.Aggregate, maxReplayedEvents)
 			if err == nil {
 				data.RestoredRoot = format(root)
-				data.Description, data.DescriptionErr = observe.RootDescription(root, false)
+				data.Description, data.DescriptionErr = observe.AggregateRootDescription(root)
 			} else {
 				data.RestoredRoot.Err = err
 			}
@@ -519,7 +519,7 @@ func (s *Server) instance(w http.ResponseWriter, r *http.Request, f frame) {
 			root, err := observe.ProcessRoot(h, data.Process)
 			if err == nil {
 				data.RestoredRoot = format(root)
-				data.Description, data.DescriptionErr = observe.RootDescription(root, data.Process.HasEnded)
+				data.Description, data.DescriptionErr = observe.ProcessRootDescription(root, data.Process.HasEnded)
 			} else {
 				data.RestoredRoot.Err = err
 			}
@@ -546,4 +546,26 @@ func (s *Server) instance(w http.ResponseWriter, r *http.Request, f frame) {
 func parseUUID(s string) (*uuidpb.UUID, bool) {
 	id, err := uuidpb.Parse(s)
 	return id, err == nil
+}
+
+// queuedCommands returns the queued commands of the given types, in the order
+// that they become due, up to [pageSize].
+//
+// It looks only in the queues of the given frame's observation, so that the
+// query can use the index on queue IDs.
+func (s *Server) queuedCommands(
+	ctx context.Context,
+	f frame,
+	typeIDs []*uuidpb.UUID,
+) ([]observe.QueuedMessage, error) {
+	if f.Obs == nil {
+		return nil, nil
+	}
+
+	var queueIDs []*uuidpb.UUID
+	for _, q := range f.Obs.Queues {
+		queueIDs = append(queueIDs, q.ID)
+	}
+
+	return s.Database.QueuedCommands(ctx, queueIDs, typeIDs, pageSize)
 }

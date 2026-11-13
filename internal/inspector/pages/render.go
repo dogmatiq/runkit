@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/enginekit/config"
@@ -91,7 +90,9 @@ func render(w http.ResponseWriter, status int, name string, data any) {
 
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "<p>Unable to render this page: %s</p>", template.HTMLEscapeString(err.Error()))
 		return
 	}
 
@@ -277,86 +278,3 @@ func sparkline(values []float64) template.HTML {
 		),
 	)
 }
-
-// pageCache holds rendered pages for a short time, so that however many
-// people view a page, and however often their browsers refresh it, the
-// queries behind it run at most once per [pageCache.TTL].
-type pageCache struct {
-	// TTL is how long a rendered page is kept.
-	TTL time.Duration
-
-	m     sync.Mutex
-	pages map[string]cachedPage
-}
-
-// cachedPage is a rendered page.
-type cachedPage struct {
-	Status  int
-	Body    []byte
-	Expires time.Time
-}
-
-// Get returns the rendered page for the given URL, calling render to render
-// it if the cache does not hold it.
-func (c *pageCache) Get(key string, render func(http.ResponseWriter)) cachedPage {
-	if p, ok := c.load(key); ok {
-		return p
-	}
-
-	rec := &recorder{
-		header: http.Header{},
-		status: http.StatusOK,
-	}
-	render(rec)
-
-	p := cachedPage{
-		Status:  rec.status,
-		Body:    rec.body.Bytes(),
-		Expires: time.Now().Add(c.TTL),
-	}
-
-	c.store(key, p)
-
-	return p
-}
-
-func (c *pageCache) load(key string) (cachedPage, bool) {
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	p, ok := c.pages[key]
-	if !ok || time.Now().After(p.Expires) {
-		return cachedPage{}, false
-	}
-
-	return p, true
-}
-
-func (c *pageCache) store(key string, p cachedPage) {
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	if c.pages == nil {
-		c.pages = map[string]cachedPage{}
-	}
-
-	now := time.Now()
-	for k, existing := range c.pages {
-		if now.After(existing.Expires) {
-			delete(c.pages, k)
-		}
-	}
-
-	c.pages[key] = p
-}
-
-// recorder is an [http.ResponseWriter] that keeps what is written to it.
-type recorder struct {
-	header http.Header
-	status int
-	body   bytes.Buffer
-}
-
-func (r *recorder) Header() http.Header         { return r.header }
-func (r *recorder) Write(b []byte) (int, error) { return r.body.Write(b) }
-func (r *recorder) WriteHeader(status int)      { r.status = status }

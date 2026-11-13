@@ -5,23 +5,47 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dapper"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/inspector/observe"
 )
 
-// ownerView is the node that owns a workload, as a page shows it.
-type ownerView struct {
-	// Root is the relative URL of the inspector's root.
+// frame is what every page needs to render its layout.
+type frame struct {
+	// Title is the page's title.
+	Title string
+
+	// Section is the navigation link that the page belongs to.
+	Section string
+
+	// Root is the relative URL of the inspector's root, ending in a slash.
+	// Every link on the page starts with it, so the inspector works wherever
+	// it is mounted.
 	Root string
 
-	// Known is false if the live nodes are not known.
-	Known bool
+	// Self is the relative URL of the page itself, which the page fetches
+	// again when an update arrives.
+	Self string
 
-	// ID is the ID of the node that owns the workload, or nil if there are no
-	// live nodes.
-	ID *uuidpb.UUID
+	// App is the application that the inspector is linked with.
+	App *observe.Application
+
+	// Obs is the most recent observation, or nil if there has not been one
+	// yet.
+	Obs *observe.Observation
+
+	// Now is the database's clock, estimated from the most recent
+	// observation.
+	Now time.Time
+
+	// LocalNow is the inspector's clock. Heartbeat times come from it.
+	LocalNow time.Time
+
+	// Issues is the things that need attention, from the most recent
+	// observation.
+	Issues []issue
 }
 
 // Owner returns the node that owns the workload with the given key.
@@ -30,44 +54,22 @@ func (f frame) Owner(key *uuidpb.UUID) ownerView {
 		Root: f.Root,
 	}
 
-	if f.Obs == nil || !f.Obs.Membership.Known {
+	if f.Obs == nil || !f.Obs.LiveNodes.Known {
 		return v
 	}
 
 	v.Known = true
-	v.ID, _ = f.Obs.Membership.FindWorkloadOwner(key)
+	v.ID, _ = f.Obs.LiveNodes.FindWorkloadOwner(key)
 
 	return v
-}
-
-// Node returns a view of the node with the given ID, as the owner of
-// something.
-func (f frame) Node(id *uuidpb.UUID) ownerView {
-	return ownerView{
-		Root:  f.Root,
-		Known: true,
-		ID:    id,
-	}
-}
-
-// queueView is a queue, as a page shows it.
-type queueView struct {
-	observe.Queue
-
-	// Label says what the queue's messages are.
-	Label string
-
-	// Owner is the node that owns the workload of delivering the queue's
-	// messages.
-	Owner ownerView
 }
 
 // QueueView returns a view of the given queue.
 func (f frame) QueueView(q observe.Queue) queueView {
 	return queueView{
-		Queue: q,
-		Label: f.QueueLabel(q.ID),
-		Owner: f.Owner(q.ID),
+		Queue:       q,
+		Label:       f.QueueLabel(q.ID),
+		DeliveredBy: f.Owner(q.ID),
 	}
 }
 
@@ -79,8 +81,16 @@ func (f frame) QueueView(q observe.Queue) queueView {
 // handler's key. A command for an aggregate instance goes to the queue whose
 // ID is the instance's event stream ID. Everything else goes to the queue
 // whose ID is the ID of the node that added it.
+//
+// Before version 0.3.0, the engine kept commands and deadlines in other
+// tables. Upgrading moved each command to the queue whose ID is its message
+// type ID, and each deadline to the queue whose ID is its process handler's
+// key.
 func (f frame) QueueLabel(id *uuidpb.UUID) string {
 	if h, ok := f.App.Handler(id); ok {
+		if h.Type == config.ProcessHandlerType {
+			return "deadlines for " + h.Name + ", added before version 0.3.0"
+		}
 		return "commands for " + h.Name
 	}
 
@@ -88,6 +98,10 @@ func (f frame) QueueLabel(id *uuidpb.UUID) string {
 		if _, ok := f.Obs.EventStream(id); ok {
 			return "commands for aggregate instances on event stream " + shortID(id)
 		}
+	}
+
+	if t := f.App.MessageType(id); t.Name != "" {
+		return "commands of type " + t.Name + ", added before version 0.3.0"
 	}
 
 	return "messages added by the node with this ID"
@@ -114,26 +128,6 @@ func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {
 	}
 
 	return nil
-}
-
-// MessageType returns the message type with the given ID.
-func (f frame) MessageType(id *uuidpb.UUID) *observe.MessageType {
-	return f.App.MessageType(id)
-}
-
-// envelopeView is a message envelope, as a page shows it.
-type envelopeView struct {
-	MessageID         *uuidpb.UUID
-	CausationID       *uuidpb.UUID
-	CorrelationID     *uuidpb.UUID
-	Description       string
-	Type              *observe.MessageType
-	CreatedAt         time.Time
-	ScheduledFor      time.Time
-	IdempotencyKey    string
-	SourceApplication *identitypb.Identity
-	SourceHandler     *identitypb.Identity
-	SourceInstanceID  string
 }
 
 // Envelope returns a view of the given envelope.
@@ -164,21 +158,6 @@ func (f frame) Envelope(env *envelopepb.Envelope) envelopeView {
 	return v
 }
 
-// IsCausedBySelf returns true if the message is its own cause, which is true
-// of a command that application code outside any handler executed.
-func (v envelopeView) IsCausedBySelf() bool {
-	return v.CausationID.Equal(v.MessageID)
-}
-
-// payloadView is the content of a message or root, decoded and formatted.
-type payloadView struct {
-	// Text is the formatted content.
-	Text string
-
-	// Err explains why the content could not be decoded.
-	Err error
-}
-
 // Payload returns the decoded content of the message in the given envelope.
 func (f frame) Payload(env *envelopepb.Envelope) payloadView {
 	m, err := f.App.DecodeMessage(
@@ -192,6 +171,61 @@ func (f frame) Payload(env *envelopepb.Envelope) payloadView {
 	}
 
 	return format(m)
+}
+
+// ownerView is the node that owns a workload, as a page shows it.
+type ownerView struct {
+	// Root is the relative URL of the inspector's root.
+	Root string
+
+	// Known is false if the live nodes are not known.
+	Known bool
+
+	// ID is the ID of the node that owns the workload, or nil if there are no
+	// live nodes.
+	ID *uuidpb.UUID
+}
+
+// queueView is a queue, as a page shows it.
+type queueView struct {
+	observe.Queue
+
+	// Label says what the queue's messages are.
+	Label string
+
+	// DeliveredBy is the node that owns the workload of delivering the
+	// queue's messages.
+	DeliveredBy ownerView
+}
+
+// envelopeView is a message envelope, as a page shows it.
+type envelopeView struct {
+	MessageID         *uuidpb.UUID
+	CausationID       *uuidpb.UUID
+	CorrelationID     *uuidpb.UUID
+	Description       string
+	Type              *observe.MessageType
+	CreatedAt         time.Time
+	ScheduledFor      time.Time
+	IdempotencyKey    string
+	SourceApplication *identitypb.Identity
+	SourceHandler     *identitypb.Identity
+	SourceInstanceID  string
+}
+
+// IsCausedBySelf returns true if the message is its own cause, which is true
+// of a command that application code outside any handler executed.
+func (v envelopeView) IsCausedBySelf() bool {
+	return v.CausationID.Equal(v.MessageID)
+}
+
+// payloadView is the content of a message or root, decoded and formatted.
+type payloadView struct {
+	// Text is the formatted content.
+	Text string
+
+	// Err explains why the content could not be decoded.
+	Err error
 }
 
 // format returns the formatted form of v. It returns an error if formatting

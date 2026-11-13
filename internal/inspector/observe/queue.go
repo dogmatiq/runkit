@@ -200,10 +200,11 @@ func (d *Database) QueuedMessages(
 	)
 }
 
-// QueuedCommands returns the commands of the given types that have not yet
-// been delivered, in the order that they become due, up to the given limit.
+// QueuedCommands returns the commands of the given types in the queues with
+// the given IDs, in the order that they become due, up to the given limit.
 func (d *Database) QueuedCommands(
 	ctx context.Context,
+	queueIDs []*uuidpb.UUID,
 	typeIDs []*uuidpb.UUID,
 	limit int,
 ) ([]QueuedMessage, error) {
@@ -211,10 +212,12 @@ func (d *Database) QueuedCommands(
 		ctx,
 		`SELECT `+queuedMessageColumns+`
 		FROM messagequeue.messages AS m
-		WHERE m.handler_key IS NULL
-			AND m.message_type_id = ANY($1)
+		WHERE m.queue_id = ANY($1)
+			AND m.message_type_id = ANY($2)
+			AND m.handler_key IS NULL
 		ORDER BY m.next_attempt_at, m.message_id
-		LIMIT $2`,
+		LIMIT $3`,
+		xsql.UUIDs(queueIDs...),
 		xsql.UUIDs(typeIDs...),
 		limit,
 	)
