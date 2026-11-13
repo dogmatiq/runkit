@@ -26,7 +26,7 @@ func TestTracker(t *testing.T) {
 			failures.WorkFailed(t.Context(), failure)
 			failures.WorkSucceeded(t.Context())
 
-			expectDelay(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
+			expectNextAttempt(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
 		})
 	})
 
@@ -43,7 +43,7 @@ func TestTracker(t *testing.T) {
 			failures.WorkSucceeded(t.Context())
 			time.Sleep(10 * time.Second)
 
-			expectDelay(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
+			expectNextAttempt(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
 		})
 	})
 
@@ -60,7 +60,7 @@ func TestTracker(t *testing.T) {
 			failures.WorkSucceeded(t.Context())
 			time.Sleep(31 * time.Second)
 
-			expectDelay(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
+			expectNextAttempt(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
 		})
 	})
 
@@ -82,7 +82,7 @@ func TestTracker(t *testing.T) {
 			time.Sleep(31 * time.Second)
 			synctest.Wait()
 
-			expectDelay(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
+			expectNextAttempt(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
 		})
 	})
 

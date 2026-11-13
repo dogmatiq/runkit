@@ -12,7 +12,6 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
-	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -86,14 +85,13 @@ func (i *instance) Save(
 	ctx context.Context,
 	tx *sql.Tx,
 	scope *messageScope,
-	engineLogger *slog.Logger,
 ) error {
 	if scope.Ended {
 		return i.end(ctx, tx)
 	}
 
 	if scope.Mutated {
-		state, err := i.marshalRoot(ctx, engineLogger)
+		state, err := i.marshalRoot()
 		if err != nil {
 			return err
 		}
@@ -119,21 +117,19 @@ func (i *instance) Save(
 // marshalRoot returns the binary form of the instance's root, from its
 // MarshalBinary method.
 //
-// It returns [messagequeue.ErrFailed] if the root can't be marshaled.
-func (i *instance) marshalRoot(ctx context.Context, engineLogger *slog.Logger) ([]byte, error) {
+// It returns a deterministic error if the root can't be marshaled.
+//
+// See [xerrors.IsDeterministic].
+func (i *instance) marshalRoot() ([]byte, error) {
 	data, err := xerrors.RecoverT(
 		func() ([]byte, error) {
 			return i.Root.MarshalBinary()
 		},
 	)
 	if err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to marshal process instance state",
-			xslog.Error(err),
+		return nil, xerrors.Deterministic(
+			fmt.Errorf("unable to marshal process instance %q: %w", i.ID, err),
 		)
-
-		return nil, messagequeue.ErrFailed
 	}
 
 	return data, nil
@@ -237,8 +233,10 @@ func (i *instance) addDeadlinesToQueue(
 //
 // Unless the instance has ended, the returned instance is bound to a deadline
 // queue, as [instance.BindToDeadlineQueue] describes, and has its root. It
-// returns [messagequeue.ErrFailed] if the given handler can't create the root,
-// or the root can't unmarshal the instance's stored state.
+// returns a deterministic error if the given handler can't create the root, or
+// the root can't unmarshal the instance's stored state.
+//
+// See [xerrors.IsDeterministic].
 func lockInstance(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -246,7 +244,6 @@ func lockInstance(
 	router *messagequeue.Router,
 	handlerKey *uuidpb.UUID,
 	instanceID string,
-	engineLogger *slog.Logger,
 ) (*instance, error) {
 	// Upsert with a dummy update to acquire a row lock, guaranteeing
 	// serialized access even for brand-new instances.
@@ -291,7 +288,7 @@ func lockInstance(
 		return nil, err
 	}
 
-	root, err := newRoot(ctx, handler, state, engineLogger)
+	root, err := newRoot(handler, state)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +303,7 @@ func lockInstance(
 // It returns false if the instance doesn't exist, and [messagequeue.ErrBusy] if
 // another transaction holds the lock. Unless the instance has ended, the
 // returned instance is bound to a deadline queue and has its root, as for
-// [lockInstance]. It returns [messagequeue.ErrFailed] in the same cases as
+// [lockInstance]. It returns a deterministic error in the same cases as
 // [lockInstance].
 func tryLockInstance(
 	ctx context.Context,
@@ -325,8 +322,8 @@ func tryLockInstance(
 	// Another attempt to handle an event or deadline for the instance may hold
 	// the instance's lock for up to the handle timeout. This function doesn't
 	// wait for it, because waiting would keep tx and its connection open all
-	// that time. SKIP LOCKED skips the row without an error, so tx remains
-	// usable, and the consumer can use it to postpone the delivery.
+	// that time. SKIP LOCKED skips the row without an error, and the sink
+	// returns [messagequeue.ErrBusy] instead.
 	row := tx.QueryRowContext(
 		ctx,
 		`WITH exists AS (
@@ -401,7 +398,7 @@ func tryLockInstance(
 		return nil, true, err
 	}
 
-	root, err := newRoot(ctx, handler, state, engineLogger)
+	root, err := newRoot(handler, state)
 	if err != nil {
 		return nil, true, err
 	}
@@ -418,9 +415,8 @@ func writeEffects(
 	router *messagequeue.Router,
 	inst *instance,
 	scope *messageScope,
-	engineLogger *slog.Logger,
 ) error {
-	if err := inst.Save(ctx, tx, scope, engineLogger); err != nil {
+	if err := inst.Save(ctx, tx, scope); err != nil {
 		return err
 	}
 
@@ -431,11 +427,13 @@ func writeEffects(
 // unmarshals the given state into it, if there is any.
 //
 // The state is NULL until the handler first mutates an instance's root.
+//
+// It returns a deterministic error on failure.
+//
+// See [xerrors.IsDeterministic].
 func newRoot(
-	ctx context.Context,
 	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
 	state []byte,
-	engineLogger *slog.Logger,
 ) (dogma.ProcessRoot, error) {
 	root, err := xerrors.RecoverT(
 		func() (dogma.ProcessRoot, error) {
@@ -443,13 +441,7 @@ func newRoot(
 		},
 	)
 	if err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to create process root",
-			xslog.Error(err),
-		)
-
-		return nil, messagequeue.ErrFailed
+		return nil, fmt.Errorf("unable to create process root: %w", err)
 	}
 
 	if state == nil {
@@ -461,13 +453,9 @@ func newRoot(
 			return root.UnmarshalBinary(state)
 		},
 	); err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to unmarshal process instance state",
-			xslog.Error(err),
+		return nil, xerrors.Deterministic(
+			fmt.Errorf("unable to unmarshal process instance state: %w", err),
 		)
-
-		return nil, messagequeue.ErrFailed
 	}
 
 	return root, nil

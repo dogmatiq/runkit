@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"time"
@@ -74,15 +75,16 @@ func (s *DeadlineSink) Deliver(
 		instanceLogger,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to load process instance %q: %w", instanceID, err)
 	}
 
 	// The event sink stores the instance's row in the same transaction as any
 	// deadlines that the handler schedules for it, and nothing deletes the row,
 	// so it always exists.
 	if !exists {
-		instanceLogger.ErrorContext(ctx, "process instance not found")
-		return messagequeue.ErrFailed
+		return xerrors.Deterministic(
+			fmt.Errorf("process instance %q not found", instanceID),
+		)
 	}
 
 	// The instance has ended, so the deadline is canceled. Ending the instance
@@ -102,12 +104,7 @@ func (s *DeadlineSink) Deliver(
 		env,
 		&deadline,
 	); err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to unmarshal deadline",
-			xslog.Error(err),
-		)
-		return messagequeue.ErrFailed
+		return fmt.Errorf("unable to unmarshal deadline: %w", err)
 	}
 
 	scope := &deadlineScope{
@@ -139,13 +136,11 @@ func (s *DeadlineSink) Deliver(
 			return s.Handler.HandleDeadline(ctx, inst.Root, scope, deadline)
 		},
 	); err != nil {
-		instanceLogger.ErrorContext(
-			ctx,
-			"unable to handle deadline",
-			xslog.Error(err),
+		return fmt.Errorf(
+			"unable to handle deadline for process instance %q: %w",
+			inst.ID,
+			err,
 		)
-
-		return messagequeue.ErrFailed
 	}
 
 	return writeEffects(
@@ -154,7 +149,6 @@ func (s *DeadlineSink) Deliver(
 		s.QueueRouter,
 		inst,
 		&scope.messageScope,
-		instanceLogger,
 	)
 }
 

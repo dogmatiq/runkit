@@ -303,8 +303,7 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 		retryAt := time.Now().Add(c.ContentionDelay)
 		c.contendedMessages.Set(a.MessageID, retryAt)
 	case a.Err != nil:
-		backoff := c.failures.WorkFailed(ctx, a.Err)
-		c.backoffUntil = time.Now().Add(backoff)
+		c.backoffUntil = c.failures.WorkFailed(ctx, a.Err)
 	default:
 		c.failures.WorkSucceeded(ctx)
 	}

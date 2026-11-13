@@ -11,21 +11,14 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/failure"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-const (
-	// failureBackoffBase is the delay, before jitter, after a delivery's first
-	// failure.
-	//
-	// It doubles with each failure after that, up to failureBackoffMax.
-	failureBackoffBase = 100 * time.Millisecond
-
-	// failureBackoffMax is the longest delay after a failure.
-	failureBackoffMax = 5 * time.Minute
-)
+// deliveryDescription describes the work of delivering a message, in the
+// records about the delivery's failure streak.
+const deliveryDescription = "deliver message"
 
 // attemptDelivery makes an attempt to deliver the message with the given ID.
 //
@@ -34,8 +27,7 @@ const (
 //
 // If the attempt doesn't complete the delivery, it rolls back the attempt's
 // transaction, which discards everything that the sink wrote. It then postpones
-// the delivery if the attempt failed because of a problem with the message or
-// its handler, or because the sink was busy.
+// the delivery, unless the consumer is stopping.
 //
 // It returns true if the attempt completed the delivery, and the error that
 // ended the attempt, if there was one. When another transaction holds the
@@ -77,7 +69,7 @@ func (c *Consumer) attemptDelivery(
 	// The application's records are held until the attempt completes the
 	// delivery and its transaction commits, so an attempt that fails or rolls
 	// back writes none.
-	appLogger, flush := xslog.Buffered(
+	appLogger, flushLogs := xslog.Buffered(
 		c.AppLogger.With(sink.LogAttr()),
 	)
 
@@ -88,15 +80,11 @@ func (c *Consumer) attemptDelivery(
 	}
 
 	if err != nil {
-		// The message can't be delivered without a valid envelope, so its
-		// delivery is postponed as a failure.
-		engineLogger.DebugContext(
-			ctx,
-			"message envelope is invalid",
-			xslog.Error(err),
+		// Every attempt finds the same envelope, so the failure is
+		// deterministic.
+		err = xerrors.Deterministic(
+			fmt.Errorf("invalid message envelope: %w", err),
 		)
-
-		err = ErrFailed
 	} else {
 		handledMessage := xslog.Envelope("handled_message", env)
 		engineLogger = engineLogger.With(handledMessage)
@@ -119,14 +107,17 @@ func (c *Consumer) attemptDelivery(
 			return false, fmt.Errorf("unable to roll back transaction: %w", err)
 		}
 
-		switch {
-		case errors.Is(err, ErrFailed):
-			return false, c.postponeAfterFailure(ctx, d, engineLogger)
-		case errors.Is(err, ErrBusy):
-			return false, c.postponeAfterContention(ctx, d, engineLogger)
-		default:
+		// The consumer is stopping, so the error isn't a failure of the
+		// delivery, and the delivery isn't postponed.
+		if ctx.Err() != nil {
 			return false, err
 		}
+
+		if errors.Is(err, ErrBusy) {
+			return false, c.postponeAfterContention(ctx, d, engineLogger)
+		}
+
+		return false, c.postponeAfterFailure(ctx, d, err, engineLogger)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -134,7 +125,8 @@ func (c *Consumer) attemptDelivery(
 	}
 
 	engineLogger.DebugContext(ctx, "message delivery completed")
-	flush(ctx)
+	d.Streak.End(ctx, engineLogger, deliveryDescription)
+	flushLogs(ctx)
 
 	return true, nil
 }
@@ -167,7 +159,8 @@ func (c *Consumer) claimMessage(
 			queue_id,
 			envelope,
 			failures,
-			failing_since
+			first_failed_at,
+			failure_logged_as_error
 		FROM messagequeue.messages
 		WHERE message_id = $1
 			AND queue_id = ANY($2::uuid[])
@@ -187,8 +180,8 @@ func (c *Consumer) claimMessage(
 	}
 
 	var (
-		envelopeData []byte
-		failingSince sql.NullTime
+		envelopeData  []byte
+		firstFailedAt sql.NullTime
 	)
 
 	if err := row.Scan(
@@ -196,8 +189,9 @@ func (c *Consumer) claimMessage(
 		xsql.UUID(d.MessageTypeID),
 		xsql.UUID(d.QueueID),
 		&envelopeData,
-		&d.Failures,
-		&failingSince,
+		&d.Streak.Failures,
+		&firstFailedAt,
+		&d.Streak.FailureLoggedAsError,
 	); err != nil {
 		// There's no such message.
 		if errors.Is(err, sql.ErrNoRows) {
@@ -207,7 +201,7 @@ func (c *Consumer) claimMessage(
 		return Delivery{}, nil, false, fmt.Errorf("unable to claim message: %w", err)
 	}
 
-	d.FailingSince = failingSince.Time
+	d.Streak.FirstFailedAt = firstFailedAt.Time
 
 	return d, envelopeData, true, nil
 }
@@ -250,8 +244,8 @@ func (c *Consumer) deliverMessage(
 	return nil
 }
 
-// postponeAfterFailure postpones the given delivery after a failed attempt,
-// and increments its failure count.
+// postponeAfterFailure postpones the given delivery after an attempt that
+// failed with the given error, and extends its failure streak.
 //
 // It's called after the attempt's transaction has been rolled back. It writes
 // nothing if another transaction holds the message's lock, the message has
@@ -260,12 +254,24 @@ func (c *Consumer) deliverMessage(
 func (c *Consumer) postponeAfterFailure(
 	ctx context.Context,
 	d Delivery,
+	cause error,
 	engineLogger *slog.Logger,
 ) error {
-	// The delay reaches its maximum long before the shift would overflow.
-	doublings := min(d.Failures, 32)
-	backoff := min(failureBackoffBase<<doublings, failureBackoffMax)
-	delay := failure.Jitter(backoff)
+	// The failure record is held until the postponement stores the extended
+	// streak, so that a failure that isn't stored isn't logged.
+	failureLogger, flushLogs := xslog.Buffered(engineLogger)
+
+	streakBefore := d.Streak
+	streakAfter := streakBefore
+	nextAttemptAt := streakAfter.Extend(ctx, failureLogger, deliveryDescription, cause)
+
+	// The failure that the streak logs as an ERROR is written before the
+	// postponement stores that it was logged. If the engine stops in between,
+	// or the postponement doesn't happen, a later attempt logs the ERROR
+	// again, instead of never.
+	if streakAfter.FailureLoggedAsError && !streakBefore.FailureLoggedAsError {
+		flushLogs(ctx)
+	}
 
 	// The statement doesn't wait for the message's lock, and it compares only
 	// the failure count to tell whether the message has changed. Together,
@@ -285,9 +291,10 @@ func (c *Consumer) postponeAfterFailure(
 		ctx,
 		c.DB,
 		`UPDATE messagequeue.messages SET
-			failures = failures + 1,
-			failing_since = COALESCE(failing_since, clock_timestamp()),
-			next_attempt_at = clock_timestamp() + $3
+			failures = $3,
+			first_failed_at = $4,
+			failure_logged_as_error = $5,
+			next_attempt_at = $6
 		WHERE message_id = (
 			SELECT message_id
 			FROM messagequeue.messages
@@ -296,8 +303,11 @@ func (c *Consumer) postponeAfterFailure(
 			FOR UPDATE SKIP LOCKED
 		)`,
 		xsql.UUID(d.MessageID),
-		d.Failures,
-		delay,
+		streakBefore.Failures,
+		streakAfter.Failures,
+		streakAfter.FirstFailedAt,
+		streakAfter.FailureLoggedAsError,
+		nextAttemptAt,
 	)
 
 	// Another transaction holds the message's lock, or the message has been
@@ -312,22 +322,20 @@ func (c *Consumer) postponeAfterFailure(
 	}
 
 	if err != nil {
-		return fmt.Errorf("unable to postpone message: %w", err)
+		return fmt.Errorf(
+			"unable to postpone message after a failed attempt (%s): %w",
+			cause,
+			err,
+		)
 	}
 
-	engineLogger.DebugContext(
-		ctx,
-		"message delivery postponed",
-		slog.Duration("delay", delay),
-		slog.String("reason", "failure"),
-		slog.Uint64("failures", d.Failures+1),
-	)
+	flushLogs(ctx)
 
 	return nil
 }
 
 // postponeAfterContention postpones the given delivery after its sink
-// returned [ErrBusy], without changing its failure count.
+// returned [ErrBusy], without changing its failure streak.
 //
 // It's called after the attempt's transaction has been rolled back. It writes
 // nothing in the same cases as [Consumer.postponeAfterFailure].
@@ -336,6 +344,8 @@ func (c *Consumer) postponeAfterContention(
 	d Delivery,
 	engineLogger *slog.Logger,
 ) error {
+	nextAttemptAt := time.Now().Add(c.ContentionDelay)
+
 	// As in [Consumer.postponeAfterFailure], a transaction that isn't a
 	// delivery attempt can hold the message's lock. If that transaction leaves
 	// the message in its queue, the message can be attempted again before the
@@ -344,7 +354,7 @@ func (c *Consumer) postponeAfterContention(
 		ctx,
 		c.DB,
 		`UPDATE messagequeue.messages SET
-			next_attempt_at = clock_timestamp() + $3
+			next_attempt_at = $3
 		WHERE message_id = (
 			SELECT message_id
 			FROM messagequeue.messages
@@ -353,8 +363,8 @@ func (c *Consumer) postponeAfterContention(
 			FOR UPDATE SKIP LOCKED
 		)`,
 		xsql.UUID(d.MessageID),
-		d.Failures,
-		c.ContentionDelay,
+		d.Streak.Failures,
+		nextAttemptAt,
 	)
 
 	// Another transaction holds the message's lock, or the message has been
@@ -375,8 +385,9 @@ func (c *Consumer) postponeAfterContention(
 	engineLogger.DebugContext(
 		ctx,
 		"message delivery postponed",
-		slog.Duration("delay", c.ContentionDelay),
 		slog.String("reason", "contention"),
+		slog.Time("next_attempt_at", nextAttemptAt),
+		slog.Duration("next_attempt_in", c.ContentionDelay),
 	)
 
 	return nil

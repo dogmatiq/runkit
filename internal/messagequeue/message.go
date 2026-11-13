@@ -52,12 +52,12 @@ func (c *Consumer) findNextMessages(
 			return messages
 		}
 
-		delay := c.failures.WorkFailed(ctx, err)
+		nextAttemptAt := c.failures.WorkFailed(ctx, err)
 
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(delay):
+		case <-time.After(time.Until(nextAttemptAt)):
 		}
 	}
 }

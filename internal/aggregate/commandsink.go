@@ -55,15 +55,10 @@ func (s *CommandSink) Deliver(
 		&commandForRouting,
 		&commandForHandling,
 	); err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to unmarshal command",
-			xslog.Error(err),
-		)
-		return messagequeue.ErrFailed
+		return fmt.Errorf("unable to unmarshal command: %w", err)
 	}
 
-	instanceID, err := s.routeCommandToInstance(ctx, engineLogger, commandForRouting)
+	instanceID, err := s.routeCommandToInstance(commandForRouting)
 	if err != nil {
 		return err
 	}
@@ -77,7 +72,7 @@ func (s *CommandSink) Deliver(
 
 	inst, err := s.tryLockInstance(ctx, tx, instanceLogger, instanceID)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to load aggregate instance %q: %w", instanceID, err)
 	}
 
 	instanceLogger = engineLogger.With(
@@ -111,13 +106,11 @@ func (s *CommandSink) Deliver(
 			return nil
 		},
 	); err != nil {
-		instanceLogger.ErrorContext(
-			ctx,
-			"unable to handle command",
-			xslog.Error(err),
+		return fmt.Errorf(
+			"unable to handle command for aggregate instance %q: %w",
+			inst.ID,
+			err,
 		)
-
-		return messagequeue.ErrFailed
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {
@@ -134,28 +127,26 @@ func (s *CommandSink) LogAttr() slog.Attr {
 
 // routeCommandToInstance routes the instance ID for the given command by
 // calling the handler's RouteCommandToInstance() method.
+//
+// It returns a deterministic error on failure.
+//
+// See [xerrors.IsDeterministic].
 func (s *CommandSink) routeCommandToInstance(
-	ctx context.Context,
-	engineLogger *slog.Logger,
 	commandForRouting dogma.Command,
 ) (string, error) {
 	instanceID, err := xerrors.RecoverT(
 		func() (string, error) {
 			instanceID := s.Handler.RouteCommandToInstance(commandForRouting)
 			if instanceID == "" {
-				return "", errors.New("handler returned an empty instance ID")
+				return "", xerrors.Deterministic(
+					errors.New("handler returned an empty instance ID"),
+				)
 			}
 			return instanceID, nil
 		},
 	)
 	if err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to route command to instance",
-			xslog.Error(err),
-		)
-
-		return "", messagequeue.ErrFailed
+		return "", fmt.Errorf("unable to route command to instance: %w", err)
 	}
 
 	return instanceID, nil
@@ -165,9 +156,11 @@ func (s *CommandSink) routeCommandToInstance(
 // creating it if it doesn't exist, and returns it with its root.
 //
 // It returns [messagequeue.ErrBusy] if another transaction holds the lock. It
-// waits if another transaction is creating the instance. It returns
-// [messagequeue.ErrFailed] if the handler can't create the root, or one of the
+// waits if another transaction is creating the instance. It returns a
+// deterministic error if the handler can't create the root, or one of the
 // instance's events can't be unmarshaled or applied to it.
+//
+// See [xerrors.IsDeterministic].
 func (s *CommandSink) tryLockInstance(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -263,7 +256,7 @@ func (s *CommandSink) tryLockInstance(
 		inst.StreamID = nil
 	}
 
-	root, err := s.newRoot(ctx, engineLogger)
+	root, err := s.newRoot()
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +272,7 @@ func (s *CommandSink) tryLockInstance(
 			// The snapshot can't be unmarshaled, so the instance's events are
 			// applied to a new root from the start of its history instead.
 			snap.NextOffset = 0
-			inst.Root, err = s.newRoot(ctx, engineLogger)
+			inst.Root, err = s.newRoot()
 			if err != nil {
 				return nil, err
 			}
@@ -287,7 +280,7 @@ func (s *CommandSink) tryLockInstance(
 	}
 
 	// Apply the events that were recorded after the snapshot was taken.
-	if err := inst.ApplyHistoricalEvents(ctx, tx, engineLogger, snap.NextOffset); err != nil {
+	if err := inst.ApplyHistoricalEvents(ctx, tx, snap.NextOffset); err != nil {
 		return nil, err
 	}
 
@@ -295,23 +288,18 @@ func (s *CommandSink) tryLockInstance(
 }
 
 // newRoot creates a new aggregate root by calling the handler's New() method.
-func (s *CommandSink) newRoot(
-	ctx context.Context,
-	engineLogger *slog.Logger,
-) (dogma.AggregateRoot, error) {
+//
+// It returns a deterministic error on failure.
+//
+// See [xerrors.IsDeterministic].
+func (s *CommandSink) newRoot() (dogma.AggregateRoot, error) {
 	root, err := xerrors.RecoverT(
 		func() (dogma.AggregateRoot, error) {
 			return s.Handler.New(), nil
 		},
 	)
 	if err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to create aggregate root",
-			xslog.Error(err),
-		)
-
-		return nil, messagequeue.ErrFailed
+		return nil, fmt.Errorf("unable to create aggregate root: %w", err)
 	}
 
 	return root, nil

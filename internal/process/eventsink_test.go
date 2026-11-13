@@ -20,6 +20,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	. "github.com/dogmatiq/runkit/internal/process"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -141,6 +142,28 @@ func TestEventSink_failureRollsBack(t *testing.T) {
 				t.Fatalf("unexpected retry result: %d, %t, %v", next, ok, err)
 			}
 		})
+	}
+}
+
+// TestEventSink_emptyInstanceIDIsDeterministic verifies that a handler that
+// routes an event to an empty instance ID causes a deterministic failure.
+func TestEventSink_emptyInstanceIDIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	s := newEventSink(t, db)
+	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+	seg := eventstream.Segment{StreamID: streamID, End: 1, Envelopes: envs}
+
+	handler := s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
+	handler.RouteEventToInstanceFunc = func(context.Context, dogma.Event) (string, bool, error) {
+		return "", true, nil
+	}
+
+	_, _, err := s.ConsumeSegment(t.Context(), 0, seg)
+
+	if !xerrors.IsDeterministic(err) {
+		t.Fatalf("expected a deterministic error, got %v", err)
 	}
 }
 

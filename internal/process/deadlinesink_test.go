@@ -16,6 +16,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	. "github.com/dogmatiq/runkit/internal/process"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -87,10 +88,9 @@ func TestDeadlineSink(t *testing.T) {
 	// transaction back.
 	//
 	// It cancels Deliver's context after five seconds, so a sink that waits for
-	// a lock returns an error instead of hanging the test. Unless Deliver
-	// returns some other error, it fails the test if the transaction is no
-	// longer usable, because the consumer then removes the message or postpones
-	// the delivery within it.
+	// a lock returns an error instead of hanging the test. If Deliver returns
+	// nil, it fails the test if the transaction is no longer usable, because
+	// the consumer then removes the message within it.
 	deliver := func(
 		t testing.TB,
 		db *sql.DB,
@@ -117,9 +117,7 @@ func TestDeadlineSink(t *testing.T) {
 			spruce.NewTestLogger(t),
 		)
 
-		postponed := errors.Is(err, messagequeue.ErrBusy) || errors.Is(err, messagequeue.ErrFailed)
-
-		if err == nil || postponed {
+		if err == nil {
 			if _, err := tx.ExecContext(ctx, `SELECT 1`); err != nil {
 				t.Fatalf("the transaction is unusable: %s", err)
 			}
@@ -173,6 +171,88 @@ func TestDeadlineSink(t *testing.T) {
 			if err := deliver(t, db, sink, env); err != nil {
 				t.Fatal(err)
 			}
+		})
+	})
+
+	// expectDeterministic fails the test unless err is a deterministic error.
+	expectDeterministic := func(t *testing.T, err error) {
+		t.Helper()
+
+		if !xerrors.IsDeterministic(err) {
+			t.Fatalf("expected a deterministic error, got %v", err)
+		}
+	}
+
+	t.Run("when the process instance doesn't exist", func(t *testing.T) {
+		t.Run("it returns a deterministic error without calling the handler", func(t *testing.T) {
+			t.Parallel()
+
+			db := xtesting.NewDatabase(t)
+			sink, env := setup(t)
+
+			expectDeterministic(t, deliver(t, db, sink, env))
+		})
+	})
+
+	t.Run("when the process instance's state can't be unmarshaled", func(t *testing.T) {
+		t.Run("it returns a deterministic error without calling the handler", func(t *testing.T) {
+			t.Parallel()
+
+			db := xtesting.NewDatabase(t)
+			sink, env := setup(t)
+
+			handler := sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
+			handler.NewFunc = func() dogma.ProcessRoot {
+				return &stubs.ProcessRootStub{
+					UnmarshalBinaryFunc: func([]byte) error {
+						return errors.New("<error>")
+					},
+				}
+			}
+
+			if _, err := db.ExecContext(
+				t.Context(),
+				`INSERT INTO process.instances (
+					handler_key,
+					instance_id,
+					state
+				) VALUES ($1, '<instance>', '\x00')`,
+				sink.Identity.GetKey().AsString(),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			expectDeterministic(t, deliver(t, db, sink, env))
+		})
+	})
+
+	t.Run("when the process root can't be marshaled", func(t *testing.T) {
+		t.Run("it returns a deterministic error", func(t *testing.T) {
+			t.Parallel()
+
+			db := xtesting.NewDatabase(t)
+			sink, env := setup(t)
+			insertInstance(t, db, sink, false)
+
+			handler := sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot])
+			handler.NewFunc = func() dogma.ProcessRoot {
+				return &stubs.ProcessRootStub{
+					MarshalBinaryFunc: func() ([]byte, error) {
+						return nil, errors.New("<error>")
+					},
+				}
+			}
+			handler.HandleDeadlineFunc = func(
+				_ context.Context,
+				_ dogma.ProcessRoot,
+				s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
+				_ dogma.Deadline,
+			) error {
+				s.Mutate(func(dogma.ProcessRoot) {})
+				return nil
+			}
+
+			expectDeterministic(t, deliver(t, db, sink, env))
 		})
 	})
 }

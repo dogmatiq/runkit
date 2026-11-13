@@ -327,7 +327,8 @@ func TestCreate_migratesQueues(t *testing.T) {
 			AND instance_id IS NULL
 			AND envelope = '\x01'
 			AND failures = 0
-			AND failing_since IS NULL
+			AND first_failed_at IS NULL
+			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:00:00Z'::timestamptz
 		FROM messagequeue.messages
@@ -336,11 +337,12 @@ func TestCreate_migratesQueues(t *testing.T) {
 
 	xtesting.ExpectQueryResult(
 		t,
-		"a failing command keeps its failures and is failing since its next attempt",
+		"a failing command keeps its failures, and its streak starts at its next attempt",
 		true,
 		db,
 		`SELECT failures = 3
-			AND failing_since = '2100-01-01T00:05:00Z'::timestamptz
+			AND first_failed_at = '2100-01-01T00:05:00Z'::timestamptz
+			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:05:00Z'::timestamptz
 		FROM messagequeue.messages
@@ -357,7 +359,8 @@ func TestCreate_migratesQueues(t *testing.T) {
 			AND instance_id = '<instance>'
 			AND envelope = '\x03'
 			AND failures = 0
-			AND failing_since IS NULL
+			AND first_failed_at IS NULL
+			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T01:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:00:00Z'::timestamptz
 		FROM messagequeue.messages
@@ -366,11 +369,12 @@ func TestCreate_migratesQueues(t *testing.T) {
 
 	xtesting.ExpectQueryResult(
 		t,
-		"a failing deadline keeps its failures and is failing since its next attempt",
+		"a failing deadline keeps its failures, and its streak starts at its next attempt",
 		true,
 		db,
 		`SELECT failures = 2
-			AND failing_since = '2100-01-01T01:05:00Z'::timestamptz
+			AND first_failed_at = '2100-01-01T01:05:00Z'::timestamptz
+			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T01:05:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:05:00Z'::timestamptz
 		FROM messagequeue.messages

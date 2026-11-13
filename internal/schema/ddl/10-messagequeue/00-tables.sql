@@ -13,21 +13,28 @@ CREATE SCHEMA IF NOT EXISTS messagequeue;
 -- "scheduled_for" is when the message was meant to be delivered, and never
 -- changes. "next_attempt_at" is the earliest time the next attempt may run, and
 -- moves later each time an attempt is postponed.
+--
+-- "failures", "first_failed_at" and "failure_logged_as_error" are the
+-- message's failure streak: the number of attempts that have failed since the
+-- message was queued, the time of the first of them, and whether one of them
+-- has been logged as an ERROR.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS messagequeue.messages (
-    message_id      uuid        PRIMARY KEY,
-    message_type_id uuid        NOT NULL,
-    queue_id        uuid        NOT NULL,
-    handler_key     uuid,
-    instance_id     text        CHECK (instance_id != ''),
-    envelope        bytea       NOT NULL,
-    failures        int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
-    failing_since   timestamptz,
-    scheduled_for   timestamptz NOT NULL DEFAULT clock_timestamp(),
-    next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    message_id              uuid        PRIMARY KEY,
+    message_type_id         uuid        NOT NULL,
+    queue_id                uuid        NOT NULL,
+    handler_key             uuid,
+    instance_id             text        CHECK (instance_id != ''),
+    envelope                bytea       NOT NULL,
+    failures                int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
+    first_failed_at         timestamptz,
+    failure_logged_as_error boolean     NOT NULL DEFAULT false,
+    scheduled_for           timestamptz NOT NULL DEFAULT clock_timestamp(),
+    next_attempt_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
 
     CHECK ((handler_key IS NULL) = (instance_id IS NULL)),
-    CHECK ((failures = 0) = (failing_since IS NULL))
+    CHECK ((failures = 0) = (first_failed_at IS NULL)),
+    CHECK (failures > 0 OR NOT failure_logged_as_error)
 );
 
 -- Create an index for finding the next message to deliver in each queue, for
