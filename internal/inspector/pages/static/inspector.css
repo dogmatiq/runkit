@@ -454,10 +454,16 @@ h3 {
 
 .footer-versions {
   flex-wrap: wrap;
-  gap: 2px 16px;
+  gap: 2px 8px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--faint);
+}
+
+/* A dot separates one version from the next. */
+.footer-versions span + span::before {
+  content: "·";
+  margin-right: 8px;
 }
 
 /*
