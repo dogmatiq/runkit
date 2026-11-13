@@ -145,16 +145,14 @@ type HandlerSummary struct {
 	// BindingsErr explains why Bindings could not be read.
 	BindingsErr error
 
-	// ConsumeRate is the number of events per second by which the handler's
-	// checkpoint offsets advanced across every local event stream, between
-	// the two most recent readings, for a process or projection handler. A
-	// checkpoint also advances past events of types that the handler does not
-	// handle.
-	ConsumeRate float64
+	// HandleRate is the number of events per second that the handler handled
+	// between the two most recent readings, across every local event stream,
+	// for a process or projection handler. It counts only events of the types
+	// that the handler handles.
+	HandleRate float64
 
-	// HasConsumeRate is true if ConsumeRate is known, which needs two
-	// readings.
-	HasConsumeRate bool
+	// HasHandleRate is true if HandleRate is known, which needs two readings.
+	HasHandleRate bool
 
 	// Progress is how far the handler has got through each event stream, for
 	// a process or projection handler.
@@ -283,20 +281,20 @@ type Observer struct {
 	// goroutine uses it.
 	slow map[string]HandlerSummary
 
-	// consumed is the total of each handler's checkpoint offsets at slowAt,
-	// keyed by handler key, used to compute the rate at which they advance.
-	// Only the Run goroutine uses it.
-	consumed map[string]consumedTotal
+	// checkpoints is each handler's checkpoint offsets at slowAt, keyed by
+	// handler key, used to compute the rate at which it handles events. Only
+	// the Run goroutine uses it.
+	checkpoints map[string]checkpointReading
 }
 
-// consumedTotal is the total of a handler's checkpoint offsets at one time.
-type consumedTotal struct {
+// checkpointReading is a handler's checkpoint offsets at one time.
+type checkpointReading struct {
 	// At is the time of the reading.
 	At time.Time
 
-	// Total is the sum of the handler's checkpoint offsets across every local
-	// event stream.
-	Total uint64
+	// Offsets maps the ID of each local event stream to the handler's
+	// checkpoint offset on it.
+	Offsets map[string]uint64
 }
 
 // Changed tells the observer that something in the database has changed.
@@ -500,7 +498,7 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 		}
 
 		if h.HandlesEvents() && s.ProgressErr == nil {
-			s.ConsumeRate, s.HasConsumeRate = o.consumeRate(h, s.Progress)
+			s.HandleRate, s.HasHandleRate = o.handleRate(ctx, h, s.Progress)
 		}
 
 		slow[h.Key.AsString()] = s
@@ -509,32 +507,39 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 	return slow
 }
 
-// consumeRate returns the rate at which the handler's checkpoint offsets have
-// advanced since the previous reading, and records the current total for the
-// next reading. It returns false if there is no previous reading, or if the
-// total went down, such as when a projection was reset.
-func (o *Observer) consumeRate(h *Handler, progress []StreamProgress) (float64, bool) {
-	var total uint64
+// handleRate returns the number of events per second that the handler handled
+// since the previous reading, and records its current checkpoint offsets for
+// the next reading. On each local event stream, the handled events are those
+// of the types that the handler handles, between its previous and current
+// checkpoint offsets. It returns false if there is no previous reading, or if
+// the events can not be counted.
+func (o *Observer) handleRate(
+	ctx context.Context,
+	h *Handler,
+	progress []StreamProgress,
+) (float64, bool) {
+	now := time.Now()
+	key := h.Key.AsString()
+
+	current := map[string]uint64{}
 	for _, p := range progress {
 		if !p.IsRemote {
-			total += p.CheckpointOffset
+			current[p.StreamID.AsString()] = p.CheckpointOffset
 		}
 	}
 
-	if o.consumed == nil {
-		o.consumed = map[string]consumedTotal{}
+	if o.checkpoints == nil {
+		o.checkpoints = map[string]checkpointReading{}
 	}
 
-	now := time.Now()
-	key := h.Key.AsString()
-	prev, ok := o.consumed[key]
+	prev, ok := o.checkpoints[key]
 
-	o.consumed[key] = consumedTotal{
-		At:    now,
-		Total: total,
+	o.checkpoints[key] = checkpointReading{
+		At:      now,
+		Offsets: current,
 	}
 
-	if !ok || total < prev.Total {
+	if !ok {
 		return 0, false
 	}
 
@@ -543,7 +548,30 @@ func (o *Observer) consumeRate(h *Handler, progress []StreamProgress) (float64, 
 		return 0, false
 	}
 
-	return float64(total-prev.Total) / seconds, true
+	handled := 0
+
+	for _, p := range progress {
+		if p.IsRemote {
+			continue
+		}
+
+		// A stream that was not in the previous reading has no starting point,
+		// and a checkpoint that moved back, such as when a projection is reset,
+		// has handled nothing new.
+		from, ok := prev.Offsets[p.StreamID.AsString()]
+		if !ok || p.CheckpointOffset <= from {
+			continue
+		}
+
+		n, err := o.Database.countHandled(ctx, h, p.StreamID, from, p.CheckpointOffset)
+		if err != nil {
+			return 0, false
+		}
+
+		handled += n
+	}
+
+	return float64(handled) / seconds, true
 }
 
 // queuedByHandler returns a summary of each handler that holds only the

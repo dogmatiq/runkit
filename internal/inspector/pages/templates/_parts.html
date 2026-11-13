@@ -136,7 +136,7 @@
   <div class="facts-line">
     <span><strong data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
     <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
-    {{if $s.HasConsumeRate}}<span><strong>{{printf "%.1f" $s.ConsumeRate}}</strong> events/s</span>{{end}}
+    {{if $s.HasHandleRate}}<span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span>{{end}}
   </div>
   {{end}}
 
@@ -150,7 +150,7 @@
   <div class="stats">
     <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
   </div>
-  {{if $s.HasConsumeRate}}<div class="facts-line"><span><strong>{{printf "%.1f" $s.ConsumeRate}}</strong> events/s</span></div>{{end}}
+  {{if $s.HasHandleRate}}<div class="facts-line"><span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span></div>{{end}}
   {{end}}
 
   {{if $failing}}<footer class="hcard-foot is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</footer>
