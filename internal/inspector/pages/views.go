@@ -236,18 +236,50 @@ func format(v any) (p payloadView) {
 	}
 }
 
+// point is a value at a time, on the database's clock.
+type point struct {
+	At    time.Time
+	Value float64
+}
+
+// chart is the points of a sparkline, and the time at its right-hand edge.
+type chart struct {
+	Points []point
+	End    time.Time
+}
+
+// chartMargin is how far before the start of a chart's window its points
+// begin, so that the page can scroll the chart left until the next update
+// without showing a gap at the left-hand edge.
+const chartMargin = chartWindow / 10
+
+// Chart returns a chart of the given points, whose right-hand edge is the time
+// of the most recent observation.
+func (f frame) Chart(points []point) chart {
+	c := chart{
+		Points: points,
+	}
+
+	if len(f.History) > 0 {
+		c.End = f.History[len(f.History)-1].At
+	}
+
+	return c
+}
+
 // rate returns the change per second in a counter between each pair of
-// consecutive samples that read it, over the given window.
-func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Total) []float64 {
+// consecutive samples that read it, over the given window and its margin. Each
+// point has the time of the later sample of its pair.
+func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Total) []point {
 	if len(samples) == 0 {
 		return nil
 	}
 
-	since := samples[len(samples)-1].At.Add(-window)
+	since := samples[len(samples)-1].At.Add(-window - chartMargin)
 
 	var (
-		rates []float64
-		prev  *observe.Sample
+		points []point
+		prev   *observe.Sample
 	)
 
 	for i := range samples {
@@ -268,41 +300,41 @@ func rate(samples []observe.Sample, window time.Duration, counter func(observe.S
 					change = float64(after - before)
 				}
 
-				rates = append(rates, change/seconds)
+				points = append(points, point{cur.At, change / seconds})
 			}
 		}
 
 		prev = cur
 	}
 
-	return rates
+	return points
 }
 
-// series returns the value of a total in each sample over the given window. It
-// skips each sample that could not read the total.
-func series(samples []observe.Sample, window time.Duration, total func(observe.Sample) observe.Total) []float64 {
+// series returns the value of a total in each sample over the given window and
+// its margin. It skips each sample that could not read the total.
+func series(samples []observe.Sample, window time.Duration, total func(observe.Sample) observe.Total) []point {
 	if len(samples) == 0 {
 		return nil
 	}
 
-	since := samples[len(samples)-1].At.Add(-window)
+	since := samples[len(samples)-1].At.Add(-window - chartMargin)
 
-	var values []float64
+	var points []point
 
 	for _, s := range samples {
 		if t := total(s); t.IsKnown && !s.At.Before(since) {
-			values = append(values, float64(t.Value))
+			points = append(points, point{s.At, float64(t.Value)})
 		}
 	}
 
-	return values
+	return points
 }
 
 // handlerRate is how fast a handler records or handles events.
 type handlerRate struct {
-	// Rates is the number of events per second between each pair of
+	// Chart is the number of events per second between each pair of
 	// consecutive samples that counted them.
-	Rates []float64
+	Chart chart
 }
 
 // HandlerRate returns how fast the given handler records events, for an
@@ -317,10 +349,12 @@ func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
 	}
 
 	return &handlerRate{
-		Rates: rate(
-			f.History,
-			chartWindow,
-			func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
+		Chart: f.Chart(
+			rate(
+				f.History,
+				chartWindow,
+				func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
+			),
 		),
 	}
 }
@@ -328,7 +362,7 @@ func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
 // perMinute returns the average of the most recent few of the given rates per
 // second, as a rate per minute. The rate between two observations is noisy, so
 // one alone is not shown.
-func perMinute(rates []float64) float64 {
+func perMinute(rates []point) float64 {
 	recent := rates[max(0, len(rates)-rateSmoothing):]
 	if len(recent) == 0 {
 		return 0
@@ -336,7 +370,7 @@ func perMinute(rates []float64) float64 {
 
 	sum := 0.0
 	for _, r := range recent {
-		sum += r
+		sum += r.Value
 	}
 
 	return sum / float64(len(recent)) * 60

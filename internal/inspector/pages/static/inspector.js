@@ -88,7 +88,7 @@
   // heartbeats, the line keeps rippling. When a node misses heartbeats, the
   // line has fewer bumps. A page that has just loaded starts with a flat line.
 
-  var beatWindow = 15000;
+  var beatWindow = 30000;
 
   // bumpWidth is the width of a bump's middle, in CSS pixels.
   var bumpWidth = 5;
@@ -99,7 +99,39 @@
     times.push(performance.now());
   }
 
+  // Scrolling charts.
+  //
+  // The server places each point of a chart by its time, with the time of the
+  // most recent observation at the right-hand edge. Between updates, the page
+  // moves each chart left at the rate that time passes, so it scrolls smoothly
+  // although new points arrive only now and then. An update that changes a
+  // chart starts it again from its new right-hand edge, where the old one had
+  // scrolled to.
+
+  var chartsSince = new WeakMap();
+
+  function scrollCharts(now) {
+    var groups = document.querySelectorAll("svg.spark[data-window] > g");
+
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i];
+      var svg = group.parentNode;
+      var d = group.firstElementChild ? group.firstElementChild.getAttribute("d") : "";
+
+      var seen = chartsSince.get(group);
+      if (!seen || seen.d !== d) {
+        seen = { d: d, since: now };
+        chartsSince.set(group, seen);
+      }
+
+      var shift = ((now - seen.since) / Number(svg.getAttribute("data-window"))) * svg.viewBox.baseVal.width;
+      group.setAttribute("transform", "translate(" + (-shift).toFixed(3) + " 0)");
+    }
+  }
+
   function drawBeats() {
+    if (!reducedMotion.matches) scrollCharts(performance.now());
+
     var canvas = document.getElementById("heartbeats");
     if (canvas && canvas.getContext) {
       var ratio = window.devicePixelRatio || 1;

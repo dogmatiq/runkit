@@ -55,18 +55,20 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 
 	data := struct {
 		frame
-		EventRates               []float64
+		EventRates               chart
 		EventsPerMinute          float64
-		QueuedMessages           []float64
+		QueuedMessages           chart
 		RemovedMessagesPerMinute float64
 	}{
 		frame:           f,
-		EventRates:      eventRates,
+		EventRates:      f.Chart(eventRates),
 		EventsPerMinute: perMinute(eventRates),
-		QueuedMessages: series(
-			history,
-			chartWindow,
-			func(s observe.Sample) observe.Total { return s.QueuedMessages },
+		QueuedMessages: f.Chart(
+			series(
+				history,
+				chartWindow,
+				func(s observe.Sample) observe.Total { return s.QueuedMessages },
+			),
 		),
 		RemovedMessagesPerMinute: perMinute(removalRates),
 	}
@@ -75,7 +77,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 }
 
 func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
-	f.Title = "Nodes"
+	f.Title = "Cluster"
 	f.Section = "nodes"
 
 	// nodeWorkloads is the workloads that one node owns.

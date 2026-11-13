@@ -283,57 +283,77 @@ func formatRouteType(t config.RouteType) string {
 	}
 }
 
-// sparkline returns an inline SVG chart of the given values, drawn left to
-// right, scaled so that the largest value reaches the top.
-func sparkline(values []float64) template.HTML {
+// sparkline returns an inline SVG chart of the given chart's points over
+// [chartWindow], with each point placed by its time, and the chart's end at the
+// right-hand edge. The chart is scaled so that the largest value reaches the
+// top.
+//
+// The last value continues flat past the right-hand edge, and the points begin
+// [chartMargin] before the left-hand edge, so that the page's script can scroll
+// the chart left as time passes, until the next update, without showing a gap
+// at either edge.
+func sparkline(c chart) template.HTML {
 	const (
 		width  = 240.0
 		height = 48.0
 		pad    = 2.0
 	)
 
-	if len(values) < 2 {
-		return template.HTML(
-			fmt.Sprintf(
-				`<svg class="spark" viewBox="0 0 %g %g" preserveAspectRatio="none" aria-hidden="true"></svg>`,
-				width,
-				height,
-			),
-		)
+	open := fmt.Sprintf(
+		`<svg class="spark" viewBox="0 0 %g %g" preserveAspectRatio="none" data-window="%d" aria-hidden="true">`,
+		width,
+		height,
+		chartWindow.Milliseconds(),
+	)
+
+	if len(c.Points) == 0 {
+		return template.HTML(open + `</svg>`)
 	}
 
 	peak := 0.0
-	for _, v := range values {
-		peak = math.Max(peak, v)
+	for _, p := range c.Points {
+		peak = math.Max(peak, p.Value)
 	}
 	if peak == 0 {
 		peak = 1
 	}
 
-	step := width / float64(len(values)-1)
+	xOf := func(t time.Time) float64 {
+		return width - c.End.Sub(t).Seconds()/chartWindow.Seconds()*width
+	}
+	yOf := func(v float64) float64 {
+		return height - pad - (v/peak)*(height-2*pad)
+	}
 
 	var line strings.Builder
-	for i, v := range values {
-		x := float64(i) * step
-		y := height - pad - (v/peak)*(height-2*pad)
-
+	for i, p := range c.Points {
 		if i == 0 {
-			fmt.Fprintf(&line, "M%.1f %.1f", x, y)
+			fmt.Fprintf(&line, "M%.2f %.2f", xOf(p.At), yOf(p.Value))
 		} else {
-			fmt.Fprintf(&line, " L%.1f %.1f", x, y)
+			fmt.Fprintf(&line, " L%.2f %.2f", xOf(p.At), yOf(p.Value))
 		}
 	}
 
-	area := fmt.Sprintf("%s L%g %g L0 %g Z", line.String(), width, height, height)
+	last := c.Points[len(c.Points)-1]
+	beyond := width * 1.25
+	fmt.Fprintf(&line, " L%.2f %.2f", beyond, yOf(last.Value))
+
+	area := fmt.Sprintf(
+		"%s L%.2f %g L%.2f %g Z",
+		line.String(),
+		beyond,
+		height,
+		xOf(c.Points[0].At),
+		height,
+	)
 
 	return template.HTML(
 		fmt.Sprintf(
-			`<svg class="spark" viewBox="0 0 %g %g" preserveAspectRatio="none" aria-hidden="true">`+
+			`%s<g>`+
 				`<path class="spark-area" d="%s"/>`+
 				`<path class="spark-line" d="%s" vector-effect="non-scaling-stroke"/>`+
-				`</svg>`,
-			width,
-			height,
+				`</g></svg>`,
+			open,
 			area,
 			line.String(),
 		),

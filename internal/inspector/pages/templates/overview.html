@@ -5,10 +5,10 @@
 <section class="metrics" aria-label="Totals">
   <a class="metric subsystem-cluster" href="{{.Root}}nodes">
     {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
-      <div class="metric-head"><span class="metric-value">{{$n}}</span><span class="metric-icon" title="Cluster">{{icon "node"}}</span></div>
-      <span class="metric-detail">{{if $n}}<span class="metric-noun">live {{if eq $n 1}}node{{else}}nodes{{end}}</span>, {{plural .Obs.TotalWorkloads "workload" "workloads"}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
+      <div class="metric-head"><span class="metric-value">{{$n}}</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
+      <span class="metric-detail">{{if $n}}<span class="metric-noun">cluster {{if eq $n 1}}node{{else}}nodes{{end}}</span>, {{plural .Obs.TotalWorkloads "workload" "workloads"}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
     {{else}}
-      <div class="metric-head"><span class="metric-value is-unknown">?</span><span class="metric-icon" title="Cluster">{{icon "node"}}</span></div>
+      <div class="metric-head"><span class="metric-value is-unknown">?</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
     <div class="metric-bar">{{.WorkloadBar}}</div>

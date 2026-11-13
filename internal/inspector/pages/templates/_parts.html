@@ -159,7 +159,7 @@
     {{if $h.Aggregate}}{{bindings $s.Bindings "streams" "event stream" "event streams"}}{{end}}
     {{if and $h.Process $h.SchedulesDeadlines}}{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}{{end}}
   </div>{{end}}
-  {{with $rate}}{{sparkline .Rates}}{{end}}
+  {{with $rate}}{{sparkline .Chart}}{{end}}
   {{end}}
 </a>
 {{- end}}
