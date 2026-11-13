@@ -78,39 +78,22 @@
     }
   }
 
-  // Heartbeat lanes.
+  // Heartbeat wave.
   //
-  // The <canvas id="heartbeats"> element on the overview has a lane for each
-  // live node, listed by ID in its data-nodes attribute. Each heartbeat that
-  // the page has received in the last 30 seconds starts a segment in its
-  // node's lane, like a segment of a bar, which lasts until the next
-  // heartbeat. The segments move left as time passes and fade as they age. A
-  // node that misses heartbeats leaves a gap. A page that has just loaded
-  // starts with empty lanes.
+  // The <canvas id="heartbeats"> element on the overview draws one line,
+  // like the charts on the other cards. Each heartbeat from a live node, whose
+  // IDs are in the canvas's data-nodes attribute, adds a small bump to the
+  // line at the right-hand edge. The bump moves left and leaves the chart
+  // after beatWindow. While the nodes are sending heartbeats, the line keeps
+  // rippling. When a node misses heartbeats, the line has fewer bumps. A page
+  // that has just loaded starts with a flat line.
 
-  var beatWindow = 30000;
+  var beatWindow = 6000;
   var beats = {};
 
   function recordBeat(nodeID) {
     var times = beats[nodeID] || (beats[nodeID] = []);
     times.push(performance.now());
-  }
-
-  // usualInterval returns the median time between the given heartbeats, or
-  // Infinity if there are too few to tell.
-  function usualInterval(times) {
-    var intervals = [];
-    for (var i = 1; i < times.length; i++) {
-      intervals.push(times[i] - times[i - 1]);
-    }
-
-    if (intervals.length < 3) return Infinity;
-
-    intervals.sort(function (a, b) {
-      return a - b;
-    });
-
-    return intervals[Math.floor(intervals.length / 2)];
   }
 
   function drawBeats() {
@@ -130,59 +113,53 @@
       var g = canvas.getContext("2d");
       g.clearRect(0, 0, width, height);
 
-      var color = window.getComputedStyle(canvas).color;
-
+      var style = window.getComputedStyle(canvas);
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
-      // Each lane and the gap below it share a pitch, which shrinks so that
-      // every lane fits, however many nodes there are.
-      var pad = 4 * ratio;
-      var pitch = Math.min(10 * ratio, (height - 2 * pad) / Math.max(nodes.length, 1));
-      var lane = (pitch * 2) / 3;
-      var gap = pitch - lane;
-      var top = (height - nodes.length * pitch + gap) / 2;
-      var spacing = 1.5 * ratio;
-      var corner = Math.min(lane / 2, 2 * ratio);
       var now = performance.now();
 
-      g.fillStyle = color;
-
+      // The bumps of all of the nodes' heartbeats, by time. More nodes make
+      // more bumps, so each is smaller, and the line stays inside the chart.
+      var times = [];
       for (var i = 0; i < nodes.length; i++) {
-        var y = top + i * (lane + gap);
-
-        g.globalAlpha = 0.08;
-        g.fillRect(0, y, width, lane);
-
-        var times = beats[nodes[i]] || [];
-        while (times.length && now - times[0] > beatWindow) times.shift();
-
-        var usual = usualInterval(times);
-
-        for (var j = 0; j < times.length; j++) {
-          var age = (now - times[j]) / beatWindow;
-          var x = width - age * width;
-
-          // Each heartbeat starts a segment that lasts until the next one, but
-          // no longer than the node's usual interval, so a missed heartbeat
-          // leaves a gap.
-          var until = j + 1 < times.length ? times[j + 1] : now;
-          var length = (Math.min(until - times[j], usual) / beatWindow) * width - spacing;
-          if (length <= 0) continue;
-
-          g.globalAlpha = 0.15 + 0.75 * (1 - age) * (1 - age);
-          g.beginPath();
-          if (g.roundRect) {
-            g.roundRect(x, y, length, lane, corner);
-          } else {
-            g.rect(x, y, length, lane);
-          }
-          g.fill();
-        }
+        var own = beats[nodes[i]] || [];
+        while (own.length && now - own[0] > beatWindow) own.shift();
+        times = times.concat(own);
       }
 
-      g.globalAlpha = 1;
+      var base = height - 2 * ratio;
+      var bump = (height * 0.55) / Math.sqrt(Math.max(nodes.length, 1));
+      var spread = 120;
+      var points = [];
+
+      for (var x = 0; x <= width; x += 2 * ratio) {
+        var t = now - ((width - x) / width) * beatWindow;
+        var y = 0;
+        for (var j = 0; j < times.length; j++) {
+          var d = (t - times[j]) / spread;
+          if (d > -4 && d < 4) y += Math.exp(-d * d) * bump;
+        }
+        points.push([x, Math.max(base - y, ratio)]);
+      }
+
+      g.beginPath();
+      g.moveTo(0, height);
+      for (var k = 0; k < points.length; k++) g.lineTo(points[k][0], points[k][1]);
+      g.lineTo(width, height);
+      g.closePath();
+      g.fillStyle = style.getPropertyValue("--subsystem-soft");
+      g.fill();
+
+      g.beginPath();
+      for (var m = 0; m < points.length; m++) {
+        if (m === 0) g.moveTo(points[m][0], points[m][1]);
+        else g.lineTo(points[m][0], points[m][1]);
+      }
+      g.strokeStyle = style.color;
+      g.lineWidth = 1.5 * ratio;
+      g.stroke();
     }
 
-    // With reduced motion, the lanes are redrawn once a second, so the segments
+    // With reduced motion, the wave is redrawn once a second, so the bumps
     // step instead of gliding.
     if (reducedMotion.matches) {
       window.setTimeout(drawBeats, 1000);

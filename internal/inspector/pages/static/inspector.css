@@ -446,10 +446,17 @@ h3 {
   box-shadow: var(--raised-shadow), 0 0 0 1px var(--border-strong);
 }
 
+/* The number and the icon share a row, with the icon centered on the number. */
+.metric-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
 .metric-icon {
-  position: absolute;
-  top: var(--space-5);
-  right: var(--space-5);
+  flex: none;
   color: var(--subsystem);
 }
 
@@ -460,7 +467,6 @@ h3 {
 }
 
 .metric-value {
-  margin-top: var(--space-2);
   font-size: var(--text-4xl);
   font-weight: 700;
   line-height: 1;
@@ -481,10 +487,15 @@ h3 {
   position: relative;
   z-index: 1;
   min-height: calc(2 * 1.5em);
-  margin-top: var(--space-2);
+  margin-top: var(--space-1);
   font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--muted);
+}
+
+/* The words for what the number counts stand out from the rest. */
+.metric-noun {
+  color: var(--text);
 }
 
 .is-bad-text {
@@ -512,8 +523,8 @@ h3 {
 }
 
 /*
- * A lane for each live node, with a tick for each recent heartbeat. The page's
- * script draws the ticks in the subsystem's colour.
+ * A line with a bump for each recent heartbeat. The page's script draws it in
+ * the subsystem's colours, like the other charts.
  */
 .beats {
   color: var(--subsystem);
