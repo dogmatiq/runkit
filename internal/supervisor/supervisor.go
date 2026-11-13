@@ -24,8 +24,8 @@ const quietPeriod = 30 * time.Second
 // A fatal error is returned to the caller without retrying, and is still a
 // fatal error to that caller.
 //
-// Any other error is recorded as a failure of a [failure.Work] with the given
-// description, and fn is called again after the delay that the [failure.Work]
+// Any other error is recorded as a failure by a [failure.Tracker] with the
+// given description, and fn is called again after the delay that the tracker
 // decides.
 // A deterministic error is logged as an ERROR immediately, and [Run] waits
 // longer before calling fn again than after any other failure.
@@ -41,15 +41,15 @@ func Run(
 	description string,
 	fn func(context.Context) error,
 ) error {
-	work := &failure.Work{
+	failures := &failure.Tracker{
 		Description:  description,
 		EngineLogger: engineLogger,
 		QuietPeriod:  quietPeriod,
 	}
-	defer work.Complete()
+	defer failures.Complete()
 
 	for {
-		work.Succeeded(ctx)
+		failures.Succeeded(ctx)
 		err := fn(ctx)
 
 		if ctx.Err() != nil {
@@ -68,9 +68,9 @@ func Run(
 
 		var delay time.Duration
 		if xerrors.IsDeterministic(err) {
-			delay = work.FailedDeterministically(ctx, err)
+			delay = failures.FailedDeterministically(ctx, err)
 		} else {
-			delay = work.Failed(ctx, err)
+			delay = failures.Failed(ctx, err)
 		}
 
 		select {

@@ -13,15 +13,14 @@ import (
 // last with its failures logged only at DEBUG.
 const maxDebugStreak = 30 * time.Second
 
-// Work is a piece of ongoing or repeated work that can fail, such as consuming
-// an event stream.
+// Tracker keeps the failure streak of one piece of ongoing work in memory, such
+// as consuming an event stream.
 //
-// It tracks each streak of consecutive failures, decides how long to wait
-// before each retry, and writes each failure and recovery record according to
-// the rules in the [logging guide].
+// It decides how long to wait before each retry, and writes each failure and
+// recovery record according to the rules in the [logging guide].
 //
 // [logging guide]: https://github.com/dogmatiq/runkit/blob/main/docs/maintainers/logging.md
-type Work struct {
+type Tracker struct {
 	// Description describes the work as a verb phrase in its base form, such
 	// as "consume event stream".
 	//
@@ -77,49 +76,49 @@ type Work struct {
 // Failed records a failure of the work.
 //
 // It returns the delay before the next attempt.
-func (w *Work) Failed(ctx context.Context, err error) time.Duration {
-	return w.fail(ctx, err, transientMaxDelay, false)
+func (t *Tracker) Failed(ctx context.Context, err error) time.Duration {
+	return t.fail(ctx, err, transientMaxDelay, false)
 }
 
 // FailedDeterministically records a deterministic failure of the work, which
 // retrying alone can't clear.
 //
 // It returns the delay before the next attempt.
-func (w *Work) FailedDeterministically(ctx context.Context, err error) time.Duration {
-	return w.fail(ctx, err, deterministicMaxDelay, true)
+func (t *Tracker) FailedDeterministically(ctx context.Context, err error) time.Duration {
+	return t.fail(ctx, err, deterministicMaxDelay, true)
 }
 
 // Succeeded records a success of the work.
 //
-// If a streak is in progress, it ends at once if [Work.QuietPeriod] is zero.
+// If a streak is in progress, it ends at once if [Tracker.QuietPeriod] is zero.
 // Otherwise it ends when the quiet period passes without another failure.
-func (w *Work) Succeeded(ctx context.Context) {
-	w.m.Lock()
-	defer w.m.Unlock()
+func (t *Tracker) Succeeded(ctx context.Context) {
+	t.m.Lock()
+	defer t.m.Unlock()
 
-	if w.failures == 0 || w.complete {
+	if t.failures == 0 || t.complete {
 		return
 	}
 
-	if w.QuietPeriod == 0 {
-		w.succeedingSince = time.Now()
-		w.recover(ctx)
+	if t.QuietPeriod == 0 {
+		t.succeedingSince = time.Now()
+		t.recover(ctx)
 		return
 	}
 
-	if w.quiet != nil {
+	if t.quiet != nil {
 		return
 	}
 
-	w.succeedingSince = time.Now()
+	t.succeedingSince = time.Now()
 
 	var timer *time.Timer
 
 	timer = time.AfterFunc(
-		w.QuietPeriod,
+		t.QuietPeriod,
 		func() {
-			w.m.Lock()
-			defer w.m.Unlock()
+			t.m.Lock()
+			defer t.m.Unlock()
 
 			// The work is stopping, so nothing is written, and the streak
 			// doesn't end.
@@ -128,119 +127,119 @@ func (w *Work) Succeeded(ctx context.Context) {
 			}
 
 			// A timer whose quiet period was canceled after it fired is no
-			// longer w.quiet. It reads timer only once w.m is held, by which
+			// longer t.quiet. It reads timer only once t.m is held, by which
 			// time timer has been assigned.
-			if w.quiet == timer && !w.complete {
-				w.recover(ctx)
+			if t.quiet == timer && !t.complete {
+				t.recover(ctx)
 			}
 		},
 	)
 
-	w.quiet = timer
+	t.quiet = timer
 }
 
 // Complete records that the work is complete, so no more attempts are made.
 //
 // It cancels any quiet period in progress, and the work writes no more
 // records. It's called when the work stops for good, such as at shutdown.
-func (w *Work) Complete() {
-	w.m.Lock()
-	defer w.m.Unlock()
+func (t *Tracker) Complete() {
+	t.m.Lock()
+	defer t.m.Unlock()
 
-	w.complete = true
-	w.cancelQuietPeriod()
+	t.complete = true
+	t.cancelQuietPeriod()
 }
 
 // fail records a failure of the work.
 //
 // The backoff is limited to the given duration. It returns the delay before the
-// next attempt. It must not be called with w.m held.
-func (w *Work) fail(
+// next attempt. It must not be called with t.m held.
+func (t *Tracker) fail(
 	ctx context.Context,
 	err error,
 	limit time.Duration,
 	deterministic bool,
 ) time.Duration {
-	w.m.Lock()
-	defer w.m.Unlock()
+	t.m.Lock()
+	defer t.m.Unlock()
 
-	w.cancelQuietPeriod()
+	t.cancelQuietPeriod()
 
 	now := time.Now()
-	w.lastFailure = now
+	t.lastFailure = now
 
-	if w.failures == 0 {
-		w.since = now
-		w.backoff = baseDelay
+	if t.failures == 0 {
+		t.since = now
+		t.backoff = baseDelay
 	} else {
-		w.backoff = min(2*w.backoff, limit)
+		t.backoff = min(2*t.backoff, limit)
 	}
 
-	w.failures++
-	delay := Jitter(w.backoff)
+	t.failures++
+	delay := Jitter(t.backoff)
 
-	if w.complete {
+	if t.complete {
 		return delay
 	}
 
 	level := slog.LevelDebug
 	attrs := []slog.Attr{
 		xslog.Error(err),
-		slog.Time("failing_since", w.since),
-		slog.Uint64("failures", w.failures),
+		slog.Time("failing_since", t.since),
+		slog.Uint64("failures", t.failures),
 		slog.Duration("delay", delay),
 	}
 
 	needsError := deterministic
-	if !now.Before(w.since.Add(maxDebugStreak)) {
+	if !now.Before(t.since.Add(maxDebugStreak)) {
 		needsError = true
 	}
 
-	if needsError && !w.loggedError {
-		w.loggedError = true
+	if needsError && !t.loggedError {
+		t.loggedError = true
 		level = slog.LevelError
-		attrs = append(attrs, slog.Duration("failing_for", now.Sub(w.since)))
+		attrs = append(attrs, slog.Duration("failing_for", now.Sub(t.since)))
 	}
 
-	w.EngineLogger.LogAttrs(ctx, level, "attempt to "+w.Description+" failed", attrs...)
+	t.EngineLogger.LogAttrs(ctx, level, "attempt to "+t.Description+" failed", attrs...)
 
 	return delay
 }
 
 // recover ends the streak in progress.
 //
-// It writes the streak's recovery record. It must be called with w.m held.
-func (w *Work) recover(ctx context.Context) {
+// It writes the streak's recovery record. It must be called with t.m held.
+func (t *Tracker) recover(ctx context.Context) {
 	level := slog.LevelDebug
-	if w.loggedError {
+	if t.loggedError {
 		level = slog.LevelInfo
 	}
 
-	w.EngineLogger.LogAttrs(
+	t.EngineLogger.LogAttrs(
 		ctx,
 		level,
-		"attempt to "+w.Description+" succeeded after failures",
-		slog.Time("failing_since", w.since),
-		slog.Uint64("failures", w.failures),
-		slog.Duration("failing_for", w.lastFailure.Sub(w.since)),
-		slog.Duration("succeeding_for", time.Since(w.succeedingSince)),
+		"attempt to "+t.Description+" succeeded after failures",
+		slog.Time("failing_since", t.since),
+		slog.Uint64("failures", t.failures),
+		slog.Duration("failing_for", t.lastFailure.Sub(t.since)),
+		slog.Duration("succeeding_for", time.Since(t.succeedingSince)),
 	)
 
-	w.cancelQuietPeriod()
-	w.failures = 0
-	w.backoff = 0
-	w.since = time.Time{}
-	w.lastFailure = time.Time{}
-	w.succeedingSince = time.Time{}
-	w.loggedError = false
+	t.cancelQuietPeriod()
+	t.failures = 0
+	t.backoff = 0
+	t.since = time.Time{}
+	t.lastFailure = time.Time{}
+	t.succeedingSince = time.Time{}
+	t.loggedError = false
 }
 
 // cancelQuietPeriod cancels the quiet period in progress, if any.
 //
-// It must be called with w.m held.
-func (w *Work) cancelQuietPeriod() {
-	if w.quiet != nil {
-		w.quiet.Stop()
-		w.quiet = nil
+// It must be called with t.m held.
+func (t *Tracker) cancelQuietPeriod() {
+	if t.quiet != nil {
+		t.quiet.Stop()
+		t.quiet = nil
 	}
 }

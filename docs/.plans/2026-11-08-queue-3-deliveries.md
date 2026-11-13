@@ -405,11 +405,11 @@ consumer's `c.work`, which becomes `c.failures`. Check that this reads well in
 `internal/messagequeue/consumer.go`, beside the counts that `failures` also
 names there.
 
-- [ ] **Step 1: Restate the assumptions**, including the first sentence of
+- [x] **Step 1: Restate the assumptions**, including the first sentence of
   `Tracker`'s doc comment
-- [ ] **Step 2: Rename the type, its files, and the callers' fields and
+- [x] **Step 2: Rename the type, its files, and the callers' fields and
   locals, and rewrite the comments**
-- [ ] **Step 3: Run `make precommit`**
+- [x] **Step 3: Run `make precommit`**
 - [ ] **Step 4: Stop for review**
 
 ---
