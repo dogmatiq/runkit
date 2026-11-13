@@ -116,12 +116,43 @@
     {{if $h.IsDisabled}}<span class="tag">disabled</span>{{end}}
   </header>
   {{if $s}}
+
+  {{if $h.Aggregate}}
   <div class="stats">
-    {{if $h.HasInstances}}<div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value" data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>{{end}}
-    {{if $h.HandlesCommands}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>{{end}}
-    {{if $h.HandlesEvents}}<div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>{{end}}
-    {{if $h.Process}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span></div>{{end}}
+    <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value" data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
   </div>
+  <div class="bar">{{bindings $s.Bindings "event stream" "event streams"}}</div>
+  <div class="facts-line">
+    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "command" "commands"}} queued</span>
+  </div>
+  {{end}}
+
+  {{if $h.Process}}
+  <div class="stats">
+    <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value" data-watch="active-{{id $h.Key}}">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $s.Bindings.Instances "active instance" "active instances"}}</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+  </div>
+  <div class="bar">{{bindings $s.Bindings "deadline queue" "deadline queues"}}</div>
+  <div class="facts-line">
+    <span><strong data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
+    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
+    {{if $s.HasConsumeRate}}<span><strong>{{printf "%.1f" $s.ConsumeRate}}</strong> events/s</span>{{end}}
+  </div>
+  {{end}}
+
+  {{if eq $kind "integration"}}
+  <div class="stats">
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>
+  </div>
+  {{end}}
+
+  {{if $h.Projection}}
+  <div class="stats">
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+  </div>
+  {{if $s.HasConsumeRate}}<div class="facts-line"><span><strong>{{printf "%.1f" $s.ConsumeRate}}</strong> events/s</span></div>{{end}}
+  {{end}}
+
   {{if $failing}}<footer class="hcard-foot is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</footer>
   {{- else if $h.Projection}}<footer class="hcard-foot">{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}</footer>{{end}}
   {{end}}

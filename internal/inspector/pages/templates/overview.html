@@ -12,6 +12,7 @@
       <span class="metric-value is-unknown">?</span>
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
+    <svg class="trace" data-heartbeat-trace viewBox="0 0 300 48" preserveAspectRatio="none" aria-hidden="true"><path/></svg>
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
@@ -25,8 +26,9 @@
   {{$events := .Obs.Events}}
   <a class="metric" href="{{.Root}}streams">
     <span class="metric-icon" title="Events">{{icon "event"}}</span>
-    <span class="metric-value" data-watch="events" title="{{num $events}}">{{compact $events}}</span>
-    <span class="metric-detail">{{if eq $events 1}}event{{else}}events{{end}} recorded, {{printf "%.1f" .CurrentRate}} per second</span>
+    <span class="metric-value" data-watch="events">{{printf "%.1f" .CurrentRate}}</span>
+    <span class="metric-detail">events per second, <span title="{{num $events}}">{{compact $events}}</span> recorded on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
+    <div class="metric-bar">{{streambar .Obs.EventStreams}}</div>
     {{sparkline .EventRate}}
   </a>
 </section>

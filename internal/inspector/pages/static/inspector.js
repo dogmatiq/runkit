@@ -56,6 +56,41 @@
   tick();
   window.setInterval(tick, 500);
 
+  // The heartbeat trace.
+  //
+  // The cluster card shows a trace like a heart monitor. Each heartbeat that
+  // arrives, from any node, draws a spike that scrolls from right to left over
+  // the trace's window. The trace is drawn from the heartbeats that this page
+  // has received, so it starts empty when the page opens.
+
+  var traceWindow = 30000;
+  var beats = [];
+
+  function drawTrace() {
+    var path = document.querySelector("[data-heartbeat-trace] path");
+    if (!path) return;
+
+    var now = performance.now();
+    while (beats.length && now - beats[0] > traceWindow) beats.shift();
+
+    var width = 300;
+    var base = 38;
+    var d = "M0 " + base;
+
+    for (var i = 0; i < beats.length; i++) {
+      var x = width - ((now - beats[i]) / traceWindow) * width;
+      d += " L" + (x - 3).toFixed(1) + " " + base;
+      d += " L" + (x - 1).toFixed(1) + " " + (base - 26);
+      d += " L" + (x + 1).toFixed(1) + " " + (base + 6);
+      d += " L" + (x + 3).toFixed(1) + " " + base;
+    }
+
+    d += " L" + width + " " + base;
+    path.setAttribute("d", d);
+  }
+
+  window.setInterval(drawTrace, 100);
+
   // Heartbeats.
 
   function pulse(nodeID) {
@@ -104,6 +139,7 @@
     });
 
     source.addEventListener("heartbeat", function (e) {
+      beats.push(performance.now());
       pulse(e.data);
     });
   }

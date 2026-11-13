@@ -70,6 +70,8 @@ var templateFuncs = template.FuncMap{
 	"htype":     func(t config.HandlerType) string { return t.String() },
 	"route":     formatRouteType,
 	"sparkline": sparkline,
+	"bindings":  bindingBar,
+	"streambar": streamBar,
 	"add":       func(a, b int) int { return a + b },
 	"list":      func(values ...any) []any { return values },
 	"plural":    countOf,

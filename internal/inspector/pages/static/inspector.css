@@ -618,6 +618,93 @@ h3 {
   font-weight: 600;
 }
 
+/* Lines of small facts under a card's main figures. */
+.facts-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.facts-line strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.facts-line .is-zero strong {
+  color: var(--faint);
+}
+
+.facts-line .is-bad,
+.facts-line .is-bad strong {
+  color: var(--bad);
+}
+
+/* A bar like a disk usage bar, with segments largest first. */
+.segbar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-sunk);
+}
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bar:empty {
+  display: none;
+}
+
+.bar-caption {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.segbar rect {
+  fill: var(--handler, var(--chart));
+}
+
+.segbar .seg-1 { opacity: 0.8; }
+.segbar .seg-2 { opacity: 0.64; }
+.segbar .seg-3 { opacity: 0.5; }
+.segbar .seg-4 { opacity: 0.38; }
+.segbar .seg-5 { opacity: 0.28; }
+
+.segbar .seg-other {
+  fill: var(--faint);
+}
+
+.metric-bar {
+  position: relative;
+  z-index: 1;
+  margin-top: var(--space-3);
+}
+
+/* The heartbeat trace, which the page's script draws as heartbeats arrive. */
+.trace {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 48px;
+}
+
+.trace path {
+  fill: none;
+  stroke: var(--pulse);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
 .status-dot {
   flex: none;
   width: 6px;
