@@ -429,7 +429,7 @@ h3 {
 .footer {
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .footer-inner {
@@ -458,7 +458,7 @@ h3 {
 }
 
 .footer-mark {
-  width: 16px;
+  width: 20px;
   height: auto;
   flex: none;
   fill: currentColor;
@@ -468,15 +468,19 @@ h3 {
 .footer-versions {
   flex-wrap: wrap;
   gap: 2px 8px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A version's link keeps the footer's colour, and is underlined on hover. */
+.footer-versions a {
+  color: inherit;
 }
 
 /* A dot separates one version from the next. */
 .footer-versions span + span::before {
   content: "·";
   margin-right: 8px;
+  color: var(--faint);
 }
 
 /*
