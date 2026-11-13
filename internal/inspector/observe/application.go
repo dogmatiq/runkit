@@ -23,6 +23,11 @@ type Application struct {
 	// Identity is the application's identity.
 	Identity *identitypb.Identity
 
+	// PackagePath is the import path of the Go package that defines the
+	// application's type. It is empty if the type has no package, such as a
+	// function type.
+	PackagePath string
+
 	// Handlers is the application's handlers, ordered by type and then name.
 	Handlers []*Handler
 
@@ -42,6 +47,17 @@ type Application struct {
 	recordingHandlers uuidcollection.Map[*Handler]
 }
 
+// packagePathOf returns the import path of the package that defines the type of
+// the given application.
+func packagePathOf(app dogma.Application) string {
+	t := reflect.TypeOf(app)
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	return t.PkgPath()
+}
+
 // NewApplication returns what the inspector knows about the given
 // application, by reading its configuration.
 //
@@ -59,7 +75,8 @@ func NewApplication(app dogma.Application) (*Application, error) {
 	}
 
 	a := &Application{
-		Identity: appConfig.Identity(),
+		Identity:    appConfig.Identity(),
+		PackagePath: packagePathOf(app),
 	}
 
 	for _, handlerConfig := range appConfig.Handlers() {

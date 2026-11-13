@@ -18,28 +18,83 @@ type moduleVersions struct {
 	Dogma  string
 }
 
+// moduleVersion is a module's path, and its version if it is known.
+type moduleVersion struct {
+	Path    string
+	Version string
+}
+
+// buildInfo is the running binary's build information.
+var buildInfo, hasBuildInfo = debug.ReadBuildInfo()
+
 // versions is the versions of the modules in the running binary.
 var versions = readModuleVersions()
+
+// moduleOf returns the module that contains the package with the given import
+// path, which is the module among the binary's own module and its dependencies
+// with the longest path that the package's path begins with. It returns false
+// if the binary's build information has no such module.
+func moduleOf(packagePath string) (moduleVersion, bool) {
+	if !hasBuildInfo || packagePath == "" {
+		return moduleVersion{}, false
+	}
+
+	var best moduleVersion
+
+	consider := func(path, version string) {
+		contains := packagePath == path || strings.HasPrefix(packagePath, path+"/")
+		if contains && len(path) > len(best.Path) {
+			best = moduleVersion{path, version}
+		}
+	}
+
+	consider(buildInfo.Main.Path, builtFromVersion())
+
+	for _, dep := range buildInfo.Deps {
+		if dep.Replace != nil {
+			consider(dep.Path, formatModuleVersion(dep.Replace.Version))
+		} else {
+			consider(dep.Path, formatModuleVersion(dep.Version))
+		}
+	}
+
+	return best, best.Path != ""
+}
+
+// builtFromVersion returns the version of the module that the binary is built
+// from. It is the version that Go stamps on the module, or else the commit that
+// the binary was built from.
+func builtFromVersion() string {
+	if v := formatModuleVersion(buildInfo.Main.Version); v != "" {
+		return v
+	}
+
+	for _, s := range buildInfo.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+			return "commit " + s.Value[:7]
+		}
+	}
+
+	return ""
+}
 
 // readModuleVersions reads the versions from the binary's build information.
 //
 // A module that the binary depends on has the version that the binary's go.mod
 // requires, unless that module is replaced by a directory, which has no
-// version. The module that the binary is built from has the version that Go
-// stamps on it, or the commit that the binary was built from.
+// version.
 //
 // A binary that is built from a module inside the runkit repository, such as
 // one of the inspector's demos, was built from a checkout of runkit, so its
 // commit is runkit's commit, even if the binary replaces its dependency on
 // runkit with a directory.
 func readModuleVersions() moduleVersions {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	if !hasBuildInfo {
 		return moduleVersions{}
 	}
 
 	dependency := func(path string) string {
-		for _, dep := range info.Deps {
+		for _, dep := range buildInfo.Deps {
 			if dep.Path != path {
 				continue
 			}
@@ -54,28 +109,12 @@ func readModuleVersions() moduleVersions {
 		return ""
 	}
 
-	// builtFrom returns the version of the module that the binary is built
-	// from.
-	builtFrom := func() string {
-		if v := formatModuleVersion(info.Main.Version); v != "" {
-			return v
-		}
-
-		for _, s := range info.Settings {
-			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-				return "commit " + s.Value[:7]
-			}
-		}
-
-		return ""
-	}
-
 	versions := moduleVersions{
 		Dogma: dependency(dogmaModule),
 	}
 
-	if info.Main.Path == runkitModule || strings.HasPrefix(info.Main.Path, runkitModule+"/") {
-		versions.Runkit = builtFrom()
+	if buildInfo.Main.Path == runkitModule || strings.HasPrefix(buildInfo.Main.Path, runkitModule+"/") {
+		versions.Runkit = builtFromVersion()
 	} else {
 		versions.Runkit = dependency(runkitModule)
 	}

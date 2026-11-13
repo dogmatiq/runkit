@@ -438,7 +438,8 @@ h3 {
   margin: 0;
 }
 
-.footer a {
+/* Only the "Powered by dogma" link stands out. The rest is one muted colour. */
+.footer-powered a {
   color: var(--text-soft);
   font-weight: 600;
 }
@@ -448,9 +449,12 @@ h3 {
   height: auto;
   flex: none;
   fill: currentColor;
+  color: var(--text-soft);
 }
 
-.footer-version {
+.footer-versions {
+  flex-wrap: wrap;
+  gap: 2px 16px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--faint);

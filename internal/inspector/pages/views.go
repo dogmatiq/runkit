@@ -109,6 +109,16 @@ func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {
 	return nil
 }
 
+// AppModule returns the module that contains the application's package, or nil
+// if the binary's build information doesn't have it.
+func (f frame) AppModule() *moduleVersion {
+	if m, ok := moduleOf(f.App.PackagePath); ok {
+		return &m
+	}
+
+	return nil
+}
+
 // WorkloadBar returns a bar of the number of workloads that each live node
 // owns. It returns an empty bar if the live nodes are not known.
 func (f frame) WorkloadBar() template.HTML {
