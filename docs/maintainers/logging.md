@@ -265,9 +265,11 @@ every handler.
   transaction commits.
 - Every record that the consumer or a sink writes about an attempt has the
   `delivery` group. A delivery can fail in only one streak, because its message
-  is removed when it completes, so the group also identifies the streak. An
-  attempt that ends with an error the sink doesn't classify, such as a database
-  error, is logged as a failure to consume the queues instead.
+  is removed when it completes, so the group also identifies the streak.
+- Any error from a sink, except a lock that another transaction holds, is a
+  failure of the delivery, and the delivery's streak logs it. An error from the
+  consumer's own work, such as finding the next messages or postponing a
+  delivery, is logged as a failure to consume the queues instead.
 
 ### Projection compaction
 

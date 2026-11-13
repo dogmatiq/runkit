@@ -11,7 +11,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -118,12 +117,13 @@ func (i *instance) DeleteIfNoEvents(ctx context.Context, tx *sql.Tx) error {
 // ApplyHistoricalEvents applies the instance's events to its root, starting at
 // the given offset in its event stream.
 //
-// It returns [messagequeue.ErrFailed] if an event can't be unmarshaled or
-// applied to the root.
+// It returns a deterministic error if an event can't be unmarshaled or applied
+// to the root.
+//
+// See [xerrors.IsDeterministic].
 func (i *instance) ApplyHistoricalEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	engineLogger *slog.Logger,
 	offset uint64,
 ) error {
 	rows, err := tx.QueryContext(
@@ -171,17 +171,11 @@ func (i *instance) ApplyHistoricalEvents(
 			eventEnvelope,
 			&eventForApply,
 		); err != nil {
-			engineLogger.ErrorContext(
-				ctx,
-				"unable to unmarshal event",
-				slog.Group(
-					"event",
-					xslog.UUID("message_id", eventMessageID),
-				),
-				xslog.Error(err),
+			return fmt.Errorf(
+				"unable to unmarshal event %s: %w",
+				eventMessageID,
+				err,
 			)
-
-			return messagequeue.ErrFailed
 		}
 
 		if err := xerrors.Recover(
@@ -190,17 +184,11 @@ func (i *instance) ApplyHistoricalEvents(
 				return nil
 			},
 		); err != nil {
-			engineLogger.ErrorContext(
-				ctx,
-				"unable to apply event to aggregate root",
-				slog.Group(
-					"event",
-					xslog.UUID("message_id", eventMessageID),
-				),
-				xslog.Error(err),
+			return fmt.Errorf(
+				"unable to apply event %s to aggregate root: %w",
+				eventMessageID,
+				err,
 			)
-
-			return messagequeue.ErrFailed
 		}
 	}
 

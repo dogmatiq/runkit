@@ -20,8 +20,8 @@ func TestStreak(t *testing.T) {
 			engineLogger := spruce.NewTestLogger(t)
 			var s Streak
 
-			delay := s.Extend(t.Context(), engineLogger, "<work>", failure)
-			expectDelay(t, delay, 100*time.Millisecond)
+			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
+			expectNextAttempt(t, nextAttemptAt, 100*time.Millisecond)
 		})
 	})
 
@@ -31,8 +31,8 @@ func TestStreak(t *testing.T) {
 			var s Streak
 
 			for i := range 10 {
-				delay := s.Extend(t.Context(), engineLogger, "<work>", failure)
-				expectDelay(t, delay, min(100*time.Millisecond<<i, 15*time.Second))
+				nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
+				expectNextAttempt(t, nextAttemptAt, min(100*time.Millisecond<<i, 15*time.Second))
 			}
 		})
 	})
@@ -43,8 +43,8 @@ func TestStreak(t *testing.T) {
 			var s Streak
 
 			for i := range 14 {
-				delay := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
-				expectDelay(t, delay, min(100*time.Millisecond<<i, 5*time.Minute))
+				nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
+				expectNextAttempt(t, nextAttemptAt, min(100*time.Millisecond<<i, 5*time.Minute))
 			}
 		})
 	})
@@ -57,8 +57,8 @@ func TestStreak(t *testing.T) {
 				FirstFailedAt: time.Now(),
 			}
 
-			delay := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
-			expectDelay(t, delay, 100*time.Millisecond<<10)
+			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
+			expectNextAttempt(t, nextAttemptAt, 100*time.Millisecond<<10)
 		})
 	})
 
@@ -70,8 +70,8 @@ func TestStreak(t *testing.T) {
 				FirstFailedAt: time.Now(),
 			}
 
-			delay := s.Extend(t.Context(), engineLogger, "<work>", failure)
-			expectDelay(t, delay, 15*time.Second)
+			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
+			expectNextAttempt(t, nextAttemptAt, 15*time.Second)
 		})
 	})
 
@@ -123,7 +123,7 @@ func TestStreak(t *testing.T) {
 
 				s.Extend(t.Context(), engineLogger, "<work>", deterministic)
 
-				if !s.HasLoggedError {
+				if !s.FailureLoggedAsError {
 					t.Fatal("expected the streak to have logged its ERROR")
 				}
 			})
@@ -136,14 +136,14 @@ func TestStreak(t *testing.T) {
 
 				s.Extend(t.Context(), engineLogger, "<work>", failure)
 
-				if s.HasLoggedError {
+				if s.FailureLoggedAsError {
 					t.Fatal("did not expect the streak to have logged its ERROR before it is 30 seconds old")
 				}
 
 				time.Sleep(30 * time.Second)
 				s.Extend(t.Context(), engineLogger, "<work>", failure)
 
-				if !s.HasLoggedError {
+				if !s.FailureLoggedAsError {
 					t.Fatal("expected the streak to have logged its ERROR")
 				}
 			})
@@ -165,12 +165,16 @@ func TestStreak(t *testing.T) {
 	})
 }
 
-// expectDelay asserts that the given delay is within the jitter applied to the
-// given backoff, which is from half of it to all of it.
-func expectDelay(t *testing.T, got, backoff time.Duration) {
+// expectNextAttempt asserts that the given time of the next attempt is after
+// now by the jitter applied to the given backoff, which is from half of it to
+// all of it.
+//
+// It must be called within a synctest bubble, so that the clock hasn't moved
+// since the failure.
+func expectNextAttempt(t *testing.T, got time.Time, backoff time.Duration) {
 	t.Helper()
 
-	if got < backoff/2 || got > backoff {
-		t.Fatalf("unexpected delay: got %s, want from %s to %s", got, backoff/2, backoff)
+	if delay := time.Until(got); delay < backoff/2 || delay > backoff {
+		t.Fatalf("unexpected delay: got %s, want from %s to %s", delay, backoff/2, backoff)
 	}
 }

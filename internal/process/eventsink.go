@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -242,13 +243,6 @@ func (s *EventSink) dispatch(
 		return nil
 	}
 
-	// Until the instance's root exists, a record can identify the instance only
-	// by its ID.
-	instanceIDAttr := slog.Group(
-		"process_instance",
-		slog.String("id", instanceID),
-	)
-
 	inst, err := lockInstance(
 		ctx,
 		tx,
@@ -256,10 +250,9 @@ func (s *EventSink) dispatch(
 		s.QueueRouter,
 		s.Identity.GetKey(),
 		instanceID,
-		engineLogger.With(instanceIDAttr),
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to load process instance %q for event %s: %w", instanceID, messageID, err)
 	}
 
 	// An ended instance doesn't handle any more events.
@@ -299,14 +292,17 @@ func (s *EventSink) dispatch(
 		return fmt.Errorf("unable to handle event %s for instance %q: %w", messageID, inst.ID, err)
 	}
 
-	return writeEffects(
+	if err := writeEffects(
 		ctx,
 		tx,
 		s.QueueRouter,
 		inst,
 		&scope.messageScope,
-		engineLogger.With(instanceIDAttr),
-	)
+	); err != nil {
+		return fmt.Errorf("unable to write the effects of event %s for instance %q: %w", messageID, inst.ID, err)
+	}
+
+	return nil
 }
 
 // routeEventToInstance routes the event to a process instance by calling the
@@ -326,7 +322,9 @@ func (s *EventSink) routeEventToInstance(
 			}
 
 			if instanceID == "" {
-				return "", fmt.Errorf("handler returned empty instance ID")
+				return "", xerrors.Deterministic(
+					errors.New("handler returned an empty instance ID"),
+				)
 			}
 
 			return instanceID, nil

@@ -13,9 +13,11 @@
 -- its handler's key. That keeps the number of queues small, while spreading the
 -- backlog across the live nodes rather than giving it all to one.
 --
--- A message that had already failed is treated as failing since its next
--- attempt, which is also the scheduled time of a deadline, because the real
--- scheduled time is inside the envelope.
+-- A migrated message that has failed gets the time of its next attempt as its
+-- "first_failed_at", because the time of its first failure isn't known.
+--
+-- A migrated deadline gets the time of its next attempt as its
+-- "scheduled_for", because its scheduled time is only in its envelope.
 --
 -- This file does nothing on a database that never had those tables. Once no
 -- such database remains, deleting this file and TestCreate_migratesQueues is
@@ -30,7 +32,7 @@ BEGIN
             queue_id,
             envelope,
             failures,
-            failing_since,
+            first_failed_at,
             scheduled_for,
             next_attempt_at
         )
@@ -66,7 +68,7 @@ BEGIN
             instance_id,
             envelope,
             failures,
-            failing_since,
+            first_failed_at,
             scheduled_for,
             next_attempt_at
         )

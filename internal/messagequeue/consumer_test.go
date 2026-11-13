@@ -16,6 +16,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -653,30 +654,61 @@ func TestConsumer(t *testing.T) {
 		expectAttempt(t, attempted, locked)
 	})
 
-	t.Run("it postpones the delivery after a failed attempt, and increments its failures", func(t *testing.T) {
+	// failOnce returns a sink whose first attempt returns the given error.
+	// Later attempts block until the consumer stops, so that they don't change
+	// the message's row.
+	failOnce := func(result error) Sink {
+		var failed atomic.Bool
+
+		return sinkFunc(
+			func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
+				if failed.CompareAndSwap(false, true) {
+					return result
+				}
+
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		)
+	}
+
+	// setStreak sets the failure streak of the message with the given ID.
+	setStreak := func(
+		t *testing.T,
+		db *sql.DB,
+		messageID *uuidpb.UUID,
+		failures int,
+		firstFailedAt time.Time,
+		errorLogged bool,
+	) {
+		t.Helper()
+
+		exec(
+			t,
+			db,
+			`UPDATE messagequeue.messages SET
+				failures = $2,
+				first_failed_at = $3,
+				failure_logged_as_error = $4
+			WHERE message_id = $1`,
+			xsql.UUID(messageID),
+			failures,
+			firstFailedAt,
+			errorLogged,
+		)
+	}
+
+	t.Run("it stores the start of the streak on the first failure", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
-		var failed atomic.Bool
+
+		// The database stores times to the microsecond, so before is truncated
+		// to compare with the stored time.
+		before := time.Now().Truncate(time.Microsecond)
 
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
-		run(
-			t,
-			db,
-			n,
-			10,
-			sinkFunc(
-				func(ctx context.Context, _ *sql.Tx, _ Delivery, _ *envelopepb.Envelope) error {
-					if failed.CompareAndSwap(false, true) {
-						return ErrFailed
-					}
-
-					// Later attempts block, so that they don't change the row.
-					<-ctx.Done()
-					return ctx.Err()
-				},
-			),
-		)
+		run(t, db, n, 10, failOnce(errors.New("<error>")))
 
 		expectQueued(
 			t,
@@ -684,9 +716,168 @@ func TestConsumer(t *testing.T) {
 			"the delivery to be postponed after a failure",
 			messageID,
 			`failures = 1
-			AND failing_since IS NOT NULL
+			AND first_failed_at >= $2
+			AND NOT failure_logged_as_error
 			AND next_attempt_at > scheduled_for`,
+			before,
 		)
+	})
+
+	t.Run("it keeps the start of a streak in progress", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		// A streak that began before this attempt has the shape of a row that
+		// was migrated from an earlier schema, which has failures but hasn't
+		// logged its ERROR. The database stores times to the microsecond, so
+		// firstFailedAt is stored as it is.
+		firstFailedAt := time.Now().Add(-time.Second).Truncate(time.Microsecond)
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		setStreak(t, db, messageID, 3, firstFailedAt, false)
+		run(t, db, n, 10, failOnce(errors.New("<error>")))
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed with the stored start of the streak",
+			messageID,
+			`failures = 4
+			AND first_failed_at = $2`,
+			firstFailedAt,
+		)
+	})
+
+	t.Run("it stores that the streak logged its ERROR", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		run(t, db, n, 10, failOnce(xerrors.Deterministic(errors.New("<error>"))))
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed with its ERROR logged",
+			messageID,
+			`failures = 1
+			AND failure_logged_as_error`,
+		)
+	})
+
+	t.Run("it keeps the streak through contention", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+
+		// The database stores times to the microsecond, so these times are
+		// stored as they are.
+		firstFailedAt := time.Now().Add(-time.Second).Truncate(time.Microsecond)
+		start := time.Now().Truncate(time.Microsecond)
+
+		messageID := addMessage(t, db, n.ID, typeID, start)
+		setStreak(t, db, messageID, 3, firstFailedAt, true)
+		run(t, db, n, 10, failOnce(ErrBusy))
+
+		// The message was due at start, so its next attempt is after start
+		// only once the delivery has been postponed.
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed with its streak unchanged",
+			messageID,
+			`failures = 3
+			AND first_failed_at = $2
+			AND failure_logged_as_error
+			AND next_attempt_at > $3`,
+			firstFailedAt,
+			start,
+		)
+	})
+
+	// expectNextAttemptWithin fails the test unless the message with the given
+	// ID has the given number of failures, and its next attempt is between
+	// min after before and max after after.
+	//
+	// The times come from Go's clock, as next_attempt_at does, so a difference
+	// between Go's clock and the database's doesn't affect the result.
+	expectNextAttemptWithin := func(
+		t *testing.T,
+		db *sql.DB,
+		messageID *uuidpb.UUID,
+		failures int,
+		before time.Time,
+		minDelay, maxDelay time.Duration,
+	) {
+		t.Helper()
+
+		expectQueued(
+			t,
+			db,
+			"the delivery to be postponed after a failure",
+			messageID,
+			`failures = $2`,
+			failures,
+		)
+
+		after := time.Now()
+
+		var nextAttemptAt time.Time
+		if err := db.QueryRowContext(
+			t.Context(),
+			`SELECT next_attempt_at
+			FROM messagequeue.messages
+			WHERE message_id = $1`,
+			xsql.UUID(messageID),
+		).Scan(&nextAttemptAt); err != nil {
+			t.Fatal(err)
+		}
+
+		// The database stores times to the microsecond, so the earliest time
+		// is truncated to compare with the stored time.
+		earliest := before.Add(minDelay).Truncate(time.Microsecond)
+		latest := after.Add(maxDelay)
+
+		if nextAttemptAt.Before(earliest) || nextAttemptAt.After(latest) {
+			t.Fatalf(
+				"unexpected next attempt: got %s, want from %s to %s",
+				nextAttemptAt,
+				earliest,
+				latest,
+			)
+		}
+	}
+
+	t.Run("it postpones a deterministic failure by up to the deterministic limit", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		before := time.Now()
+
+		// After this many failures, the delay before jitter is the limit, and
+		// the jitter makes it at least half of the limit.
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		setStreak(t, db, messageID, 20, time.Now(), true)
+		run(t, db, n, 10, failOnce(xerrors.Deterministic(errors.New("<error>"))))
+
+		expectNextAttemptWithin(t, db, messageID, 21, before, 150*time.Second, 5*time.Minute)
+	})
+
+	t.Run("it postpones any other failure by up to the transient limit", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		before := time.Now()
+
+		// After this many failures, the delay before jitter is the limit, and
+		// the jitter makes it at least half of the limit.
+		messageID := addMessage(t, db, n.ID, typeID, time.Now())
+		setStreak(t, db, messageID, 20, time.Now(), true)
+		run(t, db, n, 10, failOnce(errors.New("<error>")))
+
+		expectNextAttemptWithin(t, db, messageID, 21, before, 7500*time.Millisecond, 15*time.Second)
 	})
 
 	t.Run("it postpones the delivery without a failure when the sink needs a row while another transaction holds that row's lock", func(t *testing.T) {
@@ -720,7 +911,7 @@ func TestConsumer(t *testing.T) {
 			"the delivery to be postponed without a failure",
 			messageID,
 			`failures = 0
-			AND failing_since IS NULL
+			AND first_failed_at IS NULL
 			AND next_attempt_at > scheduled_for`,
 		)
 	})
@@ -743,7 +934,7 @@ func TestConsumer(t *testing.T) {
 					ctx,
 					`UPDATE messagequeue.messages
 					SET failures = 99,
-						failing_since = clock_timestamp()
+						first_failed_at = clock_timestamp()
 					WHERE message_id = $1`,
 					xsql.UUID(d.MessageID),
 				); err != nil {
@@ -761,7 +952,7 @@ func TestConsumer(t *testing.T) {
 		db, n, _ := setup(t)
 
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
-		run(t, db, n, 10, returnAfterWriting(ErrFailed))
+		run(t, db, n, 10, returnAfterWriting(errors.New("<error>")))
 
 		expectQueued(
 			t,
@@ -792,7 +983,7 @@ func TestConsumer(t *testing.T) {
 			"the delivery to be postponed without the sink's changes",
 			messageID,
 			`failures = 0
-			AND failing_since IS NULL
+			AND first_failed_at IS NULL
 			AND next_attempt_at > $2`,
 			start,
 		)
@@ -814,45 +1005,11 @@ func TestConsumer(t *testing.T) {
 			"the message to be postponed",
 			messageID,
 			`failures > 0
-			AND failing_since IS NOT NULL
+			AND first_failed_at IS NOT NULL
+			AND failure_logged_as_error
 			AND next_attempt_at > scheduled_for`,
 		)
 		expectNoAttempt(t, attempted)
-	})
-
-	t.Run("it leaves a message for another attempt when an attempt ends with an error", func(t *testing.T) {
-		t.Parallel()
-
-		db, n, _ := setup(t)
-		attempted := make(chan *uuidpb.UUID, 100)
-
-		messageID := addMessage(t, db, n.ID, typeID, time.Now())
-		run(
-			t,
-			db,
-			n,
-			10,
-			sinkFunc(
-				func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
-					select {
-					case attempted <- d.MessageID:
-					case <-ctx.Done():
-					}
-					return errors.New("<error>")
-				},
-			),
-		)
-
-		expectAttempt(t, attempted, messageID)
-		expectAttempt(t, attempted, messageID)
-		expectQueued(
-			t,
-			db,
-			"the message to be left without a failure",
-			messageID,
-			`failures = 0
-			AND failing_since IS NULL`,
-		)
 	})
 
 	t.Run("it lets an attempt finish after its queue's workload moves to another node", func(t *testing.T) {
@@ -927,7 +1084,7 @@ func TestConsumer(t *testing.T) {
 						ctx,
 						`UPDATE messagequeue.messages
 						SET failures = 99,
-							failing_since = clock_timestamp()
+							first_failed_at = clock_timestamp()
 						WHERE message_id = $1`,
 						xsql.UUID(d.MessageID),
 					); err != nil {

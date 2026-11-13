@@ -581,7 +581,6 @@ the record is made, so a reader sees the instance change in order.
 #100 adapts to these changes and to the [logging guide]. Once it is
 implemented, this work finishes with:
 
-- Per-delivery streaks, including a persisted first-failure time.
 - Building instance attributes for each record in the aggregate and deadline
   sinks, as their scopes now do, without an `instanceLogger` that fixes the
   instance's ID when it's created.

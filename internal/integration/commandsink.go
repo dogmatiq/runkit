@@ -71,12 +71,7 @@ func (s *CommandSink) Deliver(
 		env,
 		&commandForHandling,
 	); err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to unmarshal command",
-			xslog.Error(err),
-		)
-		return messagequeue.ErrFailed
+		return fmt.Errorf("unable to unmarshal command: %w", err)
 	}
 
 	packer := s.Packer.PackEffects(
@@ -101,13 +96,7 @@ func (s *CommandSink) Deliver(
 	}
 
 	if err != nil {
-		engineLogger.ErrorContext(
-			ctx,
-			"unable to handle command",
-			xslog.Error(err),
-		)
-
-		return messagequeue.ErrFailed
+		return fmt.Errorf("unable to handle command: %w", err)
 	}
 
 	if eventEnvelopes, ok := packer.Seal(); ok {

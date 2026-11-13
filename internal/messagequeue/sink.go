@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"time"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/failure"
 )
 
 // Sink is the destination to which a [Consumer] passes queued messages.
@@ -29,17 +29,18 @@ type Sink interface {
 	// instance while handling one of the instance's deadlines, the sink removes
 	// that deadline itself.
 	//
-	// It returns [ErrFailed] if it can't deliver the message because of a
-	// problem with the message or the handler, such as when the message can't
-	// be unmarshaled or the handler panics. It may return [ErrBusy] instead of
-	// waiting if it needs a lock while another transaction, or another call to
-	// [Sink.Deliver], holds that lock. After either error, the consumer rolls
-	// back tx, which discards any changes that the sink made, then postpones
-	// the delivery. Only [ErrFailed] increments [Delivery.Failures].
+	// It may return [ErrBusy] instead of waiting if it needs a lock while
+	// another transaction, or another call to [Sink.Deliver], holds that lock.
+	// Any other error is a failure of the delivery. After any error, the
+	// consumer rolls back tx, which discards any changes that the sink made.
+	// Unless the consumer is stopping, it then postpones the delivery, and
+	// after a failure, it extends the delivery's failure streak.
 	//
-	// It returns any other error, such as a database error, if the problem
-	// isn't specific to the message. The consumer then rolls back tx, leaves
-	// the message unchanged, and waits before it starts any more attempts.
+	// It returns a deterministic error for a failure that happens again on
+	// every attempt, such as a message that can't be unmarshaled. It doesn't
+	// log its failures, because the consumer logs them.
+	//
+	// See [xerrors.IsDeterministic].
 	//
 	// engineLogger is the target for the engine's records about the delivery,
 	// and appLogger is the target for the application's records from the
@@ -77,20 +78,11 @@ type Delivery struct {
 	// QueueID is the ID of the message's queue.
 	QueueID *uuidpb.UUID
 
-	// Failures is the number of the delivery's attempts that have failed.
-	Failures uint64
-
-	// FailingSince is the time of the first of those failures, or zero if
-	// there are no failures.
-	FailingSince time.Time
+	// Streak is the delivery's failure streak, as it was when the consumer
+	// claimed the message.
+	Streak failure.Streak
 }
 
-var (
-	// ErrFailed is returned by [Sink.Deliver] when it can't deliver a message
-	// because of a problem with the message or the handler.
-	ErrFailed = errors.New("unable to deliver message")
-
-	// ErrBusy is returned by [Sink.Deliver] when the sink needs a lock while
-	// another transaction, or another call to [Sink.Deliver], holds that lock.
-	ErrBusy = errors.New("sink is busy")
-)
+// ErrBusy is returned by [Sink.Deliver] when the sink needs a lock while
+// another transaction, or another call to [Sink.Deliver], holds that lock.
+var ErrBusy = errors.New("sink is busy")

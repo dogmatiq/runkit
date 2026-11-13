@@ -55,14 +55,15 @@ type Tracker struct {
 
 // WorkFailed records a failure of the work.
 //
-// It returns the delay before the next attempt. See [Streak.Extend].
-func (t *Tracker) WorkFailed(ctx context.Context, err error) time.Duration {
+// It returns the time at which the next attempt may start. See
+// [Streak.Extend].
+func (t *Tracker) WorkFailed(ctx context.Context, err error) time.Time {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	// No more attempts are made, so there's no delay.
+	// No more attempts are made, so there's no time for the next one.
 	if t.complete {
-		return 0
+		return time.Time{}
 	}
 
 	t.cancelQuietPeriod()
