@@ -13,7 +13,6 @@
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
     <div class="metric-bar">{{.WorkloadBar}}</div>
-    {{if .Obs.LiveNodes.Known}}<span class="node-blips">{{range .Obs.LiveNodes.Nodes}}<span class="pulse" id="blip-{{id .ID}}" data-node="{{id .ID}}" title="{{id .ID}}"></span>{{end}}</span>{{end}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}

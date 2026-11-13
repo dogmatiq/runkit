@@ -3,7 +3,6 @@ package pages
 import (
 	"fmt"
 	"html/template"
-	"sort"
 	"time"
 
 	"github.com/dogmatiq/dapper"
@@ -143,6 +142,8 @@ func (f frame) WorkloadBar() template.HTML {
 		}
 	}
 
+	// The nodes stay in the order of their IDs, so that a node's segment keeps
+	// its place as workloads move.
 	var result []nodeWorkloadCount
 	for _, n := range f.Obs.LiveNodes.Nodes {
 		result = append(
@@ -153,13 +154,6 @@ func (f frame) WorkloadBar() template.HTML {
 			},
 		)
 	}
-
-	sort.Slice(
-		result,
-		func(i, j int) bool {
-			return result[i].Workloads > result[j].Workloads
-		},
-	)
 
 	return workloadBar(result)
 }

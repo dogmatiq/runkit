@@ -112,10 +112,10 @@
   // Updates.
   //
   // Each update morphs the new page into the old one, so elements that have
-  // not changed stay as they are, and nothing flashes. A node's heartbeat
-  // blip is animated by a class that the server never renders, so the morph
-  // leaves an element's classes alone while it blips, and an update does not
-  // cut a blip short. After an update, <details> elements that were open are
+  // not changed stay as they are, and nothing flashes. A heartbeat is shown by
+  // a class that the server never renders, so the morph leaves an element's
+  // classes alone while it has that class, and an update does not cut the
+  // animation short. After an update, <details> elements that were open are
   // opened again.
 
   if (window.Idiomorph) {

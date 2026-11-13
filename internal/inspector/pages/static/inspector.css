@@ -715,15 +715,6 @@ h3 {
 }
 
 /* One blip for each live node, which dims briefly at each heartbeat. */
-.node-blips {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
 /* A bar like a disk usage bar, with segments largest first. */
 .segbar {
   display: block;
@@ -739,10 +730,6 @@ h3 {
 }
 
 /* A bar is coloured by what it measures, wherever it appears. */
-.segbar.nodes {
-  --subsystem: var(--cluster);
-}
-
 .segbar.queues {
   --subsystem: var(--queues);
 }
@@ -759,6 +746,36 @@ h3 {
 
 .segbar .seg-other {
   fill: var(--faint);
+}
+
+/*
+ * One segment for each live node, with its share of the workloads. The
+ * segments shrink in proportion to make room for the gaps and for the square
+ * segments of nodes that own no workloads.
+ */
+.nodebar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-sunk);
+}
+
+.nodeseg {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  background: var(--cluster);
+}
+
+.nodeseg.is-idle {
+  flex: none;
+}
+
+/* A heartbeat dims the node's segment briefly and brings it back. */
+.nodeseg.beat {
+  animation: beat 1.2s ease-out;
 }
 
 .metric-bar {
