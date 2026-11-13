@@ -214,6 +214,38 @@
   // Each update morphs the new page into the old one, so elements that have
   // not changed stay as they are, and nothing flashes. After an update,
   // <details> elements that were open are opened again.
+  //
+  // A segment of a bar that the update removes, such as when a queue empties,
+  // fades out instead of vanishing, because a queue often moves between one
+  // message and none. If a later update reuses the segment before it has
+  // faded, the morph removes its data-leaving attribute, and the segment
+  // stays.
+
+  if (window.Idiomorph) {
+    window.Idiomorph.defaults.callbacks.beforeNodeRemoved = function (node) {
+      if (!(node instanceof Element) || !node.animate || !node.matches(".segbar rect, .nodeseg")) {
+        return true;
+      }
+
+      if (node.hasAttribute("data-leaving")) return false;
+      node.setAttribute("data-leaving", "");
+
+      var fade = node.animate(
+        [{ opacity: window.getComputedStyle(node).opacity }, { opacity: 0 }],
+        { duration: 600, easing: "ease-out", fill: "forwards" },
+      );
+
+      fade.onfinish = function () {
+        if (node.hasAttribute("data-leaving")) {
+          node.remove();
+        } else {
+          fade.cancel();
+        }
+      };
+
+      return false;
+    };
+  }
 
   var openDetails = {};
 
