@@ -1,10 +1,10 @@
-package supervisor_test
+package failure_test
 
 import (
 	"testing"
 	"time"
 
-	. "github.com/dogmatiq/runkit/internal/supervisor"
+	. "github.com/dogmatiq/runkit/internal/failure"
 	"pgregory.net/rapid"
 )
 

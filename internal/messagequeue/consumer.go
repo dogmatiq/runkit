@@ -10,7 +10,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
-	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -101,7 +101,7 @@ type Consumer struct {
 	// messages, or if an attempt ends with an error, unless another
 	// transaction holds the message's lock. work decides how long the consumer
 	// backs off after each failure, and logs the failure.
-	work *supervisor.Work
+	work *failure.Work
 }
 
 // Run delivers messages until ctx is canceled.
@@ -122,7 +122,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		c.messageTypeIDs.Add(typeID)
 	}
 
-	c.work = &supervisor.Work{
+	c.work = &failure.Work{
 		Description:  "consume queue",
 		EngineLogger: c.EngineLogger,
 	}
