@@ -195,6 +195,12 @@ func (h *Handler) HandlesCommands() bool {
 	return h.Type == config.AggregateHandlerType || h.Type == config.IntegrationHandlerType
 }
 
+// SchedulesDeadlines returns true if the handler's routes include a deadline
+// type that it schedules, which only a process handler can have.
+func (h *Handler) SchedulesDeadlines() bool {
+	return len(h.MessageTypeIDs(config.SchedulesDeadlineRouteType)) > 0
+}
+
 // HandlesEvents returns true if the engine dispatches events from event
 // streams to the handler, which is true of process and projection handlers.
 func (h *Handler) HandlesEvents() bool {
