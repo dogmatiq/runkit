@@ -150,8 +150,6 @@
   </div>
   {{end}}
 
-  {{with $rate}}{{$n := round .PerMinute}}<p class="hcard-rate"><span class="hcard-rate-value">{{compact $n}}</span> {{noun $n "event" "events"}} {{.Verb}} per minute</p>{{end}}
-
   {{/* The bar sits on the chart, with no text between them. */}}
   {{if or $failing $h.MinimizesConcurrency $h.Aggregate (and $h.Process $h.SchedulesDeadlines)}}<div class="hcard-bottom">
     {{if or $failing $h.MinimizesConcurrency}}<footer class="hcard-foot">

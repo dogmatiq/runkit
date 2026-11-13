@@ -20,8 +20,8 @@
   <a class="metric subsystem-queues" href="{{.Root}}queues">
     <span class="metric-icon" title="Queues">{{icon "queue"}}</span>
     <span class="metric-value" title="{{num $messages}}">{{compact $messages}}</span>
-    <span class="metric-detail">{{noun $messages "message" "messages"}} queued in {{plural (len .Obs.Queues) "queue" "queues"}},
-      {{if .Obs.RemovedMessagesErr}}<span title="{{.Obs.RemovedMessagesErr}}">?</span>{{else}}<span title="Messages removed from the queues per minute: those delivered, and deadlines removed when their process instance ended. From PostgreSQL's table statistics.">{{compact (round .RemovedMessagesPerMinute)}}</span>{{end}} per minute{{if $failing}}, <span class="is-bad-text">{{num $failing}} failing</span>{{end}}</span>
+    <span class="metric-detail">{{noun $messages "message" "messages"}} in {{plural (len .Obs.Queues) "queue" "queues"}},
+      {{if .Obs.RemovedMessagesErr}}<span title="{{.Obs.RemovedMessagesErr}}">?</span>{{else}}<span title="Messages removed from the queues per minute: those delivered, and deadlines removed when their process instance ended. From PostgreSQL's table statistics.">{{compact (round .RemovedMessagesPerMinute)}}</span>{{end}}/min{{if $failing}}, <span class="is-bad-text">{{num $failing}} failing</span>{{end}}</span>
     <div class="metric-bar">{{queuebar .Obs.Queues}}</div>
     {{sparkline .QueuedMessages}}
   </a>

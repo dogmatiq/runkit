@@ -554,18 +554,6 @@ h3 {
   --subsystem-soft: var(--streams-soft);
 }
 
-.hcard-rate {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.hcard-rate-value {
-  font-weight: 600;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
 /* The footer and the bar sit at the bottom, above the chart. */
 .hcard-bottom {
   display: flex;

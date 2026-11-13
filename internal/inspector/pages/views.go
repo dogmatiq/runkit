@@ -300,13 +300,6 @@ func series(samples []observe.Sample, window time.Duration, total func(observe.S
 
 // handlerRate is how fast a handler records or handles events.
 type handlerRate struct {
-	// Verb is "recorded" for a handler that records events, and "handled"
-	// for one that handles them.
-	Verb string
-
-	// PerMinute is the recent number of events per minute.
-	PerMinute float64
-
 	// Rates is the number of events per second between each pair of
 	// consecutive samples that counted them.
 	Rates []float64
@@ -323,22 +316,13 @@ func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
 		return nil
 	}
 
-	r := &handlerRate{
-		Verb: "handled",
+	return &handlerRate{
 		Rates: rate(
 			f.History,
 			chartWindow,
 			func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
 		),
 	}
-
-	if h.RecordsEvents() {
-		r.Verb = "recorded"
-	}
-
-	r.PerMinute = perMinute(r.Rates)
-
-	return r
 }
 
 // perMinute returns the average of the most recent few of the given rates per
