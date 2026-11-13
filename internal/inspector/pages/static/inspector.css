@@ -789,11 +789,11 @@ h3 {
   --subsystem: var(--streams);
 }
 
-.segbar .seg-1 { opacity: 0.8; }
-.segbar .seg-2 { opacity: 0.64; }
-.segbar .seg-3 { opacity: 0.5; }
-.segbar .seg-4 { opacity: 0.38; }
-.segbar .seg-5 { opacity: 0.28; }
+.segbar .seg-1, .nodebar .seg-1 { opacity: 0.8; }
+.segbar .seg-2, .nodebar .seg-2 { opacity: 0.64; }
+.segbar .seg-3, .nodebar .seg-3 { opacity: 0.5; }
+.segbar .seg-4, .nodebar .seg-4 { opacity: 0.38; }
+.segbar .seg-5, .nodebar .seg-5 { opacity: 0.28; }
 
 .segbar .seg-other {
   fill: var(--faint);

@@ -218,13 +218,16 @@ func nodeBar(counts []observe.NodeCount, describe func(observe.NodeCount) string
 	var b strings.Builder
 	b.WriteString(`<div class="nodebar">`)
 
-	for _, c := range counts {
+	for i, c := range counts {
+		// The segments are shaded like those of the other bars, in the order
+		// of the nodes, and the shades repeat after barSegments of them, so
+		// that neighbors differ.
 		width := "8"
-		class := "nodeseg is-idle"
+		class := fmt.Sprintf("nodeseg seg-%d is-idle", i%barSegments)
 
 		if c.Count > 0 {
 			width = fmt.Sprintf("%.3f%%", float64(c.Count)/float64(total)*100)
-			class = "nodeseg"
+			class = fmt.Sprintf("nodeseg seg-%d", i%barSegments)
 		}
 
 		fmt.Fprintf(
