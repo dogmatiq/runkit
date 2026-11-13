@@ -41,28 +41,31 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 
 	history := s.Observer.History()
 
+	eventRates := rate(
+		history,
+		chartWindow,
+		func(s observe.Sample) observe.Counter { return s.Events },
+	)
+
+	removalRates := rate(
+		history,
+		chartWindow,
+		func(s observe.Sample) observe.Counter { return s.RemovedMessages },
+	)
+
 	data := struct {
 		frame
-		EventRate   []float64
-		CurrentRate float64
-		Messages    []float64
+		EventRates               []float64
+		EventsPerMinute          float64
+		RemovalRates             []float64
+		RemovedMessagesPerMinute float64
 	}{
-		frame:     f,
-		EventRate: rate(history, chartWindow),
-		Messages: series(history, chartWindow, func(s observe.Sample) float64 {
-			return float64(s.Messages)
-		}),
+		frame:                    f,
+		EventRates:               eventRates,
+		EventsPerMinute:          perMinute(eventRates),
+		RemovalRates:             removalRates,
+		RemovedMessagesPerMinute: perMinute(removalRates),
 	}
-
-	// The rate between two observations is noisy, so the current rate is the
-	// average of the most recent few.
-	recent := data.EventRate[max(0, len(data.EventRate)-rateSmoothing):]
-	for _, eventRate := range recent {
-		data.CurrentRate += eventRate / float64(len(recent))
-	}
-
-	// Rates are shown per minute.
-	data.CurrentRate *= 60
 
 	render(w, http.StatusOK, "overview.html", data)
 }

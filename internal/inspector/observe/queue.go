@@ -445,3 +445,32 @@ func (d *Database) queues(ctx context.Context, limit int) ([]Queue, error) {
 
 	return queues, nil
 }
+
+// removedMessages returns the number of rows that have been deleted from the
+// messagequeue.messages table since PostgreSQL's statistics were last reset.
+//
+// The engine deletes a message when it delivers it, and deletes a process
+// instance's deadlines when the instance ends, so the number counts both. It
+// comes from PostgreSQL's table statistics, which PostgreSQL keeps in shared
+// memory, so reading it reads no table. PostgreSQL also counts rows deleted
+// by a transaction that then failed to commit.
+func (d *Database) removedMessages(ctx context.Context) (uint64, error) {
+	var n int64
+
+	err := d.read(
+		ctx,
+		func(tx *sql.Tx) error {
+			return tx.QueryRowContext(
+				ctx,
+				`SELECT n_tup_del
+				FROM pg_stat_user_tables
+				WHERE relid = 'messagequeue.messages'::regclass`,
+			).Scan(&n)
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("unable to read the number of removed messages: %w", err)
+	}
+
+	return uint64(n), nil
+}

@@ -57,6 +57,14 @@ type Observation struct {
 	// observation reads, so totals over Queues are too low.
 	IsQueuesTruncated bool
 
+	// RemovedMessages is the number of messages that have been removed from
+	// the queues since PostgreSQL's statistics were last reset. See
+	// [Database.removedMessages].
+	RemovedMessages uint64
+
+	// RemovedMessagesErr explains why RemovedMessages could not be read.
+	RemovedMessagesErr error
+
 	// EventStreams is the engine's event streams, ordered by ID.
 	EventStreams []EventStream
 
@@ -79,16 +87,6 @@ func (o *Observation) Events() uint64 {
 		n += s.Length
 	}
 	return n
-}
-
-// Totals returns the total number of queued messages, and the number of those
-// whose most recent attempt failed.
-func (o *Observation) Totals() (messages, failing int) {
-	for _, q := range o.Queues {
-		messages += q.Messages
-		failing += q.Failing
-	}
-	return messages, failing
 }
 
 // Queue returns the queue with the given ID. It returns false if the queue
@@ -204,14 +202,22 @@ type Sample struct {
 	At time.Time
 
 	// Events is the total number of events on the observed event streams.
-	Events uint64
+	Events Counter
 
-	// Messages is the total number of queued messages.
-	Messages int
+	// RemovedMessages is the number of messages removed from the queues since
+	// PostgreSQL's statistics were last reset.
+	RemovedMessages Counter
+}
 
-	// Failing is the number of queued messages whose most recent attempt
-	// failed.
-	Failing int
+// Counter is the value of a total that usually only grows, such as the number
+// of events recorded, as one observation read it.
+type Counter struct {
+	// Value is the total.
+	Value uint64
+
+	// IsKnown is false if the observation could not read the total, in which
+	// case Value is zero.
+	IsKnown bool
 }
 
 // Observer reads the database repeatedly, and keeps the most recent
@@ -368,15 +374,18 @@ func (o *Observer) publish(obs *Observation) {
 		return
 	}
 
-	messages, failing := obs.Totals()
-
 	o.history = append(
 		o.history,
 		Sample{
-			At:       obs.At,
-			Events:   obs.Events(),
-			Messages: messages,
-			Failing:  failing,
+			At: obs.At,
+			Events: Counter{
+				Value:   obs.Events(),
+				IsKnown: obs.EventStreamsErr == nil,
+			},
+			RemovedMessages: Counter{
+				Value:   obs.RemovedMessages,
+				IsKnown: obs.RemovedMessagesErr == nil,
+			},
 		},
 	)
 
@@ -406,6 +415,8 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 		obs.Queues = obs.Queues[:listLimit]
 		obs.IsQueuesTruncated = true
 	}
+
+	obs.RemovedMessages, obs.RemovedMessagesErr = o.Database.removedMessages(ctx)
 
 	obs.EventStreams, obs.EventStreamsErr = o.Database.eventStreams(ctx, listLimit+1)
 	if len(obs.EventStreams) > listLimit {

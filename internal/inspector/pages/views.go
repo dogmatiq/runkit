@@ -269,9 +269,10 @@ func format(v any) (p payloadView) {
 	}
 }
 
-// rate returns the number of events recorded per second between each pair of
-// consecutive samples, over the given window.
-func rate(samples []observe.Sample, window time.Duration) []float64 {
+// rate returns the change per second in a counter between each pair of
+// consecutive samples, over the given window. It skips each pair in which
+// either sample could not read the counter.
+func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Counter) []float64 {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -292,34 +293,38 @@ func rate(samples []observe.Sample, window time.Duration) []float64 {
 			continue
 		}
 
-		// A stream can disappear from the observed streams, so the total can
-		// go down. That is not a negative rate.
-		events := 0.0
-		if cur.Events > prev.Events {
-			events = float64(cur.Events - prev.Events)
+		before, after := counter(prev), counter(cur)
+		if !before.IsKnown || !after.IsKnown {
+			continue
 		}
 
-		rates = append(rates, events/seconds)
+		// A total can go down, such as when an event stream disappears from
+		// the observed streams, or PostgreSQL's statistics are reset. That is
+		// not a negative rate.
+		change := 0.0
+		if after.Value > before.Value {
+			change = float64(after.Value - before.Value)
+		}
+
+		rates = append(rates, change/seconds)
 	}
 
 	return rates
 }
 
-// series returns one value from each sample over the given window.
-func series(samples []observe.Sample, window time.Duration, value func(observe.Sample) float64) []float64 {
-	if len(samples) == 0 {
-		return nil
+// perMinute returns the average of the most recent few of the given rates per
+// second, as a rate per minute. The rate between two observations is noisy, so
+// one alone is not shown.
+func perMinute(rates []float64) float64 {
+	recent := rates[max(0, len(rates)-rateSmoothing):]
+	if len(recent) == 0 {
+		return 0
 	}
 
-	since := samples[len(samples)-1].At.Add(-window)
-
-	var values []float64
-
-	for _, s := range samples {
-		if !s.At.Before(since) {
-			values = append(values, value(s))
-		}
+	sum := 0.0
+	for _, r := range recent {
+		sum += r
 	}
 
-	return values
+	return sum / float64(len(recent)) * 60
 }
