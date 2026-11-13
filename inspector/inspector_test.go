@@ -29,7 +29,9 @@ func TestInspector(t *testing.T) {
 
 		app := &demoapp.App{
 			StatementInterval: 50 * time.Millisecond,
-			MailerFailureRate: 0.5,
+			MailServer: &demoapp.UnreliableMailServer{
+				FailureRate: 0.5,
+			},
 		}
 
 		cluster := runBank(t, db, app)
@@ -60,7 +62,9 @@ func TestInspector(t *testing.T) {
 
 		app := &demoapp.App{
 			StatementInterval: 50 * time.Millisecond,
-			MailerFailureRate: 0.5,
+			MailServer: &demoapp.UnreliableMailServer{
+				FailureRate: 0.5,
+			},
 		}
 
 		// The nodes send heartbeats, so they must stop before the test

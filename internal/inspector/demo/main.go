@@ -52,7 +52,9 @@ func main() {
 func run(ctx context.Context, serverDSN string) error {
 	app := &demoapp.App{
 		StatementInterval: 20 * time.Second,
-		MailerFailureRate: 0.3,
+		MailServer: &cyclingMailServer{
+			start: time.Now(),
+		},
 	}
 
 	cluster, err := democluster.Start(ctx, serverDSN, app)
@@ -125,6 +127,59 @@ func executeCommands(ctx context.Context, executor dogma.CommandExecutor) {
 		// expected and ignored.
 		executor.ExecuteCommand(ctx, command)
 	}
+}
+
+// mailCycle is the length of the repeating cycle of [cyclingMailServer].
+const mailCycle = 3 * time.Minute
+
+// cyclingMailServer is a [demoapp.MailServer] whose behavior follows a
+// repeating cycle, so that the inspector shows the mailer's queue backing up
+// and draining, and messages that fail repeatedly and then succeed.
+//
+// For the first 90 seconds of each cycle it sends each statement quickly, with
+// an occasional slow one. For the next 50 seconds it is slow. The mailer
+// integration handles one command at a time, so its queue backs up without
+// any failures. For the next 25 seconds every attempt fails. For the rest of
+// the cycle it is quick again.
+type cyclingMailServer struct {
+	start time.Time
+}
+
+func (s *cyclingMailServer) Send(ctx context.Context, _ string, _ int) error {
+	var (
+		delay   time.Duration
+		refused bool
+	)
+
+	switch at := time.Since(s.start) % mailCycle; {
+	case at >= 90*time.Second && at < 140*time.Second:
+		delay = 1500*time.Millisecond + randomDuration(time.Second)
+	case at >= 140*time.Second && at < 165*time.Second:
+		delay = 50 * time.Millisecond
+		refused = true
+	case rand.IntN(10) == 0:
+		delay = 400*time.Millisecond + randomDuration(500*time.Millisecond)
+	default:
+		delay = 20*time.Millisecond + randomDuration(60*time.Millisecond)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+	}
+
+	if refused {
+		return errors.New("mail server refused the connection")
+	}
+
+	return nil
+}
+
+// randomDuration returns a random duration from zero up to, but not including,
+// d.
+func randomDuration(d time.Duration) time.Duration {
+	return time.Duration(rand.Int64N(int64(d)))
 }
 
 // holders is the names of the demo's account holders.

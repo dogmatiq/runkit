@@ -21,9 +21,9 @@ type App struct {
 	// StatementInterval is the time between the statements of an account.
 	StatementInterval time.Duration
 
-	// MailerFailureRate is the probability, between 0 and 1, that an attempt
-	// to send a statement fails.
-	MailerFailureRate float64
+	// MailServer is the server that the mailer integration sends statements
+	// through.
+	MailServer MailServer
 
 	// Balances is the projection of the balance of each account.
 	Balances BalanceProjection
@@ -41,7 +41,7 @@ func (a *App) Configure(c dogma.ApplicationConfigurer) {
 		),
 		dogma.ViaIntegration(
 			&mailerHandler{
-				FailureRate: a.MailerFailureRate,
+				MailServer: a.MailServer,
 			},
 		),
 		dogma.ViaProjection(&a.Balances),
@@ -275,11 +275,31 @@ func (s *statementSchedule) MarshalBinary() ([]byte, error) { return json.Marsha
 
 func (s *statementSchedule) UnmarshalBinary(data []byte) error { return json.Unmarshal(data, s) }
 
+// MailServer sends the statements of the accounts.
+type MailServer interface {
+	// Send sends statement number n of the account with the given ID.
+	Send(ctx context.Context, accountID string, n int) error
+}
+
+// UnreliableMailServer is a [MailServer] that fails a random share of the
+// attempts to send a statement, and sends the others at once.
+type UnreliableMailServer struct {
+	// FailureRate is the probability, between 0 and 1, that an attempt fails.
+	FailureRate float64
+}
+
+// Send fails with a probability of [UnreliableMailServer.FailureRate].
+func (s *UnreliableMailServer) Send(context.Context, string, int) error {
+	if rand.Float64() < s.FailureRate {
+		return errors.New("mail server refused the connection")
+	}
+	return nil
+}
+
 // mailerHandler is the integration message handler that sends statements.
 type mailerHandler struct {
-	// FailureRate is the probability, between 0 and 1, that an attempt to send
-	// a statement fails.
-	FailureRate float64
+	// MailServer is the server that the handler sends statements through.
+	MailServer MailServer
 }
 
 func (m *mailerHandler) Configure(c dogma.IntegrationConfigurer) {
@@ -292,14 +312,14 @@ func (m *mailerHandler) Configure(c dogma.IntegrationConfigurer) {
 }
 
 func (m *mailerHandler) HandleCommand(
-	_ context.Context,
+	ctx context.Context,
 	s dogma.IntegrationCommandScope,
 	c dogma.Command,
 ) error {
 	send := c.(*SendStatement)
 
-	if rand.Float64() < m.FailureRate {
-		return errors.New("mail server refused the connection")
+	if err := m.MailServer.Send(ctx, send.AccountID, send.Number); err != nil {
+		return err
 	}
 
 	s.RecordEvent(
