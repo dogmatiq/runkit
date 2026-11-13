@@ -83,14 +83,9 @@
   // The <canvas id="heartbeats"> element on the overview has a lane for each
   // live node, listed by ID in its data-nodes attribute. Each heartbeat that
   // the page has received in the last 30 seconds is a tick in its node's
-  // lane. The ticks move left as time passes and fade as they age. A page that
-  // has just loaded starts with empty lanes.
-  //
-  // Like a radar ping, each tick leaves a trail that fades to nothing over
-  // the heartbeat timeout, in the data-timeout attribute, or until the next
-  // tick. The timeout is how long a node stays live after its most recent
-  // heartbeat, so a node that keeps sending heartbeats has a lit lane, and the
-  // lane of a node that stops fades to dark as the node stops being live.
+  // lane. The ticks move left as time passes and fade as they age, so a node
+  // that misses heartbeats leaves a gap. A page that has just loaded starts
+  // with empty lanes.
 
   var beatWindow = 30000;
   var beats = {};
@@ -116,11 +111,7 @@
 
       var g = canvas.getContext("2d");
       g.clearRect(0, 0, width, height);
-
-      var color = window.getComputedStyle(canvas).color;
-      var clear = color.replace(/^rgb\((.*)\)$/, "rgba($1, 0)");
-      var timeout = Number(canvas.getAttribute("data-timeout")) || 5000;
-      var trail = (timeout / beatWindow) * width;
+      g.fillStyle = window.getComputedStyle(canvas).color;
 
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
       // Each lane and the gap below it share a pitch, which shrinks so that
@@ -136,7 +127,6 @@
       for (var i = 0; i < nodes.length; i++) {
         var y = top + i * (lane + gap);
 
-        g.fillStyle = color;
         g.globalAlpha = 0.08;
         g.fillRect(0, y, width, lane);
 
@@ -145,20 +135,8 @@
 
         for (var j = 0; j < times.length; j++) {
           var age = (now - times[j]) / beatWindow;
-          var x = width - age * width;
-          var next = j + 1 < times.length ? width - ((now - times[j + 1]) / beatWindow) * width : width;
-          var brightness = 0.15 + 0.75 * (1 - age) * (1 - age);
-
-          var fade = g.createLinearGradient(x, 0, x + trail, 0);
-          fade.addColorStop(0, color);
-          fade.addColorStop(1, clear);
-          g.fillStyle = fade;
-          g.globalAlpha = brightness * 0.45;
-          g.fillRect(x, y, Math.min(next, x + trail) - x, lane);
-
-          g.fillStyle = color;
-          g.globalAlpha = brightness;
-          g.fillRect(x - tick, y, tick, lane);
+          g.globalAlpha = 0.15 + 0.75 * (1 - age) * (1 - age);
+          g.fillRect(width - age * width - tick, y, tick, lane);
         }
       }
 
