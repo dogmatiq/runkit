@@ -67,6 +67,133 @@ type InstanceCount struct {
 	IsAtLeast bool
 }
 
+// Bindings is how a handler's instances are spread across the things that they
+// are bound to: an aggregate instance's event stream, or the queue for a
+// process instance's deadlines.
+//
+// It counts at most [countLimit] instances, which are the first by instance
+// ID, so for a handler with more instances it describes only those.
+type Bindings struct {
+	// Bindings is the number of instances bound to each thing, with the most
+	// instances first.
+	Bindings []Binding
+
+	// Instances is the number of instances counted.
+	Instances int
+
+	// IsAtLeast is true if the count stopped at the limit, so there are at
+	// least Instances instances.
+	IsAtLeast bool
+}
+
+// Binding is the number of instances bound to one thing.
+type Binding struct {
+	// ID is the ID of the event stream or queue, or nil for the instances that
+	// are not bound to one yet.
+	ID *uuidpb.UUID
+
+	// Instances is the number of instances bound to it.
+	Instances int
+}
+
+// AggregateBindings returns how the instances of the aggregate handler with
+// the given key are spread across event streams.
+func (d *Database) AggregateBindings(
+	ctx context.Context,
+	handlerKey *uuidpb.UUID,
+) (Bindings, error) {
+	return d.bindings(
+		ctx,
+		`SELECT x.stream_id, count(*)
+		FROM (
+			SELECT i.stream_id
+			FROM aggregate.instances AS i
+			WHERE i.handler_key = $1
+			LIMIT $2
+		) AS x
+		GROUP BY x.stream_id
+		ORDER BY count(*) DESC`,
+		handlerKey,
+	)
+}
+
+// ActiveProcessBindings returns how the instances of the process handler with
+// the given key that have not ended are spread across the queues for their
+// deadlines.
+func (d *Database) ActiveProcessBindings(
+	ctx context.Context,
+	handlerKey *uuidpb.UUID,
+) (Bindings, error) {
+	return d.bindings(
+		ctx,
+		`SELECT x.deadline_queue_id, count(*)
+		FROM (
+			SELECT i.deadline_queue_id
+			FROM process.instances AS i
+			WHERE i.handler_key = $1
+				AND NOT i.ended
+			LIMIT $2
+		) AS x
+		GROUP BY x.deadline_queue_id
+		ORDER BY count(*) DESC`,
+		handlerKey,
+	)
+}
+
+func (d *Database) bindings(
+	ctx context.Context,
+	query string,
+	handlerKey *uuidpb.UUID,
+) (Bindings, error) {
+	var b Bindings
+
+	err := d.read(
+		ctx,
+		func(tx *sql.Tx) error {
+			rows, err := tx.QueryContext(ctx, query, xsql.UUID(handlerKey), countLimit)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var (
+					id    sql.Null[string]
+					count int
+				)
+
+				if err := rows.Scan(&id, &count); err != nil {
+					return err
+				}
+
+				binding := Binding{
+					Instances: count,
+				}
+
+				if id.Valid {
+					parsed, err := uuidpb.Parse(id.V)
+					if err != nil {
+						return err
+					}
+					binding.ID = parsed
+				}
+
+				b.Bindings = append(b.Bindings, binding)
+				b.Instances += count
+			}
+
+			return rows.Err()
+		},
+	)
+	if err != nil {
+		return Bindings{}, fmt.Errorf("unable to read instance bindings: %w", err)
+	}
+
+	b.IsAtLeast = b.Instances >= countLimit
+
+	return b, nil
+}
+
 // AggregateInstances returns the instances of the aggregate handler with the
 // given key whose IDs sort after the given ID, ordered by ID, up to the given
 // limit.
@@ -111,25 +238,6 @@ func (d *Database) AggregateInstance(
 	}
 
 	return instances[0], true, nil
-}
-
-// CountAggregateInstances returns the number of instances of the aggregate
-// handler with the given key.
-func (d *Database) CountAggregateInstances(
-	ctx context.Context,
-	handlerKey *uuidpb.UUID,
-) (InstanceCount, error) {
-	return d.count(
-		ctx,
-		`SELECT count(*) FROM (
-			SELECT 1
-			FROM aggregate.instances AS i
-			WHERE i.handler_key = $1
-			LIMIT $2
-		) AS x`,
-		xsql.UUID(handlerKey),
-		countLimit,
-	)
 }
 
 // ProcessInstances returns the instances of the process handler with the given

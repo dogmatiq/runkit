@@ -39,6 +39,12 @@ type StreamProgress struct {
 	Unhandled int
 }
 
+// UnhandledIsAtLeast returns true if the count of unhandled events stopped at
+// its limit, so there are at least Unhandled of them.
+func (p StreamProgress) UnhandledIsAtLeast() bool {
+	return p.Unhandled >= countLimit
+}
+
 // IsBehind returns true if the stream has events at or after the checkpoint
 // offset that the handler handles.
 func (p StreamProgress) IsBehind() bool {

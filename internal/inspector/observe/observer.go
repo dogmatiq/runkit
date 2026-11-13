@@ -136,6 +136,26 @@ type HandlerSummary struct {
 	// InstancesErr explains why Instances could not be counted.
 	InstancesErr error
 
+	// Bindings is how the handler's instances are spread across the things
+	// that they are bound to. For an aggregate handler it covers every
+	// instance, by event stream. For a process handler it covers the
+	// instances that have not ended, by the queue for their deadlines.
+	Bindings Bindings
+
+	// BindingsErr explains why Bindings could not be read.
+	BindingsErr error
+
+	// ConsumeRate is the number of events per second by which the handler's
+	// checkpoint offsets advanced across every local event stream, between
+	// the two most recent readings, for a process or projection handler. A
+	// checkpoint also advances past events of types that the handler does not
+	// handle.
+	ConsumeRate float64
+
+	// HasConsumeRate is true if ConsumeRate is known, which needs two
+	// readings.
+	HasConsumeRate bool
+
 	// Progress is how far the handler has got through each event stream, for
 	// a process or projection handler.
 	Progress []StreamProgress
@@ -163,6 +183,18 @@ type HandlerSummary struct {
 
 	// CompactionErr explains why LastCompactedAt could not be read.
 	CompactionErr error
+}
+
+// UnhandledIsAtLeast returns true if the count of unhandled events stopped at
+// its limit on any event stream, so there are at least [HandlerSummary.Unhandled]
+// of them.
+func (h HandlerSummary) UnhandledIsAtLeast() bool {
+	for _, p := range h.Progress {
+		if p.UnhandledIsAtLeast() {
+			return true
+		}
+	}
+	return false
 }
 
 // Unhandled returns the total number of events that the handler has not yet
@@ -250,6 +282,21 @@ type Observer struct {
 	// slow is what was read at slowAt, keyed by handler key. Only the Run
 	// goroutine uses it.
 	slow map[string]HandlerSummary
+
+	// consumed is the total of each handler's checkpoint offsets at slowAt,
+	// keyed by handler key, used to compute the rate at which they advance.
+	// Only the Run goroutine uses it.
+	consumed map[string]consumedTotal
+}
+
+// consumedTotal is the total of a handler's checkpoint offsets at one time.
+type consumedTotal struct {
+	// At is the time of the reading.
+	At time.Time
+
+	// Total is the sum of the handler's checkpoint offsets across every local
+	// event stream.
+	Total uint64
 }
 
 // Changed tells the observer that something in the database has changed.
@@ -426,10 +473,16 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 
 		switch h.Type {
 		case config.AggregateHandlerType:
-			s.Instances, s.InstancesErr = o.Database.CountAggregateInstances(ctx, h.Key)
+			s.Bindings, s.BindingsErr = o.Database.AggregateBindings(ctx, h.Key)
+			s.InstancesErr = s.BindingsErr
+			s.Instances = InstanceCount{
+				Count:     s.Bindings.Instances,
+				IsAtLeast: s.Bindings.IsAtLeast,
+			}
 
 		case config.ProcessHandlerType:
 			s.Instances, s.InstancesErr = o.Database.CountProcessInstances(ctx, h.Key)
+			s.Bindings, s.BindingsErr = o.Database.ActiveProcessBindings(ctx, h.Key)
 			s.Progress, s.ProgressErr = o.Database.processProgress(ctx, h, listLimit)
 
 		case config.ProjectionHandlerType:
@@ -446,10 +499,51 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 			)
 		}
 
+		if h.HandlesEvents() && s.ProgressErr == nil {
+			s.ConsumeRate, s.HasConsumeRate = o.consumeRate(h, s.Progress)
+		}
+
 		slow[h.Key.AsString()] = s
 	}
 
 	return slow
+}
+
+// consumeRate returns the rate at which the handler's checkpoint offsets have
+// advanced since the previous reading, and records the current total for the
+// next reading. It returns false if there is no previous reading, or if the
+// total went down, such as when a projection was reset.
+func (o *Observer) consumeRate(h *Handler, progress []StreamProgress) (float64, bool) {
+	var total uint64
+	for _, p := range progress {
+		if !p.IsRemote {
+			total += p.CheckpointOffset
+		}
+	}
+
+	if o.consumed == nil {
+		o.consumed = map[string]consumedTotal{}
+	}
+
+	now := time.Now()
+	key := h.Key.AsString()
+	prev, ok := o.consumed[key]
+
+	o.consumed[key] = consumedTotal{
+		At:    now,
+		Total: total,
+	}
+
+	if !ok || total < prev.Total {
+		return 0, false
+	}
+
+	seconds := now.Sub(prev.At).Seconds()
+	if seconds <= 0 {
+		return 0, false
+	}
+
+	return float64(total-prev.Total) / seconds, true
 }
 
 // queuedByHandler returns a summary of each handler that holds only the
