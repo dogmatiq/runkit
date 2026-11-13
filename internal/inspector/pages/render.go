@@ -82,11 +82,13 @@ var templateFuncs = template.FuncMap{
 
 // nounFor returns the singular form of a noun if n is 1, and the plural form
 // otherwise.
-func nounFor(n int, singular, plural string) string {
-	if n == 1 {
+func nounFor(n any, singular, plural string) string {
+	switch n {
+	case 1, uint64(1), int64(1):
 		return singular
+	default:
+		return plural
 	}
-	return plural
 }
 
 // countOf returns n followed by the singular or plural form of a noun, such as
