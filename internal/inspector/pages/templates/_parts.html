@@ -36,7 +36,7 @@
 <div class="table-wrap">
 <table class="table">
   <thead>
-    <tr><th>Message</th><th>Type</th><th>Next attempt</th><th class="num">Failures</th><th>Failing since</th><th>Queue</th></tr>
+    <tr><th>Message</th><th>Type</th><th>Next attempt</th><th class="num">Failures</th><th>First failed</th><th>Queue</th></tr>
   </thead>
   <tbody>
   {{range $messages}}{{$e := $f.Envelope .Envelope}}
@@ -46,7 +46,7 @@
       <td>{{template "mtype" $e.Type}}</td>
       <td>{{rel $f.Now .NextAttemptAt}}</td>
       <td class="num">{{if .IsFailing}}<span class="tag bad" data-watch="failures-{{id .ID}}">{{.Failures}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
-      <td>{{if .IsFailing}}{{rel $f.Now .FailingSince}}{{else}}<span class="muted">-</span>{{end}}</td>
+      <td>{{if .IsFailing}}{{rel $f.Now .FirstFailedAt}}{{else}}<span class="muted">-</span>{{end}}</td>
       <td><a href="{{$f.Root}}queues/{{id .QueueID}}"><code>{{short .QueueID}}</code></a></td>
     </tr>
   {{else}}

@@ -12,9 +12,10 @@
       <dt>Scheduled for</dt><dd>{{rel .Now .Queued.ScheduledFor}}</dd>
       <dt>Next attempt</dt><dd>{{rel .Now .Queued.NextAttemptAt}}</dd>
       <dt>Failures in a row</dt><dd data-watch="failures">{{if .Queued.IsFailing}}<span class="tag bad">{{.Queued.Failures}}</span>{{else}}<span class="tag ok">0</span>{{end}}</dd>
-      {{if .Queued.IsFailing}}<dt>Failing since</dt><dd>{{rel .Now .Queued.FailingSince}}</dd>{{end}}
+      {{if .Queued.IsFailing}}<dt>First failed</dt><dd>{{rel .Now .Queued.FirstFailedAt}}</dd>
+      <dt>Logged as an error</dt><dd>{{if .Queued.FailureLoggedAsError}}<span class="tag bad">yes</span>{{else}}<span class="muted">not yet</span>{{end}}</dd>{{end}}
     </dl>
-    {{if .Queued.IsFailing}}<p class="note">The database does not hold the error text. The engine logs it, with this message's ID, on the node that delivers this queue.</p>{{end}}
+    {{if .Queued.IsFailing}}<p class="note">The database does not hold the error text. The engine logs each failure, with this message's ID, on the node that delivered it. It logs one failure of each failure streak as an ERROR record, either a failure that no retry can fix, or the first failure once the streak is 30 seconds old. It logs every other failure as a DEBUG record.</p>{{end}}
   </section>
   {{template "envelope" (list . $e)}}
   </div>

@@ -43,9 +43,9 @@ type Queue struct {
 	// one message in the queue.
 	MostFailures int
 
-	// FailingSince is the earliest time that a message in the queue began
+	// FirstFailedAt is the earliest time that a message in the queue began
 	// failing, or zero if none are failing.
-	FailingSince time.Time
+	FirstFailedAt time.Time
 
 	// DueSince is the earliest time that a message in the queue became due,
 	// or zero if none are due.
@@ -86,12 +86,17 @@ type QueuedMessage struct {
 	// Envelope is the message's envelope.
 	Envelope *envelopepb.Envelope
 
-	// Failures is the number of attempts in a row that have failed.
+	// Failures is the number of failures in the message's failure streak,
+	// which is the run of delivery attempts in a row that have failed.
 	Failures int
 
-	// FailingSince is the time of the first failure in the current run of
-	// failures, or zero if the most recent attempt did not fail.
-	FailingSince time.Time
+	// FirstFailedAt is the time of the first failure in the failure streak,
+	// or zero if the most recent attempt did not fail.
+	FirstFailedAt time.Time
+
+	// FailureLoggedAsError is true if the engine has logged a failure of the
+	// failure streak as an ERROR record. It logs at most one per streak.
+	FailureLoggedAsError bool
 
 	// ScheduledFor is the time that the message was meant to be delivered.
 	ScheduledFor time.Time
@@ -124,18 +129,19 @@ const queuedMessageColumns = `
 	m.instance_id,
 	m.envelope,
 	m.failures,
-	m.failing_since,
+	m.first_failed_at,
+	m.failure_logged_as_error,
 	m.scheduled_for,
 	m.next_attempt_at`
 
 // scanQueuedMessage reads one row of [queuedMessageColumns].
 func scanQueuedMessage(rows interface{ Scan(...any) error }) (QueuedMessage, error) {
 	var (
-		m            QueuedMessage
-		handlerKey   sql.Null[string]
-		instanceID   sql.Null[string]
-		envelope     []byte
-		failingSince sql.Null[time.Time]
+		m             QueuedMessage
+		handlerKey    sql.Null[string]
+		instanceID    sql.Null[string]
+		envelope      []byte
+		firstFailedAt sql.Null[time.Time]
 	)
 
 	m.ID = &uuidpb.UUID{}
@@ -148,7 +154,8 @@ func scanQueuedMessage(rows interface{ Scan(...any) error }) (QueuedMessage, err
 		&instanceID,
 		&envelope,
 		&m.Failures,
-		&failingSince,
+		&firstFailedAt,
+		&m.FailureLoggedAsError,
 		&m.ScheduledFor,
 		&m.NextAttemptAt,
 	); err != nil {
@@ -164,7 +171,7 @@ func scanQueuedMessage(rows interface{ Scan(...any) error }) (QueuedMessage, err
 		m.InstanceID = instanceID.V
 	}
 
-	m.FailingSince = failingSince.V
+	m.FirstFailedAt = firstFailedAt.V
 
 	m.Envelope = &envelopepb.Envelope{}
 	if err := m.Envelope.UnmarshalBinary(envelope); err != nil {
@@ -309,7 +316,7 @@ func (d *Database) queues(ctx context.Context, limit int) ([]Queue, error) {
 					count(*) FILTER (WHERE m.next_attempt_at <= now()),
 					count(*) FILTER (WHERE m.failures > 0),
 					max(m.failures),
-					min(m.failing_since),
+					min(m.first_failed_at),
 					min(m.next_attempt_at) FILTER (WHERE m.next_attempt_at <= now())
 				FROM messagequeue.messages AS m
 				GROUP BY m.queue_id
@@ -324,9 +331,9 @@ func (d *Database) queues(ctx context.Context, limit int) ([]Queue, error) {
 
 			for rows.Next() {
 				var (
-					q            Queue
-					failingSince sql.Null[time.Time]
-					dueSince     sql.Null[time.Time]
+					q             Queue
+					firstFailedAt sql.Null[time.Time]
+					dueSince      sql.Null[time.Time]
 				)
 
 				q.ID = &uuidpb.UUID{}
@@ -338,13 +345,13 @@ func (d *Database) queues(ctx context.Context, limit int) ([]Queue, error) {
 					&q.Due,
 					&q.Failing,
 					&q.MostFailures,
-					&failingSince,
+					&firstFailedAt,
 					&dueSince,
 				); err != nil {
 					return err
 				}
 
-				q.FailingSince = failingSince.V
+				q.FirstFailedAt = firstFailedAt.V
 				q.DueSince = dueSince.V
 				queues = append(queues, q)
 			}

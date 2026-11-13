@@ -11,7 +11,7 @@
 <div class="table-wrap">
 <table class="table">
   <thead>
-    <tr><th>Queue</th><th class="num">Messages</th><th class="num">Deadlines</th><th class="num">Due</th><th>Longest wait</th><th class="num">Failing</th><th>Failing since</th><th>Delivered by</th></tr>
+    <tr><th>Queue</th><th class="num">Messages</th><th class="num">Deadlines</th><th class="num">Due</th><th>Longest wait</th><th class="num">Failing</th><th>First failed</th><th>Delivered by</th></tr>
   </thead>
   <tbody>
   {{range .Queues}}
@@ -22,7 +22,7 @@
       <td class="num" data-watch="qd-{{id .ID}}">{{num .Due}}</td>
       <td>{{if .Due}}<span class="{{if .IsStalled $.Now}}tag bad{{end}}">{{dur (.LongestWait $.Now)}}</span>{{else}}<span class="muted">-</span>{{end}}</td>
       <td class="num">{{if .Failing}}<span class="tag bad" data-watch="qf-{{id .ID}}">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
-      <td>{{if .Failing}}{{rel $.Now .FailingSince}}{{else}}<span class="muted">-</span>{{end}}</td>
+      <td>{{if .Failing}}{{rel $.Now .FirstFailedAt}}{{else}}<span class="muted">-</span>{{end}}</td>
       <td>{{template "owner" .Owner}}</td>
     </tr>
   {{else}}
