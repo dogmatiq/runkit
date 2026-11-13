@@ -82,10 +82,10 @@
   //
   // The <canvas id="heartbeats"> element on the overview has a lane for each
   // live node, listed by ID in its data-nodes attribute. Each heartbeat that
-  // the page has received in the last 30 seconds is a tick in its node's
-  // lane. The ticks move left as time passes and fade as they age, so a node
-  // that misses heartbeats leaves a gap. A page that has just loaded starts
-  // with empty lanes.
+  // the page has received in the last 30 seconds is a dot in its node's lane.
+  // The dots move left as time passes and fade as they age, so a node that
+  // misses heartbeats leaves a gap. A page that has just loaded starts with
+  // empty lanes.
 
   var beatWindow = 30000;
   var beats = {};
@@ -111,7 +111,9 @@
 
       var g = canvas.getContext("2d");
       g.clearRect(0, 0, width, height);
-      g.fillStyle = window.getComputedStyle(canvas).color;
+
+      var color = window.getComputedStyle(canvas).color;
+      var clear = color.replace(/^rgb\((.*)\)$/, "rgba($1, 0)");
 
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
       // Each lane and the gap below it share a pitch, which shrinks so that
@@ -121,12 +123,15 @@
       var lane = (pitch * 2) / 3;
       var gap = pitch - lane;
       var top = (height - nodes.length * pitch + gap) / 2;
-      var tick = 2 * ratio;
+      var radius = lane / 2;
+      var tail = lane * 3;
       var now = performance.now();
 
       for (var i = 0; i < nodes.length; i++) {
         var y = top + i * (lane + gap);
+        var middle = y + radius;
 
+        g.fillStyle = color;
         g.globalAlpha = 0.08;
         g.fillRect(0, y, width, lane);
 
@@ -135,15 +140,30 @@
 
         for (var j = 0; j < times.length; j++) {
           var age = (now - times[j]) / beatWindow;
-          g.globalAlpha = 0.15 + 0.75 * (1 - age) * (1 - age);
-          g.fillRect(width - age * width - tick, y, tick, lane);
+          var x = width - age * width;
+          var brightness = 0.15 + 0.75 * (1 - age) * (1 - age);
+
+          // A short tail fades out behind the dot, on the side it moves away
+          // from.
+          var fade = g.createLinearGradient(x, 0, x + tail, 0);
+          fade.addColorStop(0, color);
+          fade.addColorStop(1, clear);
+          g.fillStyle = fade;
+          g.globalAlpha = brightness * 0.5;
+          g.fillRect(x, middle - radius * 0.6, tail, radius * 1.2);
+
+          g.fillStyle = color;
+          g.globalAlpha = brightness;
+          g.beginPath();
+          g.arc(x, middle, radius, 0, 2 * Math.PI);
+          g.fill();
         }
       }
 
       g.globalAlpha = 1;
     }
 
-    // With reduced motion, the lanes are redrawn once a second, so the ticks
+    // With reduced motion, the lanes are redrawn once a second, so the dots
     // step instead of gliding.
     if (reducedMotion.matches) {
       window.setTimeout(drawBeats, 1000);
