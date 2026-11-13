@@ -168,6 +168,25 @@ h3 {
   color: var(--muted);
 }
 
+/* Icons from Lucide, sized to sit beside the text they label. */
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  vertical-align: text-bottom;
+  margin-right: 6px;
+}
+
+.nav .icon {
+  margin-right: 0;
+}
+
+.kind .icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+}
+
 /* The title bar. */
 
 .titlebar {
@@ -243,34 +262,6 @@ h3 {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.live[data-state="live"] .live-dot {
-  background: var(--pulse);
-  box-shadow: 0 0 0 0 var(--pulse);
-}
-
-.live[data-state="live"].tick .live-dot {
-  animation: ring 0.9s ease-out;
-}
-
-.live[data-state="offline"] .live-dot {
-  background: var(--bad);
 }
 
 .theme {
@@ -766,16 +757,17 @@ a.tag:hover {
   height: 11px;
 }
 
+/* A heartbeat dims the dot briefly and brings it back, without a ring. */
 .pulse.beat {
-  animation: ring 0.9s ease-out;
+  animation: beat 1.2s ease-out;
 }
 
-@keyframes ring {
+@keyframes beat {
   from {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse) 70%, transparent);
+    opacity: 0.35;
   }
   to {
-    box-shadow: 0 0 0 9px transparent;
+    opacity: 1;
   }
 }
 
@@ -885,8 +877,7 @@ a.tag:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .pulse.beat,
-  .changed,
-  .live.tick .live-dot {
+  .changed {
     animation: none;
   }
 }

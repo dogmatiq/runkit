@@ -63,6 +63,7 @@ var templateFuncs = template.FuncMap{
 	"rel":       relativeTime,
 	"seg":       url.PathEscape,
 	"query":     url.QueryEscape,
+	"icon":      icon,
 	"kind":      func(k message.Kind) string { return k.String() },
 	"htype":     func(t config.HandlerType) string { return t.String() },
 	"route":     formatRouteType,

@@ -16,7 +16,7 @@
   <tbody>
   {{range .Queues}}
     <tr class="{{if .IsStalled $.Now}}row-bad{{else if .Failing}}row-warn{{end}}">
-      <td><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a><div class="sub muted">{{.Label}}</div></td>
+      <td><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a><div class="sub muted">{{.Label}}</div></td>
       <td class="num" data-watch="q-{{id .ID}}">{{num .Messages}}</td>
       <td class="num">{{num .Deadlines}}</td>
       <td class="num" data-watch="qd-{{id .ID}}">{{num .Due}}</td>

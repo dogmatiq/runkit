@@ -46,7 +46,7 @@
 {{define "envelope" -}}
 {{$f := index . 0}}{{$e := index . 1}}
 <section class="panel">
-  <header class="panel-head"><h2>Envelope</h2></header>
+  <header class="panel-head"><h2>{{icon "envelope"}}Envelope</h2></header>
   <dl class="facts">
     <dt>Type</dt><dd>{{template "mtype" $e.Type}}</dd>
     <dt>Message ID</dt><dd><code>{{id $e.MessageID}}</code></dd>

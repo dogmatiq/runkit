@@ -331,11 +331,41 @@ type streamProgressView struct {
 	ConsumedBy ownerView
 }
 
-func (s *Server) handlers(w http.ResponseWriter, r *http.Request, f frame) {
-	f.Title = "Handlers"
-	f.Section = "handlers"
+func (s *Server) aggregates(w http.ResponseWriter, r *http.Request, f frame) {
+	s.handlerList(w, f, "aggregate", "Aggregates")
+}
 
-	render(w, http.StatusOK, "handlers.html", f)
+func (s *Server) processes(w http.ResponseWriter, r *http.Request, f frame) {
+	s.handlerList(w, f, "process", "Processes")
+}
+
+func (s *Server) integrations(w http.ResponseWriter, r *http.Request, f frame) {
+	s.handlerList(w, f, "integration", "Integrations")
+}
+
+func (s *Server) projections(w http.ResponseWriter, r *http.Request, f frame) {
+	s.handlerList(w, f, "projection", "Projections")
+}
+
+// handlerList renders the page that lists the handlers of one kind.
+//
+// The kind is the name of the handler type, such as "aggregate".
+func (s *Server) handlerList(w http.ResponseWriter, f frame, kind, title string) {
+	f.Title = title
+	f.Section = kind + "s"
+
+	render(
+		w,
+		http.StatusOK,
+		"handlers.html",
+		struct {
+			frame
+			Kind string
+		}{
+			frame: f,
+			Kind:  kind,
+		},
+	)
 }
 
 func (s *Server) handler(w http.ResponseWriter, r *http.Request, f frame) {
@@ -352,7 +382,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request, f frame) {
 	}
 
 	f.Title = h.Name
-	f.Section = "handlers"
+	f.Section = kindSection(h)
 
 	data := struct {
 		frame
@@ -472,7 +502,7 @@ func (s *Server) instance(w http.ResponseWriter, r *http.Request, f frame) {
 	ctx := r.Context()
 
 	f.Title = h.Name + " " + id
-	f.Section = "handlers"
+	f.Section = kindSection(h)
 
 	data := struct {
 		frame
@@ -540,6 +570,12 @@ func (s *Server) instance(w http.ResponseWriter, r *http.Request, f frame) {
 	}
 
 	render(w, status, "instance.html", data)
+}
+
+// kindSection returns the name of the navigation section for the handler's
+// kind, such as "aggregates".
+func kindSection(h *observe.Handler) string {
+	return h.Type.String() + "s"
 }
 
 // parseUUID parses a UUID from a URL. It returns false if s is not a UUID.

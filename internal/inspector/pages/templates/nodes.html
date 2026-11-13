@@ -14,6 +14,7 @@
 {{range .Nodes}}
   <article class="card node-card" id="node-{{id .Node.ID}}">
     <header class="card-head">
+      {{icon "node"}}
       <span class="pulse big" data-node="{{id .Node.ID}}"></span>
       <code class="node-id">{{id .Node.ID}}</code>
     </header>
@@ -24,7 +25,7 @@
     {{if .Queues}}
     <h3>Delivers the messages in</h3>
     <ul class="list">
-      {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a> <span class="muted">{{.Label}}</span> <span class="tag">{{num .Messages}}</span>{{if .Failing}} <span class="tag bad">{{num .Failing}} failing</span>{{end}}</li>{{end}}
+      {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a> <span class="muted">{{.Label}}</span> <span class="tag">{{num .Messages}}</span>{{if .Failing}} <span class="tag bad">{{num .Failing}} failing</span>{{end}}</li>{{end}}
     </ul>
     {{end}}
     {{if .ConsumedStreams}}

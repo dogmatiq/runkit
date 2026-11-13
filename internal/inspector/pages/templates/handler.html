@@ -32,7 +32,7 @@
   <tbody>
   {{range .Aggregates}}
     <tr>
-      <td><a href="{{$.Root}}handlers/{{id $h.Key}}/instances/{{seg .ID}}">{{.ID}}</a></td>
+      <td><a href="{{$.Root}}handlers/{{id $h.Key}}/instances/{{seg .ID}}">{{icon "instance"}}{{.ID}}</a></td>
       <td>{{if .StreamID}}<a href="{{$.Root}}streams/{{id .StreamID}}"><code>{{short .StreamID}}</code></a>{{else}}<span class="muted">none</span>{{end}}</td>
       <td class="num">{{if .Snapshot}}{{num .SnapshotOffset}}{{else}}<span class="muted">no snapshot</span>{{end}}</td>
     </tr>
@@ -54,7 +54,7 @@
   <tbody>
   {{range .Processes}}
     <tr class="{{if .Instance.HasEnded}}row-muted{{end}}">
-      <td><a href="{{$.Root}}handlers/{{id $h.Key}}/instances/{{seg .Instance.ID}}">{{.Instance.ID}}</a>{{if .Instance.HasEnded}} <span class="tag">ended</span>{{end}}</td>
+      <td><a href="{{$.Root}}handlers/{{id $h.Key}}/instances/{{seg .Instance.ID}}">{{icon "instance"}}{{.Instance.ID}}</a>{{if .Instance.HasEnded}} <span class="tag">ended</span>{{end}}</td>
       <td>{{if .DescriptionErr}}<span class="tag bad" title="{{.DescriptionErr.Error}}">unable to describe</span>{{else if .Description}}{{.Description}}{{else}}<span class="muted">-</span>{{end}}</td>
       <td>{{with .Instance.DeadlineQueueID}}{{template "owner" ($.Owner .)}}{{else}}<span class="muted">-</span>{{end}}</td>
     </tr>

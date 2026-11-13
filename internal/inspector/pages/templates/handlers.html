@@ -1,14 +1,14 @@
 {{define "handlers.html"}}{{template "top" .}}
 <p class="lede">
-  The handlers of the linked application. The engine's database holds only
-  handler keys, so the names, types and routes come from the application's
+  The {{.Kind}} handlers of the linked application. The engine's database holds
+  only handler keys, so the names, types and routes come from the application's
   configuration.
 </p>
 <div class="cards">
-{{range .App.Handlers}}{{$s := $.HandlerSummary .Key}}
+{{range .HandlersOf .Kind}}{{$s := $.HandlerSummary .Key}}
   <a class="card handler-card" href="{{$.Root}}handlers/{{id .Key}}">
     <header class="card-head">
-      <span class="htype htype-{{htype .Type}}">{{htype .Type}}</span>
+      {{icon .Type.String}}
       <strong>{{.Name}}</strong>
       {{if .IsDisabled}}<span class="tag">disabled</span>{{end}}
     </header>
@@ -21,6 +21,8 @@
       <dt>Routes</dt><dd>{{len .Routes}}</dd>
     </dl>
   </a>
+{{else}}
+  <div class="empty"><p>The linked application has no {{.Kind}} handlers.</p></div>
 {{end}}
 </div>
 {{template "bottom" .}}{{end}}

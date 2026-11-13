@@ -12,7 +12,6 @@
   "use strict";
 
   var body = document.body;
-  var status = document.getElementById("live-status");
 
   // Relative times.
   //
@@ -74,32 +73,15 @@
 
   // Live updates.
 
-  function setStatus(state, label, title) {
-    if (!status) return;
-    status.setAttribute("data-state", state);
-    status.title = title;
-    status.querySelector(".live-label").textContent = label;
-  }
-
+  // The browser reconnects by itself after an error, so nothing is done when
+  // the connection breaks. Without live updates, the page is still correct
+  // as it was rendered.
   function connect() {
-    if (!window.EventSource) {
-      setStatus("offline", "static", "This browser can not receive live updates");
-      return;
-    }
+    if (!window.EventSource) return;
 
     var source = new EventSource(body.getAttribute("data-live"));
 
-    source.onopen = function () {
-      setStatus("live", "live", "Receiving live updates");
-    };
-
-    // The browser reconnects by itself after an error.
-    source.onerror = function () {
-      setStatus("offline", "reconnecting", "Not receiving live updates, reconnecting");
-    };
-
     source.addEventListener("observed", function () {
-      if (status) restartAnimation(status, "tick");
       if (window.htmx) window.htmx.trigger(body, "observed");
     });
 

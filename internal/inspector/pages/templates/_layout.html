@@ -21,14 +21,16 @@
     <span class="brand-tool">inspector</span>
   </a>
   <nav class="nav">
-    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>Overview{{template "badge" .}}</a>
-    <a href="{{.Root}}nodes" {{if eq .Section "nodes"}}aria-current="page"{{end}}>Nodes</a>
-    <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>Queues</a>
-    <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>Event streams</a>
-    <a href="{{.Root}}handlers" {{if eq .Section "handlers"}}aria-current="page"{{end}}>Handlers</a>
+    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>{{icon "overview"}}Overview{{template "badge" .}}</a>
+    <a href="{{.Root}}nodes" {{if eq .Section "nodes"}}aria-current="page"{{end}}>{{icon "node"}}Nodes</a>
+    <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>{{icon "queue"}}Queues</a>
+    <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>{{icon "stream"}}Event streams</a>
+    <a href="{{.Root}}aggregates" {{if eq .Section "aggregates"}}aria-current="page"{{end}}>{{icon "aggregate"}}Aggregates</a>
+    <a href="{{.Root}}processes" {{if eq .Section "processes"}}aria-current="page"{{end}}>{{icon "process"}}Processes</a>
+    <a href="{{.Root}}integrations" {{if eq .Section "integrations"}}aria-current="page"{{end}}>{{icon "integration"}}Integrations</a>
+    <a href="{{.Root}}projections" {{if eq .Section "projections"}}aria-current="page"{{end}}>{{icon "projection"}}Projections</a>
   </nav>
   <div class="controls">
-    <span class="live" id="live-status" data-state="connecting" title="Connecting for live updates"><span class="live-dot"></span><span class="live-label">connecting</span></span>
     <button class="theme" id="theme-toggle" type="button" title="Color mode: automatic">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z"/></svg>
       <span class="theme-label">auto</span>
@@ -43,7 +45,7 @@
 </main>
 <footer class="footer">
   Read-only. Every query runs in a read-only transaction. Linked with
-  <code>{{.App.Identity.GetName}}</code> <code class="muted">{{id .App.Identity.GetKey}}</code>.
+  {{icon "application"}}<code>{{.App.Identity.GetName}}</code> <code class="muted">{{id .App.Identity.GetKey}}</code>.
 </footer>
 </body>
 </html>
