@@ -3,16 +3,12 @@
 <div class="overview">
 
 <section class="metrics" aria-label="Totals">
-  <a class="metric subsystem-cluster" href="{{.Root}}cluster">
-    {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
-      <div class="metric-head"><span class="metric-value">{{$n}}</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
-      <span class="metric-detail">{{if $n}}<span class="metric-noun">cluster {{if eq $n 1}}node{{else}}nodes{{end}}</span>, {{plural .Obs.TotalWorkloads "workload" "workloads"}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
-    {{else}}
-      <div class="metric-head"><span class="metric-value is-unknown">?</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
-      <span class="metric-detail">listening for heartbeats</span>
-    {{end}}
-    <div class="metric-bar">{{.WorkloadBar}}</div>
-    {{if .Obs.LiveNodes.Known}}<canvas class="spark beats" id="heartbeats" data-nodes="{{range $i, $node := .Obs.LiveNodes.Nodes}}{{if $i}} {{end}}{{id $node.ID}}{{end}}" aria-hidden="true"></canvas>{{end}}
+  {{$events := .Obs.Events}}
+  <a class="metric subsystem-streams" href="{{.Root}}streams">
+    <div class="metric-head"><span class="metric-value">{{compact (round .EventsPerMinute)}}</span><span class="metric-icon" title="Events">{{icon "event"}}</span></div>
+    <span class="metric-detail"><span class="metric-noun">events per minute</span>, <span title="{{num $events}}">{{compact $events}}</span> {{noun $events "event" "events"}} in {{plural (len .Obs.EventStreams) "stream" "streams"}}</span>
+    <div class="metric-bar">{{streambar .Obs.EventStreams}}</div>
+    {{sparkline .EventRates}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
@@ -24,12 +20,16 @@
     {{sparkline .QueuedMessages}}
   </a>
 
-  {{$events := .Obs.Events}}
-  <a class="metric subsystem-streams" href="{{.Root}}streams">
-    <div class="metric-head"><span class="metric-value">{{compact (round .EventsPerMinute)}}</span><span class="metric-icon" title="Events">{{icon "event"}}</span></div>
-    <span class="metric-detail"><span class="metric-noun">events per minute</span>, <span title="{{num $events}}">{{compact $events}}</span> {{noun $events "event" "events"}} in {{plural (len .Obs.EventStreams) "stream" "streams"}}</span>
-    <div class="metric-bar">{{streambar .Obs.EventStreams}}</div>
-    {{sparkline .EventRates}}
+  <a class="metric subsystem-cluster" href="{{.Root}}cluster">
+    {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
+      <div class="metric-head"><span class="metric-value">{{$n}}</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
+      <span class="metric-detail">{{if $n}}<span class="metric-noun">cluster {{if eq $n 1}}node{{else}}nodes{{end}}</span>, {{plural .Obs.TotalWorkloads "workload" "workloads"}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
+    {{else}}
+      <div class="metric-head"><span class="metric-value is-unknown">?</span><span class="metric-icon" title="Cluster">{{icon "cluster"}}</span></div>
+      <span class="metric-detail">listening for heartbeats</span>
+    {{end}}
+    <div class="metric-bar">{{.WorkloadBar}}</div>
+    {{if .Obs.LiveNodes.Known}}<canvas class="spark beats" id="heartbeats" data-nodes="{{range $i, $node := .Obs.LiveNodes.Nodes}}{{if $i}} {{end}}{{id $node.ID}}{{end}}" aria-hidden="true"></canvas>{{end}}
   </a>
 </section>
 
