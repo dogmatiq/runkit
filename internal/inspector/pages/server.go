@@ -20,6 +20,7 @@ const htmxURL = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self' " + htmxURL + "; " +
 	"style-src 'self'; " +
+	"font-src 'self'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"base-uri 'none'; " +

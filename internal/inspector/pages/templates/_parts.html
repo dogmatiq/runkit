@@ -28,7 +28,7 @@
 {{- end}}
 
 {{define "count" -}}
-{{num .Count}}{{if .IsAtLeast}}+{{end}}
+{{compact .Count}}{{if .IsAtLeast}}+{{end}}
 {{- end}}
 
 {{define "messages" -}}
