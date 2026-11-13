@@ -27,7 +27,7 @@
   {{$events := .Obs.Events}}
   <a class="metric subsystem-streams" href="{{.Root}}streams">
     <div class="metric-head"><span class="metric-value">{{compact (round .EventsPerMinute)}}</span><span class="metric-icon" title="Events">{{icon "event"}}</span></div>
-    <span class="metric-detail"><span class="metric-noun">events per minute</span>, <span title="{{num $events}}">{{compact $events}}</span> {{noun $events "event" "events"}} in {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
+    <span class="metric-detail"><span class="metric-noun">events per minute</span>, <span title="{{num $events}}">{{compact $events}}</span> {{noun $events "event" "events"}} in {{plural (len .Obs.EventStreams) "stream" "streams"}}</span>
     <div class="metric-bar">{{streambar .Obs.EventStreams}}</div>
     {{sparkline .EventRates}}
   </a>
