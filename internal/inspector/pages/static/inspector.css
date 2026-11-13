@@ -522,8 +522,8 @@ h3 {
 }
 
 /*
- * A line with a bump for each recent heartbeat. The page's script draws it in
- * the subsystem's colours, like the other charts.
+ * A column for each live node, which each heartbeat fills. The page's script
+ * draws the columns in the subsystem's colour.
  */
 .beats {
   color: var(--subsystem);

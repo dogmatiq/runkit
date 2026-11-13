@@ -78,25 +78,77 @@
     }
   }
 
-  // Heartbeat wave.
+  // Heartbeat levels.
   //
-  // The <canvas id="heartbeats"> element on the overview draws one line,
-  // like the charts on the other cards. Each heartbeat from a live node, whose
-  // IDs are in the canvas's data-nodes attribute, adds a small bump to the
-  // line. The bump starts just past the right-hand edge, slides in, moves left,
-  // and leaves the chart after beatWindow. While the nodes are sending
-  // heartbeats, the line keeps rippling. When a node misses heartbeats, the
-  // line has fewer bumps. A page that has just loaded starts with a flat line.
+  // The <canvas id="heartbeats"> element on the overview has a column for each
+  // live node, in the order of the node IDs in its data-nodes attribute, like
+  // the segments of the workload bar above it. A heartbeat fills the node's
+  // column, and the column drains until the next heartbeat.
+  //
+  // Each node can send heartbeats at its own interval, which the page can't
+  // see, so it measures each node's usual interval from the heartbeats that
+  // it receives. A column drains to empty over drainBeats of the node's usual
+  // intervals, so it empties when the node has missed about that many
+  // heartbeats. Until the page has seen two of a node's heartbeats, the
+  // node's column stays full after a heartbeat. A page that has just loaded
+  // starts with empty columns.
 
-  var beatWindow = 30000;
+  // riseTime is how long a column takes to fill after a heartbeat, so that it
+  // rises instead of jumping.
+  var riseTime = 160;
 
-  // bumpWidth is the width of a bump's middle, in CSS pixels.
-  var bumpWidth = 14;
-  var beats = {};
+  // drainBeats is the number of a node's usual intervals over which its
+  // column drains to empty.
+  var drainBeats = 3;
+
+  // levels holds, for each node ID, the times of the node's recent
+  // heartbeats, and the level that its column had just before the most recent
+  // one.
+  var levels = {};
 
   function recordBeat(nodeID) {
-    var times = beats[nodeID] || (beats[nodeID] = []);
-    times.push(performance.now());
+    var now = performance.now();
+    var l = levels[nodeID] || { times: [] };
+
+    l.from = levelOf(nodeID, now);
+    l.times.push(now);
+    if (l.times.length > 9) l.times.shift();
+
+    levels[nodeID] = l;
+  }
+
+  // usualInterval returns the median time between the given heartbeats, or
+  // 0 if there are fewer than two.
+  function usualInterval(times) {
+    var intervals = [];
+    for (var i = 1; i < times.length; i++) {
+      intervals.push(times[i] - times[i - 1]);
+    }
+
+    if (intervals.length === 0) return 0;
+
+    intervals.sort(function (a, b) {
+      return a - b;
+    });
+
+    return intervals[Math.floor(intervals.length / 2)];
+  }
+
+  // levelOf returns the level of a node's column, from 0 when it is empty to
+  // 1 when it is full.
+  function levelOf(nodeID, now) {
+    var l = levels[nodeID];
+    if (!l) return 0;
+
+    var since = now - l.times[l.times.length - 1];
+    if (since < riseTime) {
+      return l.from + (1 - l.from) * (since / riseTime);
+    }
+
+    var interval = usualInterval(l.times);
+    if (interval === 0) return 1;
+
+    return Math.max(0, 1 - (since - riseTime) / (drainBeats * interval));
   }
 
   // Scrolling charts.
@@ -129,6 +181,18 @@
     }
   }
 
+  // roundRect fills a rectangle with rounded corners, or square ones if the
+  // browser can't round them.
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    if (g.roundRect) {
+      g.roundRect(x, y, w, h, r);
+    } else {
+      g.rect(x, y, w, h);
+    }
+    g.fill();
+  }
+
   function drawBeats() {
     if (!reducedMotion.matches) scrollCharts(performance.now());
 
@@ -147,68 +211,38 @@
 
       var g = canvas.getContext("2d");
       g.clearRect(0, 0, width, height);
+      g.fillStyle = window.getComputedStyle(canvas).color;
 
-      var style = window.getComputedStyle(canvas);
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
       var now = performance.now();
 
-      // spread is the width of a bump's middle, as a time. A bump starts
-      // lead before the right-hand edge, so it slides in instead of
-      // appearing.
-      var spread = ((bumpWidth * ratio) / width) * beatWindow;
-      var lead = 4 * spread;
+      // The columns line up with the card's content, as the bar above does.
+      var side = 20 * ratio;
+      var gap = 3 * ratio;
+      var top = 8 * ratio;
+      var full = height - 2 * top;
+      var column = (width - 2 * side - gap * (nodes.length - 1)) / Math.max(nodes.length, 1);
+      var corner = Math.min(2 * ratio, column / 2);
 
-      // The bumps of all of the nodes' heartbeats, by time. More nodes make
-      // more bumps, so each is smaller, and the line stays inside the chart.
-      var times = [];
       for (var i = 0; i < nodes.length; i++) {
-        var own = beats[nodes[i]] || [];
-        while (own.length && now - own[0] > beatWindow + 2 * lead) own.shift();
-        times = times.concat(own);
-      }
+        var x = side + i * (column + gap);
+        var level = levelOf(nodes[i], now);
+        var fill = full * level;
 
-      var base = height - 2 * ratio;
-      var bump = (height * 0.55) / Math.sqrt(Math.max(nodes.length, 1));
-      var points = [];
+        g.globalAlpha = 0.08;
+        roundRect(g, x, top, column, full, corner);
 
-      // The line is drawn through points at fixed times, not at fixed
-      // places, so each point moves left with the bumps and keeps its height.
-      // Points at fixed places would sample each bump at a slightly different
-      // part from one frame to the next, and its edges would shimmer.
-      var step = ((2 * ratio) / width) * beatWindow;
-      var right = now - lead;
-      var left = right - beatWindow;
-
-      for (var t = Math.floor(left / step) * step; t <= right + step; t += step) {
-        var x = width - ((right - t) / beatWindow) * width;
-        var y = 0;
-        for (var j = 0; j < times.length; j++) {
-          var d = (t - times[j]) / spread;
-          if (d > -4 && d < 4) y += Math.exp(-d * d) * bump;
+        if (fill > 0) {
+          g.globalAlpha = 0.25 + 0.6 * level;
+          roundRect(g, x, top + full - fill, column, fill, Math.min(corner, fill / 2));
         }
-        points.push([x, Math.max(base - y, ratio)]);
       }
 
-      g.beginPath();
-      g.moveTo(0, height);
-      for (var k = 0; k < points.length; k++) g.lineTo(points[k][0], points[k][1]);
-      g.lineTo(width, height);
-      g.closePath();
-      g.fillStyle = style.getPropertyValue("--subsystem-soft");
-      g.fill();
-
-      g.beginPath();
-      for (var m = 0; m < points.length; m++) {
-        if (m === 0) g.moveTo(points[m][0], points[m][1]);
-        else g.lineTo(points[m][0], points[m][1]);
-      }
-      g.strokeStyle = style.color;
-      g.lineWidth = 1.5 * ratio;
-      g.stroke();
+      g.globalAlpha = 1;
     }
 
-    // With reduced motion, the wave is redrawn once a second, so the bumps
-    // step instead of gliding.
+    // With reduced motion, the columns are redrawn once a second, so they
+    // step instead of draining smoothly.
     if (reducedMotion.matches) {
       window.setTimeout(drawBeats, 1000);
     } else {
