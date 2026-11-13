@@ -65,6 +65,11 @@ events.
 - Documented that the database passed to `New()` should keep as many idle
   connections as it allows open. Its default of two idle connections can make
   delivering commands and deadlines more than ten times slower.
+- Added the `inspector` package, a website that shows what an engine cluster
+  is doing: its live nodes and the workloads that each one owns, its queued
+  commands and deadlines, its event streams, and each handler's instances and
+  progress. It only reads, so its database role needs only the `SELECT`
+  privilege on the engine's tables.
 
 ### Changed
 
