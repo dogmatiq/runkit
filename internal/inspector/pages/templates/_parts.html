@@ -114,7 +114,7 @@
   <header class="hcard-head">
     <span class="hcard-title">
       <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
-      <span class="hcard-kind">{{$kind}}{{if $h.IsDisabled}}, disabled{{end}}</span>
+      <span class="hcard-kind">{{$kind}}{{if $h.IsDisabled}}, disabled{{end}}{{if $h.MinimizesConcurrency}}<span class="hcard-concurrency" title="Minimize concurrency: this handler's configuration instructs the engine to attempt to process messages one at a time, minimizing conflicts and/or contention.">{{icon "minimize-concurrency"}}</span>{{end}}</span>
     </span>
     <span class="handler-badge" title="{{$kind}} handler">{{icon $kind}}</span>
   </header>
@@ -151,10 +151,9 @@
   {{end}}
 
   {{/* The bar sits on the chart, with no text between them. */}}
-  {{if or $failing $h.MinimizesConcurrency $h.Aggregate (and $h.Process $h.SchedulesDeadlines)}}<div class="hcard-bottom">
-    {{if or $failing $h.MinimizesConcurrency}}<footer class="hcard-foot">
-      {{- if $failing}}<span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>{{end}}
-      {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end -}}
+  {{if or $failing $h.Aggregate (and $h.Process $h.SchedulesDeadlines)}}<div class="hcard-bottom">
+    {{if $failing}}<footer class="hcard-foot">
+      <span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>
     </footer>{{end}}
     {{if $h.Aggregate}}{{bindings $s.Bindings "streams" "event stream" "event streams"}}{{end}}
     {{if and $h.Process $h.SchedulesDeadlines}}{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}{{end}}

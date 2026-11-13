@@ -772,6 +772,24 @@ h3 {
   color: var(--muted);
 }
 
+/*
+ * An icon after the kind marks a handler that minimizes concurrency. Its
+ * mouse-over text explains it.
+ */
+.hcard-concurrency {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--text-soft);
+  cursor: help;
+}
+
+.hcard-concurrency .icon {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  vertical-align: -2px;
+}
+
 .hcard-name {
   min-width: 0;
   font-size: var(--text-sm);
