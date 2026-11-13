@@ -48,11 +48,11 @@ func (c *Consumer) findNextMessages(
 
 		// The next messages were found, which ends any streak of failures.
 		if err == nil {
-			c.work.Succeeded(ctx)
+			c.failures.Succeeded(ctx)
 			return messages
 		}
 
-		delay := c.work.Failed(ctx, err)
+		delay := c.failures.Failed(ctx, err)
 
 		select {
 		case <-ctx.Done():

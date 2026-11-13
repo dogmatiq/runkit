@@ -95,13 +95,14 @@ type Consumer struct {
 	// messageTypeIDs is the set of IDs of the message types in Sinks.
 	messageTypeIDs *uuidcollection.Set
 
-	// work tracks the failures of consuming the queues.
+	// failures keeps the streak of the consumer's own failures, such as losing
+	// its database connection.
 	//
 	// The consumer records a failure in it if the consumer can't find the next
 	// messages, or if an attempt ends with an error, unless another
-	// transaction holds the message's lock. work decides how long the consumer
-	// backs off after each failure, and logs the failure.
-	work *failure.Work
+	// transaction holds the message's lock. failures decides how long the
+	// consumer backs off after each failure, and logs the failure.
+	failures *failure.Tracker
 }
 
 // Run delivers messages until ctx is canceled.
@@ -122,11 +123,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 		c.messageTypeIDs.Add(typeID)
 	}
 
-	c.work = &failure.Work{
+	c.failures = &failure.Tracker{
 		Description:  "consume queue",
 		EngineLogger: c.EngineLogger,
 	}
-	defer c.work.Complete()
+	defer c.failures.Complete()
 
 	c.deliveryAttempted = make(chan deliveryAttempt, c.Concurrency)
 	defer func() {
@@ -302,10 +303,10 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 		retryAt := time.Now().Add(c.ContentionDelay)
 		c.contendedMessages.Set(a.MessageID, retryAt)
 	case a.Err != nil:
-		backoff := c.work.Failed(ctx, a.Err)
+		backoff := c.failures.Failed(ctx, a.Err)
 		c.backoffUntil = time.Now().Add(backoff)
 	default:
-		c.work.Succeeded(ctx)
+		c.failures.Succeeded(ctx)
 	}
 }
 
