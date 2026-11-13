@@ -38,6 +38,11 @@ const (
 	// another, so that the inspector shows workloads moving between nodes.
 	nodeLifetime = time.Minute
 
+	// startStagger is the longest random delay before a node starts. A node
+	// sends a heartbeat once a second, starting from when it starts, so the
+	// delay keeps the nodes' heartbeats from arriving together.
+	startStagger = time.Second
+
 	// dropTimeout is the time allowed to drop the database and the role.
 	dropTimeout = 10 * time.Second
 )
@@ -197,8 +202,15 @@ func (c *Cluster) run(ctx context.Context, app dogma.Application) {
 	}
 }
 
-// start starts a node, and adds it to the running nodes once it is ready.
+// start starts a node after a random delay of up to [startStagger], and adds it
+// to the running nodes once it is ready.
 func (c *Cluster) start(ctx context.Context, app dogma.Application) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Duration(rand.Int64N(int64(startStagger)))):
+	}
+
 	nodeCtx, stop := context.WithCancel(ctx)
 
 	e := runkit.New(
