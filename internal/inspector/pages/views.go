@@ -253,15 +253,21 @@ type chart struct {
 // without showing a gap at the left-hand edge.
 const chartMargin = chartWindow / 10
 
-// Chart returns a chart of the given points, whose right-hand edge is the time
-// of the most recent observation.
+// chartLead is how far behind the most recent observation a chart's
+// right-hand edge is. It is longer than the time between two observations
+// that count handled events, so each new point is placed beyond the edge and
+// scrolls in, instead of appearing at the edge.
+const chartLead = 10 * time.Second
+
+// Chart returns a chart of the given points, whose right-hand edge is
+// [chartLead] before the time of the most recent observation.
 func (f frame) Chart(points []point) chart {
 	c := chart{
 		Points: points,
 	}
 
 	if len(f.History) > 0 {
-		c.End = f.History[len(f.History)-1].At
+		c.End = f.History[len(f.History)-1].At.Add(-chartLead)
 	}
 
 	return c
@@ -275,7 +281,7 @@ func rate(samples []observe.Sample, window time.Duration, counter func(observe.S
 		return nil
 	}
 
-	since := samples[len(samples)-1].At.Add(-window - chartMargin)
+	since := samples[len(samples)-1].At.Add(-chartLead - window - chartMargin)
 
 	var (
 		points []point
@@ -317,7 +323,7 @@ func series(samples []observe.Sample, window time.Duration, total func(observe.S
 		return nil
 	}
 
-	since := samples[len(samples)-1].At.Add(-window - chartMargin)
+	since := samples[len(samples)-1].At.Add(-chartLead - window - chartMargin)
 
 	var points []point
 

@@ -288,10 +288,11 @@ func formatRouteType(t config.RouteType) string {
 // right-hand edge. The chart is scaled so that the largest value reaches the
 // top.
 //
-// The last value continues flat past the right-hand edge, and the points begin
-// [chartMargin] before the left-hand edge, so that the page's script can scroll
-// the chart left as time passes, until the next update, without showing a gap
-// at either edge.
+// The points from the last [chartLead] are beyond the right-hand edge, and the
+// last value continues flat past them. The points begin [chartMargin] before
+// the left-hand edge. So the page's script can scroll the chart left as time
+// passes, until the next update, and new points scroll in from the right
+// without showing a gap at either edge.
 func sparkline(c chart) template.HTML {
 	const (
 		width  = 240.0
@@ -335,7 +336,7 @@ func sparkline(c chart) template.HTML {
 	}
 
 	last := c.Points[len(c.Points)-1]
-	beyond := width * 1.25
+	beyond := math.Max(xOf(last.At), width) + width*0.25
 	fmt.Fprintf(&line, " L%.2f %.2f", beyond, yOf(last.Value))
 
 	area := fmt.Sprintf(
