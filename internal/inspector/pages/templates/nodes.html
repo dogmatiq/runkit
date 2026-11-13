@@ -14,8 +14,8 @@
 {{range .Nodes}}{{$streams := 0}}{{range .ConsumedStreams}}{{$streams = add $streams .EventStreams}}{{end}}{{$queues := len .Queues}}
   <article class="hcard node-card" id="node-{{id .Node.ID}}">
     <header class="hcard-head">
-      <span class="handler-badge badge-node" title="node">{{icon "node"}}</span>
       <code class="hcard-id" title="{{id .Node.ID}}">{{short .Node.ID}}</code>
+      <span class="handler-badge badge-node" title="node">{{icon "node"}}</span>
     </header>
     <div class="stats">
       <div class="stat{{if not $queues}} is-zero{{end}}"><span class="stat-value">{{$queues}}</span><span class="stat-label">{{noun $queues "queue" "queues"}} delivered</span></div>
