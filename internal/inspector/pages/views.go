@@ -94,24 +94,6 @@ func (f frame) HandlersOf(kind string) []*observe.Handler {
 	return handlers
 }
 
-// SummariesOf returns the summaries of the handlers of the given kind, from the
-// most recent observation. It returns nil if there is no observation yet.
-func (f frame) SummariesOf(kind string) []observe.HandlerSummary {
-	if f.Obs == nil {
-		return nil
-	}
-
-	var summaries []observe.HandlerSummary
-
-	for _, s := range f.Obs.Handlers {
-		if s.Handler.Type.String() == kind {
-			summaries = append(summaries, s)
-		}
-	}
-
-	return summaries
-}
-
 // HandlerSummary returns the summary of the handler with the given key from
 // the most recent observation, or nil if there is none.
 func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {

@@ -32,6 +32,10 @@ type Application struct {
 	// messageTypes maps the ID of each message type that the application
 	// routes to the message type.
 	messageTypes uuidcollection.Map[*MessageType]
+
+	// commandHandlers maps the ID of each command type to the handler that
+	// handles it.
+	commandHandlers uuidcollection.Map[*Handler]
 }
 
 // NewApplication returns what the inspector knows about the given
@@ -58,6 +62,10 @@ func NewApplication(app dogma.Application) (*Application, error) {
 		h := newHandler(handlerConfig, &a.messageTypes)
 		a.Handlers = append(a.Handlers, h)
 		a.handlers.Set(h.Key, h)
+
+		for _, id := range h.MessageTypeIDs(config.HandlesCommandRouteType) {
+			a.commandHandlers.Set(id, h)
+		}
 	}
 
 	slices.SortFunc(
@@ -77,6 +85,12 @@ func NewApplication(app dogma.Application) (*Application, error) {
 // application has no such handler.
 func (a *Application) Handler(key *uuidpb.UUID) (*Handler, bool) {
 	return a.handlers.Get(key)
+}
+
+// CommandHandler returns the handler that handles commands of the type with
+// the given ID. It returns false if the application has no such handler.
+func (a *Application) CommandHandler(typeID *uuidpb.UUID) (*Handler, bool) {
+	return a.commandHandlers.Get(typeID)
 }
 
 // MessageType returns the message type with the given ID.

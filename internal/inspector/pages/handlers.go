@@ -46,15 +46,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 		EventRate   []float64
 		CurrentRate float64
 		Messages    []float64
-		Failing     []float64
 	}{
 		frame:     f,
 		EventRate: rate(history, chartWindow),
 		Messages: series(history, chartWindow, func(s observe.Sample) float64 {
 			return float64(s.Messages)
-		}),
-		Failing: series(history, chartWindow, func(s observe.Sample) float64 {
-			return float64(s.Failing)
 		}),
 	}
 

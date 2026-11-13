@@ -3,10 +3,10 @@
 
 <section class="tiles">
   <a class="tile" href="{{.Root}}nodes">
-    <span class="tile-label">{{icon "node"}}Live nodes</span>
+    <span class="tile-label">{{icon "node"}}Cluster</span>
     {{if .Obs.LiveNodes.Known}}
       <span class="tile-value" data-watch="nodes">{{len .Obs.LiveNodes.Nodes}}</span>
-      <span class="tile-dots">{{range .Obs.LiveNodes.Nodes}}<span class="pulse" data-node="{{id .ID}}" title="{{id .ID}}"></span>{{end}}</span>
+      <span class="tile-sub">{{if .Obs.LiveNodes.Nodes}}live nodes{{else}}<span class="tag bad">no live nodes</span>{{end}}</span>
     {{else}}
       <span class="tile-value muted">?</span>
       <span class="tile-sub muted">listening for heartbeats</span>
@@ -14,46 +14,23 @@
   </a>
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
   <a class="tile" href="{{.Root}}queues">
-    <span class="tile-label">{{icon "queue"}}Queued messages</span>
+    <span class="tile-label">{{icon "queue"}}Queues</span>
     <span class="tile-value" data-watch="messages">{{num $messages}}</span>
     <span class="tile-sub">{{if $failing}}<span class="tag bad" data-watch="failing">{{num $failing}} failing</span>{{else}}<span class="tag ok">none failing</span>{{end}} in {{plural (len .Obs.Queues) "queue" "queues"}}</span>
     {{sparkline .Messages}}
   </a>
   <a class="tile" href="{{.Root}}streams">
-    <span class="tile-label">{{icon "event"}}Events recorded</span>
+    <span class="tile-label">{{icon "event"}}Events</span>
     <span class="tile-value" data-watch="events" title="{{num .Obs.Events}} events">{{compact .Obs.Events}}</span>
     <span class="tile-sub"><strong>{{printf "%.1f" .CurrentRate}}</strong> per second on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
     {{sparkline .EventRate}}
   </a>
 </section>
 
-<div class="columns">
-<section class="panel">
-  <header class="panel-head"><h2>{{icon "queue"}}Busiest queues</h2><a href="{{.Root}}queues">All queues</a></header>
-  <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Queue</th><th class="num">Messages</th><th class="num">Due</th><th class="num">Failing</th><th>Delivered by</th></tr></thead>
-    <tbody>
-    {{range $i, $q := .Obs.Queues}}{{if lt $i 8}}{{with $.QueueView $q}}
-      <tr class="{{if .IsStalled $.Now}}row-bad{{else if .Failing}}row-warn{{end}}">
-        <td><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a></td>
-        <td class="num" data-watch="q-{{id .ID}}">{{num .Messages}}</td>
-        <td class="num">{{num .Due}}</td>
-        <td class="num">{{if .Failing}}<span class="tag bad">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
-        <td>{{template "owner" .DeliveredBy}}</td>
-      </tr>
-    {{end}}{{end}}{{else}}
-      <tr><td colspan="5" class="empty-row">Every queue is empty.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  </div>
-</section>
-
-{{template "typePanel" (list . "aggregate" "Aggregates" "aggregates")}}
-{{template "typePanel" (list . "process" "Processes" "processes")}}
-{{template "typePanel" (list . "integration" "Integrations" "integrations")}}
-{{template "typePanel" (list . "projection" "Projections" "projections")}}
+<div class="cards">
+{{range .App.Handlers}}
+  {{template "handlerCard" (list $ .)}}
+{{end}}
 </div>
 {{end}}
 {{template "bottom" .}}{{end}}

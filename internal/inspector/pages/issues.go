@@ -129,7 +129,7 @@ func findIssues(app *observe.Application, obs *observe.Observation, now time.Tim
 	for _, s := range obs.Handlers {
 		link := "handlers/" + s.Handler.Key.AsString()
 
-		for _, err := range []error{s.InstancesErr, s.ProgressErr, s.CompactionErr} {
+		for _, err := range []error{s.InstancesErr, s.ProgressErr, s.QueuedMessagesErr, s.CompactionErr} {
 			if err != nil {
 				add(broken, link, "%s", err)
 			}

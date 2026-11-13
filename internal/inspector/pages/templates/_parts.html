@@ -106,26 +106,22 @@
 </div>
 {{- end}}
 
-{{define "typePanel" -}}
-{{$f := index . 0}}{{$kind := index . 1}}{{$title := index . 2}}{{$section := index . 3}}
-<section class="panel">
-  <header class="panel-head"><h2>{{icon $kind}}{{$title}}</h2><a href="{{$f.Root}}{{$section}}">All {{$kind}} handlers</a></header>
-  <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Handler</th>{{if or (eq $kind "aggregate") (eq $kind "process")}}<th class="num">Instances</th>{{end}}{{if or (eq $kind "process") (eq $kind "projection")}}<th class="num">To handle</th>{{end}}{{if eq $kind "integration"}}<th class="num">Routes</th>{{end}}</tr></thead>
-    <tbody>
-    {{range $f.SummariesOf $kind}}
-      <tr>
-        <td><a href="{{$f.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a>{{if .Handler.IsDisabled}} <span class="tag">disabled</span>{{end}}</td>
-        {{if or (eq $kind "aggregate") (eq $kind "process")}}<td class="num"><span data-watch="inst-{{id .Handler.Key}}">{{template "count" .Instances}}</span></td>{{end}}
-        {{if or (eq $kind "process") (eq $kind "projection")}}<td class="num">{{if .Unhandled}}<span class="tag warn" data-watch="todo-{{id .Handler.Key}}">{{num .Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}</td>{{end}}
-        {{if eq $kind "integration"}}<td class="num">{{len .Handler.Routes}}</td>{{end}}
-      </tr>
-    {{else}}
-      <tr><td colspan="3" class="empty-row">No {{$kind}} handlers.</td></tr>
+{{define "handlerCard" -}}
+{{$f := index . 0}}{{$h := index . 1}}{{$s := $f.HandlerSummary $h.Key}}{{$kind := $h.Type.String}}
+<a class="card handler-card" href="{{$f.Root}}handlers/{{id $h.Key}}">
+  <header class="card-head">
+    {{icon $kind}}<strong>{{$h.Name}}</strong>
+    {{if $h.IsDisabled}}<span class="tag">disabled</span>{{end}}
+    <span class="card-kind muted">{{$kind}}</span>
+  </header>
+  <dl class="facts">
+    {{if $s}}
+      {{if $h.HasInstances}}<dt>Instances</dt><dd data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</dd>{{end}}
+      {{if $h.HandlesCommands}}<dt>Commands waiting</dt><dd data-watch="queued-{{id $h.Key}}">{{num $s.QueuedMessages}}{{if $s.FailingMessages}} <span class="tag bad">{{num $s.FailingMessages}} failing</span>{{end}}</dd>{{end}}
+      {{if $h.Process}}<dt>Deadlines waiting</dt><dd data-watch="queued-{{id $h.Key}}">{{num $s.QueuedMessages}}{{if $s.FailingMessages}} <span class="tag bad">{{num $s.FailingMessages}} failing</span>{{end}}</dd>{{end}}
+      {{if $h.HandlesEvents}}<dt>To handle</dt><dd data-watch="todo-{{id $h.Key}}">{{if $s.Unhandled}}<span class="tag warn">{{plural $s.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
+      {{if $h.Projection}}<dt>Last compacted</dt><dd>{{rel $f.Now $s.LastCompactedAt}}</dd>{{end}}
     {{end}}
-    </tbody>
-  </table>
-  </div>
-</section>
+  </dl>
+</a>
 {{- end}}

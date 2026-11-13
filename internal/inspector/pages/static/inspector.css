@@ -529,6 +529,11 @@ a.card:hover {
   margin-bottom: 10px;
 }
 
+.card-kind {
+  margin-left: auto;
+  font-size: 12px;
+}
+
 .node-id {
   font-size: 12px;
   overflow-wrap: anywhere;

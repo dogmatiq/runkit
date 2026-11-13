@@ -143,6 +143,18 @@ type HandlerSummary struct {
 	// ProgressErr explains why Progress could not be read.
 	ProgressErr error
 
+	// QueuedMessages is the number of queued messages for the handler. They
+	// are commands for an aggregate or integration handler, and deadlines for
+	// a process handler.
+	QueuedMessages int
+
+	// FailingMessages is the number of QueuedMessages whose most recent
+	// attempt failed.
+	FailingMessages int
+
+	// QueuedMessagesErr explains why QueuedMessages could not be counted.
+	QueuedMessagesErr error
+
 	// LastCompactedAt is the time that the engine stores as the projection's
 	// most recent compaction, for a projection handler. Before the first
 	// compaction, it is the time that an engine first ran the handler. It is
@@ -406,8 +418,11 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[string]HandlerSummary {
 	slow := map[string]HandlerSummary{}
 
+	queued, queuedErr := o.queuedByHandler(ctx)
+
 	for _, h := range o.Application.Handlers {
-		var s HandlerSummary
+		s := queued[h.Key.AsString()]
+		s.QueuedMessagesErr = queuedErr
 
 		switch h.Type {
 		case config.AggregateHandlerType:
@@ -435,6 +450,38 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 	}
 
 	return slow
+}
+
+// queuedByHandler returns a summary of each handler that holds only the
+// number of its queued messages, keyed by handler key.
+func (o *Observer) queuedByHandler(ctx context.Context) (map[string]HandlerSummary, error) {
+	groups, err := o.Database.queuedGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := map[string]HandlerSummary{}
+
+	for _, g := range groups {
+		key := g.HandlerKey
+
+		// A command has no handler key of its own, so it belongs to the
+		// handler that handles its type.
+		if key == nil {
+			h, ok := o.Application.CommandHandler(g.TypeID)
+			if !ok {
+				continue
+			}
+			key = h.Key
+		}
+
+		s := summaries[key.AsString()]
+		s.QueuedMessages += g.Messages
+		s.FailingMessages += g.Failing
+		summaries[key.AsString()] = s
+	}
+
+	return summaries, nil
 }
 
 // boundApplication returns the database's clock, and the identity of the
