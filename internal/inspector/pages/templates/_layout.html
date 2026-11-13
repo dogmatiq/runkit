@@ -52,14 +52,14 @@
   <div class="footer-inner">
     <p class="footer-powered">
       {{logo "footer-mark"}}
-      <a href="https://github.com/dogmatiq/dogma">Powered by dogma</a>
+      <a href="https://github.com/dogmatiq/dogma">Powered by Dogma</a>
     </p>
     <p class="footer-versions">
       {{- with versions}}
-      {{- if .Dogma}}<span>dogma {{.Dogma}}</span>{{end}}
+      {{- if .Dogma}}<span>Dogma {{.Dogma}}</span>{{end}}
       {{- if .Runkit}}<span>runkit {{.Runkit}}</span>{{end}}
       {{- end}}
-      {{- with .AppModule}}<span>{{.Path}}{{if .Version}} {{.Version}}{{end}}</span>{{end}}
+      {{- with .AppModule}}{{if .Version}}<span>{{$.App.Identity.GetName}} {{.Version}}</span>{{end}}{{end}}
     </p>
   </div>
 </footer>

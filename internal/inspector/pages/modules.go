@@ -62,8 +62,8 @@ func moduleOf(packagePath string) (moduleVersion, bool) {
 }
 
 // builtFromVersion returns the version of the module that the binary is built
-// from. It is the version that Go stamps on the module, or else the commit that
-// the binary was built from.
+// from. It is the version that Go stamps on the module, or else the first seven
+// characters of the hash of the commit that the binary was built from.
 func builtFromVersion() string {
 	if v := formatModuleVersion(buildInfo.Main.Version); v != "" {
 		return v
@@ -71,7 +71,7 @@ func builtFromVersion() string {
 
 	for _, s := range buildInfo.Settings {
 		if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-			return "commit " + s.Value[:7]
+			return s.Value[:7]
 		}
 	}
 
@@ -126,8 +126,10 @@ func readModuleVersions() moduleVersions {
 // tag, and captures the first 12 characters of the commit's hash.
 var pseudoVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+-(?:[0-9A-Za-z.-]+\.)?\d{14}-([0-9a-f]{12})`)
 
-// formatModuleVersion returns the text to show for a module version. It returns
-// an empty string if the version is empty or means "built from a directory".
+// formatModuleVersion returns the text to show for a module version. A release
+// is shown as its tag, and a pseudo-version as the first seven characters of
+// its commit's hash. It returns an empty string if the version is empty or means
+// "built from a directory".
 func formatModuleVersion(v string) string {
 	switch v {
 	case "", "(devel)":
@@ -135,7 +137,7 @@ func formatModuleVersion(v string) string {
 	}
 
 	if m := pseudoVersion.FindStringSubmatch(v); m != nil {
-		return "commit " + m[1][:7]
+		return m[1][:7]
 	}
 
 	return v
