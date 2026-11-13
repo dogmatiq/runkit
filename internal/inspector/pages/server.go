@@ -16,6 +16,12 @@ const (
 	// template has the same URL, with the script's integrity hash.
 	htmxURL = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
 
+	// geistURL and geistMonoURL are the bases of the Geist font packages,
+	// whose stylesheets every page loads. The layout template has the same
+	// URLs, with the stylesheets' integrity hashes.
+	geistURL     = "https://cdn.jsdelivr.net/npm/@fontsource-variable/geist@5.3.0/"
+	geistMonoURL = "https://cdn.jsdelivr.net/npm/@fontsource-variable/geist-mono@5.3.0/"
+
 	// morphURL is the URL of the htmx extension that morphs each update into
 	// the page. The layout template has the same URL, with its integrity hash.
 	morphURL = "https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph-ext.min.js"
@@ -25,8 +31,8 @@ const (
 // and everything else only from the inspector.
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self' " + htmxURL + " " + morphURL + "; " +
-	"style-src 'self'; " +
-	"font-src 'self'; " +
+	"style-src 'self' " + geistURL + " " + geistMonoURL + "; " +
+	"font-src " + geistURL + " " + geistMonoURL + "; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"base-uri 'none'; " +
