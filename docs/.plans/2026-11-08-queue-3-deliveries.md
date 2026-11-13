@@ -494,8 +494,8 @@ A rename commit, using `gopls rename`. `Tracker.Failed` and
 `Tracker.Succeeded` become `Tracker.WorkFailed` and `Tracker.WorkSucceeded`,
 because the work fails or succeeds, not the tracker.
 
-- [ ] **Step 1: Rename the methods, and the comments that mention them**
-- [ ] **Step 2: Run `make precommit`**
+- [x] **Step 1: Rename the methods, and the comments that mention them**
+- [x] **Step 2: Run `make precommit`**
 - [ ] **Step 3: Stop for review**
 
 ---
@@ -584,6 +584,10 @@ because the work fails or succeeds, not the tracker.
 A small commit of its own, at any point. Replace "at <level>" with "as an
 ERROR", "as a DEBUG record" and so on in `docs/maintainers/logging.md` and
 `internal/cluster/node.go`.
+
+Also reword the docs in `internal/failure/tracker.go` that use "records" as a
+verb, because "record" is a Dogma term. For example, "WorkFailed adds a
+failure of the work to the streak in progress, or starts a streak".
 
 - [ ] **Step 1: Fix the wording**
 - [ ] **Step 2: Stop for review**
