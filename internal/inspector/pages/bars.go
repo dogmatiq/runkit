@@ -33,10 +33,6 @@ func segmentBar(class string, segments []segment) template.HTML {
 		total += s.Value
 	}
 
-	if total == 0 {
-		return ""
-	}
-
 	const gap = 0.6
 
 	var b strings.Builder
@@ -47,8 +43,14 @@ func segmentBar(class string, segments []segment) template.HTML {
 		template.HTMLEscapeString(class),
 	)
 
+	// An empty bar is still drawn, as an empty track, so that it does not move
+	// the page when it fills.
 	x := 0.0
 	for i, s := range segments {
+		if total == 0 {
+			break
+		}
+
 		width := s.Value / total * 100
 		drawn := width
 		if i < len(segments)-1 {
@@ -80,13 +82,10 @@ func segmentBar(class string, segments []segment) template.HTML {
 }
 
 // bindingBar returns a bar of how a handler's instances are spread across the
-// things that they are bound to, with a caption. The nouns name one thing, such
-// as "event stream", and many.
-func bindingBar(b observe.Bindings, singular, plural string) template.HTML {
-	if b.Instances == 0 {
-		return ""
-	}
-
+// things that they are bound to, with a caption. The class names the subsystem
+// of those things, such as "streams", and the nouns name one thing, such as
+// "event stream", and many.
+func bindingBar(b observe.Bindings, class, singular, plural string) template.HTML {
 	var (
 		segments []segment
 		bound    int
@@ -135,7 +134,7 @@ func bindingBar(b observe.Bindings, singular, plural string) template.HTML {
 		caption += ", from the first " + formatNumber(b.Instances) + " instances"
 	}
 
-	return segmentBar("bindings", segments) + template.HTML(
+	return segmentBar(class, segments) + template.HTML(
 		`<span class="bar-caption">`+template.HTMLEscapeString(caption)+`</span>`,
 	)
 }
@@ -181,4 +180,56 @@ func streamBar(streams []observe.EventStream) template.HTML {
 	}
 
 	return segmentBar("streams", segments)
+}
+
+// queueBar returns a bar of the number of messages in each of the given queues.
+func queueBar(queues []observe.Queue) template.HTML {
+	var segments []segment
+
+	for i, q := range queues {
+		if i == barSegments-1 && len(queues) > barSegments {
+			rest := 0
+			for _, r := range queues[i:] {
+				rest += r.Messages
+			}
+
+			segments = append(
+				segments,
+				segment{
+					Value:   float64(rest),
+					Title:   fmt.Sprintf("%s in %d other queues", countOf(rest, "message", "messages"), len(queues)-i),
+					IsOther: true,
+				},
+			)
+			break
+		}
+
+		segments = append(
+			segments,
+			segment{
+				Value: float64(q.Messages),
+				Title: fmt.Sprintf("%s in queue %s", countOf(q.Messages, "message", "messages"), shortID(q.ID)),
+			},
+		)
+	}
+
+	return segmentBar("queues", segments)
+}
+
+// workloadBar returns a bar of the number of workloads that each live node
+// owns, as the inspector computes ownership.
+func workloadBar(counts []nodeWorkloadCount) template.HTML {
+	var segments []segment
+
+	for _, c := range counts {
+		segments = append(
+			segments,
+			segment{
+				Value: float64(c.Workloads),
+				Title: fmt.Sprintf("%s on node %s", countOf(c.Workloads, "workload", "workloads"), shortID(c.NodeID)),
+			},
+		)
+	}
+
+	return segmentBar("nodes", segments)
 }

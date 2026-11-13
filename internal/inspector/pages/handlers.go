@@ -61,6 +61,9 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 		data.CurrentRate += eventRate / float64(len(recent))
 	}
 
+	// Rates are shown per minute.
+	data.CurrentRate *= 60
+
 	render(w, http.StatusOK, "overview.html", data)
 }
 

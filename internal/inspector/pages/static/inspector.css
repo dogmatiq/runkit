@@ -72,6 +72,14 @@
   --handler-integration-soft: #e4f1fa;
   --handler-projection: #7c3aed;
   --handler-projection-soft: #f2ecfe;
+  --cluster: #15a34a;
+  --cluster-soft: #e6f6ec;
+  --queues: #0284c7;
+  --queues-soft: #e2f1fa;
+  --streams: #4f46e5;
+  --streams-soft: #eef0ff;
+  --neutral: #6b7486;
+  --neutral-soft: #eef0f4;
   color-scheme: light;
 }
 
@@ -114,6 +122,14 @@
     --handler-integration-soft: rgba(56, 189, 248, 0.13);
     --handler-projection: #c4a1ff;
     --handler-projection-soft: rgba(192, 132, 252, 0.15);
+    --cluster: #3ddc84;
+    --cluster-soft: rgba(61, 220, 132, 0.13);
+    --queues: #38bdf8;
+    --queues-soft: rgba(56, 189, 248, 0.13);
+    --streams: #8f8cff;
+    --streams-soft: rgba(143, 140, 255, 0.15);
+    --neutral: #8592a8;
+    --neutral-soft: rgba(133, 146, 168, 0.13);
     color-scheme: dark;
   }
 }
@@ -156,6 +172,14 @@
   --handler-integration-soft: rgba(56, 189, 248, 0.13);
   --handler-projection: #c4a1ff;
   --handler-projection-soft: rgba(192, 132, 252, 0.15);
+  --cluster: #3ddc84;
+  --cluster-soft: rgba(61, 220, 132, 0.13);
+  --queues: #38bdf8;
+  --queues-soft: rgba(56, 189, 248, 0.13);
+  --streams: #8f8cff;
+  --streams-soft: rgba(143, 140, 255, 0.15);
+  --neutral: #8592a8;
+  --neutral-soft: rgba(133, 146, 168, 0.13);
   color-scheme: dark;
 }
 
@@ -425,7 +449,7 @@ h3 {
   position: absolute;
   top: var(--space-5);
   right: var(--space-5);
-  color: var(--faint);
+  color: var(--subsystem);
 }
 
 .metric-icon .icon {
@@ -471,12 +495,12 @@ h3 {
 }
 
 .spark-area {
-  fill: var(--chart-fill);
+  fill: var(--subsystem-soft);
 }
 
 .spark-line {
   fill: none;
-  stroke: var(--chart);
+  stroke: var(--subsystem);
   stroke-width: 1.5;
 }
 
@@ -511,24 +535,34 @@ h3 {
   min-width: 0;
 }
 
-.handler-aggregate {
-  --handler: var(--handler-aggregate);
-  --handler-soft: var(--handler-aggregate-soft);
+/*
+ * Colour follows the engine's subsystems: green for the cluster, blue for
+ * queues and the messages in them, and purple for event streams and events.
+ * A handler takes the colour of the messages that it produces. Aggregates and
+ * integrations record events, processes produce commands and deadlines, and
+ * projections produce nothing.
+ */
+.subsystem-cluster {
+  --subsystem: var(--cluster);
+  --subsystem-soft: var(--cluster-soft);
 }
 
+.subsystem-queues,
 .handler-process {
-  --handler: var(--handler-process);
-  --handler-soft: var(--handler-process-soft);
+  --subsystem: var(--queues);
+  --subsystem-soft: var(--queues-soft);
 }
 
+.subsystem-streams,
+.handler-aggregate,
 .handler-integration {
-  --handler: var(--handler-integration);
-  --handler-soft: var(--handler-integration-soft);
+  --subsystem: var(--streams);
+  --subsystem-soft: var(--streams-soft);
 }
 
 .handler-projection {
-  --handler: var(--handler-projection);
-  --handler-soft: var(--handler-projection-soft);
+  --subsystem: var(--neutral);
+  --subsystem-soft: var(--neutral-soft);
 }
 
 .handler-badge {
@@ -538,8 +572,8 @@ h3 {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--handler-soft);
-  color: var(--handler);
+  background: var(--subsystem-soft);
+  color: var(--subsystem);
 }
 
 .handler-badge .icon {
@@ -691,7 +725,20 @@ h3 {
 }
 
 .segbar rect {
-  fill: var(--handler, var(--chart));
+  fill: var(--subsystem);
+}
+
+/* A bar is coloured by what it measures, wherever it appears. */
+.segbar.nodes {
+  --subsystem: var(--cluster);
+}
+
+.segbar.queues {
+  --subsystem: var(--queues);
+}
+
+.segbar.streams {
+  --subsystem: var(--streams);
 }
 
 .segbar .seg-1 { opacity: 0.8; }
@@ -993,7 +1040,7 @@ a.tag:hover {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--pulse);
+  background: var(--cluster);
 }
 
 .pulse.big {

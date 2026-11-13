@@ -2,6 +2,8 @@ package pages
 
 import (
 	"fmt"
+	"html/template"
+	"sort"
 	"time"
 
 	"github.com/dogmatiq/dapper"
@@ -102,6 +104,64 @@ func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {
 	}
 
 	return nil
+}
+
+// nodeWorkloadCount is the number of workloads that one live node owns.
+type nodeWorkloadCount struct {
+	NodeID    *uuidpb.UUID
+	Workloads int
+}
+
+// WorkloadBar returns a bar of the number of workloads that each live node
+// owns: delivering each queue's messages, and consuming each local event stream
+// for each process and projection handler. It returns an empty bar if the live
+// nodes are not known.
+func (f frame) WorkloadBar() template.HTML {
+	if f.Obs == nil || !f.Obs.LiveNodes.Known {
+		return workloadBar(nil)
+	}
+
+	counts := map[string]int{}
+
+	add := func(key *uuidpb.UUID) {
+		if id, ok := f.Obs.LiveNodes.FindWorkloadOwner(key); ok {
+			counts[id.AsString()]++
+		}
+	}
+
+	for _, q := range f.Obs.Queues {
+		add(q.ID)
+	}
+
+	for _, h := range f.App.Handlers {
+		if !h.HandlesEvents() {
+			continue
+		}
+
+		for _, s := range f.Obs.EventStreams {
+			add(h.StreamWorkloadKey(s.ID))
+		}
+	}
+
+	var result []nodeWorkloadCount
+	for _, n := range f.Obs.LiveNodes.Nodes {
+		result = append(
+			result,
+			nodeWorkloadCount{
+				NodeID:    n.ID,
+				Workloads: counts[n.ID.AsString()],
+			},
+		)
+	}
+
+	sort.Slice(
+		result,
+		func(i, j int) bool {
+			return result[i].Workloads > result[j].Workloads
+		},
+	)
+
+	return workloadBar(result)
 }
 
 // Envelope returns a view of the given envelope.

@@ -121,7 +121,7 @@
   <div class="stats">
     <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
   </div>
-  <div class="bar">{{bindings $s.Bindings "event stream" "event streams"}}</div>
+  <div class="bar">{{bindings $s.Bindings "streams" "event stream" "event streams"}}</div>
   <div class="facts-line">
     <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "command" "commands"}} queued</span>
   </div>
@@ -132,7 +132,7 @@
     <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $s.Bindings.Instances "active instance" "active instances"}}</span></div>
     <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
   </div>
-  <div class="bar">{{bindings $s.Bindings "deadline queue" "deadline queues"}}</div>
+  <div class="bar">{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}</div>
   <div class="facts-line">
     <span><strong>{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
     <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
