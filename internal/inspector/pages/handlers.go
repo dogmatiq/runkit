@@ -15,7 +15,7 @@ import (
 
 const (
 	// chartWindow is the period of time that the charts show.
-	chartWindow = 5 * time.Minute
+	chartWindow = 1 * time.Minute
 
 	// rateSmoothing is the number of recent rates that the current rate of
 	// recorded events averages.

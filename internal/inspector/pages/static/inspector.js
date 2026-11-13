@@ -91,7 +91,7 @@
   var beatWindow = 30000;
 
   // bumpWidth is the width of a bump's middle, in CSS pixels.
-  var bumpWidth = 5;
+  var bumpWidth = 14;
   var beats = {};
 
   function recordBeat(nodeID) {
