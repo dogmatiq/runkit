@@ -13,7 +13,7 @@
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
     <div class="metric-bar">{{.WorkloadBar}}</div>
-    {{if .Obs.LiveNodes.Known}}<canvas class="spark beats" id="heartbeats" data-nodes="{{range $i, $node := .Obs.LiveNodes.Nodes}}{{if $i}} {{end}}{{id $node.ID}}{{end}}" aria-hidden="true"></canvas>{{end}}
+    {{if .Obs.LiveNodes.Known}}<canvas class="spark beats" id="heartbeats" data-timeout="{{.Obs.LiveNodes.Timeout.Milliseconds}}" data-nodes="{{range $i, $node := .Obs.LiveNodes.Nodes}}{{if $i}} {{end}}{{id $node.ID}}{{end}}" aria-hidden="true"></canvas>{{end}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}

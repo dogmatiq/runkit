@@ -96,8 +96,9 @@ func (l *Listener) LiveNodes(now time.Time) LiveNodes {
 	}
 
 	live := LiveNodes{
-		Known: true,
-		set:   &uuidcollection.Set{},
+		Known:   true,
+		Timeout: l.HeartbeatTimeout,
+		set:     &uuidcollection.Set{},
 	}
 
 	for id, at := range l.heartbeats.All() {
@@ -254,6 +255,9 @@ type LiveNodes struct {
 
 	// Nodes is the live nodes, ordered by ID.
 	Nodes []LiveNode
+
+	// Timeout is how long a node stays live after its most recent heartbeat.
+	Timeout time.Duration
 
 	// set is the set of the IDs in Nodes.
 	set *uuidcollection.Set
