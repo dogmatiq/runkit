@@ -55,14 +55,12 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 
 	data := struct {
 		frame
-		History                  []observe.Sample
 		EventRates               []float64
 		EventsPerMinute          float64
 		QueuedMessages           []float64
 		RemovedMessagesPerMinute float64
 	}{
 		frame:           f,
-		History:         recent(history, chartWindow),
 		EventRates:      eventRates,
 		EventsPerMinute: perMinute(eventRates),
 		QueuedMessages: series(

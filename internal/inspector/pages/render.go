@@ -73,7 +73,6 @@ var templateFuncs = template.FuncMap{
 	"bindings":  bindingBar,
 	"streambar": streamBar,
 	"queuebar":  queueBar,
-	"workloads": workloadChart,
 	"add":       func(a, b int) int { return a + b },
 	"list":      func(values ...any) []any { return values },
 	"plural":    countOf,

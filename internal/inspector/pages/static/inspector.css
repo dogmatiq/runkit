@@ -512,25 +512,11 @@ h3 {
 }
 
 /*
- * Each node's share of the workloads over time, as stacked bands, with a line
- * between each pair of bands.
+ * A lane for each live node, with a tick for each recent heartbeat. The page's
+ * script draws the ticks in the subsystem's colour.
  */
-.stack .band {
-  fill: var(--subsystem);
-}
-
-.stack .band-0 {
-  opacity: 0.16;
-}
-
-.stack .band-1 {
-  opacity: 0.08;
-}
-
-.stack .band-edge {
-  fill: none;
-  stroke: var(--subsystem);
-  stroke-width: 1.5;
+.beats {
+  color: var(--subsystem);
 }
 
 /* A handler's card, on the overview and on the page for its kind. */

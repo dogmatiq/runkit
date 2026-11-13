@@ -289,23 +289,6 @@ func series(samples []observe.Sample, window time.Duration, total func(observe.S
 	return values
 }
 
-// recent returns the samples in the given window.
-func recent(samples []observe.Sample, window time.Duration) []observe.Sample {
-	if len(samples) == 0 {
-		return nil
-	}
-
-	since := samples[len(samples)-1].At.Add(-window)
-
-	for i, s := range samples {
-		if !s.At.Before(since) {
-			return samples[i:]
-		}
-	}
-
-	return nil
-}
-
 // perMinute returns the average of the most recent few of the given rates per
 // second, as a rate per minute. The rate between two observations is noisy, so
 // one alone is not shown.

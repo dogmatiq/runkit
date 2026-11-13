@@ -66,6 +66,8 @@
   var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   function pulse(nodeID) {
+    recordBeat(nodeID);
+
     if (reducedMotion.matches) return;
 
     var elements = document.querySelectorAll('[data-node="' + CSS.escape(nodeID) + '"]');
@@ -75,6 +77,78 @@
       }
     }
   }
+
+  // Heartbeat lanes.
+  //
+  // The <canvas id="heartbeats"> element on the overview has a lane for each
+  // live node, listed by ID in its data-nodes attribute. Each heartbeat that
+  // the page has received in the last 30 seconds is a tick in its node's
+  // lane. The ticks move left as time passes and fade as they age, so a node
+  // that misses heartbeats leaves a gap. A page that has just loaded starts
+  // with empty lanes.
+
+  var beatWindow = 30000;
+  var beats = {};
+
+  function recordBeat(nodeID) {
+    var times = beats[nodeID] || (beats[nodeID] = []);
+    times.push(performance.now());
+  }
+
+  function drawBeats() {
+    var canvas = document.getElementById("heartbeats");
+    if (canvas && canvas.getContext) {
+      var ratio = window.devicePixelRatio || 1;
+      var width = Math.round(canvas.clientWidth * ratio);
+      var height = Math.round(canvas.clientHeight * ratio);
+
+      // Setting the size also clears the canvas, as does an update that
+      // morphs the page and removes the size attributes.
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      var g = canvas.getContext("2d");
+      g.clearRect(0, 0, width, height);
+      g.fillStyle = window.getComputedStyle(canvas).color;
+
+      var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
+      var gap = 4 * ratio;
+      var lane = Math.min(6 * ratio, (height - gap * (nodes.length + 1)) / Math.max(nodes.length, 1));
+      var top = (height - nodes.length * lane - (nodes.length - 1) * gap) / 2;
+      var tick = 2 * ratio;
+      var now = performance.now();
+
+      for (var i = 0; i < nodes.length; i++) {
+        var y = top + i * (lane + gap);
+
+        g.globalAlpha = 0.08;
+        g.fillRect(0, y, width, lane);
+
+        var times = beats[nodes[i]] || [];
+        while (times.length && now - times[0] > beatWindow) times.shift();
+
+        for (var j = 0; j < times.length; j++) {
+          var age = (now - times[j]) / beatWindow;
+          g.globalAlpha = 0.15 + 0.75 * (1 - age) * (1 - age);
+          g.fillRect(width - age * width - tick, y, tick, lane);
+        }
+      }
+
+      g.globalAlpha = 1;
+    }
+
+    // With reduced motion, the lanes are redrawn once a second, so the ticks
+    // step instead of gliding.
+    if (reducedMotion.matches) {
+      window.setTimeout(drawBeats, 1000);
+    } else {
+      window.requestAnimationFrame(drawBeats);
+    }
+  }
+
+  drawBeats();
 
   // Live updates.
 

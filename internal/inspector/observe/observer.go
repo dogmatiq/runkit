@@ -94,6 +94,15 @@ func (o *Observation) QueuedMessages() uint64 {
 	return n
 }
 
+// TotalWorkloads returns the number of workloads that the live nodes own.
+func (o *Observation) TotalWorkloads() int {
+	n := 0
+	for _, w := range o.Workloads {
+		n += w.Workloads
+	}
+	return n
+}
+
 // Events returns the total number of events on the observed event streams.
 func (o *Observation) Events() uint64 {
 	var n uint64
@@ -224,10 +233,6 @@ type Sample struct {
 	// RemovedMessages is the number of messages removed from the queues since
 	// PostgreSQL's statistics were last reset.
 	RemovedMessages Total
-
-	// Workloads is the number of workloads that each live node owns. It is
-	// nil if the live nodes are not known.
-	Workloads []NodeWorkloads
 }
 
 // NodeWorkloads is the number of workloads that one live node owns, as the
@@ -421,7 +426,6 @@ func (o *Observer) publish(obs *Observation) {
 				Value:   obs.RemovedMessages,
 				IsKnown: obs.RemovedMessagesErr == nil,
 			},
-			Workloads: obs.Workloads,
 		},
 	)
 

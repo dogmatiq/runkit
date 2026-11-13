@@ -7,13 +7,13 @@
     <span class="metric-icon" title="Cluster">{{icon "node"}}</span>
     {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
       <span class="metric-value">{{$n}}</span>
-      <span class="metric-detail">{{if $n}}live {{if eq $n 1}}node{{else}}nodes{{end}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
+      <span class="metric-detail">{{if $n}}live {{if eq $n 1}}node{{else}}nodes{{end}}, {{plural .Obs.TotalWorkloads "workload" "workloads"}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
     {{else}}
       <span class="metric-value is-unknown">?</span>
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
     <div class="metric-bar">{{.WorkloadBar}}</div>
-    {{workloads .History}}
+    {{if .Obs.LiveNodes.Known}}<canvas class="spark beats" id="heartbeats" data-nodes="{{range $i, $node := .Obs.LiveNodes.Nodes}}{{if $i}} {{end}}{{id $node.ID}}{{end}}" aria-hidden="true"></canvas>{{end}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
