@@ -114,9 +114,13 @@
       g.fillStyle = window.getComputedStyle(canvas).color;
 
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
-      var gap = 4 * ratio;
-      var lane = Math.min(6 * ratio, (height - gap * (nodes.length + 1)) / Math.max(nodes.length, 1));
-      var top = (height - nodes.length * lane - (nodes.length - 1) * gap) / 2;
+      // Each lane and the gap below it share a pitch, which shrinks so that
+      // every lane fits, however many nodes there are.
+      var pad = 4 * ratio;
+      var pitch = Math.min(10 * ratio, (height - 2 * pad) / Math.max(nodes.length, 1));
+      var lane = (pitch * 2) / 3;
+      var gap = pitch - lane;
+      var top = (height - nodes.length * pitch + gap) / 2;
       var tick = 2 * ratio;
       var now = performance.now();
 
