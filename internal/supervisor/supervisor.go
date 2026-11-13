@@ -51,7 +51,7 @@ func Run(
 	defer failures.Complete()
 
 	for {
-		failures.Succeeded(ctx)
+		failures.WorkSucceeded(ctx)
 		err := fn(ctx)
 
 		if ctx.Err() != nil {
@@ -68,7 +68,7 @@ func Run(
 
 		xsql.PanicOnDeadlock(err)
 
-		delay := failures.Failed(ctx, err)
+		delay := failures.WorkFailed(ctx, err)
 
 		select {
 		case <-ctx.Done():

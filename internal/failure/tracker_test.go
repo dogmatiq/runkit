@@ -22,11 +22,11 @@ func TestTracker(t *testing.T) {
 				EngineLogger: spruce.NewTestLogger(t),
 			}
 
-			failures.Failed(t.Context(), failure)
-			failures.Failed(t.Context(), failure)
-			failures.Succeeded(t.Context())
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkSucceeded(t.Context())
 
-			expectDelay(t, failures.Failed(t.Context(), failure), 100*time.Millisecond)
+			expectDelay(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
 		})
 	})
 
@@ -38,12 +38,12 @@ func TestTracker(t *testing.T) {
 				QuietPeriod:  30 * time.Second,
 			}
 
-			failures.Failed(t.Context(), failure)
-			failures.Failed(t.Context(), failure)
-			failures.Succeeded(t.Context())
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkSucceeded(t.Context())
 			time.Sleep(10 * time.Second)
 
-			expectDelay(t, failures.Failed(t.Context(), failure), 400*time.Millisecond)
+			expectDelay(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
 		})
 	})
 
@@ -55,12 +55,12 @@ func TestTracker(t *testing.T) {
 				QuietPeriod:  30 * time.Second,
 			}
 
-			failures.Failed(t.Context(), failure)
-			failures.Failed(t.Context(), failure)
-			failures.Succeeded(t.Context())
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkSucceeded(t.Context())
 			time.Sleep(31 * time.Second)
 
-			expectDelay(t, failures.Failed(t.Context(), failure), 100*time.Millisecond)
+			expectDelay(t, failures.WorkFailed(t.Context(), failure), 100*time.Millisecond)
 		})
 	})
 
@@ -74,15 +74,15 @@ func TestTracker(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(t.Context())
 
-			failures.Failed(ctx, failure)
-			failures.Failed(ctx, failure)
-			failures.Succeeded(ctx)
+			failures.WorkFailed(ctx, failure)
+			failures.WorkFailed(ctx, failure)
+			failures.WorkSucceeded(ctx)
 			cancel()
 
 			time.Sleep(31 * time.Second)
 			synctest.Wait()
 
-			expectDelay(t, failures.Failed(t.Context(), failure), 400*time.Millisecond)
+			expectDelay(t, failures.WorkFailed(t.Context(), failure), 400*time.Millisecond)
 		})
 	})
 
@@ -94,8 +94,8 @@ func TestTracker(t *testing.T) {
 				QuietPeriod:  30 * time.Second,
 			}
 
-			failures.Failed(t.Context(), failure)
-			failures.Succeeded(t.Context())
+			failures.WorkFailed(t.Context(), failure)
+			failures.WorkSucceeded(t.Context())
 			failures.Complete()
 
 			time.Sleep(31 * time.Second)
@@ -115,8 +115,8 @@ func TestTracker(t *testing.T) {
 
 			for range 100 {
 				g.Go(func() {
-					failures.Failed(t.Context(), failure)
-					failures.Succeeded(t.Context())
+					failures.WorkFailed(t.Context(), failure)
+					failures.WorkSucceeded(t.Context())
 				})
 			}
 

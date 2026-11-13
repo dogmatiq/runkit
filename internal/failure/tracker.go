@@ -53,10 +53,10 @@ type Tracker struct {
 	complete bool
 }
 
-// Failed records a failure of the work.
+// WorkFailed records a failure of the work.
 //
 // It returns the delay before the next attempt. See [Streak.Extend].
-func (t *Tracker) Failed(ctx context.Context, err error) time.Duration {
+func (t *Tracker) WorkFailed(ctx context.Context, err error) time.Duration {
 	t.m.Lock()
 	defer t.m.Unlock()
 
@@ -70,11 +70,11 @@ func (t *Tracker) Failed(ctx context.Context, err error) time.Duration {
 	return t.streak.Extend(ctx, t.EngineLogger, t.Description, err)
 }
 
-// Succeeded records a success of the work.
+// WorkSucceeded records a success of the work.
 //
 // If a streak is in progress, it ends at once if [Tracker.QuietPeriod] is zero.
 // Otherwise it ends when the quiet period passes without another failure.
-func (t *Tracker) Succeeded(ctx context.Context) {
+func (t *Tracker) WorkSucceeded(ctx context.Context) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
