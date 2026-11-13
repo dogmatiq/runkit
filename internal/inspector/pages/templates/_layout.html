@@ -1,0 +1,52 @@
+{{define "top" -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0}'>
+<title>{{.Title}} · {{.App.Identity.GetName}} inspector</title>
+<link rel="icon" href="{{.Root}}static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Root}}static/inspector.css">
+<script src="{{.Root}}static/theme.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js" integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg" crossorigin="anonymous" defer></script>
+<script src="{{.Root}}static/inspector.js" defer></script>
+</head>
+<body data-live="{{.Root}}live">
+<header class="titlebar">
+  <a class="brand" href="{{.Root}}">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+    <span class="brand-app">{{.App.Identity.GetName}}</span>
+    <span class="brand-tool">inspector</span>
+  </a>
+  <nav class="nav">
+    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>Overview{{template "badge" .}}</a>
+    <a href="{{.Root}}nodes" {{if eq .Section "nodes"}}aria-current="page"{{end}}>Nodes</a>
+    <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>Queues</a>
+    <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>Event streams</a>
+    <a href="{{.Root}}handlers" {{if eq .Section "handlers"}}aria-current="page"{{end}}>Handlers</a>
+  </nav>
+  <div class="controls">
+    <span class="live" id="live-status" data-state="connecting" title="Connecting for live updates"><span class="live-dot"></span><span class="live-label">connecting</span></span>
+    <button class="theme" id="theme-toggle" type="button" title="Color mode: automatic">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z"/></svg>
+      <span class="theme-label">auto</span>
+    </button>
+  </div>
+</header>
+<main id="live" class="page" hx-get="{{.Self}}" hx-trigger="observed from:body" hx-select="#live" hx-swap="outerHTML">
+<h1 class="page-title">{{.Title}}</h1>
+{{- end}}
+
+{{define "bottom" -}}
+</main>
+<footer class="footer">
+  Read-only. Every query runs in a read-only transaction. Linked with
+  <code>{{.App.Identity.GetName}}</code> <code class="muted">{{id .App.Identity.GetKey}}</code>.
+</footer>
+</body>
+</html>
+{{- end}}
+
+{{define "badge"}}{{$bad := 0}}{{range .Issues}}{{if eq .Severity "bad"}}{{$bad = add $bad 1}}{{end}}{{end}}{{if $bad}} <span class="count bad" data-watch="issues">{{$bad}}</span>{{end}}{{end}}

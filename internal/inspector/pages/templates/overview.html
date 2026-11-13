@@ -1,0 +1,86 @@
+{{define "overview.html"}}{{template "top" .}}
+{{if not .Obs}}{{template "waiting" .}}{{else}}
+
+<section class="issues" aria-label="Things that need attention">
+{{range .Issues}}
+  <div class="issue {{.Severity}}"><span class="sev" aria-hidden="true"></span>{{if .Link}}<a href="{{$.Root}}{{.Link}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}</div>
+{{else}}
+  <div class="issue ok"><span class="sev" aria-hidden="true"></span><span>All quiet. No queue is stalled, no message is failing, and every handler has handled every event.</span></div>
+{{end}}
+</section>
+
+<section class="tiles">
+  <a class="tile" href="{{.Root}}nodes">
+    <span class="tile-label">Live nodes</span>
+    {{if .Obs.Membership.Known}}
+      <span class="tile-value" data-watch="nodes">{{len .Obs.Membership.Nodes}}</span>
+      <span class="tile-dots">{{range .Obs.Membership.Nodes}}<span class="pulse" data-node="{{id .ID}}" title="{{id .ID}}"></span>{{end}}</span>
+    {{else}}
+      <span class="tile-value muted">?</span>
+      <span class="tile-sub muted">listening for heartbeats</span>
+    {{end}}
+  </a>
+  {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
+  <a class="tile" href="{{.Root}}queues">
+    <span class="tile-label">Queued messages</span>
+    <span class="tile-value" data-watch="messages">{{num $messages}}</span>
+    <span class="tile-sub">{{if $failing}}<span class="tag bad" data-watch="failing">{{num $failing}} failing</span>{{else}}<span class="tag ok">none failing</span>{{end}} in {{plural (len .Obs.Queues) "queue" "queues"}}</span>
+    {{sparkline .Messages}}
+  </a>
+  <a class="tile" href="{{.Root}}streams">
+    <span class="tile-label">Events recorded</span>
+    <span class="tile-value" data-watch="events">{{num .Obs.Events}}</span>
+    <span class="tile-sub"><strong>{{printf "%.1f" .CurrentRate}}</strong> per second on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
+    {{sparkline .EventRate}}
+  </a>
+  <a class="tile" href="{{.Root}}handlers">
+    <span class="tile-label">Handlers</span>
+    <span class="tile-value">{{len .App.Handlers}}</span>
+    <span class="tile-sub">{{$todo := 0}}{{range .Obs.Handlers}}{{$todo = add $todo .Unhandled}}{{end}}{{if $todo}}<span class="tag warn" data-watch="todo">{{plural $todo "event" "events"}} to handle</span>{{else}}<span class="tag ok">up to date</span>{{end}}</span>
+  </a>
+</section>
+
+<div class="columns">
+<section class="panel">
+  <header class="panel-head"><h2>Busiest queues</h2><a href="{{.Root}}queues">All queues</a></header>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Queue</th><th class="num">Messages</th><th class="num">Due</th><th class="num">Failing</th><th>Delivered by</th></tr></thead>
+    <tbody>
+    {{range $i, $q := .Obs.Queues}}{{if lt $i 8}}{{with $.QueueView $q}}
+      <tr class="{{if .IsStalled $.Now}}row-bad{{else if .Failing}}row-warn{{end}}">
+        <td><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a> <span class="sub muted">{{.Label}}</span></td>
+        <td class="num" data-watch="q-{{id .ID}}">{{num .Messages}}</td>
+        <td class="num">{{num .Due}}</td>
+        <td class="num">{{if .Failing}}<span class="tag bad">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+        <td>{{template "owner" .Owner}}</td>
+      </tr>
+    {{end}}{{end}}{{else}}
+      <tr><td colspan="5" class="empty-row">Every queue is empty.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="panel">
+  <header class="panel-head"><h2>Handlers</h2><a href="{{.Root}}handlers">All handlers</a></header>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Handler</th><th>Type</th><th class="num">Instances</th><th class="num">To handle</th></tr></thead>
+    <tbody>
+    {{range .Obs.Handlers}}
+      <tr>
+        <td><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a>{{if .Handler.IsDisabled}} <span class="tag">disabled</span>{{end}}</td>
+        <td><span class="htype htype-{{htype .Handler.Type}}">{{htype .Handler.Type}}</span></td>
+        <td class="num">{{if .Handler.HasInstances}}<span data-watch="inst-{{id .Handler.Key}}">{{template "count" .Instances}}</span>{{else}}<span class="muted">-</span>{{end}}</td>
+        <td class="num">{{if .Handler.ConsumesEventStreams}}{{if .Unhandled}}<span class="tag warn" data-watch="todo-{{id .Handler.Key}}">{{num .Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}{{else}}<span class="muted">-</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+</div>
+{{end}}
+{{template "bottom" .}}{{end}}

@@ -232,6 +232,18 @@ func (h *Handler) MessageTypeIDs(t config.RouteType) []*uuidpb.UUID {
 	return ids
 }
 
+// HasInstances returns true if the handler has instances, which is true of
+// aggregate and process handlers.
+func (h *Handler) HasInstances() bool {
+	return h.Type == config.AggregateHandlerType || h.Type == config.ProcessHandlerType
+}
+
+// MinimizesConcurrency returns true if the handler prefers to minimize
+// concurrency, which only integration and projection handlers can prefer.
+func (h *Handler) MinimizesConcurrency() bool {
+	return h.Concurrency == dogma.MinimizeConcurrency
+}
+
 // ConsumesEventStreams returns true if the engine dispatches events from event
 // streams to the handler, which is true of process and projection handlers.
 func (h *Handler) ConsumesEventStreams() bool {
@@ -246,7 +258,7 @@ func (h *Handler) ConsumesEventStreams() bool {
 func (h *Handler) StreamWorkloadKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 	// A projection that minimizes concurrency consumes every stream on one
 	// node.
-	if h.Type == config.ProjectionHandlerType && h.Concurrency == dogma.MinimizeConcurrency {
+	if h.Type == config.ProjectionHandlerType && h.MinimizesConcurrency() {
 		return h.Key
 	}
 

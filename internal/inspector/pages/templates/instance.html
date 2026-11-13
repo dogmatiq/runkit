@@ -1,0 +1,42 @@
+{{define "instance.html"}}{{template "top" .}}
+{{$h := .Handler}}
+{{template "error" .Err}}
+{{if .Found}}
+<p class="headline">{{if .Process.HasEnded}}<span class="muted">ended</span>{{else if .DescriptionErr}}<span class="tag bad" title="{{.DescriptionErr.Error}}">unable to describe</span>{{else if .Description}}{{.Description}}{{else}}<span class="muted">no description</span>{{end}}</p>
+<dl class="facts wide">
+  <dt>Handler</dt><dd><a href="{{.Root}}handlers/{{id $h.Key}}">{{$h.Name}}</a> <span class="htype htype-{{htype $h.Type}}">{{htype $h.Type}}</span></dd>
+  <dt>Instance ID</dt><dd><code>{{.ID}}</code></dd>
+  {{if $h.Aggregate}}
+    <dt>Event stream</dt><dd>{{with .Aggregate.StreamID}}<a href="{{$.Root}}streams/{{id .}}"><code>{{short .}}</code></a>{{else}}<span class="muted">none</span>{{end}}</dd>
+    <dt>Snapshot</dt><dd>{{if .Aggregate.Snapshot}}includes events up to offset {{num .Aggregate.SnapshotOffset}}{{else}}<span class="muted">none</span>{{end}}</dd>
+  {{end}}
+  {{if $h.Process}}
+    <dt>Status</dt><dd>{{if .Process.HasEnded}}<span class="tag">ended</span>{{else}}<span class="tag ok">active</span>{{end}}</dd>
+    <dt>Deadlines delivered by</dt><dd>{{with .Process.DeadlineQueueID}}<a href="{{$.Root}}queues/{{id .}}"><code>{{short .}}</code></a> {{template "owner" ($.Owner .)}}{{else}}<span class="muted">no deadlines yet</span>{{end}}</dd>
+  {{end}}
+</dl>
+
+<section class="panel">
+  <header class="panel-head"><h2>Root</h2><span class="muted">{{if $h.Aggregate}}restored from the snapshot and the events after it{{else}}restored from the stored state{{end}}</span></header>
+  {{if .Process.HasEnded}}<p class="muted">The instance has ended. The engine discards the state of an instance when it ends.</p>
+  {{else if .RestoredRoot.Err}}<div class="error"><strong>Unable to restore the root.</strong> <code>{{.RestoredRoot.Err.Error}}</code></div>{{else}}<pre class="code">{{.RestoredRoot.Text}}</pre>{{end}}
+</section>
+
+{{if $h.Aggregate}}
+<h2>Events <span class="muted">newest first</span></h2>
+{{template "error" .EventsErr}}
+{{template "events" (list . .Events)}}
+{{end}}
+
+{{if $h.Process}}
+<h2>Deadlines <span class="muted">in the order that they become due</span></h2>
+{{template "error" .DeadlinesErr}}
+{{template "messages" (list . .Deadlines)}}
+{{end}}
+{{else if not .Err}}
+<div class="empty">
+  <p>{{$h.Name}} has no instance with the ID <code>{{.ID}}</code>.</p>
+  {{if $h.Aggregate}}<p class="muted">The engine deletes an aggregate instance that handles a command without recording an event.</p>{{end}}
+</div>
+{{end}}
+{{template "bottom" .}}{{end}}

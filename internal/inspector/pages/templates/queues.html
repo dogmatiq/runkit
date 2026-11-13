@@ -1,0 +1,35 @@
+{{define "queues.html"}}{{template "top" .}}
+<p class="lede">
+  A queue holds commands and deadlines that have not yet been delivered. Its ID
+  is the key of the workload of delivering its messages, so one node delivers
+  them. A message that is due has reached its next attempt time. A message that
+  is failing has failed at least once in a row. The error text of a failure is
+  in the engine's log, not in the database.
+</p>
+{{if not .Obs}}{{template "waiting" .}}{{else}}
+{{template "error" .Obs.QueuesErr}}
+<div class="table-wrap">
+<table class="table">
+  <thead>
+    <tr><th>Queue</th><th class="num">Messages</th><th class="num">Deadlines</th><th class="num">Due</th><th>Longest wait</th><th class="num">Failing</th><th>Failing since</th><th>Delivered by</th></tr>
+  </thead>
+  <tbody>
+  {{range .Queues}}
+    <tr class="{{if .IsStalled $.Now}}row-bad{{else if .Failing}}row-warn{{end}}">
+      <td><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a><div class="sub muted">{{.Label}}</div></td>
+      <td class="num" data-watch="q-{{id .ID}}">{{num .Messages}}</td>
+      <td class="num">{{num .Deadlines}}</td>
+      <td class="num" data-watch="qd-{{id .ID}}">{{num .Due}}</td>
+      <td>{{if .Due}}<span class="{{if .IsStalled $.Now}}tag bad{{end}}">{{dur (.LongestWait $.Now)}}</span>{{else}}<span class="muted">-</span>{{end}}</td>
+      <td class="num">{{if .Failing}}<span class="tag bad" data-watch="qf-{{id .ID}}">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td>{{if .Failing}}{{rel $.Now .FailingSince}}{{else}}<span class="muted">-</span>{{end}}</td>
+      <td>{{template "owner" .Owner}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="8" class="empty-row">Every queue is empty. A queue exists only while it holds messages.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+{{template "bottom" .}}{{end}}

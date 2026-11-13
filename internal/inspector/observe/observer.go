@@ -32,6 +32,10 @@ type Observation struct {
 	// not with the inspector's clock.
 	At time.Time
 
+	// ReadAt is the inspector's clock at the time of the observation. Adding
+	// the time since ReadAt to At estimates the database's clock now.
+	ReadAt time.Time
+
 	// Err is non-nil if the observation could not read the database at all.
 	Err error
 
@@ -342,6 +346,7 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 	}
 
 	obs.At = at
+	obs.ReadAt = time.Now()
 	obs.BoundApplication = bound
 	obs.Queues, obs.QueuesErr = o.Database.queues(ctx, listLimit)
 	obs.EventStreams, obs.EventStreamsErr = o.Database.eventStreams(ctx, listLimit)

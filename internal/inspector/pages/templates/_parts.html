@@ -1,0 +1,107 @@
+{{define "owner" -}}
+{{if not .Known}}<span class="muted" title="The live nodes are not known yet">not known</span>
+{{- else if not .ID}}<span class="tag bad">no live nodes</span>
+{{- else}}<a class="node-ref" href="{{.Root}}nodes#node-{{id .ID}}" title="{{id .ID}}"><span class="pulse" data-node="{{id .ID}}"></span><code>{{short .ID}}</code></a>
+{{- end}}
+{{- end}}
+
+{{define "mtype" -}}
+{{if .Name}}<span class="kind kind-{{kind .Kind}}">{{kind .Kind}}</span> <code class="type">{{.Name}}</code>
+{{- else}}<span class="kind">unknown</span> <code class="muted" title="This message type is not in the linked application's message registry">{{id .ID}}</code>
+{{- end}}
+{{- end}}
+
+{{define "error" -}}
+{{if .}}<div class="error"><strong>Unable to read this.</strong> <code>{{.Error}}</code></div>{{end}}
+{{- end}}
+
+{{define "notknown" -}}
+<div class="empty">
+  <p>The live nodes are not known yet.</p>
+  {{with .Obs}}{{with .Membership.Reason}}<p class="muted"><code>{{.Error}}</code></p>{{end}}{{end}}
+  <p class="muted">The inspector learns which nodes are live by listening for their heartbeats. It knows the live nodes once it has listened for one whole heartbeat timeout. It can not listen on a read-only replica.</p>
+</div>
+{{- end}}
+
+{{define "waiting" -}}
+<div class="empty"><p>Reading the database for the first time.</p></div>
+{{- end}}
+
+{{define "count" -}}
+{{num .Count}}{{if .IsAtLeast}}+{{end}}
+{{- end}}
+
+{{define "messages" -}}
+{{$f := index . 0}}{{$messages := index . 1}}
+<div class="table-wrap">
+<table class="table">
+  <thead>
+    <tr><th>Message</th><th>Type</th><th>Next attempt</th><th class="num">Failures</th><th>Failing since</th><th>Queue</th></tr>
+  </thead>
+  <tbody>
+  {{range $messages}}{{$e := $f.Envelope .Envelope}}
+    <tr class="{{if .IsFailing}}row-bad{{else if .IsDue $f.Now}}row-due{{end}}">
+      <td class="desc"><a href="{{$f.Root}}messages/{{id .ID}}">{{if $e.Description}}{{$e.Description}}{{else}}<code>{{short .ID}}</code>{{end}}</a>
+        {{if .IsDeadline}}<div class="sub muted">for <a href="{{$f.Root}}handlers/{{id .HandlerKey}}/instances/{{seg .InstanceID}}">{{$f.HandlerName .HandlerKey}} {{.InstanceID}}</a></div>{{end}}</td>
+      <td>{{template "mtype" $e.Type}}</td>
+      <td>{{rel $f.Now .NextAttemptAt}}</td>
+      <td class="num">{{if .IsFailing}}<span class="tag bad" data-watch="failures-{{id .ID}}">{{.Failures}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td>{{if .IsFailing}}{{rel $f.Now .FailingSince}}{{else}}<span class="muted">-</span>{{end}}</td>
+      <td><a href="{{$f.Root}}queues/{{id .QueueID}}"><code>{{short .QueueID}}</code></a></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="6" class="empty-row">No messages.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{- end}}
+
+{{define "events" -}}
+{{$f := index . 0}}{{$events := index . 1}}
+<div class="table-wrap">
+<table class="table">
+  <thead>
+    <tr><th class="num">Offset</th><th>Event</th><th>Type</th><th>Recorded by</th><th>Recorded</th></tr>
+  </thead>
+  <tbody>
+  {{range $events}}{{$e := $f.Envelope .Envelope}}
+    <tr>
+      <td class="num"><a href="{{$f.Root}}streams/{{id .StreamID}}"><code>{{short .StreamID}}</code></a>&thinsp;<span class="offset">@{{num .Offset}}</span></td>
+      <td class="desc"><a href="{{$f.Root}}messages/{{id $e.MessageID}}">{{if $e.Description}}{{$e.Description}}{{else}}<code>{{short $e.MessageID}}</code>{{end}}</a></td>
+      <td>{{template "mtype" $e.Type}}</td>
+      <td>{{if .AggregateHandlerKey}}<a href="{{$f.Root}}handlers/{{id .AggregateHandlerKey}}/instances/{{seg .AggregateInstanceID}}">{{$f.HandlerName .AggregateHandlerKey}} <span class="muted">{{.AggregateInstanceID}}</span></a>{{else if $e.SourceHandler}}<a href="{{$f.Root}}handlers/{{id $e.SourceHandler.GetKey}}">{{$e.SourceHandler.GetName}}</a>{{else}}<span class="muted">-</span>{{end}}</td>
+      <td>{{rel $f.Now .RecordedAt}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5" class="empty-row">No events.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{- end}}
+
+{{define "progress" -}}
+{{$f := index . 0}}{{$rows := index . 1}}
+<div class="table-wrap">
+<table class="table">
+  <thead>
+    <tr><th>Handler</th><th>Event stream</th><th class="num">Checkpoint</th><th class="num">Length</th><th class="num">To handle</th><th>Consumed by</th></tr>
+  </thead>
+  <tbody>
+  {{range $rows}}
+    <tr class="{{if .Progress.IsBehind}}row-due{{end}}">
+      <td><a href="{{$f.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a></td>
+      <td><a href="{{$f.Root}}streams/{{id .Progress.StreamID}}"><code>{{short .Progress.StreamID}}</code></a>{{if .Progress.IsRemote}} <span class="tag">remote</span>{{end}}</td>
+      <td class="num" data-watch="cp-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.CheckpointOffset}}</td>
+      <td class="num">{{if .Progress.IsRemote}}<span class="muted" title="The engine does not store the length of another engine's event stream">not known</span>{{else}}<span data-watch="len-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Length}}</span>{{end}}</td>
+      <td class="num">{{if .Progress.IsRemote}}<span class="muted">-</span>{{else if .Progress.IsBehind}}<span class="tag warn" data-watch="todo-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}</td>
+      <td>{{template "owner" .Owner}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="6" class="empty-row">No event streams.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{- end}}

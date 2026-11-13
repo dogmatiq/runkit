@@ -1,0 +1,26 @@
+{{define "handlers.html"}}{{template "top" .}}
+<p class="lede">
+  The handlers of the linked application. The engine's database holds only
+  handler keys, so the names, types and routes come from the application's
+  configuration.
+</p>
+<div class="cards">
+{{range .App.Handlers}}{{$s := $.HandlerSummary .Key}}
+  <a class="card handler-card" href="{{$.Root}}handlers/{{id .Key}}">
+    <header class="card-head">
+      <span class="htype htype-{{htype .Type}}">{{htype .Type}}</span>
+      <strong>{{.Name}}</strong>
+      {{if .IsDisabled}}<span class="tag">disabled</span>{{end}}
+    </header>
+    <dl class="facts">
+      {{if $s}}
+        {{if .HasInstances}}<dt>Instances</dt><dd data-watch="inst-{{id .Key}}">{{template "count" $s.Instances}}</dd>{{end}}
+        {{if .ConsumesEventStreams}}<dt>To handle</dt><dd>{{if $s.Unhandled}}<span class="tag warn" data-watch="todo-{{id .Key}}">{{plural $s.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
+        {{if .Projection}}<dt>Compacted</dt><dd>{{rel $.Now $s.LastCompactedAt}}</dd>{{end}}
+      {{end}}
+      <dt>Routes</dt><dd>{{len .Routes}}</dd>
+    </dl>
+  </a>
+{{end}}
+</div>
+{{template "bottom" .}}{{end}}

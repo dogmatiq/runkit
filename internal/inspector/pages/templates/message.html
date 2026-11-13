@@ -1,0 +1,68 @@
+{{define "message.html"}}{{template "top" .}}
+{{template "error" .Err}}
+{{if .IsQueued}}{{$e := .Envelope .Queued.Envelope}}
+  <p class="headline">{{if $e.Description}}{{$e.Description}}{{else}}<span class="muted">no description</span>{{end}}</p>
+  <div class="columns">
+  <section class="panel">
+    <header class="panel-head"><h2>Delivery</h2></header>
+    <dl class="facts">
+      <dt>Queue</dt><dd><a href="{{.Root}}queues/{{id .Queued.QueueID}}"><code>{{short .Queued.QueueID}}</code></a> <span class="muted">{{.QueueLabel .Queued.QueueID}}</span></dd>
+      <dt>Delivered by</dt><dd>{{template "owner" (.Owner .Queued.QueueID)}}</dd>
+      {{if .Queued.IsDeadline}}<dt>Process instance</dt><dd><a href="{{.Root}}handlers/{{id .Queued.HandlerKey}}/instances/{{seg .Queued.InstanceID}}">{{.HandlerName .Queued.HandlerKey}} {{.Queued.InstanceID}}</a></dd>{{end}}
+      <dt>Scheduled for</dt><dd>{{rel .Now .Queued.ScheduledFor}}</dd>
+      <dt>Next attempt</dt><dd>{{rel .Now .Queued.NextAttemptAt}}</dd>
+      <dt>Failures in a row</dt><dd data-watch="failures">{{if .Queued.IsFailing}}<span class="tag bad">{{.Queued.Failures}}</span>{{else}}<span class="tag ok">0</span>{{end}}</dd>
+      {{if .Queued.IsFailing}}<dt>Failing since</dt><dd>{{rel .Now .Queued.FailingSince}}</dd>{{end}}
+    </dl>
+    {{if .Queued.IsFailing}}<p class="note">The database does not hold the error text. The engine logs it, with this message's ID, on the node that delivers this queue.</p>{{end}}
+  </section>
+  {{template "envelope" (list . $e)}}
+  </div>
+  {{template "payload" (.Payload .Queued.Envelope)}}
+{{else if .IsEvent}}{{$e := .Envelope .Event.Envelope}}
+  <p class="headline">{{if $e.Description}}{{$e.Description}}{{else}}<span class="muted">no description</span>{{end}}</p>
+  <div class="columns">
+  <section class="panel">
+    <header class="panel-head"><h2>Event stream</h2></header>
+    <dl class="facts">
+      <dt>Event stream</dt><dd><a href="{{.Root}}streams/{{id .Event.StreamID}}"><code>{{short .Event.StreamID}}</code></a></dd>
+      <dt>Offset</dt><dd>{{num .Event.Offset}}</dd>
+      <dt>Recorded</dt><dd>{{rel .Now .Event.RecordedAt}}</dd>
+      {{if .Event.AggregateHandlerKey}}<dt>Aggregate instance</dt><dd><a href="{{.Root}}handlers/{{id .Event.AggregateHandlerKey}}/instances/{{seg .Event.AggregateInstanceID}}">{{.HandlerName .Event.AggregateHandlerKey}} {{.Event.AggregateInstanceID}}</a></dd>{{end}}
+    </dl>
+  </section>
+  {{template "envelope" (list . $e)}}
+  </div>
+  {{template "payload" (.Payload .Event.Envelope)}}
+{{else if not .Err}}
+  <div class="empty">
+    <p>There is no message with the ID <code>{{id .ID}}</code>.</p>
+    <p class="muted">The engine deletes a command or deadline once it has been delivered. Events are never deleted.</p>
+  </div>
+{{end}}
+{{template "bottom" .}}{{end}}
+
+{{define "envelope" -}}
+{{$f := index . 0}}{{$e := index . 1}}
+<section class="panel">
+  <header class="panel-head"><h2>Envelope</h2></header>
+  <dl class="facts">
+    <dt>Type</dt><dd>{{template "mtype" $e.Type}}</dd>
+    <dt>Message ID</dt><dd><code>{{id $e.MessageID}}</code></dd>
+    <dt>Caused by</dt><dd>{{if $e.IsCausedBySelf}}<span class="muted">itself</span>{{else}}<a href="{{$f.Root}}messages/{{id $e.CausationID}}"><code>{{id $e.CausationID}}</code></a>{{end}}</dd>
+    <dt>Correlation ID</dt><dd><code>{{id $e.CorrelationID}}</code></dd>
+    <dt>Created</dt><dd>{{rel $f.Now $e.CreatedAt}}</dd>
+    {{if not $e.ScheduledFor.IsZero}}<dt>Scheduled for</dt><dd>{{rel $f.Now $e.ScheduledFor}}</dd>{{end}}
+    {{if $e.IdempotencyKey}}<dt>Idempotency key</dt><dd><code>{{$e.IdempotencyKey}}</code></dd>{{end}}
+    <dt>Application</dt><dd>{{with $e.SourceApplication}}{{.GetName}} <code class="muted">{{short .GetKey}}</code>{{end}}</dd>
+    <dt>Produced by</dt><dd>{{with $e.SourceHandler}}<a href="{{$f.Root}}handlers/{{id .GetKey}}">{{.GetName}}</a>{{if $e.SourceInstanceID}} <span class="muted">{{$e.SourceInstanceID}}</span>{{end}}{{else}}<span class="muted">application code outside any handler</span>{{end}}</dd>
+  </dl>
+</section>
+{{- end}}
+
+{{define "payload" -}}
+<section class="panel">
+  <header class="panel-head"><h2>Content</h2></header>
+  {{if .Err}}<div class="error"><strong>Unable to decode the content.</strong> <code>{{.Err.Error}}</code></div>{{else}}<pre class="code">{{.Text}}</pre>{{end}}
+</section>
+{{- end}}

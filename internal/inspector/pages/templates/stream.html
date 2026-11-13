@@ -1,0 +1,17 @@
+{{define "stream.html"}}{{template "top" .}}
+<dl class="facts wide">
+  <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
+  <dt>Events</dt><dd data-watch="length">{{if .IsKnown}}{{num .Stream.Length}}{{else}}<span class="muted">not known</span>{{end}}</dd>
+</dl>
+{{if .Progress}}
+<h2>Handlers</h2>
+{{template "progress" (list . .Progress)}}
+{{end}}
+<h2>Events <span class="muted">{{if .IsNewest}}newest first, updating live{{else}}before offset {{num .Before}}{{end}}</span></h2>
+{{template "error" .Err}}
+{{template "events" (list . .Events)}}
+<nav class="pager">
+  {{if not .IsNewest}}<a href="{{.Root}}streams/{{id .ID}}">Newest events</a>{{end}}
+  {{if .OlderLink}}<a href="{{.Root}}{{.OlderLink}}">Older events</a>{{end}}
+</nav>
+{{template "bottom" .}}{{end}}

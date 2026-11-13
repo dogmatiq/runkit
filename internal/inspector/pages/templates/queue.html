@@ -1,0 +1,18 @@
+{{define "queue.html"}}{{template "top" .}}
+<dl class="facts wide">
+  <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
+  <dt>Holds</dt><dd>{{.Label}}</dd>
+  <dt>Delivered by</dt><dd>{{template "owner" .Owner}}</dd>
+  {{if .HasMessages}}
+  <dt>Messages</dt><dd data-watch="messages">{{num .Queue.Messages}} <span class="muted">({{num .Queue.Deadlines}} deadlines)</span></dd>
+  <dt>Due</dt><dd data-watch="due">{{num .Queue.Due}}{{if .Queue.Due}} <span class="muted">the oldest for {{dur (.Queue.LongestWait .Now)}}</span>{{end}}</dd>
+  <dt>Failing</dt><dd data-watch="failing">{{if .Queue.Failing}}<span class="tag bad">{{num .Queue.Failing}}</span> <span class="muted">up to {{num .Queue.MostFailures}} failures in a row</span>{{else}}<span class="tag ok">0</span>{{end}}</dd>
+  {{end}}
+</dl>
+{{if and .HasMessages (.Queue.IsStalled .Now)}}
+<div class="callout bad">Messages in this queue have been due for {{dur (.Queue.LongestWait .Now)}}. A node normally delivers a due message within moments, so delivery from this queue has stopped. Check the engine's log on the node that delivers it.</div>
+{{end}}
+{{template "error" .Err}}
+<h2>Messages <span class="muted">in the order that they become due{{if eq (len .Messages) .Limit}}, the first {{.Limit}}{{end}}</span></h2>
+{{template "messages" (list . .Messages)}}
+{{template "bottom" .}}{{end}}

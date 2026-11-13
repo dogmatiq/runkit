@@ -1,0 +1,43 @@
+{{define "nodes.html"}}{{template "top" .}}
+<p class="lede">
+  A node is one running engine. It is live while its heartbeats keep arriving
+  within the heartbeat timeout. Each piece of work that only one node may do at
+  a time, such as delivering the messages in a queue, is a workload.
+  <a href="https://en.wikipedia.org/wiki/Rendezvous_hashing" rel="noreferrer">Rendezvous hashing</a>
+  chooses the node that owns each workload from the live nodes, so when a node
+  stops, its workloads move to the others.
+</p>
+{{if not .Obs}}{{template "waiting" .}}
+{{else if not .Obs.Membership.Known}}{{template "notknown" .}}
+{{else}}
+<div class="cards">
+{{range .Nodes}}
+  <article class="card node-card" id="node-{{id .Node.ID}}">
+    <header class="card-head">
+      <span class="pulse big" data-node="{{id .Node.ID}}"></span>
+      <code class="node-id">{{id .Node.ID}}</code>
+    </header>
+    <dl class="facts">
+      <dt>Last heartbeat</dt><dd>{{rel $.LocalNow .Node.LastHeartbeatAt}}</dd>
+      <dt>Queues</dt><dd data-watch="nq-{{id .Node.ID}}">{{len .Queues}}</dd>
+    </dl>
+    {{if .Queues}}
+    <h3>Delivers the messages in</h3>
+    <ul class="list">
+      {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}"><code>{{short .ID}}</code></a> <span class="muted">{{.Label}}</span> <span class="tag">{{num .Messages}}</span>{{if .Failing}} <span class="tag bad">{{num .Failing}} failing</span>{{end}}</li>{{end}}
+    </ul>
+    {{end}}
+    {{if .Consumers}}
+    <h3>Consumes event streams for</h3>
+    <ul class="list">
+      {{range .Consumers}}<li><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a> <span class="tag">{{plural .EventStreams "event stream" "event streams"}}</span></li>{{end}}
+    </ul>
+    {{end}}
+    {{if and (not .Queues) (not .Consumers)}}<p class="muted">Owns no workloads right now.</p>{{end}}
+  </article>
+{{else}}
+  <div class="empty bad"><p>There are no live nodes. No messages are delivered and no event streams are consumed until a node starts.</p></div>
+{{end}}
+</div>
+{{end}}
+{{template "bottom" .}}{{end}}

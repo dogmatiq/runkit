@@ -1,0 +1,27 @@
+{{define "streams.html"}}{{template "top" .}}
+<p class="lede">
+  An event stream is an ordered list of events. Aggregate and integration
+  handlers append the events that they record. Process and projection handlers
+  consume every event stream, and each keeps a checkpoint offset for each one,
+  which is the offset of the next event that it expects to handle.
+</p>
+{{if not .Obs}}{{template "waiting" .}}{{else}}
+{{template "error" .Obs.EventStreamsErr}}
+<div class="table-wrap">
+<table class="table">
+  <thead><tr><th>Event stream</th><th class="num">Events</th><th>Handlers with events to handle</th></tr></thead>
+  <tbody>
+  {{range $s := .Obs.EventStreams}}
+    <tr>
+      <td><a href="{{$.Root}}streams/{{id .ID}}"><code>{{id .ID}}</code></a></td>
+      <td class="num" data-watch="len-{{id .ID}}">{{num .Length}}</td>
+      <td>{{range $.Obs.Handlers}}{{$h := .Handler}}{{range .Progress}}{{if and (.StreamID.Equal $s.ID) .IsBehind}}<a class="tag warn" href="{{$.Root}}handlers/{{id $h.Key}}">{{$h.Name}} {{num .Unhandled}}</a> {{end}}{{end}}{{end}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="3" class="empty-row">No events have been recorded.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+{{template "bottom" .}}{{end}}
