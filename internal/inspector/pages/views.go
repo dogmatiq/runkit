@@ -33,6 +33,9 @@ type frame struct {
 	// App is the application that the inspector is linked with.
 	App *observe.Application
 
+	// History is the samples from the recent observations, oldest first.
+	History []observe.Sample
+
 	// Obs is the most recent observation, or nil if there has not been one
 	// yet.
 	Obs *observe.Observation
@@ -120,23 +123,6 @@ func (f frame) WorkloadBar() template.HTML {
 			return fmt.Sprintf("%s owned by node %s", countOf(c.Count, "workload", "workloads"), shortID(c.NodeID))
 		},
 	)
-}
-
-// HandlerNodeBar returns a bar of how the work of the handler that s
-// summarizes is spread across the live nodes. See
-// [observe.HandlerSummary.Nodes].
-func (f frame) HandlerNodeBar(s *observe.HandlerSummary) template.HTML {
-	describe := func(c observe.NodeCount) string {
-		return fmt.Sprintf("%s consumed by node %s", countOf(c.Count, "event stream", "event streams"), shortID(c.NodeID))
-	}
-
-	if s.Handler.Type == config.IntegrationHandlerType {
-		describe = func(c observe.NodeCount) string {
-			return fmt.Sprintf("%s to be delivered by node %s", countOf(c.Count, "command", "commands"), shortID(c.NodeID))
-		}
-	}
-
-	return nodeBar(s.Nodes, describe)
 }
 
 // Envelope returns a view of the given envelope.
@@ -251,8 +237,7 @@ func format(v any) (p payloadView) {
 }
 
 // rate returns the change per second in a counter between each pair of
-// consecutive samples, over the given window. It skips each pair in which
-// either sample could not read the counter.
+// consecutive samples that read it, over the given window.
 func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Total) []float64 {
 	if len(samples) == 0 {
 		return nil
@@ -260,34 +245,34 @@ func rate(samples []observe.Sample, window time.Duration, counter func(observe.S
 
 	since := samples[len(samples)-1].At.Add(-window)
 
-	var rates []float64
+	var (
+		rates []float64
+		prev  *observe.Sample
+	)
 
-	for i := 1; i < len(samples); i++ {
-		prev, cur := samples[i-1], samples[i]
-
-		if cur.At.Before(since) {
+	for i := range samples {
+		cur := &samples[i]
+		if !counter(*cur).IsKnown {
 			continue
 		}
 
-		seconds := cur.At.Sub(prev.At).Seconds()
-		if seconds <= 0 {
-			continue
+		if prev != nil && !cur.At.Before(since) {
+			if seconds := cur.At.Sub(prev.At).Seconds(); seconds > 0 {
+				before, after := counter(*prev).Value, counter(*cur).Value
+
+				// A total can go down, such as when an event stream
+				// disappears from the observed streams, or PostgreSQL's
+				// statistics are reset. That is not a negative rate.
+				change := 0.0
+				if after > before {
+					change = float64(after - before)
+				}
+
+				rates = append(rates, change/seconds)
+			}
 		}
 
-		before, after := counter(prev), counter(cur)
-		if !before.IsKnown || !after.IsKnown {
-			continue
-		}
-
-		// A total can go down, such as when an event stream disappears from
-		// the observed streams, or PostgreSQL's statistics are reset. That is
-		// not a negative rate.
-		change := 0.0
-		if after.Value > before.Value {
-			change = float64(after.Value - before.Value)
-		}
-
-		rates = append(rates, change/seconds)
+		prev = cur
 	}
 
 	return rates
@@ -311,6 +296,49 @@ func series(samples []observe.Sample, window time.Duration, total func(observe.S
 	}
 
 	return values
+}
+
+// handlerRate is how fast a handler records or handles events.
+type handlerRate struct {
+	// Verb is "recorded" for a handler that records events, and "handled"
+	// for one that handles them.
+	Verb string
+
+	// PerMinute is the recent number of events per minute.
+	PerMinute float64
+
+	// Rates is the number of events per second between each pair of
+	// consecutive samples that counted them.
+	Rates []float64
+}
+
+// HandlerRate returns how fast the given handler records events, for an
+// aggregate or integration handler, or handles them, for a process or
+// projection handler. It returns nil for an integration handler that records
+// no events.
+func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
+	key := h.Key.AsString()
+
+	if h.Type == config.IntegrationHandlerType && !h.RecordsEvents() {
+		return nil
+	}
+
+	r := &handlerRate{
+		Verb: "handled",
+		Rates: rate(
+			f.History,
+			chartWindow,
+			func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
+		),
+	}
+
+	if h.RecordsEvents() {
+		r.Verb = "recorded"
+	}
+
+	r.PerMinute = perMinute(r.Rates)
+
+	return r
 }
 
 // perMinute returns the average of the most recent few of the given rates per

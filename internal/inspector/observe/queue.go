@@ -183,9 +183,6 @@ func scanQueuedMessage(rows interface{ Scan(...any) error }) (QueuedMessage, err
 
 // queuedGroup is the number of queued messages of one type for one handler.
 type queuedGroup struct {
-	// QueueID is the ID of the queue that holds the messages.
-	QueueID *uuidpb.UUID
-
 	// HandlerKey is the key of the process handler that the messages are
 	// deadlines for, or nil if they are commands.
 	HandlerKey *uuidpb.UUID
@@ -201,7 +198,7 @@ type queuedGroup struct {
 }
 
 // queuedGroups returns the number of queued messages of each type for each
-// handler in each queue, in any order.
+// handler, in any order.
 func (d *Database) queuedGroups(ctx context.Context) ([]queuedGroup, error) {
 	var groups []queuedGroup
 
@@ -211,13 +208,12 @@ func (d *Database) queuedGroups(ctx context.Context) ([]queuedGroup, error) {
 			rows, err := tx.QueryContext(
 				ctx,
 				`SELECT
-					m.queue_id,
 					m.handler_key,
 					m.message_type_id,
 					count(*),
 					count(*) FILTER (WHERE m.failures > 0)
 				FROM messagequeue.messages AS m
-				GROUP BY m.queue_id, m.handler_key, m.message_type_id`,
+				GROUP BY m.handler_key, m.message_type_id`,
 			)
 			if err != nil {
 				return err
@@ -230,11 +226,9 @@ func (d *Database) queuedGroups(ctx context.Context) ([]queuedGroup, error) {
 					handlerKey sql.Null[string]
 				)
 
-				g.QueueID = &uuidpb.UUID{}
 				g.TypeID = &uuidpb.UUID{}
 
 				if err := rows.Scan(
-					xsql.UUID(g.QueueID),
 					&handlerKey,
 					xsql.UUID(g.TypeID),
 					&g.Messages,

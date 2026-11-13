@@ -39,7 +39,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 	f.Title = "Overview"
 	f.Section = "overview"
 
-	history := s.Observer.History()
+	history := f.History
 
 	eventRates := rate(
 		history,

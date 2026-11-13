@@ -55,6 +55,11 @@ type Observation struct {
 	// nil if the live nodes are not known.
 	Workloads []NodeCount
 
+	// HandlerEvents is the number of events that each handler has recorded or
+	// handled since the inspector started, keyed by handler key. See
+	// [Observer.countHandlerEvents].
+	HandlerEvents map[string]Total
+
 	// Queues is the queues that hold at least one message, with the most
 	// messages first.
 	Queues []Queue
@@ -205,19 +210,6 @@ type HandlerSummary struct {
 
 	// CompactionErr explains why LastCompactedAt could not be read.
 	CompactionErr error
-
-	// Nodes is how the handler's work is spread across the live nodes, as the
-	// inspector computes ownership, in the order of [LiveNodes.Nodes].
-	//
-	// For an integration handler, it counts the commands in the handler's
-	// backlog, by the node that owns the workload of the queue that holds
-	// each one. For a projection handler, it counts the observed event
-	// streams, by the node that owns the workload of consuming each one for
-	// the handler. It is nil for other handlers, and if it could not be read.
-	Nodes []NodeCount
-
-	// backlog is the number of the handler's queued messages in each queue.
-	backlog []queuedGroup
 }
 
 // UnhandledIsAtLeast returns true if the count of unhandled events stopped at
@@ -257,6 +249,10 @@ type Sample struct {
 	// RemovedMessages is the number of messages removed from the queues since
 	// PostgreSQL's statistics were last reset.
 	RemovedMessages Total
+
+	// HandlerEvents is the number of events that each handler has recorded or
+	// handled since the inspector started, keyed by handler key.
+	HandlerEvents map[string]Total
 }
 
 // NodeCount is a number of things, such as workloads, that belong to one live
@@ -373,6 +369,27 @@ type Observer struct {
 	// slow is what was read at slowAt, keyed by handler key. Only the Run
 	// goroutine uses it.
 	slow map[string]HandlerSummary
+
+	// counted is the number of events that each handler has recorded or
+	// handled since the observer started, keyed by handler key. Only the Run
+	// goroutine uses it.
+	counted map[string]uint64
+
+	// countedLengths is the length of each event stream, keyed by stream ID,
+	// when the observer last counted the events that handlers recorded. Only
+	// the Run goroutine uses it.
+	countedLengths map[string]uint64
+
+	// countedCheckpoints is each process or projection handler's checkpoint
+	// offset on each event stream when the observer last counted the events
+	// that the handler handled, keyed by handler key and then stream ID. Only
+	// the Run goroutine uses it.
+	countedCheckpoints map[string]map[string]uint64
+
+	// handledCounted is the handlers whose handled events the most recent
+	// reading of the slow parts counted, keyed by handler key. Only the Run
+	// goroutine uses it.
+	handledCounted map[string]bool
 
 	// lengths is the length of each event stream at recent observations,
 	// oldest first. The first entry is the newest that is at least
@@ -563,6 +580,7 @@ func (o *Observer) publish(obs *Observation) {
 				Value:   obs.RemovedMessages,
 				IsKnown: obs.RemovedMessagesErr == nil,
 			},
+			HandlerEvents: obs.HandlerEvents,
 		},
 	)
 
@@ -605,10 +623,15 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 	obs.Workloads = o.workloads(obs)
 	o.recordLengths(obs)
 
-	if time.Since(o.slowAt) >= o.SlowInterval {
+	recorded := o.countRecorded(ctx, obs)
+
+	slow := time.Since(o.slowAt) >= o.SlowInterval
+	if slow {
 		o.slow = o.observeSlowParts(ctx, obs)
 		o.slowAt = time.Now()
 	}
+
+	obs.HandlerEvents = o.handlerEvents(recorded, slow)
 
 	compactions, compactionsErr := o.Database.compactions(ctx)
 
@@ -620,8 +643,6 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 			s.LastCompactedAt = compactions[h.Key.AsString()]
 			s.CompactionErr = compactionsErr
 		}
-
-		s.Nodes = o.handlerNodes(obs, s)
 
 		obs.Handlers = append(obs.Handlers, s)
 	}
@@ -662,40 +683,158 @@ func (o *Observer) workloads(obs *Observation) []NodeCount {
 	)
 }
 
-// handlerNodes returns how the work of the handler that s summarizes is spread
-// across the live nodes. See [HandlerSummary.Nodes].
-func (o *Observer) handlerNodes(obs *Observation, s HandlerSummary) []NodeCount {
-	switch s.Handler.Type {
-	case config.IntegrationHandlerType:
-		if s.QueuedMessagesErr != nil {
-			return nil
-		}
-
-		return countByNode(
-			obs.LiveNodes,
-			func(count func(*uuidpb.UUID, int)) {
-				for _, q := range s.backlog {
-					count(q.QueueID, q.Messages)
-				}
-			},
-		)
-
-	case config.ProjectionHandlerType:
-		if obs.EventStreamsErr != nil {
-			return nil
-		}
-
-		return countByNode(
-			obs.LiveNodes,
-			func(count func(*uuidpb.UUID, int)) {
-				for _, es := range obs.EventStreams {
-					count(s.Handler.StreamWorkloadKey(es.ID), 1)
-				}
-			},
-		)
+// countRecorded adds the events that each aggregate and integration handler
+// recorded since the previous count to [Observer.counted]. It counts the
+// events that were added to each event stream since then, and attributes each
+// to the one handler that records its type. It returns false if it could not
+// count them, in which case the next count includes them.
+func (o *Observer) countRecorded(ctx context.Context, obs *Observation) bool {
+	if obs.EventStreamsErr != nil {
+		return false
 	}
 
-	return nil
+	var ranges []eventRange
+
+	for _, s := range obs.EventStreams {
+		if begin, ok := o.countedLengths[s.ID.AsString()]; ok && s.Length > begin {
+			ranges = append(
+				ranges,
+				eventRange{
+					StreamID: s.ID,
+					Begin:    begin,
+					End:      s.Length,
+				},
+			)
+		}
+	}
+
+	counts, err := o.Database.countEventsByType(ctx, ranges)
+	if err != nil {
+		return false
+	}
+
+	if o.counted == nil {
+		o.counted = map[string]uint64{}
+	}
+
+	for id, n := range counts {
+		typeID, err := uuidpb.Parse(id)
+		if err != nil {
+			continue
+		}
+
+		if h, ok := o.Application.RecordingHandler(typeID); ok {
+			o.counted[h.Key.AsString()] += uint64(n)
+		}
+	}
+
+	o.countedLengths = map[string]uint64{}
+	for _, s := range obs.EventStreams {
+		o.countedLengths[s.ID.AsString()] = s.Length
+	}
+
+	return true
+}
+
+// countHandled adds the events that the given process or projection handler
+// handled since the previous count to [Observer.counted]. It counts the events
+// of the types that the handler handles, between the handler's previous and
+// current checkpoint offsets on each of the engine's own event streams.
+func (o *Observer) countHandled(ctx context.Context, h *Handler, s HandlerSummary) {
+	key := h.Key.AsString()
+
+	if o.handledCounted == nil {
+		o.handledCounted = map[string]bool{}
+	}
+	o.handledCounted[key] = false
+
+	if s.ProgressErr != nil {
+		return
+	}
+
+	previous := o.countedCheckpoints[key]
+
+	var ranges []eventRange
+
+	for _, p := range s.Progress {
+		if p.IsRemote {
+			continue
+		}
+
+		if begin, ok := previous[p.StreamID.AsString()]; ok && p.CheckpointOffset > begin {
+			ranges = append(
+				ranges,
+				eventRange{
+					StreamID: p.StreamID,
+					Begin:    begin,
+					End:      p.CheckpointOffset,
+				},
+			)
+		}
+	}
+
+	counts, err := o.Database.countEventsByType(ctx, ranges)
+	if err != nil {
+		return
+	}
+
+	if o.counted == nil {
+		o.counted = map[string]uint64{}
+	}
+
+	for _, id := range h.MessageTypeIDs(config.HandlesEventRouteType) {
+		o.counted[key] += uint64(counts[id.AsString()])
+	}
+
+	checkpoints := map[string]uint64{}
+	for _, p := range s.Progress {
+		if !p.IsRemote {
+			checkpoints[p.StreamID.AsString()] = p.CheckpointOffset
+		}
+	}
+
+	if o.countedCheckpoints == nil {
+		o.countedCheckpoints = map[string]map[string]uint64{}
+	}
+	o.countedCheckpoints[key] = checkpoints
+	o.handledCounted[key] = true
+}
+
+// handlerEvents returns the number of events that each handler has recorded or
+// handled since the observer started, keyed by handler key.
+//
+// An aggregate or integration handler's number is the events that it
+// recorded. It is known if recorded is true, which means that the events were
+// counted in this observation. An integration handler that records no events
+// has no number.
+//
+// A process or projection handler's number is the events that it handled. It
+// is known if slow is true, which means that the observation read the slow
+// parts, and the events were counted then.
+func (o *Observer) handlerEvents(recorded, slow bool) map[string]Total {
+	totals := map[string]Total{}
+
+	for _, h := range o.Application.Handlers {
+		key := h.Key.AsString()
+
+		switch h.Type {
+		case config.AggregateHandlerType, config.IntegrationHandlerType:
+			if h.RecordsEvents() {
+				totals[key] = Total{
+					Value:   o.counted[key],
+					IsKnown: recorded,
+				}
+			}
+
+		default:
+			totals[key] = Total{
+				Value:   o.counted[key],
+				IsKnown: slow && o.handledCounted[key],
+			}
+		}
+	}
+
+	return totals
 }
 
 // observeSlowParts reads the parts of an observation that cost the most to
@@ -736,6 +875,7 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 			s.Instances, s.InstancesErr = o.Database.CountProcessInstances(ctx, h.Key)
 			s.Bindings, s.BindingsErr = o.Database.ProcessBindings(ctx, h.Key)
 			s.Progress, s.ProgressErr = o.Database.processProgress(ctx, h, listLimit)
+			o.countHandled(ctx, h, s)
 
 		case config.ProjectionHandlerType:
 			if obs.EventStreamsErr != nil {
@@ -749,6 +889,7 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 				obs.EventStreams,
 				o.CheckpointTimeout,
 			)
+			o.countHandled(ctx, h, s)
 		}
 
 		slow[h.Key.AsString()] = s
@@ -783,7 +924,6 @@ func (o *Observer) queuedByHandler(ctx context.Context) (map[string]HandlerSumma
 		s := summaries[key.AsString()]
 		s.QueuedMessages += g.Messages
 		s.FailingMessages += g.Failing
-		s.backlog = append(s.backlog, g)
 		summaries[key.AsString()] = s
 	}
 

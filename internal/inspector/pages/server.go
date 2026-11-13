@@ -168,9 +168,10 @@ func staticHandler() http.Handler {
 // frame returns the frame for the given request.
 func (s *Server) frame(r *http.Request) frame {
 	f := frame{
-		Root: rootOf(r.URL.EscapedPath()),
-		App:  s.Application,
-		Obs:  s.Observer.Latest(),
+		Root:    rootOf(r.URL.EscapedPath()),
+		App:     s.Application,
+		History: s.Observer.History(),
+		Obs:     s.Observer.Latest(),
 	}
 
 	f.Self = f.Root + strings.TrimPrefix(r.URL.RequestURI(), "/")

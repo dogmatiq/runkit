@@ -528,6 +528,8 @@ h3 {
 }
 
 .hcard {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -536,6 +538,36 @@ h3 {
   background: var(--panel);
   box-shadow: var(--raised-shadow);
   color: var(--text);
+}
+
+/*
+ * A card with a chart of its events along the bottom edge. The chart is the
+ * colour of event streams, whatever the card's own colour.
+ */
+.hcard.has-spark {
+  padding-bottom: calc(var(--space-5) + 40px);
+}
+
+.hcard .spark {
+  height: 40px;
+  --subsystem: var(--streams);
+  --subsystem-soft: var(--streams-soft);
+}
+
+.hcard-rate {
+  margin: auto 0 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.hcard-rate-value {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hcard-rate + .hcard-foot {
+  margin-top: 0;
 }
 
 /* An accent along the top marks a card that needs attention. */

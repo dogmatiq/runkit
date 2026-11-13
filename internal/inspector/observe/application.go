@@ -36,6 +36,10 @@ type Application struct {
 	// commandHandlers maps the ID of each command type to the handler that
 	// handles it.
 	commandHandlers uuidcollection.Map[*Handler]
+
+	// recordingHandlers maps the ID of each event type to the handler that
+	// records it. Dogma allows only one handler to record each event type.
+	recordingHandlers uuidcollection.Map[*Handler]
 }
 
 // NewApplication returns what the inspector knows about the given
@@ -66,6 +70,10 @@ func NewApplication(app dogma.Application) (*Application, error) {
 		for _, id := range h.MessageTypeIDs(config.HandlesCommandRouteType) {
 			a.commandHandlers.Set(id, h)
 		}
+
+		for _, id := range h.MessageTypeIDs(config.RecordsEventRouteType) {
+			a.recordingHandlers.Set(id, h)
+		}
 	}
 
 	slices.SortFunc(
@@ -91,6 +99,12 @@ func (a *Application) Handler(key *uuidpb.UUID) (*Handler, bool) {
 // the given ID. It returns false if the application has no such handler.
 func (a *Application) CommandHandler(typeID *uuidpb.UUID) (*Handler, bool) {
 	return a.commandHandlers.Get(typeID)
+}
+
+// RecordingHandler returns the handler that records events of the type with
+// the given ID. It returns false if the application has no such handler.
+func (a *Application) RecordingHandler(typeID *uuidpb.UUID) (*Handler, bool) {
+	return a.recordingHandlers.Get(typeID)
 }
 
 // MessageType returns the message type with the given ID.
@@ -193,6 +207,12 @@ func (h *Handler) MinimizesConcurrency() bool {
 // of aggregate and integration handlers.
 func (h *Handler) HandlesCommands() bool {
 	return h.Type == config.AggregateHandlerType || h.Type == config.IntegrationHandlerType
+}
+
+// RecordsEvents returns true if the handler's routes include an event type
+// that it records, which only an aggregate or integration handler can have.
+func (h *Handler) RecordsEvents() bool {
+	return len(h.MessageTypeIDs(config.RecordsEventRouteType)) > 0
 }
 
 // SchedulesDeadlines returns true if the handler's routes include a deadline

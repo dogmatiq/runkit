@@ -109,7 +109,8 @@
 {{define "handlerCard" -}}
 {{$f := index . 0}}{{$h := index . 1}}{{$s := $f.HandlerSummary $h.Key}}{{$kind := $h.Type.String}}
 {{$failing := 0}}{{$todo := 0}}{{if $s}}{{$failing = $s.FailingMessages}}{{$todo = $s.Unhandled}}{{end}}
-<a class="hcard handler-{{$kind}}{{if $failing}} is-bad{{end}}" href="{{$f.Root}}handlers/{{id $h.Key}}">
+{{$rate := $f.HandlerRate $h}}
+<a class="hcard handler-{{$kind}}{{if $failing}} is-bad{{end}}{{if $rate}} has-spark{{end}}" href="{{$f.Root}}handlers/{{id $h.Key}}">
   <header class="hcard-head">
     <span class="hcard-title">
       <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
@@ -143,21 +144,21 @@
   <div class="stats">
     <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">command backlog</span></div>
   </div>
-  {{$f.HandlerNodeBar $s}}
   {{end}}
 
   {{if $h.Projection}}
   <div class="stats">
     <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">event backlog</span></div>
   </div>
-  {{$f.HandlerNodeBar $s}}
   {{end}}
 
-  {{if or $failing $h.Projection $h.MinimizesConcurrency}}<footer class="hcard-foot">
+  {{with $rate}}{{$n := round .PerMinute}}<p class="hcard-rate"><span class="hcard-rate-value">{{compact $n}}</span> {{noun $n "event" "events"}} {{.Verb}} per minute</p>{{end}}
+
+  {{if or $failing $h.MinimizesConcurrency}}<footer class="hcard-foot">
     {{- if $failing}}<span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>{{end}}
-    {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end}}
-    {{- if $h.Projection}}<span>{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}</span>{{end -}}
+    {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end -}}
   </footer>{{end}}
+  {{with $rate}}{{sparkline .Rates}}{{end}}
   {{end}}
 </a>
 {{- end}}
