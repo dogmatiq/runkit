@@ -7,26 +7,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-const (
-	// baseDelay is the initial backoff duration.
-	baseDelay = 100 * time.Millisecond
-
-	// transientMaxDelay is the maximum backoff duration after a failure that
-	// is not deterministic.
-	transientMaxDelay = 15 * time.Second
-
-	// deterministicMaxDelay is the maximum backoff duration after a
-	// deterministic failure.
-	deterministicMaxDelay = 5 * time.Minute
-
-	// quietPeriod is how long fn must run without failing for [Run] to end a
-	// streak of failures.
-	quietPeriod = 30 * time.Second
-)
+// quietPeriod is how long fn must run without failing for [Run] to end a
+// streak of failures.
+const quietPeriod = 30 * time.Second
 
 // Run calls fn until it succeeds, fails fatally, or ctx is canceled.
 //
@@ -36,8 +24,9 @@ const (
 // A fatal error is returned to the caller without retrying, and is still a
 // fatal error to that caller.
 //
-// Any other error is recorded as a failure of a [Work] with the given
-// description, and fn is called again after the delay that the [Work] decides.
+// Any other error is recorded as a failure of a [failure.Work] with the given
+// description, and fn is called again after the delay that the [failure.Work]
+// decides.
 // A deterministic error is logged as an ERROR immediately, and [Run] waits
 // longer before calling fn again than after any other failure.
 //
@@ -52,7 +41,7 @@ func Run(
 	description string,
 	fn func(context.Context) error,
 ) error {
-	work := &Work{
+	work := &failure.Work{
 		Description:  description,
 		EngineLogger: engineLogger,
 		QuietPeriod:  quietPeriod,

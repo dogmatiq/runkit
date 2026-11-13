@@ -1,4 +1,4 @@
-package supervisor
+package failure
 
 import (
 	"math/rand/v2"

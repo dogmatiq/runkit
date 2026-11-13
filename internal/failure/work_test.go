@@ -1,4 +1,4 @@
-package supervisor_test
+package failure_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	. "github.com/dogmatiq/runkit/internal/supervisor"
+	. "github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/spruce"
 )
 

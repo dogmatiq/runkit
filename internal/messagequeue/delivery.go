@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -265,7 +265,7 @@ func (c *Consumer) postponeAfterFailure(
 	// The delay reaches its maximum long before the shift would overflow.
 	doublings := min(d.Failures, 32)
 	backoff := min(failureBackoffBase<<doublings, failureBackoffMax)
-	delay := supervisor.Jitter(backoff)
+	delay := failure.Jitter(backoff)
 
 	// The statement doesn't wait for the message's lock, and it compares only
 	// the failure count to tell whether the message has changed. Together,
