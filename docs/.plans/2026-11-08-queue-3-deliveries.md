@@ -131,7 +131,8 @@ These were made with the maintainer, and aren't in [#100][100].
   and five minutes for a deterministic one. A tracker's
   deterministic failure after many transient ones used to double from the
   transient limit, and now gets the delay that its number of failures gives.
-  Each of these values gets an engine option, in the backoff options task.
+  Each kind of work gets an engine option for these values, in the failure
+  policy options task.
 - **A delivery's times come from Go's clock.** The consumer stores the `Streak`
   that `Extend` updates, and sets `next_attempt_at` from Go's clock, as it
   already compares `next_attempt_at` with Go's clock.
@@ -589,42 +590,100 @@ because the work fails or succeeds, not the tracker.
 
 ---
 
-### Task 9: Engine options for the backoff
+### Task 9: A separate streak for dispatching events
 
-Every value that decides how long the engine waits after a failure gets an
-engine option, so an operator can tune it. The internal packages take the
-values as required fields, and `engine.go` holds the defaults, as for the
-existing options.
+The event stream consumer runs all of its work under one `supervisor.Run`, so
+one streak counts both failures to read events from the stream and failures
+of its sink to handle them. The consumer keeps its sink's failures in a streak
+of its own, with a `failure.Tracker`, so that the failure policy options task
+can give the dispatching of events its own policy. Only failures to read
+events reach `supervisor.Run`.
 
-The values are:
+Each stream consumer has a second `failure.Tracker`, described as "dispatch
+events", with no quiet period. Errors from the sink's `CheckpointOffset` and
+`ConsumeSegment` are its failures, because both run the handler's code, and
+its streak ends when the sink next handles a segment. Errors from reading the
+stream, and checkpoint conflicts, stay with `supervisor.Run`. As today, a
+failure unwinds out of `Catalog.Consume`, and the consumer waits with nothing
+open, then consumes again from the checkpoint. No new tests: both trackers use
+the same values until the failure policy options task, which tests the split.
 
-- the base delay, 100 milliseconds
-- the limit for a transient failure, 15 seconds
-- the limit for a deterministic failure, 5 minutes
-- the quiet period after which `supervisor.Run` ends a streak, 30 seconds
-- how old a streak of transient failures must be before a failure is logged
-  as an ERROR, 30 seconds
+- [x] **Step 1: Restate the assumptions**
+- [x] **Step 2: Implement it**
+- [x] **Step 3: Run `make precommit`**
+- [ ] **Step 4: Stop for review**
 
-The message queue's contention delay already has an option,
+---
+
+### Task 10: Deadlocks in the message queue consumer
+
+A small commit. In v0.2.0, the message pump ran under `supervisor.Run`, which
+passes every error through `xsql.PanicOnDeadlock`, so a deadlock fails the
+tests. `messagequeue.Consumer` doesn't run under `supervisor.Run`, so its own
+errors and its sinks' errors aren't checked. Pass both through
+`xsql.PanicOnDeadlock` before they're counted as failures.
+
+- [ ] **Step 1: Implement it**
+- [ ] **Step 2: Run `make precommit`**
+- [ ] **Step 3: Stop for review**
+
+---
+
+### Task 11: Engine options for failure policies
+
+A failure policy is how the engine responds to failures of a kind of work: how
+long it waits before each retry, and when it logs a streak of failures as an
+ERROR. Each kind of work gets an engine option that takes a whole policy, so
+an operator can tune them separately.
+
+The public type is `FailurePolicy`, with these fields and defaults:
+
+- `RetryDelay`, the delay before the first retry, 100 milliseconds
+- `TransientRetryDelayLimit`, the longest delay after a transient failure, 15
+  seconds
+- `DeterministicRetryDelayLimit`, the longest delay after a deterministic
+  failure, 5 minutes
+- `ErrorThreshold`, how old a streak of transient failures must be before a
+  failure is logged as an ERROR, 30 seconds
+
+Every field must be positive, and each option panics otherwise. A caller
+copies a default policy and changes the fields it needs.
+
+| Option | Covers |
+| --- | --- |
+| `WithMessageQueueDeliveryFailurePolicy` | command and deadline deliveries |
+| `WithEventStreamDispatchFailurePolicy` | the process and projection sinks handling events |
+| `WithProjectionCompactionFailurePolicy` | projection compaction |
+| `WithEngineFailurePolicy` | the engine's own work, including reading event streams |
+
+Each option has a `Default...FailurePolicy` value, all the same for now.
+Internally, `failure.Policy` holds the same four values. `Streak.Extend` takes
+one as a parameter, `failure.Tracker` and `supervisor.Run` take one, and
+`engine.go` passes each group's policy to the packages in that group, in
+fields named `FailurePolicy`.
+
+The quiet period after which `supervisor.Run` ends a streak has no option for
+now. The message queue's contention delay already has an option,
 `WithMessageQueueContentionDelay()`. The logging guide states 30 seconds as
-the default for the ERROR threshold, and names the option.
+the default ERROR threshold, and names the options.
 
-- [ ] **Step 1: Restate the assumptions**, including the options' names, and
-  how a `Streak`'s holder passes the values to `Extend`
+- [ ] **Step 1: Restate the assumptions**
 - [ ] **Step 2: Write the failing tests**
 - [ ] **Step 3: Implement it, and add the options to `CHANGELOG.md`**
 - [ ] **Step 4: Stop for review**
 
 ---
 
-### Task 10: Fix "at <level>" in the logging guide
+### Task 12: Fix "at <level>" in the logging guide
 
 A small commit of its own, at any point. Replace "at <level>" with "as an
 ERROR", "as a DEBUG record" and so on in `docs/maintainers/logging.md` and
 `internal/cluster/node.go`.
 
 Also reword the docs in `internal/failure/tracker.go` that use "records" as a
-verb, because "record" is a Dogma term. For example, "WorkFailed adds a
+verb, because "record" is a Dogma term, and the process event sink's
+`dispatch` doc, which says "applies its effects", because "apply" is Dogma's
+word for aggregate roots. It writes its effects. For example, "WorkFailed adds a
 failure of the work to the streak in progress, or starts a streak".
 
 - [ ] **Step 1: Fix the wording**
@@ -632,7 +691,7 @@ failure of the work to the streak in progress, or starts a streak".
 
 ---
 
-### Task 11: Unify field naming and order
+### Task 13: Unify field naming and order
 
 The queue work adds many structs beside older ones, and their fields drifted
 apart along the way. This task makes the whole codebase consistent, not just
@@ -669,7 +728,7 @@ layer, as the logging guide requires.
 
 ---
 
-### Task 12: Close out
+### Task 14: Close out
 
 **Files:**
 - Modify: `CHANGELOG.md`, `docs/.plans/` (delete the queue plans and the

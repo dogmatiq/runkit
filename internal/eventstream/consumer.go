@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -124,13 +128,47 @@ func (c *Consumer) startStreamConsumer(
 		logger.DebugContext(ctx, "started consuming event stream")
 		defer logger.DebugContext(ctx, "stopped consuming event stream")
 
+		// sinkFailures tracks the failures of the sink, apart from failures to
+		// read the stream and checkpoint conflicts, which [supervisor.Run]
+		// tracks. Its streak ends as soon as the sink next handles a segment,
+		// because that shows that the sink has recovered. A stream with no new
+		// events leaves the streak open.
+		sinkFailures := &failure.Tracker{
+			Description:  "dispatch events",
+			EngineLogger: logger,
+		}
+		defer sinkFailures.Complete()
+
 		err := supervisor.Run(
 			ctx,
 			logger,
 			"consume event stream",
 			func(ctx context.Context) error {
 				for {
-					err := c.consume(ctx, streamID)
+					err := c.consume(ctx, streamID, sinkFailures)
+
+					// A failure while the consumer is stopping isn't a failure
+					// of the sink.
+					if ctx.Err() != nil {
+						return err
+					}
+
+					// The sink failed, so nothing is read from the stream
+					// until the time that WorkFailed returns. Consumption then
+					// resumes from the sink's checkpoint offset. A fatal error
+					// is returned to Run, which doesn't retry it.
+					if f, ok := errors.AsType[sinkFailure](err); ok && !xerrors.IsFatal(err) {
+						xsql.PanicOnDeadlock(f.err)
+						nextAttemptAt := sinkFailures.WorkFailed(ctx, f.err)
+
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(time.Until(nextAttemptAt)):
+						}
+
+						continue
+					}
 
 					// A stream that leaves the catalog, such as when the
 					// remote engine it comes from is removed, is expected. Run
@@ -170,10 +208,17 @@ func (c *Consumer) startStreamConsumer(
 // consume dispatches the events of the stream with the given ID to the sink,
 // beginning at the sink's checkpoint offset, until ctx is canceled or it is
 // unable to continue.
-func (c *Consumer) consume(ctx context.Context, streamID *uuidpb.UUID) error {
+//
+// It returns a [sinkFailure] if the sink fails. Each time the sink handles a
+// segment, it tells sinkFailures that the work succeeded.
+func (c *Consumer) consume(
+	ctx context.Context,
+	streamID *uuidpb.UUID,
+	sinkFailures *failure.Tracker,
+) error {
 	cp, err := c.Sink.CheckpointOffset(ctx, streamID)
 	if err != nil {
-		return err
+		return sinkFailure{err}
 	}
 
 	return c.EventStreams.Consume(
@@ -185,15 +230,26 @@ func (c *Consumer) consume(ctx context.Context, streamID *uuidpb.UUID) error {
 			var ok bool
 			cp, ok, err = c.Sink.ConsumeSegment(ctx, cp, seg)
 			if err != nil {
-				return err
+				return sinkFailure{
+					fmt.Errorf(
+						"unable to consume the segment of event stream %s that begins at offset %d: %w",
+						streamID,
+						seg.Begin,
+						err,
+					),
+				}
 			}
 
+			// Another consumer changed the checkpoint offset, which isn't a
+			// failure of the sink.
 			if !ok {
 				return fmt.Errorf(
 					"checkpoint conflict on event stream %s",
 					streamID,
 				)
 			}
+
+			sinkFailures.WorkSucceeded(ctx)
 
 			return nil
 		},
@@ -215,4 +271,19 @@ func (c *Consumer) awaitStream(ctx context.Context, streamID *uuidpb.UUID) error
 		case <-changed:
 		}
 	}
+}
+
+// sinkFailure is an error that a [Sink] returned. The stream consumer uses it
+// to tell the sink's failures from failures to read the stream, because
+// [Catalog.Consume] returns the sink's error as it is.
+type sinkFailure struct {
+	err error
+}
+
+func (e sinkFailure) Error() string {
+	return e.err.Error()
+}
+
+func (e sinkFailure) Unwrap() error {
+	return e.err
 }
