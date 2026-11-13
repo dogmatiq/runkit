@@ -260,7 +260,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request, f frame) {
 }
 
 func (s *Server) eventStreams(w http.ResponseWriter, r *http.Request, f frame) {
-	f.Title = "Streams"
+	f.Title = "Events"
 	f.Section = "streams"
 
 	render(w, http.StatusOK, "streams.html", f)
