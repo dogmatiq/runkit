@@ -1,6 +1,7 @@
 package inspector_test
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
@@ -75,6 +76,63 @@ func TestInspector(t *testing.T) {
 				crawl(t, server.URL+"/")
 			},
 		)
+	})
+
+	t.Run("it tells each connecting page the version of the pages that it renders", func(t *testing.T) {
+		db := xtesting.NewDatabase(t)
+
+		insp, err := New(&demoapp.App{}, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		server := httptest.NewServer(insp)
+		defer server.Close()
+
+		m := pageVersion.FindStringSubmatch(get(t, server.URL+"/").Body)
+		if m == nil {
+			t.Fatal("expected the page to record the version that rendered it")
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/live", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+
+		var event, data string
+
+		scanner := bufio.NewScanner(res.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				break
+			}
+
+			if v, ok := strings.CutPrefix(line, "event: "); ok {
+				event = v
+			}
+
+			if v, ok := strings.CutPrefix(line, "data: "); ok {
+				data = v
+			}
+		}
+
+		if event != "hello" {
+			t.Fatalf("got first event %q, want %q", event, "hello")
+		}
+
+		if data != m[1] {
+			t.Fatalf("got version %q, want the page's version %q", data, m[1])
+		}
 	})
 
 	t.Run("it rejects a request that is not GET or HEAD", func(t *testing.T) {
@@ -319,6 +377,9 @@ func get(t *testing.T, u string) page {
 		Body:   string(body),
 	}
 }
+
+// pageVersion matches the version that rendered a page.
+var pageVersion = regexp.MustCompile(`data-version="([^"]+)"`)
 
 // links matches the href attribute of each link on a page.
 var links = regexp.MustCompile(`href="([^"]+)"`)

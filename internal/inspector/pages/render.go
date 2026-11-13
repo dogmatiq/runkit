@@ -59,11 +59,13 @@ var templateFuncs = template.FuncMap{
 	"short":     shortID,
 	"id":        func(id *uuidpb.UUID) string { return id.AsString() },
 	"num":       formatNumber,
+	"compact":   formatCompact,
 	"dur":       formatDuration,
 	"rel":       relativeTime,
 	"seg":       url.PathEscape,
 	"query":     url.QueryEscape,
 	"icon":      icon,
+	"version":   func() string { return pagesVersion },
 	"kind":      func(k message.Kind) string { return k.String() },
 	"htype":     func(t config.HandlerType) string { return t.String() },
 	"route":     formatRouteType,
@@ -143,6 +145,50 @@ func formatNumber(n any) string {
 	}
 
 	return b.String()
+}
+
+// compactUnits is the units that [formatCompact] uses, smallest first.
+var compactUnits = []struct {
+	Size   float64
+	Suffix string
+}{
+	{1e3, "K"},
+	{1e6, "M"},
+	{1e9, "B"},
+}
+
+// formatCompact returns n as it is if it is below 1,000, and otherwise with one
+// decimal place in the largest unit that keeps it below 1,000, such as "1.0K"
+// or "12.3M".
+func formatCompact(n any) string {
+	var x float64
+
+	switch n := n.(type) {
+	case int:
+		x = float64(n)
+	case uint64:
+		x = float64(n)
+	case int64:
+		x = float64(n)
+	default:
+		return fmt.Sprint(n)
+	}
+
+	if x < 1000 {
+		return formatNumber(n)
+	}
+
+	for i, u := range compactUnits {
+		v := x / u.Size
+
+		// A value that would round up to 1000.0 moves to the next unit,
+		// unless there is none.
+		if v < 999.95 || i == len(compactUnits)-1 {
+			return strconv.FormatFloat(v, 'f', 1, 64) + u.Suffix
+		}
+	}
+
+	return formatNumber(n)
 }
 
 // formatDuration returns a short, rounded form of d, such as "4s", "2m 5s" or

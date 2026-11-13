@@ -325,11 +325,13 @@ func (c *Cluster) drop() {
 	}
 }
 
-// Serve serves h on a port of the loopback interface that the operating
-// system chooses, until ctx is canceled. It prints the URL of each of the
-// given paths once it is listening.
-func Serve(ctx context.Context, h http.Handler, paths ...string) error {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// Serve serves h on the given address until ctx is canceled. It prints the URL
+// of each of the given paths once it is listening.
+//
+// Each demo listens on a fixed address, so that a page left open in a browser
+// reconnects to the same address when the demo restarts.
+func Serve(ctx context.Context, addr string, h http.Handler, paths ...string) error {
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}

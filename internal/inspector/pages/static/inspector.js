@@ -73,13 +73,31 @@
 
   // Live updates.
 
-  // The browser reconnects by itself after an error, so nothing is done when
-  // the connection breaks. Without live updates, the page is still correct
-  // as it was rendered.
+  // The browser reconnects by itself when the connection breaks, such as while
+  // the server restarts. Each time the page connects, the server sends a
+  // "hello" event that holds the version of the pages that it renders.
+  //
+  // If the version differs from the one that rendered this page, the server
+  // has restarted with different templates, styles or scripts, so the page
+  // reloads itself. Otherwise, after a reconnection, the page fetches itself
+  // again, because it may have missed updates while it was disconnected.
+  var version = body.getAttribute("data-version");
+  var hasConnected = false;
+
   function connect() {
     if (!window.EventSource) return;
 
     var source = new EventSource(body.getAttribute("data-live"));
+
+    source.addEventListener("hello", function (e) {
+      if (e.data !== version) {
+        window.location.reload();
+        return;
+      }
+
+      if (hasConnected && window.htmx) window.htmx.trigger(body, "observed");
+      hasConnected = true;
+    });
 
     source.addEventListener("observed", function () {
       if (window.htmx) window.htmx.trigger(body, "observed");

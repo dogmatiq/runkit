@@ -9,9 +9,15 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
-// keepAliveInterval is the time between the comments that keep an idle
-// live-update connection open through proxies.
-const keepAliveInterval = 15 * time.Second
+const (
+	// keepAliveInterval is the time between the comments that keep an idle
+	// live-update connection open through proxies.
+	keepAliveInterval = 15 * time.Second
+
+	// reconnectDelay is how long a page waits before reconnecting after its
+	// live-update connection breaks, such as while the server restarts.
+	reconnectDelay = 1 * time.Second
+)
 
 // liveEvent is a server-sent event that tells open pages that something
 // changed.
@@ -64,6 +70,19 @@ func (b *Broadcaster) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+
+	// Tell the page how soon to reconnect if the connection breaks, and which
+	// version of the pages this server renders. A page that a different
+	// version rendered reloads itself.
+	if _, err := fmt.Fprintf(
+		w,
+		"retry: %d\nevent: hello\ndata: %s\n\n",
+		reconnectDelay.Milliseconds(),
+		pagesVersion,
+	); err != nil {
+		return
+	}
+
 	flusher.Flush()
 
 	keepAlive := time.NewTicker(keepAliveInterval)

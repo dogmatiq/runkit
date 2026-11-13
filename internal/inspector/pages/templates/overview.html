@@ -1,14 +1,6 @@
 {{define "overview.html"}}{{template "top" .}}
 {{if not .Obs}}{{template "waiting" .}}{{else}}
 
-<section class="issues" aria-label="Things that need attention">
-{{range .Issues}}
-  <div class="issue {{.Severity}}"><span class="sev" aria-hidden="true"></span>{{if .Link}}<a href="{{$.Root}}{{.Link}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}</div>
-{{else}}
-  <div class="issue ok"><span class="sev" aria-hidden="true"></span><span>All quiet. No queue is stalled, no message is failing, and every handler has handled every event.</span></div>
-{{end}}
-</section>
-
 <section class="tiles">
   <a class="tile" href="{{.Root}}nodes">
     <span class="tile-label">{{icon "node"}}Live nodes</span>
@@ -29,7 +21,7 @@
   </a>
   <a class="tile" href="{{.Root}}streams">
     <span class="tile-label">{{icon "event"}}Events recorded</span>
-    <span class="tile-value" data-watch="events">{{num .Obs.Events}}</span>
+    <span class="tile-value" data-watch="events" title="{{num .Obs.Events}} events">{{compact .Obs.Events}}</span>
     <span class="tile-sub"><strong>{{printf "%.1f" .CurrentRate}}</strong> per second on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
     {{sparkline .EventRate}}
   </a>

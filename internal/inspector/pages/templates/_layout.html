@@ -7,13 +7,13 @@
 <meta name="color-scheme" content="light dark">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0}'>
 <title>{{.Title}} · {{.App.Identity.GetName}} inspector</title>
-<link rel="icon" href="{{.Root}}static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="{{.Root}}static/inspector.css">
-<script src="{{.Root}}static/theme.js"></script>
+<link rel="icon" href="{{.Root}}static/favicon.svg?v={{version}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Root}}static/inspector.css?v={{version}}">
+<script src="{{.Root}}static/theme.js?v={{version}}"></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js" integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg" crossorigin="anonymous" defer></script>
-<script src="{{.Root}}static/inspector.js" defer></script>
+<script src="{{.Root}}static/inspector.js?v={{version}}" defer></script>
 </head>
-<body data-live="{{.Root}}live">
+<body data-live="{{.Root}}live" data-version="{{version}}">
 <header class="titlebar">
   <a class="brand" href="{{.Root}}">
     <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
@@ -38,7 +38,7 @@
   </div>
 </header>
 <main id="live" class="page" hx-get="{{.Self}}" hx-trigger="observed from:body" hx-select="#live" hx-swap="outerHTML">
-<h1 class="page-title">{{.Title}}</h1>
+{{if ne .Section "overview"}}<h1 class="page-title">{{.Title}}</h1>{{end}}
 {{- end}}
 
 {{define "bottom" -}}

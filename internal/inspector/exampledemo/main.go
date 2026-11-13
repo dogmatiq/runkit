@@ -12,6 +12,9 @@
 //	cd internal/inspector/exampledemo
 //	go run . postgres://user:password@localhost:5432/postgres
 //
+// It serves the bank at http://127.0.0.1:8071/ and the inspector at
+// http://127.0.0.1:8071/inspector/.
+//
 // It runs the cluster with [democluster.Start], which creates a new database
 // for it and drops the database when the command stops. The application's
 // projections are kept in an in-memory SQLite database.
@@ -36,6 +39,9 @@ import (
 	"github.com/dogmatiq/example/ui/projections"
 	"github.com/dogmatiq/runkit/internal/inspector/democluster"
 )
+
+// listenAddress is the address of the bank and the inspector.
+const listenAddress = "127.0.0.1:8071"
 
 // eventWaitTimeout is the longest time that the bank's user interface waits
 // for the events that a command causes. A transfer scheduled for later causes
@@ -101,7 +107,7 @@ func run(ctx context.Context, serverDSN string) error {
 		},
 	)
 
-	err = democluster.Serve(ctx, mux, "/", "/inspector/")
+	err = democluster.Serve(ctx, listenAddress, mux, "/", "/inspector/")
 
 	if waitErr := cluster.Wait(); !errors.Is(waitErr, context.Canceled) {
 		err = errors.Join(err, waitErr)

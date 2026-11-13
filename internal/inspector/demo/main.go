@@ -5,8 +5,9 @@
 //
 //	go run ./internal/inspector/demo postgres://user:password@localhost:5432/postgres
 //
-// It runs a small banking application on a [democluster.Cluster], and keeps
-// executing commands against it.
+// It runs a small banking application on a [democluster.Cluster], keeps
+// executing commands against it, and serves the inspector at
+// http://127.0.0.1:8070/.
 package main
 
 import (
@@ -24,9 +25,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// commandInterval is the average time between the commands that the demo
-// executes.
-const commandInterval = 250 * time.Millisecond
+const (
+	// listenAddress is the address of the inspector.
+	listenAddress = "127.0.0.1:8070"
+
+	// commandInterval is the average time between the commands that the demo
+	// executes.
+	commandInterval = 250 * time.Millisecond
+)
 
 func main() {
 	if len(os.Args) != 2 {
@@ -59,7 +65,7 @@ func run(ctx context.Context, serverDSN string) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return democluster.Serve(ctx, cluster.Inspector, "/")
+		return democluster.Serve(ctx, listenAddress, cluster.Inspector, "/")
 	})
 
 	g.Go(func() error {
