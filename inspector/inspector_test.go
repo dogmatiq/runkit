@@ -223,7 +223,7 @@ func serveInspector(t *testing.T, app *demoapp.App, db *sql.DB) *httptest.Server
 		t,
 		"the first observation",
 		func() bool {
-			return strings.Contains(get(t, server.URL+"/").Body, `class="tiles"`)
+			return strings.Contains(get(t, server.URL+"/").Body, `class="metrics"`)
 		},
 	)
 

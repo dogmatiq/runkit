@@ -73,6 +73,16 @@ var templateFuncs = template.FuncMap{
 	"add":       func(a, b int) int { return a + b },
 	"list":      func(values ...any) []any { return values },
 	"plural":    countOf,
+	"noun":      nounFor,
+}
+
+// nounFor returns the singular form of a noun if n is 1, and the plural form
+// otherwise.
+func nounFor(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 // countOf returns n followed by the singular or plural form of a noun, such as

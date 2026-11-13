@@ -4,7 +4,7 @@
   only handler keys, so the names, types and routes come from the application's
   configuration.
 </p>
-<div class="cards">
+<div class="hcards">
 {{range .HandlersOf .Kind}}
   {{template "handlerCard" (list $ .)}}
 {{else}}

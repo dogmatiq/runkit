@@ -1,36 +1,42 @@
 {{define "overview.html"}}{{template "top" .}}
 {{if not .Obs}}{{template "waiting" .}}{{else}}
+<div class="overview">
 
-<section class="tiles">
-  <a class="tile" href="{{.Root}}nodes">
-    <span class="tile-label">{{icon "node"}}Cluster</span>
-    {{if .Obs.LiveNodes.Known}}
-      <span class="tile-value" data-watch="nodes">{{len .Obs.LiveNodes.Nodes}}</span>
-      <span class="tile-sub">{{if .Obs.LiveNodes.Nodes}}live nodes{{else}}<span class="tag bad">no live nodes</span>{{end}}</span>
+<section class="metrics" aria-label="Totals">
+  <a class="metric" href="{{.Root}}nodes">
+    <span class="metric-title">{{icon "node"}}Cluster</span>
+    {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
+      <span class="metric-value" data-watch="nodes">{{$n}}</span>
+      <span class="metric-detail">{{if $n}}live {{if eq $n 1}}node{{else}}nodes{{end}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
     {{else}}
-      <span class="tile-value muted">?</span>
-      <span class="tile-sub muted">listening for heartbeats</span>
+      <span class="metric-value is-unknown">?</span>
+      <span class="metric-detail">listening for heartbeats</span>
     {{end}}
   </a>
+
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
-  <a class="tile" href="{{.Root}}queues">
-    <span class="tile-label">{{icon "queue"}}Queues</span>
-    <span class="tile-value" data-watch="messages">{{num $messages}}</span>
-    <span class="tile-sub">{{if $failing}}<span class="tag bad" data-watch="failing">{{num $failing}} failing</span>{{else}}<span class="tag ok">none failing</span>{{end}} in {{plural (len .Obs.Queues) "queue" "queues"}}</span>
+  <a class="metric" href="{{.Root}}queues">
+    <span class="metric-title">{{icon "queue"}}Queues</span>
+    <span class="metric-value" data-watch="messages" title="{{num $messages}}">{{compact $messages}}</span>
+    <span class="metric-detail">{{if eq $messages 1}}message{{else}}messages{{end}} waiting in {{plural (len .Obs.Queues) "queue" "queues"}}{{if $failing}}, <span class="is-bad-text" data-watch="failing">{{num $failing}} failing</span>{{end}}</span>
     {{sparkline .Messages}}
   </a>
-  <a class="tile" href="{{.Root}}streams">
-    <span class="tile-label">{{icon "event"}}Events</span>
-    <span class="tile-value" data-watch="events" title="{{num .Obs.Events}} events">{{compact .Obs.Events}}</span>
-    <span class="tile-sub"><strong>{{printf "%.1f" .CurrentRate}}</strong> per second on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
+
+  {{$events := .Obs.Events}}
+  <a class="metric" href="{{.Root}}streams">
+    <span class="metric-title">{{icon "event"}}Events</span>
+    <span class="metric-value" data-watch="events" title="{{num $events}}">{{compact $events}}</span>
+    <span class="metric-detail">{{if eq $events 1}}event{{else}}events{{end}} recorded, {{printf "%.1f" .CurrentRate}} per second</span>
     {{sparkline .EventRate}}
   </a>
 </section>
 
-<div class="cards">
+<section class="hcards" aria-label="Handlers">
 {{range .App.Handlers}}
   {{template "handlerCard" (list $ .)}}
 {{end}}
+</section>
+
 </div>
 {{end}}
 {{template "bottom" .}}{{end}}

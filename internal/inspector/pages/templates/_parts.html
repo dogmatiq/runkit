@@ -108,20 +108,27 @@
 
 {{define "handlerCard" -}}
 {{$f := index . 0}}{{$h := index . 1}}{{$s := $f.HandlerSummary $h.Key}}{{$kind := $h.Type.String}}
-<a class="card handler-card" href="{{$f.Root}}handlers/{{id $h.Key}}">
-  <header class="card-head">
-    {{icon $kind}}<strong>{{$h.Name}}</strong>
-    {{if $h.IsDisabled}}<span class="tag">disabled</span>{{end}}
-    <span class="card-kind muted">{{$kind}}</span>
+{{$failing := 0}}{{$todo := 0}}{{if $s}}{{$failing = $s.FailingMessages}}{{$todo = $s.Unhandled}}{{end}}
+<a class="hcard handler-{{$kind}}{{if $failing}} is-bad{{end}}" href="{{$f.Root}}handlers/{{id $h.Key}}">
+  <header class="hcard-head">
+    <span class="handler-badge">{{icon $kind}}</span>
+    <span class="hcard-title">
+      <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
+      <span class="hcard-kind">{{$kind}} handler{{if $h.IsDisabled}}, disabled{{end}}</span>
+    </span>
   </header>
-  <dl class="facts">
-    {{if $s}}
-      {{if $h.HasInstances}}<dt>Instances</dt><dd data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</dd>{{end}}
-      {{if $h.HandlesCommands}}<dt>Commands waiting</dt><dd data-watch="queued-{{id $h.Key}}">{{num $s.QueuedMessages}}{{if $s.FailingMessages}} <span class="tag bad">{{num $s.FailingMessages}} failing</span>{{end}}</dd>{{end}}
-      {{if $h.Process}}<dt>Deadlines waiting</dt><dd data-watch="queued-{{id $h.Key}}">{{num $s.QueuedMessages}}{{if $s.FailingMessages}} <span class="tag bad">{{num $s.FailingMessages}} failing</span>{{end}}</dd>{{end}}
-      {{if $h.HandlesEvents}}<dt>To handle</dt><dd data-watch="todo-{{id $h.Key}}">{{if $s.Unhandled}}<span class="tag warn">{{plural $s.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
-      {{if $h.Projection}}<dt>Last compacted</dt><dd>{{rel $f.Now $s.LastCompactedAt}}</dd>{{end}}
-    {{end}}
-  </dl>
+  {{if $s}}
+  <div class="stats">
+    {{if $h.HasInstances}}<div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value" data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>{{end}}
+    {{if $h.HandlesCommands}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} waiting</span></div>{{end}}
+    {{if $h.Process}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}} waiting</span></div>{{end}}
+    {{if $h.HandlesEvents}}<div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>{{end}}
+  </div>
+  <footer class="hcard-foot{{if $failing}} is-bad{{end}}">
+    {{if $failing}}<span class="status-dot"></span>{{plural $failing "message" "messages"}} failing
+    {{- else if $h.Projection}}{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}
+    {{- else}}Nothing failing{{end}}
+  </footer>
+  {{end}}
 </a>
 {{- end}}

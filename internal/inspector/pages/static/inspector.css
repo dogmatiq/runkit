@@ -6,6 +6,32 @@
  * when the viewer chose dark mode.
  */
 
+/*
+ * The type and spacing scales. Every size on a page comes from one of these,
+ * so the pages share one rhythm.
+ */
+:root {
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius: 12px;
+}
+
 :root {
   --bg: #f4f5f8;
   --bg-sunk: #eceef3;
@@ -36,6 +62,16 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --faint: #a3abb9;
+  --raised-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 4px 12px rgba(16, 24, 40, 0.06);
+  --handler-aggregate: #4f46e5;
+  --handler-aggregate-soft: #eef0ff;
+  --handler-process: #0f766e;
+  --handler-process-soft: #e3f5f2;
+  --handler-integration: #0369a1;
+  --handler-integration-soft: #e4f1fa;
+  --handler-projection: #7c3aed;
+  --handler-projection-soft: #f2ecfe;
   color-scheme: light;
 }
 
@@ -68,6 +104,16 @@
     --chart-fill: rgba(143, 140, 255, 0.16);
     --flash: rgba(143, 140, 255, 0.3);
     --shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --faint: #4f596b;
+    --raised-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --handler-aggregate: #a5a3ff;
+    --handler-aggregate-soft: rgba(143, 140, 255, 0.15);
+    --handler-process: #2dd4bf;
+    --handler-process-soft: rgba(45, 212, 191, 0.13);
+    --handler-integration: #38bdf8;
+    --handler-integration-soft: rgba(56, 189, 248, 0.13);
+    --handler-projection: #c4a1ff;
+    --handler-projection-soft: rgba(192, 132, 252, 0.15);
     color-scheme: dark;
   }
 }
@@ -100,6 +146,16 @@
   --chart-fill: rgba(143, 140, 255, 0.16);
   --flash: rgba(143, 140, 255, 0.3);
   --shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --faint: #4f596b;
+  --raised-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --handler-aggregate: #a5a3ff;
+  --handler-aggregate-soft: rgba(143, 140, 255, 0.15);
+  --handler-process: #2dd4bf;
+  --handler-process-soft: rgba(45, 212, 191, 0.13);
+  --handler-integration: #38bdf8;
+  --handler-integration-soft: rgba(56, 189, 248, 0.13);
+  --handler-projection: #c4a1ff;
+  --handler-projection-soft: rgba(192, 132, 252, 0.15);
   color-scheme: dark;
 }
 
@@ -392,63 +448,83 @@ h3 {
   background: var(--ok);
 }
 
-/* Tiles. */
+/*
+ * The overview.
+ *
+ * A figure is shown as a value joined to the words that say what it counts,
+ * such as "3 live nodes", rather than as a label above a bare number. Colour
+ * is kept for things that need attention, and a value of zero recedes.
+ */
 
-.tiles {
+.overview {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--space-6);
 }
 
-.tile {
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+
+.metric {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 150px;
-  padding: 14px 16px 54px;
+  min-height: 176px;
+  padding: var(--space-5) var(--space-5) var(--space-8);
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: var(--raised-shadow);
   color: var(--text);
 }
 
-.tile:hover {
-  border-color: var(--border-strong);
+.metric:hover,
+.hcard:hover {
   text-decoration: none;
+  box-shadow: var(--raised-shadow), 0 0 0 1px var(--border-strong);
 }
 
-.tile-label {
-  font-size: 12px;
+.metric-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.tile-value {
-  align-self: flex-start;
-  font-size: 30px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.tile-sub {
-  position: relative;
-  z-index: 1;
-  font-size: 12.5px;
   color: var(--text-soft);
 }
 
-.tile-dots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+.metric-title .icon {
+  margin: 0;
+  color: var(--muted);
+}
+
+.metric-value {
+  margin-top: var(--space-4);
+  font-size: var(--text-4xl);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  align-self: flex-start;
+}
+
+.metric-value.is-unknown {
+  color: var(--faint);
+}
+
+.metric-detail {
+  position: relative;
+  z-index: 1;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.is-bad-text {
+  color: var(--bad);
+  font-weight: 600;
 }
 
 .spark {
@@ -457,7 +533,7 @@ h3 {
   right: 0;
   bottom: 0;
   width: 100%;
-  height: 42px;
+  height: 48px;
 }
 
 .spark-area {
@@ -468,6 +544,147 @@ h3 {
   fill: none;
   stroke: var(--chart);
   stroke-width: 1.5;
+}
+
+/* A handler's card, on the overview and on the page for its kind. */
+
+.hcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-5);
+}
+
+.hcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--raised-shadow);
+  color: var(--text);
+}
+
+/* An accent along the top marks a card that needs attention. */
+.hcard.is-bad {
+  box-shadow: inset 0 3px 0 var(--bad), var(--raised-shadow);
+}
+
+.hcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.handler-aggregate {
+  --handler: var(--handler-aggregate);
+  --handler-soft: var(--handler-aggregate-soft);
+}
+
+.handler-process {
+  --handler: var(--handler-process);
+  --handler-soft: var(--handler-process-soft);
+}
+
+.handler-integration {
+  --handler: var(--handler-integration);
+  --handler-soft: var(--handler-integration-soft);
+}
+
+.handler-projection {
+  --handler: var(--handler-projection);
+  --handler-soft: var(--handler-projection-soft);
+}
+
+.handler-badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--handler-soft);
+  color: var(--handler);
+}
+
+.handler-badge .icon {
+  margin: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.hcard-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hcard-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hcard-kind {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.stat.is-zero .stat-value {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.stat.is-bad .stat-value {
+  color: var(--bad);
+}
+
+.hcard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.hcard-foot.is-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 /* Panels and cards. */
@@ -527,11 +744,6 @@ a.card:hover {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-}
-
-.card-kind {
-  margin-left: auto;
-  font-size: 12px;
 }
 
 .node-id {
