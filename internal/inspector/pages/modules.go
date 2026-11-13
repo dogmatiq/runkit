@@ -3,6 +3,7 @@ package pages
 import (
 	"regexp"
 	"runtime/debug"
+	"strings"
 )
 
 const (
@@ -26,27 +27,18 @@ var versions = readModuleVersions()
 // requires, unless that module is replaced by a directory, which has no
 // version. The module that the binary is built from has the version that Go
 // stamps on it, or the commit that the binary was built from.
+//
+// A binary that is built from a module inside the runkit repository, such as
+// one of the inspector's demos, was built from a checkout of runkit, so its
+// commit is runkit's commit, even if the binary replaces its dependency on
+// runkit with a directory.
 func readModuleVersions() moduleVersions {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return moduleVersions{}
 	}
 
-	find := func(path string) string {
-		if info.Main.Path == path {
-			if v := formatModuleVersion(info.Main.Version); v != "" {
-				return v
-			}
-
-			for _, s := range info.Settings {
-				if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-					return "commit " + s.Value[:7]
-				}
-			}
-
-			return ""
-		}
-
+	dependency := func(path string) string {
 		for _, dep := range info.Deps {
 			if dep.Path != path {
 				continue
@@ -62,10 +54,33 @@ func readModuleVersions() moduleVersions {
 		return ""
 	}
 
-	return moduleVersions{
-		Runkit: find(runkitModule),
-		Dogma:  find(dogmaModule),
+	// builtFrom returns the version of the module that the binary is built
+	// from.
+	builtFrom := func() string {
+		if v := formatModuleVersion(info.Main.Version); v != "" {
+			return v
+		}
+
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return "commit " + s.Value[:7]
+			}
+		}
+
+		return ""
 	}
+
+	versions := moduleVersions{
+		Dogma: dependency(dogmaModule),
+	}
+
+	if info.Main.Path == runkitModule || strings.HasPrefix(info.Main.Path, runkitModule+"/") {
+		versions.Runkit = builtFrom()
+	} else {
+		versions.Runkit = dependency(runkitModule)
+	}
+
+	return versions
 }
 
 // pseudoVersion matches a pseudo-version, which names a commit that has no
