@@ -2,11 +2,16 @@ package failure
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"testing"
 	"time"
 
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // maxDebugStreak is how long a streak of transient failures can last before
@@ -58,6 +63,8 @@ func (s *Streak) Extend(
 	description string,
 	err error,
 ) time.Time {
+	panicOnEngineBug(err)
+
 	now := time.Now()
 	deterministic := xerrors.IsDeterministic(err)
 
@@ -149,4 +156,20 @@ func (s *Streak) qualifiesForError(deterministic bool, now time.Time) bool {
 	}
 
 	return !now.Before(s.FirstFailedAt.Add(maxDebugStreak))
+}
+
+// panicOnEngineBug panics if err shows a bug in the engine, when the program is
+// running under go test.
+func panicOnEngineBug(err error) {
+	if !testing.Testing() {
+		return
+	}
+
+	// A deadlock means that two pieces of the engine's code lock rows in
+	// different orders.
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		if pgErr.Code == pgerrcode.DeadlockDetected {
+			panic(fmt.Sprintf("deadlock: %s", err))
+		}
+	}
 }

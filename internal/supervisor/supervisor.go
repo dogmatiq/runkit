@@ -9,7 +9,6 @@ import (
 
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // quietPeriod is how long fn must run without failing for [Run] to end a
@@ -65,8 +64,6 @@ func Run(
 		if xerrors.IsFatal(err) {
 			return err
 		}
-
-		xsql.PanicOnDeadlock(err)
 
 		nextAttemptAt := failures.WorkFailed(ctx, err)
 

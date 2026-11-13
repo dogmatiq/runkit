@@ -615,17 +615,23 @@ the same values until the failure policy options task, which tests the split.
 
 ---
 
-### Task 10: Deadlocks in the message queue consumer
+### Task 10: Check every failure for an engine bug
 
-A small commit. In v0.2.0, the message pump ran under `supervisor.Run`, which
-passes every error through `xsql.PanicOnDeadlock`, so a deadlock fails the
-tests. `messagequeue.Consumer` doesn't run under `supervisor.Run`, so its own
-errors and its sinks' errors aren't checked. Pass both through
-`xsql.PanicOnDeadlock` before they're counted as failures.
+In v0.2.0, the message pump ran under `supervisor.Run`, which passes every
+error through `xsql.PanicOnDeadlock`, so a deadlock fails the tests.
+`messagequeue.Consumer` doesn't run under `supervisor.Run`, so its own errors
+and its sinks' errors aren't checked. Every failure that the engine counts
+passes through `failure.Streak.Extend`, so the check moves there, as the
+unexported `failure.panicOnEngineBug`, whose doc says only that it panics on
+an error that shows a bug in the engine, under `go test`. `xsql.PanicOnDeadlock`
+and the calls in `supervisor.Run` and `eventstream.Consumer` go.
 
-- [ ] **Step 1: Implement it**
-- [ ] **Step 2: Run `make precommit`**
-- [ ] **Step 3: Stop for review**
+One commit, because the callers can't call an unexported function, so a pure
+move isn't possible.
+
+- [x] **Step 1: Implement it**
+- [x] **Step 2: Run `make precommit`**
+- [x] **Step 3: Stop for review**
 
 ---
 

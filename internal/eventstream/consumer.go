@@ -16,7 +16,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -158,7 +157,6 @@ func (c *Consumer) startStreamConsumer(
 					// resumes from the sink's checkpoint offset. A fatal error
 					// is returned to Run, which doesn't retry it.
 					if f, ok := errors.AsType[sinkFailure](err); ok && !xerrors.IsFatal(err) {
-						xsql.PanicOnDeadlock(f.err)
 						nextAttemptAt := sinkFailures.WorkFailed(ctx, f.err)
 
 						select {
