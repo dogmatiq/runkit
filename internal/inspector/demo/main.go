@@ -5,52 +5,28 @@
 //
 //	go run ./internal/inspector/demo postgres://user:password@localhost:5432/postgres
 //
-// It creates a new database with a unique name on that server, and never
-// touches any other database. It runs three engine nodes in this process with
-// a small banking application, keeps executing commands, and every minute
-// stops one node and starts another. The inspector connects as a new role
-// that may only read. When the command stops, it drops the database and the
-// role.
+// It runs a small banking application on a [democluster.Cluster], and keeps
+// executing commands against it.
 package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"math/rand/v2"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/inspector"
 	"github.com/dogmatiq/runkit/internal/inspector/demoapp"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/dogmatiq/runkit/internal/inspector/democluster"
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	// nodeCount is the number of engine nodes that run at once.
-	nodeCount = 3
-
-	// nodeLifetime is the time between stopping one node and starting
-	// another.
-	nodeLifetime = time.Minute
-
-	// commandInterval is the average time between the commands that the demo
-	// executes.
-	commandInterval = 250 * time.Millisecond
-)
+// commandInterval is the average time between the commands that the demo
+// executes.
+const commandInterval = 250 * time.Millisecond
 
 func main() {
 	if len(os.Args) != 2 {
@@ -68,90 +44,22 @@ func main() {
 }
 
 func run(ctx context.Context, serverDSN string) error {
-	serverConfig, err := pgx.ParseConfig(serverDSN)
-	if err != nil {
-		return fmt.Errorf("unable to parse connection string: %w", err)
-	}
-
-	server := stdlib.OpenDB(*serverConfig)
-	defer server.Close()
-
-	name := "inspector-demo-" + uuidpb.Generate().AsString()[:8]
-	password := uuidpb.Generate().AsString()
-
-	if err := createDatabaseAndRole(ctx, server, name, password); err != nil {
-		return err
-	}
-	defer dropDatabaseAndRole(server, name)
-
-	engineConfig := serverConfig.Copy()
-	engineConfig.Database = name
-	engineDB := stdlib.OpenDB(*engineConfig)
-	defer engineDB.Close()
-
-	if err := runkit.CreateSchema(ctx, engineDB); err != nil {
-		return fmt.Errorf("unable to create the engine's schema: %w", err)
-	}
-
-	if err := grantRead(ctx, engineDB, name); err != nil {
-		return err
-	}
-
-	readerConfig := engineConfig.Copy()
-	readerConfig.User = name
-	readerConfig.Password = password
-	readerDB := stdlib.OpenDB(*readerConfig)
-	defer readerDB.Close()
-
 	app := &demoapp.App{
 		StatementInterval: 20 * time.Second,
 		MailerFailureRate: 0.3,
 	}
 
-	insp, err := inspector.New(app, readerDB)
+	cluster, err := democluster.Start(ctx, serverDSN, app)
 	if err != nil {
 		return err
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-
-	fmt.Printf("database %q, read by role %q\n", name, name)
-	fmt.Printf("inspector: http://%s/\n", listener.Addr())
-
-	httpServer := &http.Server{
-		Handler: insp,
-	}
-
-	cluster := &cluster{
-		app: app,
-		db:  engineDB,
-	}
+	fmt.Printf("database %q, read by role %q\n", cluster.Name, cluster.Name)
 
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return insp.Run(ctx)
-	})
-
-	g.Go(func() error {
-		if err := httpServer.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return ctx.Err()
-	})
-
-	g.Go(func() error {
-		<-ctx.Done()
-		return httpServer.Close()
-	})
-
-	g.Go(func() error {
-		cluster.Run(ctx)
-		return ctx.Err()
+		return democluster.Serve(ctx, cluster.Inspector, "/")
 	})
 
 	g.Go(func() error {
@@ -159,108 +67,17 @@ func run(ctx context.Context, serverDSN string) error {
 		return ctx.Err()
 	})
 
-	return g.Wait()
-}
+	err = g.Wait()
 
-// cluster runs the demo's engine nodes in this process.
-type cluster struct {
-	// app is the application that every node runs.
-	app dogma.Application
-
-	// db is the engine's database.
-	db *sql.DB
-
-	// m guards nodes.
-	m sync.Mutex
-
-	// nodes is the running nodes, oldest first.
-	nodes []node
-}
-
-// node is one of the demo's running engine nodes.
-type node struct {
-	Engine *runkit.Engine
-	Stop   context.CancelFunc
-}
-
-// Run keeps [nodeCount] nodes running, and replaces one every
-// [nodeLifetime], until ctx is canceled.
-func (c *cluster) Run(ctx context.Context) {
-	for range nodeCount {
-		c.start(ctx)
+	if waitErr := cluster.Wait(); !errors.Is(waitErr, context.Canceled) {
+		err = errors.Join(err, waitErr)
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(nodeLifetime):
-		}
-
-		c.stopOldest()
-		c.start(ctx)
-	}
-}
-
-// Executor returns a running engine to execute a command on, or nil if there
-// is none.
-func (c *cluster) Executor() *runkit.Engine {
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	if len(c.nodes) == 0 {
-		return nil
-	}
-
-	return c.nodes[rand.IntN(len(c.nodes))].Engine
-}
-
-// start starts a node, and adds it to the running nodes once it is ready.
-func (c *cluster) start(ctx context.Context) {
-	nodeCtx, stop := context.WithCancel(ctx)
-
-	e := runkit.New(
-		c.app,
-		c.db,
-		runkit.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
-	)
-
-	go e.Run(nodeCtx)
-
-	select {
-	case <-e.Ready():
-	case <-ctx.Done():
-		stop()
-		return
-	}
-
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	c.nodes = append(
-		c.nodes,
-		node{
-			Engine: e,
-			Stop:   stop,
-		},
-	)
-}
-
-// stopOldest stops the node that has run for the longest time.
-func (c *cluster) stopOldest() {
-	c.m.Lock()
-	defer c.m.Unlock()
-
-	if len(c.nodes) == 0 {
-		return
-	}
-
-	c.nodes[0].Stop()
-	c.nodes = c.nodes[1:]
+	return err
 }
 
 // executeCommands executes random commands until ctx is canceled.
-func executeCommands(ctx context.Context, c *cluster) {
+func executeCommands(ctx context.Context, executor dogma.CommandExecutor) {
 	var accounts []string
 
 	for {
@@ -270,11 +87,6 @@ func executeCommands(ctx context.Context, c *cluster) {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
-		}
-
-		e := c.Executor()
-		if e == nil {
-			continue
 		}
 
 		var command dogma.Command
@@ -305,7 +117,7 @@ func executeCommands(ctx context.Context, c *cluster) {
 
 		// A node that is stopping can not execute commands, so failures are
 		// expected and ignored.
-		e.ExecuteCommand(ctx, command)
+		executor.ExecuteCommand(ctx, command)
 	}
 }
 
@@ -313,71 +125,4 @@ func executeCommands(ctx context.Context, c *cluster) {
 var holders = []string{
 	"Alex", "Bea", "Chidi", "Dana", "Eli", "Fatima", "Goran", "Hana",
 	"Ines", "Jun", "Kofi", "Lena", "Mateo", "Noor", "Oskar", "Priya",
-}
-
-// createDatabaseAndRole creates the demo's database, and a role with the same
-// name that may log in with the given password.
-func createDatabaseAndRole(ctx context.Context, server *sql.DB, name, password string) error {
-	ident := pgx.Identifier{name}.Sanitize()
-
-	if _, err := server.ExecContext(ctx, `CREATE DATABASE `+ident); err != nil {
-		return fmt.Errorf("unable to create database: %w", err)
-	}
-
-	quoted := "'" + strings.ReplaceAll(password, "'", "''") + "'"
-
-	if _, err := server.ExecContext(ctx, `CREATE ROLE `+ident+` LOGIN PASSWORD `+quoted); err != nil {
-		return fmt.Errorf("unable to create role: %w", err)
-	}
-
-	return nil
-}
-
-// grantRead gives the role with the given name the privileges that the
-// inspector needs, which are the privileges to read the engine's tables.
-func grantRead(ctx context.Context, db *sql.DB, name string) error {
-	ident := pgx.Identifier{name}.Sanitize()
-
-	statements := []string{
-		`GRANT CONNECT ON DATABASE ` + ident + ` TO ` + ident,
-	}
-
-	for _, schema := range []string{
-		"application",
-		"eventstream",
-		"messagequeue",
-		"aggregate",
-		"process",
-		"projection",
-	} {
-		statements = append(
-			statements,
-			`GRANT USAGE ON SCHEMA `+schema+` TO `+ident,
-			`GRANT SELECT ON ALL TABLES IN SCHEMA `+schema+` TO `+ident,
-		)
-	}
-
-	for _, s := range statements {
-		if _, err := db.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("unable to grant read privileges: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// dropDatabaseAndRole drops the demo's database and role.
-func dropDatabaseAndRole(server *sql.DB, name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	ident := pgx.Identifier{name}.Sanitize()
-
-	if _, err := server.ExecContext(ctx, `DROP DATABASE IF EXISTS `+ident+` WITH (FORCE)`); err != nil {
-		fmt.Fprintln(os.Stderr, "unable to drop database:", err)
-	}
-
-	if _, err := server.ExecContext(ctx, `DROP ROLE IF EXISTS `+ident); err != nil {
-		fmt.Fprintln(os.Stderr, "unable to drop role:", err)
-	}
 }
