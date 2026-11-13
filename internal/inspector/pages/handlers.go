@@ -21,6 +21,10 @@ const (
 	// recorded events averages.
 	rateSmoothing = 8
 
+	// chartSmoothing is the number of consecutive rates that each point of a
+	// rate's chart averages.
+	chartSmoothing = 4
+
 	// pageSize is the number of messages, events or instances in one page
 	// of a list.
 	pageSize = 50
@@ -61,7 +65,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 		RemovedMessagesPerMinute float64
 	}{
 		frame:           f,
-		EventRates:      f.Chart(eventRates),
+		EventRates:      f.Chart(smooth(eventRates)),
 		EventsPerMinute: perMinute(eventRates),
 		QueuedMessages: f.Chart(
 			series(

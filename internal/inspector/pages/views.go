@@ -316,6 +316,26 @@ func rate(samples []observe.Sample, window time.Duration, counter func(observe.S
 	return points
 }
 
+// smooth returns the given rates with each one replaced by the average of it
+// and the [chartSmoothing] - 1 rates before it. A rate between two close
+// observations is noisy, and the average follows the trend instead.
+func smooth(rates []point) []point {
+	smoothed := make([]point, len(rates))
+
+	for i, r := range rates {
+		recent := rates[max(0, i-chartSmoothing+1) : i+1]
+
+		sum := 0.0
+		for _, p := range recent {
+			sum += p.Value
+		}
+
+		smoothed[i] = point{r.At, sum / float64(len(recent))}
+	}
+
+	return smoothed
+}
+
 // series returns the value of a total in each sample over the given window and
 // its margin. It skips each sample that could not read the total.
 func series(samples []observe.Sample, window time.Duration, total func(observe.Sample) observe.Total) []point {
@@ -356,10 +376,12 @@ func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
 
 	return &handlerRate{
 		Chart: f.Chart(
-			rate(
-				f.History,
-				chartWindow,
-				func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
+			smooth(
+				rate(
+					f.History,
+					chartWindow,
+					func(s observe.Sample) observe.Total { return s.HandlerEvents[key] },
+				),
 			),
 		),
 	}
