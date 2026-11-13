@@ -452,7 +452,6 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-top: var(--space-2);
 }
 
 .metric-icon {

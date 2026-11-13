@@ -83,12 +83,15 @@
   // The <canvas id="heartbeats"> element on the overview draws one line,
   // like the charts on the other cards. Each heartbeat from a live node, whose
   // IDs are in the canvas's data-nodes attribute, adds a small bump to the
-  // line at the right-hand edge. The bump moves left and leaves the chart
-  // after beatWindow. While the nodes are sending heartbeats, the line keeps
-  // rippling. When a node misses heartbeats, the line has fewer bumps. A page
-  // that has just loaded starts with a flat line.
+  // line. The bump starts just past the right-hand edge, slides in, moves left,
+  // and leaves the chart after beatWindow. While the nodes are sending
+  // heartbeats, the line keeps rippling. When a node misses heartbeats, the
+  // line has fewer bumps. A page that has just loaded starts with a flat line.
 
-  var beatWindow = 6000;
+  var beatWindow = 15000;
+
+  // bumpWidth is the width of a bump's middle, in CSS pixels.
+  var bumpWidth = 5;
   var beats = {};
 
   function recordBeat(nodeID) {
@@ -117,22 +120,27 @@
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
       var now = performance.now();
 
+      // spread is the width of a bump's middle, as a time. A bump starts
+      // lead before the right-hand edge, so it slides in instead of
+      // appearing.
+      var spread = ((bumpWidth * ratio) / width) * beatWindow;
+      var lead = 4 * spread;
+
       // The bumps of all of the nodes' heartbeats, by time. More nodes make
       // more bumps, so each is smaller, and the line stays inside the chart.
       var times = [];
       for (var i = 0; i < nodes.length; i++) {
         var own = beats[nodes[i]] || [];
-        while (own.length && now - own[0] > beatWindow) own.shift();
+        while (own.length && now - own[0] > beatWindow + 2 * lead) own.shift();
         times = times.concat(own);
       }
 
       var base = height - 2 * ratio;
       var bump = (height * 0.55) / Math.sqrt(Math.max(nodes.length, 1));
-      var spread = 120;
       var points = [];
 
       for (var x = 0; x <= width; x += 2 * ratio) {
-        var t = now - ((width - x) / width) * beatWindow;
+        var t = now - lead - ((width - x) / width) * beatWindow;
         var y = 0;
         for (var j = 0; j < times.length; j++) {
           var d = (t - times[j]) / spread;
