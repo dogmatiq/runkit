@@ -697,14 +697,18 @@ h3 {
 
 .hcard-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-4);
   margin-top: auto;
   font-size: var(--text-xs);
   color: var(--muted);
 }
 
-.hcard-foot.is-bad {
+.hcard-foot .is-bad {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--bad);
   font-weight: 600;
 }

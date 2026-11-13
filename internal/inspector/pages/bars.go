@@ -200,18 +200,19 @@ func queueBar(queues []observe.Queue) template.HTML {
 	return segmentBar("queues", segments)
 }
 
-// workloadBar returns a bar with one segment for each live node, as the
-// inspector computes ownership. A segment's width is the node's share of the
-// workloads, and a node that owns no workloads has a square segment.
+// nodeBar returns a bar with one segment for each live node, as the inspector
+// computes ownership. A segment's width is the node's share of the total, and
+// a node with a count of zero has a square segment. The describe function
+// returns the tooltip of each segment.
 //
 // Each segment is an <svg> element because its width attribute sets its width
 // without a style attribute, which the Content-Security-Policy forbids. The
 // widths add up to 100%, and the bar shrinks them in proportion to make room
 // for the gaps and the square segments.
-func workloadBar(counts []observe.NodeWorkloads) template.HTML {
+func nodeBar(counts []observe.NodeCount, describe func(observe.NodeCount) string) template.HTML {
 	total := 0
 	for _, c := range counts {
-		total += c.Workloads
+		total += c.Count
 	}
 
 	var b strings.Builder
@@ -221,20 +222,17 @@ func workloadBar(counts []observe.NodeWorkloads) template.HTML {
 		width := "8"
 		class := "nodeseg is-idle"
 
-		if c.Workloads > 0 {
-			width = fmt.Sprintf("%.3f%%", float64(c.Workloads)/float64(total)*100)
+		if c.Count > 0 {
+			width = fmt.Sprintf("%.3f%%", float64(c.Count)/float64(total)*100)
 			class = "nodeseg"
 		}
 
 		fmt.Fprintf(
 			&b,
-			`<svg class="%s" id="workloads-%s" width="%s" height="8" role="img"><title>%s</title></svg>`,
+			`<svg class="%s" width="%s" height="8" role="img"><title>%s</title></svg>`,
 			class,
-			c.NodeID.AsString(),
 			width,
-			template.HTMLEscapeString(
-				fmt.Sprintf("%s on node %s", countOf(c.Workloads, "workload", "workloads"), shortID(c.NodeID)),
-			),
+			template.HTMLEscapeString(describe(c)),
 		)
 	}
 

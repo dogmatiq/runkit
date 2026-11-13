@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dapper"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -108,11 +109,34 @@ func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {
 // WorkloadBar returns a bar of the number of workloads that each live node
 // owns. It returns an empty bar if the live nodes are not known.
 func (f frame) WorkloadBar() template.HTML {
-	if f.Obs == nil {
-		return workloadBar(nil)
+	var counts []observe.NodeCount
+	if f.Obs != nil {
+		counts = f.Obs.Workloads
 	}
 
-	return workloadBar(f.Obs.Workloads)
+	return nodeBar(
+		counts,
+		func(c observe.NodeCount) string {
+			return fmt.Sprintf("%s owned by node %s", countOf(c.Count, "workload", "workloads"), shortID(c.NodeID))
+		},
+	)
+}
+
+// HandlerNodeBar returns a bar of how the work of the handler that s
+// summarizes is spread across the live nodes. See
+// [observe.HandlerSummary.Nodes].
+func (f frame) HandlerNodeBar(s *observe.HandlerSummary) template.HTML {
+	describe := func(c observe.NodeCount) string {
+		return fmt.Sprintf("%s consumed by node %s", countOf(c.Count, "event stream", "event streams"), shortID(c.NodeID))
+	}
+
+	if s.Handler.Type == config.IntegrationHandlerType {
+		describe = func(c observe.NodeCount) string {
+			return fmt.Sprintf("%s to be delivered by node %s", countOf(c.Count, "command", "commands"), shortID(c.NodeID))
+		}
+	}
+
+	return nodeBar(s.Nodes, describe)
 }
 
 // Envelope returns a view of the given envelope.

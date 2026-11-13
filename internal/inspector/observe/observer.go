@@ -53,7 +53,7 @@ type Observation struct {
 	// Workloads is the number of workloads that each live node owns, as the
 	// inspector computes ownership, in the order of [LiveNodes.Nodes]. It is
 	// nil if the live nodes are not known.
-	Workloads []NodeWorkloads
+	Workloads []NodeCount
 
 	// Queues is the queues that hold at least one message, with the most
 	// messages first.
@@ -102,7 +102,7 @@ func (o *Observation) QueuedMessages() uint64 {
 func (o *Observation) TotalWorkloads() int {
 	n := 0
 	for _, w := range o.Workloads {
-		n += w.Workloads
+		n += w.Count
 	}
 	return n
 }
@@ -205,6 +205,19 @@ type HandlerSummary struct {
 
 	// CompactionErr explains why LastCompactedAt could not be read.
 	CompactionErr error
+
+	// Nodes is how the handler's work is spread across the live nodes, as the
+	// inspector computes ownership, in the order of [LiveNodes.Nodes].
+	//
+	// For an integration handler, it counts the commands in the handler's
+	// backlog, by the node that owns the workload of the queue that holds
+	// each one. For a projection handler, it counts the observed event
+	// streams, by the node that owns the workload of consuming each one for
+	// the handler. It is nil for other handlers, and if it could not be read.
+	Nodes []NodeCount
+
+	// backlog is the number of the handler's queued messages in each queue.
+	backlog []queuedGroup
 }
 
 // UnhandledIsAtLeast returns true if the count of unhandled events stopped at
@@ -246,14 +259,45 @@ type Sample struct {
 	RemovedMessages Total
 }
 
-// NodeWorkloads is the number of workloads that one live node owns, as the
-// inspector computes ownership.
-type NodeWorkloads struct {
+// NodeCount is a number of things, such as workloads, that belong to one live
+// node, as the inspector computes ownership.
+type NodeCount struct {
 	// NodeID is the ID of the node.
 	NodeID *uuidpb.UUID
 
-	// Workloads is the number of workloads that the node owns.
-	Workloads int
+	// Count is the number of things.
+	Count int
+}
+
+// countByNode returns the total of the given numbers for each live node, in
+// the order of [LiveNodes.Nodes]. The add function passes each number to its
+// count function, with the rendezvous key of the workload that it belongs
+// to. It returns nil if the live nodes are not known.
+func countByNode(nodes LiveNodes, add func(count func(key *uuidpb.UUID, n int))) []NodeCount {
+	if !nodes.Known {
+		return nil
+	}
+
+	counts := map[string]int{}
+
+	add(func(key *uuidpb.UUID, n int) {
+		if id, ok := nodes.FindWorkloadOwner(key); ok {
+			counts[id.AsString()] += n
+		}
+	})
+
+	result := make([]NodeCount, 0, len(nodes.Nodes))
+	for _, n := range nodes.Nodes {
+		result = append(
+			result,
+			NodeCount{
+				NodeID: n.ID,
+				Count:  counts[n.ID.AsString()],
+			},
+		)
+	}
+
+	return result
 }
 
 // Total is one total, such as the number of events recorded, as one
@@ -577,6 +621,8 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 			s.CompactionErr = compactionsErr
 		}
 
+		s.Nodes = o.handlerNodes(obs, s)
+
 		obs.Handlers = append(obs.Handlers, s)
 	}
 
@@ -586,11 +632,7 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 // workloads returns the number of workloads that each live node owns: delivering
 // the messages in each queue, and consuming each observed event stream for each
 // handler that handles events. It returns nil if the live nodes are not known.
-func (o *Observer) workloads(obs *Observation) []NodeWorkloads {
-	if !obs.LiveNodes.Known {
-		return nil
-	}
-
+func (o *Observer) workloads(obs *Observation) []NodeCount {
 	// A projection handler that minimizes concurrency has one workload for
 	// all of the event streams, so each key is counted once.
 	keys := map[string]*uuidpb.UUID{}
@@ -610,25 +652,50 @@ func (o *Observer) workloads(obs *Observation) []NodeWorkloads {
 		}
 	}
 
-	counts := map[string]int{}
-	for _, k := range keys {
-		if id, ok := obs.LiveNodes.FindWorkloadOwner(k); ok {
-			counts[id.AsString()]++
-		}
-	}
+	return countByNode(
+		obs.LiveNodes,
+		func(count func(*uuidpb.UUID, int)) {
+			for _, k := range keys {
+				count(k, 1)
+			}
+		},
+	)
+}
 
-	workloads := make([]NodeWorkloads, 0, len(obs.LiveNodes.Nodes))
-	for _, n := range obs.LiveNodes.Nodes {
-		workloads = append(
-			workloads,
-			NodeWorkloads{
-				NodeID:    n.ID,
-				Workloads: counts[n.ID.AsString()],
+// handlerNodes returns how the work of the handler that s summarizes is spread
+// across the live nodes. See [HandlerSummary.Nodes].
+func (o *Observer) handlerNodes(obs *Observation, s HandlerSummary) []NodeCount {
+	switch s.Handler.Type {
+	case config.IntegrationHandlerType:
+		if s.QueuedMessagesErr != nil {
+			return nil
+		}
+
+		return countByNode(
+			obs.LiveNodes,
+			func(count func(*uuidpb.UUID, int)) {
+				for _, q := range s.backlog {
+					count(q.QueueID, q.Messages)
+				}
+			},
+		)
+
+	case config.ProjectionHandlerType:
+		if obs.EventStreamsErr != nil {
+			return nil
+		}
+
+		return countByNode(
+			obs.LiveNodes,
+			func(count func(*uuidpb.UUID, int)) {
+				for _, es := range obs.EventStreams {
+					count(s.Handler.StreamWorkloadKey(es.ID), 1)
+				}
 			},
 		)
 	}
 
-	return workloads
+	return nil
 }
 
 // observeSlowParts reads the parts of an observation that cost the most to
@@ -716,6 +783,7 @@ func (o *Observer) queuedByHandler(ctx context.Context) (map[string]HandlerSumma
 		s := summaries[key.AsString()]
 		s.QueuedMessages += g.Messages
 		s.FailingMessages += g.Failing
+		s.backlog = append(s.backlog, g)
 		summaries[key.AsString()] = s
 	}
 

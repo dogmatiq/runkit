@@ -141,16 +141,21 @@
   <div class="stats">
     <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">command backlog</span></div>
   </div>
+  {{$f.HandlerNodeBar $s}}
   {{end}}
 
   {{if $h.Projection}}
   <div class="stats">
     <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">event backlog</span></div>
   </div>
+  {{$f.HandlerNodeBar $s}}
   {{end}}
 
-  {{if $failing}}<footer class="hcard-foot is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</footer>
-  {{- else if $h.Projection}}<footer class="hcard-foot">{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}</footer>{{end}}
+  {{if or $failing $h.Projection $h.MinimizesConcurrency}}<footer class="hcard-foot">
+    {{- if $failing}}<span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>{{end}}
+    {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end}}
+    {{- if $h.Projection}}<span>{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}</span>{{end -}}
+  </footer>{{end}}
   {{end}}
 </a>
 {{- end}}
