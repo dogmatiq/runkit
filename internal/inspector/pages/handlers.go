@@ -187,7 +187,6 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request, f frame) {
 	data := struct {
 		frame
 		ID          *uuidpb.UUID
-		Label       string
 		DeliveredBy ownerView
 		Queue       observe.Queue
 		HasMessages bool
@@ -197,7 +196,6 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request, f frame) {
 	}{
 		frame:       f,
 		ID:          id,
-		Label:       f.QueueLabel(id),
 		DeliveredBy: f.Owner(id),
 		Limit:       pageSize * 2,
 	}

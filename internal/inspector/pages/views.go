@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/dogmatiq/dapper"
-	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -68,43 +67,8 @@ func (f frame) Owner(key *uuidpb.UUID) ownerView {
 func (f frame) QueueView(q observe.Queue) queueView {
 	return queueView{
 		Queue:       q,
-		Label:       f.QueueLabel(q.ID),
 		DeliveredBy: f.Owner(q.ID),
 	}
-}
-
-// QueueLabel returns a short description of the messages in the queue with
-// the given ID.
-//
-// The engine chooses each message's queue. A command for an integration
-// handler that minimizes concurrency goes to the queue whose ID is the
-// handler's key. A command for an aggregate instance goes to the queue whose
-// ID is the instance's event stream ID. Everything else goes to the queue
-// whose ID is the ID of the node that added it.
-//
-// Before version 0.3.0, the engine kept commands and deadlines in other
-// tables. Upgrading moved each command to the queue whose ID is its message
-// type ID, and each deadline to the queue whose ID is its process handler's
-// key.
-func (f frame) QueueLabel(id *uuidpb.UUID) string {
-	if h, ok := f.App.Handler(id); ok {
-		if h.Type == config.ProcessHandlerType {
-			return "deadlines for " + h.Name + ", added before version 0.3.0"
-		}
-		return "commands for " + h.Name
-	}
-
-	if f.Obs != nil {
-		if _, ok := f.Obs.EventStream(id); ok {
-			return "commands for aggregate instances on event stream " + shortID(id)
-		}
-	}
-
-	if t := f.App.MessageType(id); t.Name != "" {
-		return "commands of type " + t.Name + ", added before version 0.3.0"
-	}
-
-	return "messages added by the node with this ID"
 }
 
 // HandlerName returns the name of the handler with the given key, or its key
@@ -221,9 +185,6 @@ type ownerView struct {
 // queueView is a queue, as a page shows it.
 type queueView struct {
 	observe.Queue
-
-	// Label says what the queue's messages are.
-	Label string
 
 	// DeliveredBy is the node that owns the workload of delivering the
 	// queue's messages.

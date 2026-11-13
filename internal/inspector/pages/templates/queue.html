@@ -1,7 +1,6 @@
 {{define "queue.html"}}{{template "top" .}}
 <dl class="facts wide">
   <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
-  <dt>Holds</dt><dd>{{.Label}}</dd>
   <dt>Delivered by</dt><dd>{{template "owner" .DeliveredBy}}</dd>
   {{if .HasMessages}}
   <dt>Messages</dt><dd data-watch="messages">{{num .Queue.Messages}} <span class="muted">({{num .Queue.Deadlines}} deadlines)</span></dd>
