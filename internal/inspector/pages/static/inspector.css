@@ -457,14 +457,6 @@ h3 {
   font-weight: 600;
 }
 
-.footer-mark {
-  width: 20px;
-  height: auto;
-  flex: none;
-  fill: currentColor;
-  color: var(--text-soft);
-}
-
 .footer-versions {
   flex-wrap: wrap;
   gap: 2px 8px;
