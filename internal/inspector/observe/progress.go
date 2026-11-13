@@ -227,42 +227,6 @@ func (d *Database) projectionProgress(
 	return progress, nil
 }
 
-// countHandled returns the number of events on the given stream from the given
-// offset, up to but not including the end offset, of the types that the given
-// handler handles.
-func (d *Database) countHandled(
-	ctx context.Context,
-	h *Handler,
-	streamID *uuidpb.UUID,
-	from, end uint64,
-) (int, error) {
-	var n int
-
-	err := d.read(
-		ctx,
-		func(tx *sql.Tx) error {
-			return tx.QueryRowContext(
-				ctx,
-				`SELECT count(*)
-				FROM eventstream.events AS e
-				WHERE e.stream_id = $1
-					AND e.message_type_id = ANY($2)
-					AND e.stream_offset >= $3
-					AND e.stream_offset < $4`,
-				xsql.UUID(streamID),
-				xsql.UUIDs(h.MessageTypeIDs(config.HandlesEventRouteType)...),
-				from,
-				end,
-			).Scan(&n)
-		},
-	)
-	if err != nil {
-		return 0, fmt.Errorf("unable to count handled events: %w", err)
-	}
-
-	return n, nil
-}
-
 // countUnhandled returns the number of events on the given stream at or after
 // the given offset of the types that the given handler handles, up to
 // [countLimit].

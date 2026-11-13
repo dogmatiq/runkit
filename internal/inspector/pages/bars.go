@@ -82,20 +82,11 @@ func segmentBar(class string, segments []segment) template.HTML {
 }
 
 // bindingBar returns a bar of how a handler's instances are spread across the
-// things that they are bound to, with a caption. The class names the subsystem
+// things that they are bound to. The class names the subsystem
 // of those things, such as "streams", and the nouns name one thing, such as
 // "event stream", and many.
 func bindingBar(b observe.Bindings, class, singular, plural string) template.HTML {
-	var (
-		segments []segment
-		bound    int
-	)
-
-	for _, binding := range b.Bindings {
-		if binding.ID != nil {
-			bound++
-		}
-	}
+	var segments []segment
 
 	for i, binding := range b.Bindings {
 		if i == barSegments-1 && len(b.Bindings) > barSegments {
@@ -129,14 +120,7 @@ func bindingBar(b observe.Bindings, class, singular, plural string) template.HTM
 		)
 	}
 
-	caption := "across " + countOf(bound, singular, plural)
-	if b.IsAtLeast {
-		caption += ", from the first " + formatNumber(b.Instances) + " instances"
-	}
-
-	return segmentBar(class, segments) + template.HTML(
-		`<span class="bar-caption">`+template.HTMLEscapeString(caption)+`</span>`,
-	)
+	return segmentBar(class, segments)
 }
 
 // streamBar returns a bar of the sizes of the given event streams, like a disk

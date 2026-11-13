@@ -117,10 +117,11 @@ func (d *Database) AggregateBindings(
 	)
 }
 
-// ActiveProcessBindings returns how the instances of the process handler with
-// the given key that have not ended are spread across the queues for their
-// deadlines.
-func (d *Database) ActiveProcessBindings(
+// ProcessBindings returns how the instances of the process handler with the
+// given key that are in progress are spread across the queues for their
+// deadlines. A process instance is in progress until it ends, even while it
+// waits for a deadline.
+func (d *Database) ProcessBindings(
 	ctx context.Context,
 	handlerKey *uuidpb.UUID,
 ) (Bindings, error) {

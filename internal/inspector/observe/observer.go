@@ -139,20 +139,12 @@ type HandlerSummary struct {
 	// Bindings is how the handler's instances are spread across the things
 	// that they are bound to. For an aggregate handler it covers every
 	// instance, by event stream. For a process handler it covers the
-	// instances that have not ended, by the queue for their deadlines.
+	// instances that are in progress, which are those that have not ended, by
+	// the queue for their deadlines.
 	Bindings Bindings
 
 	// BindingsErr explains why Bindings could not be read.
 	BindingsErr error
-
-	// HandleRate is the number of events per second that the handler handled
-	// between the two most recent readings, across every local event stream,
-	// for a process or projection handler. It counts only events of the types
-	// that the handler handles.
-	HandleRate float64
-
-	// HasHandleRate is true if HandleRate is known, which needs two readings.
-	HasHandleRate bool
 
 	// Progress is how far the handler has got through each event stream, for
 	// a process or projection handler.
@@ -280,21 +272,6 @@ type Observer struct {
 	// slow is what was read at slowAt, keyed by handler key. Only the Run
 	// goroutine uses it.
 	slow map[string]HandlerSummary
-
-	// checkpoints is each handler's checkpoint offsets at slowAt, keyed by
-	// handler key, used to compute the rate at which it handles events. Only
-	// the Run goroutine uses it.
-	checkpoints map[string]checkpointReading
-}
-
-// checkpointReading is a handler's checkpoint offsets at one time.
-type checkpointReading struct {
-	// At is the time of the reading.
-	At time.Time
-
-	// Offsets maps the ID of each local event stream to the handler's
-	// checkpoint offset on it.
-	Offsets map[string]uint64
 }
 
 // Changed tells the observer that something in the database has changed.
@@ -480,7 +457,7 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 
 		case config.ProcessHandlerType:
 			s.Instances, s.InstancesErr = o.Database.CountProcessInstances(ctx, h.Key)
-			s.Bindings, s.BindingsErr = o.Database.ActiveProcessBindings(ctx, h.Key)
+			s.Bindings, s.BindingsErr = o.Database.ProcessBindings(ctx, h.Key)
 			s.Progress, s.ProgressErr = o.Database.processProgress(ctx, h, listLimit)
 
 		case config.ProjectionHandlerType:
@@ -497,81 +474,10 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 			)
 		}
 
-		if h.HandlesEvents() && s.ProgressErr == nil {
-			s.HandleRate, s.HasHandleRate = o.handleRate(ctx, h, s.Progress)
-		}
-
 		slow[h.Key.AsString()] = s
 	}
 
 	return slow
-}
-
-// handleRate returns the number of events per second that the handler handled
-// since the previous reading, and records its current checkpoint offsets for
-// the next reading. On each local event stream, the handled events are those
-// of the types that the handler handles, between its previous and current
-// checkpoint offsets. It returns false if there is no previous reading, or if
-// the events can not be counted.
-func (o *Observer) handleRate(
-	ctx context.Context,
-	h *Handler,
-	progress []StreamProgress,
-) (float64, bool) {
-	now := time.Now()
-	key := h.Key.AsString()
-
-	current := map[string]uint64{}
-	for _, p := range progress {
-		if !p.IsRemote {
-			current[p.StreamID.AsString()] = p.CheckpointOffset
-		}
-	}
-
-	if o.checkpoints == nil {
-		o.checkpoints = map[string]checkpointReading{}
-	}
-
-	prev, ok := o.checkpoints[key]
-
-	o.checkpoints[key] = checkpointReading{
-		At:      now,
-		Offsets: current,
-	}
-
-	if !ok {
-		return 0, false
-	}
-
-	seconds := now.Sub(prev.At).Seconds()
-	if seconds <= 0 {
-		return 0, false
-	}
-
-	handled := 0
-
-	for _, p := range progress {
-		if p.IsRemote {
-			continue
-		}
-
-		// A stream that was not in the previous reading has no starting point,
-		// and a checkpoint that moved back, such as when a projection is reset,
-		// has handled nothing new.
-		from, ok := prev.Offsets[p.StreamID.AsString()]
-		if !ok || p.CheckpointOffset <= from {
-			continue
-		}
-
-		n, err := o.Database.countHandled(ctx, h, p.StreamID, from, p.CheckpointOffset)
-		if err != nil {
-			return 0, false
-		}
-
-		handled += n
-	}
-
-	return float64(handled) / seconds, true
 }
 
 // queuedByHandler returns a summary of each handler that holds only the

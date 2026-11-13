@@ -111,46 +111,41 @@
 {{$failing := 0}}{{$todo := 0}}{{if $s}}{{$failing = $s.FailingMessages}}{{$todo = $s.Unhandled}}{{end}}
 <a class="hcard handler-{{$kind}}{{if $failing}} is-bad{{end}}" href="{{$f.Root}}handlers/{{id $h.Key}}">
   <header class="hcard-head">
-    <span class="handler-badge" title="{{$kind}} handler">{{icon $kind}}</span>
-    <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
-    {{if $h.IsDisabled}}<span class="tag">disabled</span>{{end}}
+    <span class="handler-badge">{{icon $kind}}</span>
+    <span class="hcard-title">
+      <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
+      <span class="hcard-kind">{{$kind}}{{if $h.IsDisabled}}, disabled{{end}}</span>
+    </span>
   </header>
   {{if $s}}
 
   {{if $h.Aggregate}}
   <div class="stats">
     <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value">{{compact $s.QueuedMessages}}</span><span class="stat-label">queued</span></div>
   </div>
-  <div class="bar">{{bindings $s.Bindings "streams" "event stream" "event streams"}}</div>
-  <div class="facts-line">
-    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "command" "commands"}} queued</span>
-  </div>
+  {{bindings $s.Bindings "streams" "event stream" "event streams"}}
   {{end}}
 
   {{if $h.Process}}
   <div class="stats">
-    <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $s.Bindings.Instances "active instance" "active instances"}}</span></div>
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+    <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">in progress</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">to handle</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}}</span></div>
   </div>
-  <div class="bar">{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}</div>
-  <div class="facts-line">
-    <span><strong>{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
-    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
-    {{if $s.HasHandleRate}}<span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span>{{end}}
-  </div>
+  {{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}
   {{end}}
 
   {{if eq $kind "integration"}}
   <div class="stats">
-    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value">{{compact $s.QueuedMessages}}</span><span class="stat-label">queued</span></div>
   </div>
   {{end}}
 
   {{if $h.Projection}}
   <div class="stats">
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">to handle</span></div>
   </div>
-  {{if $s.HasHandleRate}}<div class="facts-line"><span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span></div>{{end}}
   {{end}}
 
   {{if $failing}}<footer class="hcard-foot is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</footer>
