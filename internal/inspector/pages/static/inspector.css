@@ -24,7 +24,7 @@
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 24px;
+  --space-5: 20px;
   --space-6: 32px;
   --space-7: 48px;
   --space-8: 64px;
@@ -383,71 +383,6 @@ h3 {
   border-top: 1px solid var(--border);
 }
 
-/* Issues. */
-
-.issues {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-
-.issue {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-left-width: 3px;
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.issue a {
-  color: inherit;
-}
-
-.issue .sev {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.issue.bad {
-  border-left-color: var(--bad);
-  background: var(--bad-soft);
-}
-
-.issue.bad .sev {
-  background: var(--bad);
-}
-
-.issue.warn {
-  border-left-color: var(--warn);
-  background: var(--warn-soft);
-}
-
-.issue.warn .sev {
-  background: var(--warn);
-}
-
-.issue.info {
-  border-left-color: var(--info);
-}
-
-.issue.info .sev {
-  background: var(--info);
-}
-
-.issue.ok {
-  border-left-color: var(--ok);
-  background: var(--ok-soft);
-}
-
-.issue.ok .sev {
-  background: var(--ok);
-}
-
 /*
  * The overview.
  *
@@ -486,22 +421,21 @@ h3 {
   box-shadow: var(--raised-shadow), 0 0 0 1px var(--border-strong);
 }
 
-.metric-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-soft);
+.metric-icon {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+  color: var(--faint);
 }
 
-.metric-title .icon {
+.metric-icon .icon {
   margin: 0;
-  color: var(--muted);
+  width: 20px;
+  height: 20px;
 }
 
 .metric-value {
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
   font-size: var(--text-4xl);
   font-weight: 700;
   line-height: 1;
@@ -614,23 +548,15 @@ h3 {
   height: 18px;
 }
 
-.hcard-title {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
 .hcard-name {
-  font-size: var(--text-base);
-  font-weight: 600;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.hcard-kind {
-  font-size: var(--text-xs);
-  color: var(--muted);
 }
 
 .stats {

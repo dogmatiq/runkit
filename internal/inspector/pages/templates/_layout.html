@@ -21,7 +21,7 @@
     <span class="brand-tool">inspector</span>
   </a>
   <nav class="nav">
-    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>{{icon "overview"}}Overview{{template "badge" .}}</a>
+    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>{{icon "overview"}}Overview</a>
     <a href="{{.Root}}nodes" {{if eq .Section "nodes"}}aria-current="page"{{end}}>{{icon "node"}}Nodes</a>
     <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>{{icon "queue"}}Queues</a>
     <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>{{icon "stream"}}Event streams</a>
@@ -51,4 +51,3 @@
 </html>
 {{- end}}
 
-{{define "badge"}}{{$bad := 0}}{{range .Issues}}{{if .IsBroken}}{{$bad = add $bad 1}}{{end}}{{end}}{{if $bad}} <span class="count bad" data-watch="issues">{{$bad}}</span>{{end}}{{end}}

@@ -86,7 +86,7 @@
 <div class="table-wrap">
 <table class="table">
   <thead>
-    <tr><th>Handler</th><th>Event stream</th><th class="num">Checkpoint</th><th class="num">Length</th><th class="num">To handle</th><th>Consumed by</th></tr>
+    <tr><th>Handler</th><th>Event stream</th><th class="num">Checkpoint</th><th class="num">Length</th><th class="num">To handle</th><th title="The node that owns this workload, computed from the live nodes that the inspector hears. During a handoff, nodes can briefly disagree.">Owner</th></tr>
   </thead>
   <tbody>
   {{range $rows}}
@@ -111,24 +111,19 @@
 {{$failing := 0}}{{$todo := 0}}{{if $s}}{{$failing = $s.FailingMessages}}{{$todo = $s.Unhandled}}{{end}}
 <a class="hcard handler-{{$kind}}{{if $failing}} is-bad{{end}}" href="{{$f.Root}}handlers/{{id $h.Key}}">
   <header class="hcard-head">
-    <span class="handler-badge">{{icon $kind}}</span>
-    <span class="hcard-title">
-      <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
-      <span class="hcard-kind">{{$kind}} handler{{if $h.IsDisabled}}, disabled{{end}}</span>
-    </span>
+    <span class="handler-badge" title="{{$kind}} handler">{{icon $kind}}</span>
+    <span class="hcard-name" title="{{$h.Name}}">{{$h.Name}}</span>
+    {{if $h.IsDisabled}}<span class="tag">disabled</span>{{end}}
   </header>
   {{if $s}}
   <div class="stats">
     {{if $h.HasInstances}}<div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value" data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>{{end}}
-    {{if $h.HandlesCommands}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} waiting</span></div>{{end}}
-    {{if $h.Process}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}} waiting</span></div>{{end}}
-    {{if $h.HandlesEvents}}<div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>{{end}}
+    {{if $h.HandlesCommands}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>{{end}}
+    {{if $h.HandlesEvents}}<div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>{{end}}
+    {{if $h.Process}}<div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span></div>{{end}}
   </div>
-  <footer class="hcard-foot{{if $failing}} is-bad{{end}}">
-    {{if $failing}}<span class="status-dot"></span>{{plural $failing "message" "messages"}} failing
-    {{- else if $h.Projection}}{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}
-    {{- else}}Nothing failing{{end}}
-  </footer>
+  {{if $failing}}<footer class="hcard-foot is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</footer>
+  {{- else if $h.Projection}}<footer class="hcard-foot">{{if $s.LastCompactedAt.IsZero}}Never compacted{{else}}Compacted {{rel $f.Now $s.LastCompactedAt}}{{end}}</footer>{{end}}
   {{end}}
 </a>
 {{- end}}

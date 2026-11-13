@@ -7,7 +7,7 @@
     <header class="panel-head"><h2>Delivery</h2></header>
     <dl class="facts">
       <dt>Queue</dt><dd><a href="{{.Root}}queues/{{id .Queued.QueueID}}"><code>{{short .Queued.QueueID}}</code></a> </dd>
-      <dt>Delivered by</dt><dd>{{template "owner" (.Owner .Queued.QueueID)}}</dd>
+      <dt title="The node that owns this workload, computed from the live nodes that the inspector hears. During a handoff, nodes can briefly disagree.">Owner</dt><dd>{{template "owner" (.Owner .Queued.QueueID)}}</dd>
       {{if .Queued.IsDeadline}}<dt>Process instance</dt><dd><a href="{{.Root}}handlers/{{id .Queued.HandlerKey}}/instances/{{seg .Queued.InstanceID}}">{{.HandlerName .Queued.HandlerKey}} {{.Queued.InstanceID}}</a></dd>{{end}}
       <dt>Scheduled for</dt><dd>{{rel .Now .Queued.ScheduledFor}}</dd>
       <dt>Next attempt</dt><dd>{{rel .Now .Queued.NextAttemptAt}}</dd>

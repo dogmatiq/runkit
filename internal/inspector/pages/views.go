@@ -41,10 +41,6 @@ type frame struct {
 
 	// LocalNow is the inspector's clock. Heartbeat times come from it.
 	LocalNow time.Time
-
-	// Issues is the things that need attention, from the most recent
-	// observation.
-	Issues []issue
 }
 
 // Owner returns the node that owns the workload with the given key.

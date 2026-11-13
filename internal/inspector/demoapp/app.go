@@ -31,7 +31,7 @@ type App struct {
 
 // Configure declares the application's configuration.
 func (a *App) Configure(c dogma.ApplicationConfigurer) {
-	c.Identity("bank", "d0137119-2660-4bc2-ab4c-bc156e08521c")
+	c.Identity("statements", "d0137119-2660-4bc2-ab4c-bc156e08521c")
 	c.Routes(
 		dogma.ViaAggregate[*account](&accountHandler{}),
 		dogma.ViaProcess[*statementSchedule](

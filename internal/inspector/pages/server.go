@@ -168,10 +168,6 @@ func (s *Server) frame(r *http.Request) frame {
 		f.Now = f.Obs.At.Add(time.Since(f.Obs.ReadAt))
 	}
 
-	if f.Obs != nil {
-		f.Issues = findIssues(s.Application, f.Obs, f.Now)
-	}
-
 	return f
 }
 

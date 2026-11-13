@@ -1,7 +1,7 @@
 {{define "queue.html"}}{{template "top" .}}
 <dl class="facts wide">
   <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
-  <dt>Delivered by</dt><dd>{{template "owner" .DeliveredBy}}</dd>
+  <dt title="The node that owns this workload, computed from the live nodes that the inspector hears. During a handoff, nodes can briefly disagree.">Owner</dt><dd>{{template "owner" .DeliveredBy}}</dd>
   {{if .HasMessages}}
   <dt>Messages</dt><dd data-watch="messages">{{num .Queue.Messages}} <span class="muted">({{num .Queue.Deadlines}} deadlines)</span></dd>
   <dt>Due</dt><dd data-watch="due">{{num .Queue.Due}}{{if .Queue.Due}} <span class="muted">the oldest for {{dur (.Queue.LongestWait .Now)}}</span>{{end}}</dd>

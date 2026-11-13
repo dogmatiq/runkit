@@ -11,7 +11,7 @@
 <div class="table-wrap">
 <table class="table">
   <thead>
-    <tr><th>Queue</th><th class="num">Messages</th><th class="num">Deadlines</th><th class="num">Due</th><th>Longest wait</th><th class="num">Failing</th><th>First failed</th><th>Delivered by</th></tr>
+    <tr><th>Queue</th><th class="num">Messages</th><th class="num">Deadlines</th><th class="num">Due</th><th>Longest wait</th><th class="num">Failing</th><th>First failed</th><th title="The node that owns this workload, computed from the live nodes that the inspector hears. During a handoff, nodes can briefly disagree.">Owner</th></tr>
   </thead>
   <tbody>
   {{range .Queues}}
