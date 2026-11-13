@@ -19,16 +19,16 @@
 <body data-live="{{.Root}}live" data-version="{{version}}" hx-ext="morph">
 <header class="titlebar">
 <div class="titlebar-inner">
-  <a class="brand" href="{{.Root}}" title="Application {{.App.Identity.GetName}}, key {{id .App.Identity.GetKey}}">
+  <a class="brand" href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page" {{end}}title="Application {{.App.Identity.GetName}}, key {{id .App.Identity.GetKey}}">
     {{logo "mark"}}
     <span class="brand-app">{{.App.Identity.GetName}}</span>
     <span class="brand-tool">inspector</span>
   </a>
   <nav class="nav">
-    <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>{{icon "overview"}}Overview</a>
     <a href="{{.Root}}cluster" {{if eq .Section "cluster"}}aria-current="page"{{end}}>{{icon "cluster"}}Cluster</a>
     <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>{{icon "queue"}}Queues</a>
     <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>{{icon "stream"}}Streams</a>
+    <span class="nav-divider" aria-hidden="true"></span>
     <a href="{{.Root}}aggregates" {{if eq .Section "aggregates"}}aria-current="page"{{end}}>{{icon "aggregate"}}Aggregates</a>
     <a href="{{.Root}}processes" {{if eq .Section "processes"}}aria-current="page"{{end}}>{{icon "process"}}Processes</a>
     <a href="{{.Root}}integrations" {{if eq .Section "integrations"}}aria-current="page"{{end}}>{{icon "integration"}}Integrations</a>
