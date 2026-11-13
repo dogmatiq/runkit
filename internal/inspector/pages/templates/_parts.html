@@ -126,7 +126,6 @@
     <div class="stat{{if not $s.ActiveInstances.Count}} is-zero{{end}}" title="{{if $s.ActiveInstancesErr}}{{$s.ActiveInstancesErr}}{{else}}Instances that recorded an event in the last {{dur $f.Obs.ActiveWindow}}{{end}}"><span class="stat-value">{{if $s.ActiveInstancesErr}}?{{else}}{{template "count" $s.ActiveInstances}}{{end}}</span><span class="stat-label">active</span></div>
     <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">command backlog</span></div>
   </div>
-  {{bindings $s.Bindings "streams" "event stream" "event streams"}}
   {{end}}
 
   {{if $h.Process}}
@@ -137,7 +136,6 @@
     <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "deadline"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}}</span></div>
     {{- end}}
   </div>
-  {{if $h.SchedulesDeadlines}}{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}{{end}}
   {{end}}
 
   {{if eq $kind "integration"}}
@@ -154,10 +152,15 @@
 
   {{with $rate}}{{$n := round .PerMinute}}<p class="hcard-rate"><span class="hcard-rate-value">{{compact $n}}</span> {{noun $n "event" "events"}} {{.Verb}} per minute</p>{{end}}
 
-  {{if or $failing $h.MinimizesConcurrency}}<footer class="hcard-foot">
-    {{- if $failing}}<span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>{{end}}
-    {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end -}}
-  </footer>{{end}}
+  {{/* The bar sits on the chart, with no text between them. */}}
+  {{if or $failing $h.MinimizesConcurrency $h.Aggregate (and $h.Process $h.SchedulesDeadlines)}}<div class="hcard-bottom">
+    {{if or $failing $h.MinimizesConcurrency}}<footer class="hcard-foot">
+      {{- if $failing}}<span class="is-bad"><span class="status-dot"></span>{{plural $failing "message" "messages"}} failing</span>{{end}}
+      {{- if $h.MinimizesConcurrency}}<span title="The handler's configuration asks the engine to minimize concurrency">Minimizes concurrency</span>{{end -}}
+    </footer>{{end}}
+    {{if $h.Aggregate}}{{bindings $s.Bindings "streams" "event stream" "event streams"}}{{end}}
+    {{if and $h.Process $h.SchedulesDeadlines}}{{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}{{end}}
+  </div>{{end}}
   {{with $rate}}{{sparkline .Rates}}{{end}}
   {{end}}
 </a>
