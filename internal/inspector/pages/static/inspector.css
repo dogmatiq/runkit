@@ -632,7 +632,7 @@ h3 {
 .stats {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4) var(--space-6);
+  gap: var(--space-4) var(--space-5);
 }
 
 .stat {
@@ -652,11 +652,12 @@ h3 {
   color: var(--muted);
 }
 
-.stat-label .icon {
-  width: 12px;
-  height: 12px;
-  margin-right: var(--space-1);
-  vertical-align: -2px;
+/* An icon before a value hints at what it counts, such as events. */
+.stat-value .icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  vertical-align: -1px;
 }
 
 .hint-streams .icon {
@@ -670,6 +671,10 @@ h3 {
 .stat.is-zero .stat-value {
   color: var(--faint);
   font-weight: 500;
+}
+
+.stat.is-zero .icon {
+  opacity: 0.6;
 }
 
 .stat.is-bad .stat-value {
