@@ -171,8 +171,16 @@
       var bump = (height * 0.55) / Math.sqrt(Math.max(nodes.length, 1));
       var points = [];
 
-      for (var x = 0; x <= width; x += 2 * ratio) {
-        var t = now - lead - ((width - x) / width) * beatWindow;
+      // The line is drawn through points at fixed times, not at fixed
+      // places, so each point moves left with the bumps and keeps its height.
+      // Points at fixed places would sample each bump at a slightly different
+      // part from one frame to the next, and its edges would shimmer.
+      var step = ((2 * ratio) / width) * beatWindow;
+      var right = now - lead;
+      var left = right - beatWindow;
+
+      for (var t = Math.floor(left / step) * step; t <= right + step; t += step) {
+        var x = width - ((right - t) / beatWindow) * width;
         var y = 0;
         for (var j = 0; j < times.length; j++) {
           var d = (t - times[j]) / spread;
