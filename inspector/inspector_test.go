@@ -44,7 +44,7 @@ func TestInspector(t *testing.T) {
 			t,
 			"the inspector to show the live nodes",
 			func() bool {
-				return strings.Contains(get(t, server.URL+"/nodes").Body, `class="hcard node-card"`)
+				return strings.Contains(get(t, server.URL+"/cluster").Body, `class="hcard node-card"`)
 			},
 		)
 

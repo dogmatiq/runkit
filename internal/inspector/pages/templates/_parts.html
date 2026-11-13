@@ -1,7 +1,7 @@
 {{define "owner" -}}
 {{if not .Known}}<span class="muted" title="The live nodes are not known yet">not known</span>
 {{- else if not .ID}}<span class="tag bad">no live nodes</span>
-{{- else}}<a class="node-ref" href="{{.Root}}nodes#node-{{id .ID}}" title="{{id .ID}}">{{icon "node"}}<code>{{short .ID}}</code></a>
+{{- else}}<a class="node-ref" href="{{.Root}}cluster#node-{{id .ID}}" title="{{id .ID}}">{{icon "node"}}<code>{{short .ID}}</code></a>
 {{- end}}
 {{- end}}
 

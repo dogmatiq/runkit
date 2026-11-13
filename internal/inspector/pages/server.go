@@ -108,7 +108,7 @@ func (s *Server) init() {
 	s.mux.HandleFunc("GET /live", s.Broadcaster.serve)
 
 	s.page("GET /{$}", s.overview)
-	s.page("GET /nodes", s.nodes)
+	s.page("GET /cluster", s.cluster)
 	s.page("GET /queues", s.queues)
 	s.page("GET /queues/{id}", s.queue)
 	s.page("GET /messages/{id}", s.message)

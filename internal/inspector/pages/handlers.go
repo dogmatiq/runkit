@@ -76,9 +76,9 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 	render(w, http.StatusOK, "overview.html", data)
 }
 
-func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
+func (s *Server) cluster(w http.ResponseWriter, r *http.Request, f frame) {
 	f.Title = "Cluster"
-	f.Section = "nodes"
+	f.Section = "cluster"
 
 	// nodeWorkloads is the workloads that one node owns.
 	type nodeWorkloads struct {
@@ -139,7 +139,7 @@ func (s *Server) nodes(w http.ResponseWriter, r *http.Request, f frame) {
 	render(
 		w,
 		http.StatusOK,
-		"nodes.html",
+		"cluster.html",
 		struct {
 			frame
 			Nodes []*nodeWorkloads
