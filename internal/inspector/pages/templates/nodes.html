@@ -10,30 +10,28 @@
 {{if not .Obs}}{{template "waiting" .}}
 {{else if not .Obs.LiveNodes.Known}}{{template "notknown" .}}
 {{else}}
-<div class="cards">
-{{range .Nodes}}
-  <article class="card node-card" id="node-{{id .Node.ID}}">
-    <header class="card-head">
-      {{icon "node"}}
-      <code class="node-id">{{id .Node.ID}}</code>
+<div class="hcards">
+{{range .Nodes}}{{$streams := 0}}{{range .ConsumedStreams}}{{$streams = add $streams .EventStreams}}{{end}}{{$queues := len .Queues}}
+  <article class="hcard node-card" id="node-{{id .Node.ID}}">
+    <header class="hcard-head">
+      <span class="handler-badge badge-node" title="node">{{icon "node"}}</span>
+      <code class="hcard-id" title="{{id .Node.ID}}">{{short .Node.ID}}</code>
     </header>
-    <dl class="facts">
-      <dt>Last heartbeat</dt><dd>{{rel $.LocalNow .Node.LastHeartbeatAt}}</dd>
-      <dt>Queues</dt><dd data-watch="nq-{{id .Node.ID}}">{{len .Queues}}</dd>
-    </dl>
+    <div class="stats">
+      <div class="stat{{if not $queues}} is-zero{{end}}"><span class="stat-value" data-watch="nq-{{id .Node.ID}}">{{$queues}}</span><span class="stat-label">{{noun $queues "queue" "queues"}} delivered</span></div>
+      <div class="stat{{if not $streams}} is-zero{{end}}"><span class="stat-value" data-watch="ns-{{id .Node.ID}}">{{$streams}}</span><span class="stat-label">{{noun $streams "event stream workload" "event stream workloads"}}</span></div>
+    </div>
     {{if .Queues}}
-    <h3>Delivers the messages in</h3>
-    <ul class="list">
-      {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a> <span class="tag">{{num .Messages}}</span>{{if .Failing}} <span class="tag bad">{{num .Failing}} failing</span>{{end}}</li>{{end}}
+    <ul class="workloads">
+      {{range .Queues}}<li><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a><span class="muted">{{plural .Messages "message" "messages"}}</span>{{if .Failing}}<span class="is-bad-text">{{num .Failing}} failing</span>{{end}}</li>{{end}}
     </ul>
     {{end}}
     {{if .ConsumedStreams}}
-    <h3>Consumes event streams for</h3>
-    <ul class="list">
-      {{range .ConsumedStreams}}<li><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a> <span class="tag">{{plural .EventStreams "event stream" "event streams"}}</span></li>{{end}}
+    <ul class="workloads">
+      {{range .ConsumedStreams}}<li><a href="{{$.Root}}handlers/{{id .Handler.Key}}">{{icon .Handler.Type.String}}{{.Handler.Name}}</a><span class="muted">{{plural .EventStreams "event stream" "event streams"}}</span></li>{{end}}
     </ul>
     {{end}}
-    {{if and (not .Queues) (not .ConsumedStreams)}}<p class="muted">Owns no workloads right now.</p>{{end}}
+    <footer class="hcard-foot">Last heartbeat {{rel $.LocalNow .Node.LastHeartbeatAt}}</footer>
   </article>
 {{else}}
   <div class="empty bad"><p>There are no live nodes. No messages are delivered and no event streams are consumed until a node starts.</p></div>
