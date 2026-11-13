@@ -27,8 +27,10 @@ const quietPeriod = 30 * time.Second
 // Any other error is recorded as a failure by a [failure.Tracker] with the
 // given description, and fn is called again after the delay that the tracker
 // decides.
-// A deterministic error is logged as an ERROR immediately, and [Run] waits
-// longer before calling fn again than after any other failure.
+//
+// A deterministic error is logged as an ERROR unless its streak has already
+// logged one, and the delay after it is limited to 5 minutes instead of 15
+// seconds.
 //
 // [Run] can't see whether fn is making progress, so a streak of failures ends
 // once fn has run for the quiet period without failing. If fn returns nil
@@ -66,12 +68,7 @@ func Run(
 
 		xsql.PanicOnDeadlock(err)
 
-		var delay time.Duration
-		if xerrors.IsDeterministic(err) {
-			delay = failures.FailedDeterministically(ctx, err)
-		} else {
-			delay = failures.Failed(ctx, err)
-		}
+		delay := failures.Failed(ctx, err)
 
 		select {
 		case <-ctx.Done():

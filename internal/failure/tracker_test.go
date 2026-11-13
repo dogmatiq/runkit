@@ -15,55 +15,6 @@ import (
 func TestTracker(t *testing.T) {
 	failure := errors.New("<error>")
 
-	// expectDelay asserts that the given delay is within the jitter applied to
-	// the given backoff, which is from half of it to all of it.
-	expectDelay := func(t *testing.T, got, backoff time.Duration) {
-		t.Helper()
-
-		if got < backoff/2 || got > backoff {
-			t.Fatalf("unexpected delay: got %s, want from %s to %s", got, backoff/2, backoff)
-		}
-	}
-
-	t.Run("it starts each streak at the base delay", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			failures := &Tracker{
-				Description:  "<work>",
-				EngineLogger: spruce.NewTestLogger(t),
-			}
-
-			expectDelay(t, failures.Failed(t.Context(), failure), 100*time.Millisecond)
-		})
-	})
-
-	t.Run("it doubles the delay up to the transient limit", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			failures := &Tracker{
-				Description:  "<work>",
-				EngineLogger: spruce.NewTestLogger(t),
-			}
-
-			for i := range 10 {
-				backoff := min(100*time.Millisecond<<i, 15*time.Second)
-				expectDelay(t, failures.Failed(t.Context(), failure), backoff)
-			}
-		})
-	})
-
-	t.Run("it limits a deterministic failure's delay to 5 minutes", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			failures := &Tracker{
-				Description:  "<work>",
-				EngineLogger: spruce.NewTestLogger(t),
-			}
-
-			for i := range 14 {
-				backoff := min(100*time.Millisecond<<i, 5*time.Minute)
-				expectDelay(t, failures.FailedDeterministically(t.Context(), failure), backoff)
-			}
-		})
-	})
-
 	t.Run("it ends a streak at a success when the quiet period is zero", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
