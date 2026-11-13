@@ -91,6 +91,10 @@ const (
 	// parts that cost the most to read.
 	slowObserveInterval = 5 * time.Second
 
+	// activeWindow is how recently an aggregate instance must have recorded an
+	// event to count as active.
+	activeWindow = 30 * time.Second
+
 	// checkpointTimeout is the time allowed for all of the calls to one
 	// projection handler's CheckpointOffset method in one reading.
 	checkpointTimeout = 10 * time.Second
@@ -150,6 +154,7 @@ func New(app dogma.Application, db *sql.DB) (*Inspector, error) {
 		MinInterval:       minObserveInterval,
 		MaxInterval:       maxObserveInterval,
 		SlowInterval:      slowObserveInterval,
+		ActiveWindow:      activeWindow,
 		CheckpointTimeout: checkpointTimeout,
 		OnObserve: func(*observe.Observation) {
 			broadcaster.Observed()

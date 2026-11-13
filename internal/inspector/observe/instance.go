@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -582,4 +583,94 @@ func (d *Database) count(ctx context.Context, query string, args ...any) (Instan
 	c.IsAtLeast = c.Count >= countLimit
 
 	return c, nil
+}
+
+// activityScan is a range of offsets of one event stream, read to find the
+// aggregate instances that recorded events recently.
+type activityScan struct {
+	// StreamID is the ID of the event stream.
+	StreamID *uuidpb.UUID
+
+	// Begin is the offset of the first event in the range.
+	Begin uint64
+
+	// End is the offset after the last event in the range.
+	End uint64
+
+	// IsCapped is true if the range was shortened to [countLimit] events, so
+	// events before Begin may also be recent.
+	IsCapped bool
+}
+
+// activeAggregateInstances returns the number of instances of each aggregate
+// handler that recorded an event at or after since, keyed by handler key. It
+// reads only the events in the given ranges, using the index on each event's
+// stream and offset, so it reads no more than [countLimit] events from each
+// stream.
+func (d *Database) activeAggregateInstances(
+	ctx context.Context,
+	scans []activityScan,
+	since time.Time,
+) (map[string]InstanceCount, error) {
+	active := map[string]InstanceCount{}
+
+	err := d.read(
+		ctx,
+		func(tx *sql.Tx) error {
+			for _, scan := range scans {
+				rows, err := tx.QueryContext(
+					ctx,
+					`SELECT e.aggregate_handler_key, count(DISTINCT e.aggregate_instance_id)
+					FROM eventstream.events AS e
+					WHERE e.stream_id = $1
+						AND e.stream_offset >= $2
+						AND e.stream_offset < $3
+						AND e.recorded_at >= $4
+						AND e.aggregate_handler_key IS NOT NULL
+					GROUP BY e.aggregate_handler_key`,
+					xsql.UUID(scan.StreamID),
+					int64(scan.Begin),
+					int64(scan.End),
+					since,
+				)
+				if err != nil {
+					return err
+				}
+
+				for rows.Next() {
+					var (
+						key string
+						n   int
+					)
+
+					if err := rows.Scan(&key, &n); err != nil {
+						rows.Close()
+						return err
+					}
+
+					// An instance records all of its events on one event
+					// stream, so the counts from each stream add up.
+					c := active[key]
+					c.Count += n
+					c.IsAtLeast = c.IsAtLeast || scan.IsCapped
+					active[key] = c
+				}
+
+				if err := rows.Close(); err != nil {
+					return err
+				}
+
+				if err := rows.Err(); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to count active aggregate instances: %w", err)
+	}
+
+	return active, nil
 }

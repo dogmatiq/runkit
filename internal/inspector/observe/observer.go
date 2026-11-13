@@ -46,6 +46,10 @@ type Observation struct {
 	// LiveNodes is the live nodes, according to the listener.
 	LiveNodes LiveNodes
 
+	// ActiveWindow is how recently an aggregate instance must have recorded
+	// an event to count as active.
+	ActiveWindow time.Duration
+
 	// Workloads is the number of workloads that each live node owns, as the
 	// inspector computes ownership, in the order of [LiveNodes.Nodes]. It is
 	// nil if the live nodes are not known.
@@ -156,6 +160,13 @@ type HandlerSummary struct {
 
 	// InstancesErr explains why Instances could not be counted.
 	InstancesErr error
+
+	// ActiveInstances is the number of instances that recorded an event within
+	// [Observation.ActiveWindow] of the observation, for an aggregate handler.
+	ActiveInstances InstanceCount
+
+	// ActiveInstancesErr explains why ActiveInstances could not be counted.
+	ActiveInstancesErr error
 
 	// Bindings is how the handler's instances are spread across the things
 	// that they are bound to. For an aggregate handler it covers every
@@ -285,6 +296,10 @@ type Observer struct {
 	// handler has got through each event stream.
 	SlowInterval time.Duration
 
+	// ActiveWindow is how recently an aggregate instance must have recorded an
+	// event to count as active.
+	ActiveWindow time.Duration
+
 	// CheckpointTimeout is the time allowed for all of the calls to one
 	// projection handler's CheckpointOffset method in one reading.
 	CheckpointTimeout time.Duration
@@ -314,6 +329,80 @@ type Observer struct {
 	// slow is what was read at slowAt, keyed by handler key. Only the Run
 	// goroutine uses it.
 	slow map[string]HandlerSummary
+
+	// lengths is the length of each event stream at recent observations,
+	// oldest first. The first entry is the newest that is at least
+	// ActiveWindow old, once there is one. Only the Run goroutine uses it.
+	lengths []streamLengths
+}
+
+// streamLengths is the length of each event stream at one observation.
+type streamLengths struct {
+	// At is the time of the observation, on the database's clock.
+	At time.Time
+
+	// Lengths is the length of each event stream, keyed by stream ID.
+	Lengths map[string]uint64
+}
+
+// recordLengths keeps the lengths of the event streams in obs, and discards
+// those that are no longer needed.
+func (o *Observer) recordLengths(obs *Observation) {
+	if obs.EventStreamsErr != nil {
+		return
+	}
+
+	lengths := streamLengths{
+		At:      obs.At,
+		Lengths: map[string]uint64{},
+	}
+
+	for _, s := range obs.EventStreams {
+		lengths.Lengths[s.ID.AsString()] = s.Length
+	}
+
+	o.lengths = append(o.lengths, lengths)
+
+	since := obs.At.Add(-o.ActiveWindow)
+	for len(o.lengths) > 1 && !o.lengths[1].At.After(since) {
+		o.lengths = o.lengths[1:]
+	}
+}
+
+// activityScans returns, for each event stream in obs, the range of offsets
+// that holds the events recorded within ActiveWindow of the observation. A
+// range starts at the stream's length when the window began, if the observer
+// knows it, and holds at most [countLimit] events.
+func (o *Observer) activityScans(obs *Observation) []activityScan {
+	var before map[string]uint64
+	if len(o.lengths) > 0 && !o.lengths[0].At.After(obs.At.Add(-o.ActiveWindow)) {
+		before = o.lengths[0].Lengths
+	}
+
+	var scans []activityScan
+
+	for _, s := range obs.EventStreams {
+		scan := activityScan{
+			StreamID: s.ID,
+			End:      s.Length,
+		}
+
+		if s.Length > countLimit {
+			scan.Begin = s.Length - countLimit
+			scan.IsCapped = true
+		}
+
+		if n, ok := before[s.ID.AsString()]; ok && n >= scan.Begin {
+			scan.Begin = n
+			scan.IsCapped = false
+		}
+
+		if scan.Begin < scan.End {
+			scans = append(scans, scan)
+		}
+	}
+
+	return scans
 }
 
 // Changed tells the observer that something in the database has changed.
@@ -353,6 +442,10 @@ func (o *Observer) Run(ctx context.Context) error {
 
 	if o.SlowInterval <= 0 {
 		panic("slow interval must be positive")
+	}
+
+	if o.ActiveWindow <= 0 {
+		panic("active window must be positive")
 	}
 
 	if o.CheckpointTimeout <= 0 {
@@ -437,7 +530,8 @@ func (o *Observer) publish(obs *Observation) {
 // observe reads one observation.
 func (o *Observer) observe(ctx context.Context) *Observation {
 	obs := &Observation{
-		LiveNodes: o.Listener.LiveNodes(time.Now()),
+		LiveNodes:    o.Listener.LiveNodes(time.Now()),
+		ActiveWindow: o.ActiveWindow,
 	}
 
 	at, bound, err := o.Database.boundApplication(ctx)
@@ -465,6 +559,7 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 	}
 
 	obs.Workloads = o.workloads(obs)
+	o.recordLengths(obs)
 
 	if time.Since(o.slowAt) >= o.SlowInterval {
 		o.slow = o.observeSlowParts(ctx, obs)
@@ -543,12 +638,26 @@ func (o *Observer) observeSlowParts(ctx context.Context, obs *Observation) map[s
 
 	queued, queuedErr := o.queuedByHandler(ctx)
 
+	var (
+		active    map[string]InstanceCount
+		activeErr = obs.EventStreamsErr
+	)
+	if activeErr == nil {
+		active, activeErr = o.Database.activeAggregateInstances(
+			ctx,
+			o.activityScans(obs),
+			obs.At.Add(-o.ActiveWindow),
+		)
+	}
+
 	for _, h := range o.Application.Handlers {
 		s := queued[h.Key.AsString()]
 		s.QueuedMessagesErr = queuedErr
 
 		switch h.Type {
 		case config.AggregateHandlerType:
+			s.ActiveInstances = active[h.Key.AsString()]
+			s.ActiveInstancesErr = activeErr
 			s.Bindings, s.BindingsErr = o.Database.AggregateBindings(ctx, h.Key)
 			s.InstancesErr = s.BindingsErr
 			s.Instances = InstanceCount{
