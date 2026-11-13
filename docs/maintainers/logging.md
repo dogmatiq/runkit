@@ -204,9 +204,21 @@ failure. Any failure it can't classify is treated as transient.
 | Shutdown during a streak | — |
 
 A streak logs at most one ERROR. Its log message describes the failure itself,
-like any other failure record. Every failure record has the `error` as an
-attribute. The ERROR record also has attributes for how long the streak has
-lasted and how many failures it has had.
+like any other failure record.
+
+Failure and recovery records have these attributes, as well as the attributes
+that identify the work. Each duration starts or ends at the record's own time.
+
+| Attribute | Failure records | Recovery records |
+| --- | --- | --- |
+| `error` | The error | — |
+| `failures` | The number of failures in the streak, including this one | The number of failures in the streak |
+| `failing_since` | The time of the streak's first failure | The time of the streak's first failure |
+| `failing_for` | The time from the streak's first failure to this record | The time from the streak's first failure to this record |
+| `next_attempt_at` | The time of the next attempt | — |
+| `next_attempt_in` | The time from this record to the next attempt | — |
+| `succeeding_since` | — | The time of the first success after the last failure, if the work must succeed for a quiet period to recover |
+| `succeeding_for` | — | The time from that success to this record |
 
 A streak's ERROR is followed by its recovery record when the work succeeds
 again. Until then, the work is still failing, and later failures in the streak
@@ -271,7 +283,7 @@ so the compactor writes its application records immediately.
   a produced message's description or the text passed to `Log()`. That text is
   the content of the application's record, so it stays readable as it is.
 - Say what was observed, not what it might mean. A recovery record says how
-  long the work has been succeeding and after how many failures, and it
+  long the work was failing and after how many failures it succeeded, and it
   doesn't claim that the work is healthy.
 - Name things that a person running the engine knows about.
 - Put values in attributes, not in the log message.

@@ -106,16 +106,16 @@ These were made with the maintainer, and aren't in [#100][100].
   in a remote engine discoverer is logged as an ERROR immediately, and
   rediscovery waits up to five minutes.
 - **A streak is a value that its holder stores, in memory or in a row.**
-  `failure.Streak` holds the number of failures, the times of the first and
-  most recent failures, and whether the streak has written its ERROR. Its
-  methods apply the logging guide's rules to that state, write the records to
-  the engine logger that the holder passes in, and return the updated value and
-  the delay. `failure.Tracker` keeps one in memory, with its quiet period. The
-  message queue consumer stores one in the message's row, and passes a buffered
-  engine logger that it flushes only once the postponement commits. Both follow
-  the guide: a streak writes at most one ERROR, its recovery is INFO exactly
-  when it wrote one, and `failing_for` is the time from the first failure to
-  the most recent one.
+  `failure.Streak` holds the number of failures, the time of the first failure,
+  and whether the streak has logged its ERROR. Its methods apply the logging
+  guide's rules to that state, write the records to the engine logger that the
+  holder passes in, and return the delay. `failure.Tracker` keeps one in memory,
+  with its quiet period. The message queue consumer stores one in the message's
+  row, and passes a buffered engine logger that it flushes only once the
+  postponement commits. Both follow the guide: a streak writes at most one
+  ERROR, its recovery is INFO exactly when it wrote one, and `failing_for` is
+  the time from the first failure to the record, because a streak lasts until it
+  recovers.
 - **A stored streak may duplicate its ERROR, but never loses it.** On the
   attempt where the streak writes its ERROR, the consumer flushes the buffered
   records before the postponement, which then stores that the ERROR was
@@ -132,9 +132,9 @@ These were made with the maintainer, and aren't in [#100][100].
   deterministic failure after many transient ones used to double from the
   transient limit, and now gets the delay that its number of failures gives.
   The delay will be made configurable later, outside this plan.
-- **A delivery's times come from Go's clock.** The consumer stores the times
-  in the `Streak` that `Failed` returns, and sets `next_attempt_at` from Go's
-  clock, as it already compares `next_attempt_at` with Go's clock.
+- **A delivery's times come from Go's clock.** The consumer stores the `Streak`
+  that `Extend` updates, and sets `next_attempt_at` from Go's clock, as it
+  already compares `next_attempt_at` with Go's clock.
 - **Process preparation is one function** used by the event sink and the
   deadline handler. It runs the handler, marshals the state, and seals the
   packers, and returns a value the write step persists. The [#99][99] bug is
@@ -179,7 +179,7 @@ Each one has a test in the task that owns the code.
 3. A delivery whose streak began before this attempt must keep the stored
    start of the streak, not restart it at the attempt's time. The
    per-delivery streaks task has the test.
-4. A migrated row with `failures > 0` and `failing_since` equal to its old
+4. A migrated row with `failures > 0` and `first_failed_at` equal to its old
    `deliver_at` must be treated as a streak in progress, not a fresh one.
    The per-delivery streaks task has the test.
 
@@ -229,12 +229,12 @@ Each one has a test in the task that owns the code.
   message, so `delivery.message_id` also pairs a streak's ERROR with its
   recovery.
 - Failure and recovery records about a delivery carry the same attributes as
-  `failure.Tracker`'s, at the top level: `error`, `failing_since`, `failures`
-  and `delay` on each failure, plus `failing_for` on the ERROR, and
-  `failing_since`, `failures` and `failing_for` on recovery, without
-  `succeeding_for`. The per-delivery streaks task writes them through
-  `Streak`. Until then, the other records about a delivery stop carrying
-  `failures`.
+  `failure.Tracker`'s, at the top level: `error`, `failures`, `failing_since`,
+  `failing_for`, `next_attempt_at` and `next_attempt_in` on each failure, and
+  `failures`, `failing_since` and `failing_for` on recovery, without
+  `succeeding_since` or `succeeding_for`. The per-delivery streaks task writes
+  them through `Streak`. Until then, the other records about a delivery stop
+  carrying `failures`.
 - The guide's "Streaks" section gains: "When the work can only fail in one
   streak, such as delivering one message, the attributes that identify the work
   also identify the streak." Its `delivery` row describes the group above.
@@ -425,62 +425,87 @@ names there.
 **Interfaces:**
 - Consumes: `xerrors.IsDeterministic`, from a prep commit that's already made.
 - Produces: `failure.Streak`, a value whose zero value means no streak is in
-  progress. It holds the number of failures, the times of the first and most
-  recent failures, and whether the streak has written its ERROR. `Failed`
-  classifies the error with `xerrors.IsDeterministic`, writes the failure
-  record, and returns the updated streak and the delay. `Succeeded` writes the
-  recovery record. The description and the engine logger aren't part of a
-  streak's state, so each holder passes them in. `Tracker` also passes
-  `succeeding_for` to `Succeeded`, because only a tracker has a quiet period.
-  The exact shape is agreed with the maintainer in step 1, words before code.
+  progress. Its exported fields are `Failures`, `FirstFailedAt` and
+  `HasLoggedError`. `Extend`, which has a pointer receiver, classifies the error
+  with `xerrors.IsDeterministic`, updates the streak, writes the failure record,
+  and returns the delay. `End` writes the recovery record. The description
+  and the engine logger aren't part of a streak's state, so each holder passes
+  them in. `Tracker` adds `succeeding_for` to the engine logger that it passes
+  to `End`, because only a tracker has a quiet period.
+
+  The records' attributes, which the logging guide's "Streaks" section
+  documents:
+
+  | Record | Times | Durations |
+  | --- | --- | --- |
+  | Failure | `failing_since`, `next_attempt_at` | `failing_for`, `next_attempt_in` |
+  | Recovery | `failing_since` | `failing_for` |
+  | Recovery, tracker only | `succeeding_since` | `succeeding_for` |
+
+  Every duration starts or ends at the record's own time. `failing_for` is on
+  every failure record, not only the ERROR, and `delay` becomes
+  `next_attempt_in`.
 
   `Tracker` holds a `Streak` behind its mutex, and adds only the quiet period,
   the time of the success that began it, and completion. Once the tracker is
-  complete, it passes a logger that discards records, so it still returns a
-  delay but writes nothing. Its own backoff, `FailedDeterministically`, and its
+  complete, `Failed` returns zero at once, because no more attempts are made.
+  Its own backoff, `FailedDeterministically`, and its
   separate fields for the streak's state go. `supervisor.Run` calls `Failed`
   for every failure that isn't fatal.
 
   The comments in the `failure` package say "logged as a DEBUG record" and so
   on, not "at <level>".
 
-- [ ] **Step 1: Agree the shape of `Streak` with the maintainer**
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 1: Agree the shape of `Streak` with the maintainer**
+- [x] **Step 2: Write the failing tests**
 
   `streak_test.go`, with `synctest`:
 
   ```go
   func TestStreak(t *testing.T) {
       t.Run("it returns the base delay for the first failure", ...)
-      t.Run("it doubles the delay for each failure up to the limit", ...)
+      t.Run("it doubles the delay for each failure up to the transient limit", ...)
       t.Run("it uses the deterministic limit for a deterministic failure", ...)
       t.Run("it bases a deterministic failure's delay on the number of failures", ...)
       t.Run("it doesn't overflow after many failures", ...)
       t.Run("it starts the streak at the first failure", ...)
       t.Run("it keeps the start of a streak in progress", ...)
-      t.Run("it keeps the time of the most recent failure", ...)
-      t.Run("it marks that it wrote its ERROR once it qualifies for one", ...)
+      t.Run("it marks that it logged its ERROR once it qualifies for one", ...)
+      t.Run("it ends the streak when the work succeeds", ...)
   }
   ```
 
-  The delay tests move from `tracker_test.go` and `supervisor_test.go` to
-  `streak_test.go`. `supervisor_test.go`'s "it grows the delay from the
-  transient cap after a deterministic failure" goes, because that behavior
-  goes.
+  The tracker's delay tests move from `tracker_test.go` to `streak_test.go`.
+  `supervisor_test.go` keeps its delay tests, as tests of `Run` from
+  end to end, except "it grows the delay from the transient cap after a
+  deterministic failure", which goes, because that behavior goes.
 
-- [ ] **Step 3: Run `make test` to verify they fail**
-- [ ] **Step 4: Implement `Streak`, and make `Tracker` use it**
-- [ ] **Step 5: Run `make test` to verify they pass**
-- [ ] **Step 6: Stop for review**
+- [x] **Step 3: Run `make test` to verify they fail**
+- [x] **Step 4: Implement `Streak`, and make `Tracker` use it**
+- [x] **Step 5: Run `make test` to verify they pass**
+- [x] **Step 6: Update the logging guide's attributes for streaks**
+- [ ] **Step 7: Stop for review**
 
 ---
 
-### Task 7: Per-delivery streaks
+### Task 7: Rename the tracker's methods
+
+A rename commit, using `gopls rename`. `Tracker.Failed` and
+`Tracker.Succeeded` become `Tracker.WorkFailed` and `Tracker.WorkSucceeded`,
+because the work fails or succeeds, not the tracker.
+
+- [ ] **Step 1: Rename the methods, and the comments that mention them**
+- [ ] **Step 2: Run `make precommit`**
+- [ ] **Step 3: Stop for review**
+
+---
+
+### Task 8: Per-delivery streaks
 
 **Files:**
 - Modify: `internal/schema/ddl/10-messagequeue/00-tables.sql` (the new
-  columns, with `CHECK` constraints that match `failing_since`'s) and
-  `internal/schema/ddl/10-messagequeue/90-migrate.sql` (fill them for migrated
+  column, and `first_failed_at` renamed) and
+  `internal/schema/ddl/10-messagequeue/90-migrate.sql` (fill it for migrated
   rows)
 - Modify: `internal/messagequeue/delivery.go`,
   `internal/messagequeue/sink.go`
@@ -498,12 +523,10 @@ names there.
 - Consumes: the rollback from the rollback task, `failure.Streak` from the
   streak value task, and `xerrors.IsDeterministic`.
 
-  The message row gains `last_failed_at` and a column for whether the streak
-  has written its ERROR, which is `NOT NULL DEFAULT false`, and whose name is
-  agreed in step 1. A migrated row with failures gets `last_failed_at` equal to
-  its `failing_since`, and is treated as not having written its ERROR. Whether
-  `Delivery` replaces `Failures` and `FailingSince` with one `failure.Streak`
-  field is agreed in step 1.
+  The `failing_since` column is renamed `first_failed_at`. The message row gains
+  `error_logged`, which is `NOT NULL DEFAULT false`, and is false for a migrated
+  row. Whether `Delivery` replaces `Failures` and `FailingSince` with one
+  `failure.Streak` field is agreed in step 1.
 
   `ErrFailed` goes, and any error from a sink except `ErrBusy` is a failure.
   A missing process instance, or a state that can't be unmarshaled, is
@@ -511,10 +534,10 @@ names there.
   the attempt itself rejects.
 
   The attempt builds a `Streak` from the row, and passes the description
-  "deliver message" when it calls `Failed` and `Succeeded`. It calls `Failed`
+  "deliver message" when it calls `Extend` and `End`. It calls `Extend`
   on any error except `ErrBusy`, and stores the returned streak and
   `next_attempt_at`, which is Go's time plus the delay, in the statement that
-  postpones the message. The engine logger that it passes to `Failed` is
+  postpones the message. The engine logger that it passes to `Extend` is
   buffered, and flushed only once the postponement commits, so that an outage
   doesn't log a failure for every message attempted. If the postponement finds
   the message taken over, it stores nothing and discards the record. The
@@ -524,13 +547,12 @@ names there.
   `ErrBusy` neither fails nor succeeds the streak. Contention keeps the streak
   as it is, and keeps its "message delivery postponed" record. An attempt that
   fails because the consumer is stopping writes nothing. After a successful
-  commit, the attempt calls `Succeeded`.
+  commit, the attempt calls `End`.
 
   The delivery's own backoff, `failureBackoffBase` and `failureBackoffMax`,
   goes.
 
-- [ ] **Step 1: Restate the assumptions**, including the name of the column
-  for whether the streak has written its ERROR, and what `Delivery` holds
+- [ ] **Step 1: Restate the assumptions**, including what `Delivery` holds
 - [ ] **Step 2: Write the failing tests**
 
   `consumer_test.go`:
@@ -538,16 +560,15 @@ names there.
   ```go
   t.Run("it stores the start of the streak on the first failure", ...)
   t.Run("it keeps the start of the streak on later failures", ...)
-  t.Run("it stores the time of the most recent failure", ...)
-  t.Run("it stores that the streak wrote its ERROR", ...)
+  t.Run("it stores that the streak logged its ERROR", ...)
   t.Run("it keeps the streak through contention", ...)
   t.Run("it treats a migrated row's failures as a streak in progress", ...)
   t.Run("it postpones a deterministic failure by up to the deterministic limit", ...)
   t.Run("it postpones any other failure by up to the transient limit", ...)
   ```
 
-  `schema_test.go`'s `TestCreate_migratesQueues` also checks
-  `last_failed_at`.
+  `schema_test.go`'s `TestCreate_migratesQueues` checks `first_failed_at`
+  and `error_logged`.
 
 - [ ] **Step 3: Run `make test` to verify they fail**
 - [ ] **Step 4: Implement it**
@@ -558,7 +579,7 @@ names there.
 
 ---
 
-### Task 8: Fix "at <level>" in the logging guide
+### Task 9: Fix "at <level>" in the logging guide
 
 A small commit of its own, at any point. Replace "at <level>" with "as an
 ERROR", "as a DEBUG record" and so on in `docs/maintainers/logging.md` and
@@ -569,7 +590,7 @@ ERROR", "as a DEBUG record" and so on in `docs/maintainers/logging.md` and
 
 ---
 
-### Task 9: Unify field naming and order
+### Task 10: Unify field naming and order
 
 The queue work adds many structs beside older ones, and their fields drifted
 apart along the way. This task makes the whole codebase consistent, not just
@@ -606,7 +627,7 @@ layer, as the logging guide requires.
 
 ---
 
-### Task 10: Close out
+### Task 11: Close out
 
 **Files:**
 - Modify: `CHANGELOG.md`, `docs/.plans/` (delete the queue plans and the
