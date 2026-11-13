@@ -3,6 +3,7 @@ package pages
 import (
 	"fmt"
 	"html/template"
+	"slices"
 	"sort"
 	"strings"
 
@@ -209,7 +210,7 @@ func queueBar(queues []observe.Queue) template.HTML {
 // without a style attribute, which the Content-Security-Policy forbids. The
 // widths add up to 100%, and the bar shrinks them in proportion to make room
 // for the gaps and the square segments.
-func workloadBar(counts []nodeWorkloadCount) template.HTML {
+func workloadBar(counts []observe.NodeWorkloads) template.HTML {
 	total := 0
 	for _, c := range counts {
 		total += c.Workloads
@@ -241,6 +242,113 @@ func workloadBar(counts []nodeWorkloadCount) template.HTML {
 	}
 
 	b.WriteString(`</div>`)
+
+	return template.HTML(b.String())
+}
+
+// workloadChart returns an inline SVG chart of each live node's share of the
+// workloads over time, drawn left to right, one sample at a time. Each node
+// has a band, stacked in the order of the node IDs, so that the newest column
+// matches [workloadBar]. A sample in which the live nodes are not known, or
+// own no workloads, is left out.
+func workloadChart(samples []observe.Sample) template.HTML {
+	const (
+		width  = 240.0
+		height = 48.0
+	)
+
+	// columns is the share of the workloads of each node, keyed by node ID,
+	// in each sample that is drawn.
+	var columns []map[string]float64
+
+	nodes := map[string]struct{}{}
+
+	for _, s := range samples {
+		total := 0
+		for _, w := range s.Workloads {
+			total += w.Workloads
+		}
+
+		if total == 0 {
+			continue
+		}
+
+		column := map[string]float64{}
+		for _, w := range s.Workloads {
+			id := w.NodeID.AsString()
+			column[id] = float64(w.Workloads) / float64(total)
+			nodes[id] = struct{}{}
+		}
+
+		columns = append(columns, column)
+	}
+
+	var b strings.Builder
+
+	fmt.Fprintf(
+		&b,
+		`<svg class="spark stack" viewBox="0 0 %g %g" preserveAspectRatio="none" aria-hidden="true">`,
+		width,
+		height,
+	)
+
+	if len(columns) >= 2 {
+		order := make([]string, 0, len(nodes))
+		for id := range nodes {
+			order = append(order, id)
+		}
+		sort.Strings(order)
+
+		step := width / float64(len(columns)-1)
+
+		// below is the top edge of the bands drawn so far, in each column.
+		below := make([]float64, len(columns))
+
+		for n, id := range order {
+			var top, bottom strings.Builder
+
+			for i, column := range columns {
+				x := float64(i) * step
+				y := height - (below[i]+column[id])*height
+
+				if i == 0 {
+					fmt.Fprintf(&top, "M%.1f %.1f", x, y)
+				} else {
+					fmt.Fprintf(&top, " L%.1f %.1f", x, y)
+				}
+
+				below[i] += column[id]
+			}
+
+			// The bottom edge of this band is the top edge of the one below
+			// it, traced from right to left.
+			for i, column := range slices.Backward(columns) {
+				x := float64(i) * step
+				y := height - (below[i]-column[id])*height
+				fmt.Fprintf(&bottom, " L%.1f %.1f", x, y)
+			}
+
+			fmt.Fprintf(
+				&b,
+				`<path class="band band-%d" d="%s%s Z"/>`,
+				n%2,
+				top.String(),
+				bottom.String(),
+			)
+
+			// The top band's top edge is always the top of the chart, so it
+			// has no line.
+			if n < len(order)-1 {
+				fmt.Fprintf(
+					&b,
+					`<path class="band-edge" d="%s" vector-effect="non-scaling-stroke"/>`,
+					top.String(),
+				)
+			}
+		}
+	}
+
+	b.WriteString(`</svg>`)
 
 	return template.HTML(b.String())
 }

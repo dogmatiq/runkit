@@ -56,18 +56,24 @@
   window.setInterval(tick, 500);
 
   // Heartbeats.
+  //
+  // A heartbeat dims each of the node's indicators briefly and brings it
+  // back. The animation is not a class, so an update that morphs the page
+  // leaves it running, and each heartbeat starts it again. There is no
+  // animation if the viewer asks for reduced motion.
+
+  var beat = [{ opacity: 0.65 }, { opacity: 1 }];
+  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   function pulse(nodeID) {
+    if (reducedMotion.matches) return;
+
     var elements = document.querySelectorAll('[data-node="' + CSS.escape(nodeID) + '"]');
     for (var i = 0; i < elements.length; i++) {
-      restartAnimation(elements[i], "beat");
+      if (elements[i].animate) {
+        elements[i].animate(beat, { duration: 1200, easing: "ease-out" });
+      }
     }
-  }
-
-  function restartAnimation(el, className) {
-    el.classList.remove(className);
-    void el.offsetWidth; // Restarts the CSS animation.
-    el.classList.add(className);
   }
 
   // Live updates.
@@ -112,17 +118,8 @@
   // Updates.
   //
   // Each update morphs the new page into the old one, so elements that have
-  // not changed stay as they are, and nothing flashes. A heartbeat is shown by
-  // a class that the server never renders, so the morph leaves an element's
-  // classes alone while it has that class, and an update does not cut the
-  // animation short. After an update, <details> elements that were open are
-  // opened again.
-
-  if (window.Idiomorph) {
-    window.Idiomorph.defaults.callbacks.beforeAttributeUpdated = function (name, node) {
-      return !(name === "class" && node.classList && node.classList.contains("beat"));
-    };
-  }
+  // not changed stay as they are, and nothing flashes. After an update,
+  // <details> elements that were open are opened again.
 
   var openDetails = {};
 

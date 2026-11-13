@@ -105,57 +105,14 @@ func (f frame) HandlerSummary(key *uuidpb.UUID) *observe.HandlerSummary {
 	return nil
 }
 
-// nodeWorkloadCount is the number of workloads that one live node owns.
-type nodeWorkloadCount struct {
-	NodeID    *uuidpb.UUID
-	Workloads int
-}
-
 // WorkloadBar returns a bar of the number of workloads that each live node
-// owns: delivering each queue's messages, and consuming each local event stream
-// for each process and projection handler. It returns an empty bar if the live
-// nodes are not known.
+// owns. It returns an empty bar if the live nodes are not known.
 func (f frame) WorkloadBar() template.HTML {
-	if f.Obs == nil || !f.Obs.LiveNodes.Known {
+	if f.Obs == nil {
 		return workloadBar(nil)
 	}
 
-	counts := map[string]int{}
-
-	add := func(key *uuidpb.UUID) {
-		if id, ok := f.Obs.LiveNodes.FindWorkloadOwner(key); ok {
-			counts[id.AsString()]++
-		}
-	}
-
-	for _, q := range f.Obs.Queues {
-		add(q.ID)
-	}
-
-	for _, h := range f.App.Handlers {
-		if !h.HandlesEvents() {
-			continue
-		}
-
-		for _, s := range f.Obs.EventStreams {
-			add(h.StreamWorkloadKey(s.ID))
-		}
-	}
-
-	// The nodes stay in the order of their IDs, so that a node's segment keeps
-	// its place as workloads move.
-	var result []nodeWorkloadCount
-	for _, n := range f.Obs.LiveNodes.Nodes {
-		result = append(
-			result,
-			nodeWorkloadCount{
-				NodeID:    n.ID,
-				Workloads: counts[n.ID.AsString()],
-			},
-		)
-	}
-
-	return workloadBar(result)
+	return workloadBar(f.Obs.Workloads)
 }
 
 // Envelope returns a view of the given envelope.
@@ -330,6 +287,23 @@ func series(samples []observe.Sample, window time.Duration, total func(observe.S
 	}
 
 	return values
+}
+
+// recent returns the samples in the given window.
+func recent(samples []observe.Sample, window time.Duration) []observe.Sample {
+	if len(samples) == 0 {
+		return nil
+	}
+
+	since := samples[len(samples)-1].At.Add(-window)
+
+	for i, s := range samples {
+		if !s.At.Before(since) {
+			return samples[i:]
+		}
+	}
+
+	return nil
 }
 
 // perMinute returns the average of the most recent few of the given rates per

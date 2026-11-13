@@ -13,6 +13,7 @@
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
     <div class="metric-bar">{{.WorkloadBar}}</div>
+    {{workloads .History}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}

@@ -46,6 +46,11 @@ type Observation struct {
 	// LiveNodes is the live nodes, according to the listener.
 	LiveNodes LiveNodes
 
+	// Workloads is the number of workloads that each live node owns, as the
+	// inspector computes ownership, in the order of [LiveNodes.Nodes]. It is
+	// nil if the live nodes are not known.
+	Workloads []NodeWorkloads
+
 	// Queues is the queues that hold at least one message, with the most
 	// messages first.
 	Queues []Queue
@@ -219,6 +224,20 @@ type Sample struct {
 	// RemovedMessages is the number of messages removed from the queues since
 	// PostgreSQL's statistics were last reset.
 	RemovedMessages Total
+
+	// Workloads is the number of workloads that each live node owns. It is
+	// nil if the live nodes are not known.
+	Workloads []NodeWorkloads
+}
+
+// NodeWorkloads is the number of workloads that one live node owns, as the
+// inspector computes ownership.
+type NodeWorkloads struct {
+	// NodeID is the ID of the node.
+	NodeID *uuidpb.UUID
+
+	// Workloads is the number of workloads that the node owns.
+	Workloads int
 }
 
 // Total is one total, such as the number of events recorded, as one
@@ -402,6 +421,7 @@ func (o *Observer) publish(obs *Observation) {
 				Value:   obs.RemovedMessages,
 				IsKnown: obs.RemovedMessagesErr == nil,
 			},
+			Workloads: obs.Workloads,
 		},
 	)
 
@@ -440,6 +460,8 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 		obs.IsEventStreamsTruncated = true
 	}
 
+	obs.Workloads = o.workloads(obs)
+
 	if time.Since(o.slowAt) >= o.SlowInterval {
 		o.slow = o.observeSlowParts(ctx, obs)
 		o.slowAt = time.Now()
@@ -460,6 +482,54 @@ func (o *Observer) observe(ctx context.Context) *Observation {
 	}
 
 	return obs
+}
+
+// workloads returns the number of workloads that each live node owns: delivering
+// the messages in each queue, and consuming each observed event stream for each
+// handler that handles events. It returns nil if the live nodes are not known.
+func (o *Observer) workloads(obs *Observation) []NodeWorkloads {
+	if !obs.LiveNodes.Known {
+		return nil
+	}
+
+	// A projection handler that minimizes concurrency has one workload for
+	// all of the event streams, so each key is counted once.
+	keys := map[string]*uuidpb.UUID{}
+
+	for _, q := range obs.Queues {
+		keys[q.ID.AsString()] = q.ID
+	}
+
+	for _, h := range o.Application.Handlers {
+		if !h.HandlesEvents() {
+			continue
+		}
+
+		for _, s := range obs.EventStreams {
+			k := h.StreamWorkloadKey(s.ID)
+			keys[k.AsString()] = k
+		}
+	}
+
+	counts := map[string]int{}
+	for _, k := range keys {
+		if id, ok := obs.LiveNodes.FindWorkloadOwner(k); ok {
+			counts[id.AsString()]++
+		}
+	}
+
+	workloads := make([]NodeWorkloads, 0, len(obs.LiveNodes.Nodes))
+	for _, n := range obs.LiveNodes.Nodes {
+		workloads = append(
+			workloads,
+			NodeWorkloads{
+				NodeID:    n.ID,
+				Workloads: counts[n.ID.AsString()],
+			},
+		)
+	}
+
+	return workloads
 }
 
 // observeSlowParts reads the parts of an observation that cost the most to
