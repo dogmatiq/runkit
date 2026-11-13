@@ -515,6 +515,33 @@ h3 {
   fill: var(--subsystem-soft);
 }
 
+/*
+ * A chart with a lead-in colours its paths with gradients, set by their
+ * attributes, so these classes set only what the gradients don't.
+ */
+.spark-led-line {
+  stroke-width: 1.5;
+}
+
+/* The stops of the gradients that fade a chart's lead-in in from nothing. */
+.spark-area-in {
+  stop-color: var(--subsystem-soft);
+}
+
+.spark-area-out {
+  stop-color: var(--subsystem-soft);
+  stop-opacity: 0;
+}
+
+.spark-line-in {
+  stop-color: var(--subsystem);
+}
+
+.spark-line-out {
+  stop-color: var(--subsystem);
+  stop-opacity: 0;
+}
+
 .spark-line {
   fill: none;
   stroke: var(--subsystem);

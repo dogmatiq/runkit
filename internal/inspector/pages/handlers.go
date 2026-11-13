@@ -65,9 +65,10 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 		RemovedMessagesPerMinute float64
 	}{
 		frame:           f,
-		EventRates:      f.Chart(smooth(eventRates)),
+		EventRates:      f.Chart("events", smooth(eventRates)),
 		EventsPerMinute: perMinute(eventRates),
 		QueuedMessages: f.Chart(
+			"queued",
 			series(
 				history,
 				chartWindow,

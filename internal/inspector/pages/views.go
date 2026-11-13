@@ -244,6 +244,11 @@ type point struct {
 
 // chart is the points of a sparkline, and the time at its right-hand edge.
 type chart struct {
+	// ID tells the chart apart from the others on the page, so that the
+	// chart's gradients have IDs of their own. It is the same each time the
+	// page is rendered.
+	ID string
+
 	Points []point
 	End    time.Time
 }
@@ -261,8 +266,9 @@ const chartLead = 10 * time.Second
 
 // Chart returns a chart of the given points, whose right-hand edge is
 // [chartLead] before the time of the most recent observation.
-func (f frame) Chart(points []point) chart {
+func (f frame) Chart(id string, points []point) chart {
 	c := chart{
+		ID:     id,
 		Points: points,
 	}
 
@@ -376,6 +382,7 @@ func (f frame) HandlerRate(h *observe.Handler) *handlerRate {
 
 	return &handlerRate{
 		Chart: f.Chart(
+			"handler-"+key,
 			smooth(
 				rate(
 					f.History,

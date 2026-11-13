@@ -295,11 +295,20 @@ func formatRouteType(t config.RouteType) string {
 // the left-hand edge. So the page's script can scroll the chart left as time
 // passes, until the next update, and new points scroll in from the right
 // without showing a gap at either edge.
+//
+// While the points begin inside the window, as they do on a page that has just
+// loaded, the chart has a lead-in: the line and the area beneath it continue
+// to the left of the first point at the same height, and fade to nothing. It
+// shows no value, and gives the chart a soft start instead of an abrupt one.
+// It is gone once the points fill the window.
 func sparkline(c chart) template.HTML {
 	const (
 		width  = 240.0
 		height = 48.0
 		pad    = 2.0
+
+		// leadIn is the width of the lead-in, in the chart's own units.
+		leadIn = 60.0
 	)
 
 	open := fmt.Sprintf(
@@ -328,11 +337,48 @@ func sparkline(c chart) template.HTML {
 		return height - pad - (v/peak)*(height-2*pad)
 	}
 
-	var line strings.Builder
+	first := c.Points[0]
+	firstX := xOf(first.At)
+	startX := firstX
+
+	// A chart with a lead-in takes its fill and stroke from gradients, so its
+	// paths have classes that the stylesheet leaves alone. A stylesheet rule
+	// would override the paths' attributes.
+	var (
+		line      strings.Builder
+		defs      string
+		areaClass = `class="spark-area"`
+		lineClass = `class="spark-line"`
+	)
+
+	if firstX > 0 {
+		startX = firstX - leadIn
+
+		fmt.Fprintf(&line, "M%.2f %.2f L%.2f %.2f", startX, yOf(first.Value), firstX, yOf(first.Value))
+
+		defs = fmt.Sprintf(
+			`<defs>`+
+				`<linearGradient id="%[1]s-area" gradientUnits="userSpaceOnUse" x1="%[2]g" x2="%[3]g" y1="0" y2="0">`+
+				`<stop class="spark-area-out" offset="0"/><stop class="spark-area-in" offset="1"/></linearGradient>`+
+				`<linearGradient id="%[1]s-line" gradientUnits="userSpaceOnUse" x1="%[2]g" x2="%[3]g" y1="0" y2="0">`+
+				`<stop class="spark-line-out" offset="0"/><stop class="spark-line-in" offset="1"/></linearGradient>`+
+				`</defs>`,
+			template.HTMLEscapeString(c.ID),
+			startX,
+			firstX,
+		)
+		areaClass = fmt.Sprintf(`class="spark-led" fill="url(#%s-area)"`, template.HTMLEscapeString(c.ID))
+		lineClass = fmt.Sprintf(`class="spark-led spark-led-line" fill="none" stroke="url(#%s-line)"`, template.HTMLEscapeString(c.ID))
+	}
+
 	for i, p := range c.Points {
-		if i == 0 {
+		switch {
+		case i == 0 && firstX > 0:
+			// The lead-in has already moved the line to this point.
+			continue
+		case i == 0:
 			fmt.Fprintf(&line, "M%.2f %.2f", xOf(p.At), yOf(p.Value))
-		} else {
+		default:
 			fmt.Fprintf(&line, " L%.2f %.2f", xOf(p.At), yOf(p.Value))
 		}
 	}
@@ -346,18 +392,21 @@ func sparkline(c chart) template.HTML {
 		line.String(),
 		beyond,
 		height,
-		xOf(c.Points[0].At),
+		startX,
 		height,
 	)
 
 	return template.HTML(
 		fmt.Sprintf(
-			`%s<g>`+
-				`<path class="spark-area" d="%s"/>`+
-				`<path class="spark-line" d="%s" vector-effect="non-scaling-stroke"/>`+
+			`%s%s<g>`+
+				`<path %s d="%s"/>`+
+				`<path %s d="%s" vector-effect="non-scaling-stroke"/>`+
 				`</g></svg>`,
 			open,
+			defs,
+			areaClass,
 			area,
+			lineClass,
 			line.String(),
 		),
 	)
