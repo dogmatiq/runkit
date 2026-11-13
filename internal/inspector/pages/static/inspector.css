@@ -522,8 +522,8 @@ h3 {
 }
 
 /*
- * A column for each live node, which each heartbeat fills. The page's script
- * draws the columns in the subsystem's colour.
+ * A line whose height across the card follows each live node's heartbeats.
+ * The page's script draws it in the subsystem's colours, like the other charts.
  */
 .beats {
   color: var(--subsystem);

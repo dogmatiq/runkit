@@ -80,29 +80,32 @@
 
   // Heartbeat levels.
   //
-  // The <canvas id="heartbeats"> element on the overview has a column for each
-  // live node, in the order of the node IDs in its data-nodes attribute, like
-  // the segments of the workload bar above it. A heartbeat fills the node's
-  // column, and the column drains until the next heartbeat.
+  // The <canvas id="heartbeats"> element on the overview draws one line across
+  // the card, like the charts on the other cards. Each live node has an equal
+  // share of the width, in the order of the node IDs in its data-nodes
+  // attribute, like the segments of the workload bar above it. The line's
+  // height in the middle of a node's share is the node's level, and the line
+  // curves smoothly from one node's level to the next.
   //
-  // Each node can send heartbeats at its own interval, which the page can't
-  // see, so it measures each node's usual interval from the heartbeats that
-  // it receives. A column drains to empty over drainBeats of the node's usual
-  // intervals, so it empties when the node has missed about that many
-  // heartbeats. Until the page has seen two of a node's heartbeats, the
-  // node's column stays full after a heartbeat. A page that has just loaded
-  // starts with empty columns.
+  // A heartbeat raises the node's level to full, and the level drains until
+  // the next heartbeat. Each node can send heartbeats at its own interval,
+  // which the page can't see, so it measures each node's usual interval from
+  // the heartbeats that it receives. A level drains to empty over drainBeats
+  // of the node's usual intervals, so it empties when the node has missed
+  // about that many heartbeats. Until the page has seen two of a node's
+  // heartbeats, the node's level stays full after a heartbeat. A page that has
+  // just loaded starts with empty levels.
 
-  // riseTime is how long a column takes to fill after a heartbeat, so that it
+  // riseTime is how long a level takes to rise after a heartbeat, so that it
   // rises instead of jumping.
   var riseTime = 160;
 
   // drainBeats is the number of a node's usual intervals over which its
-  // column drains to empty.
+  // level drains to empty.
   var drainBeats = 3;
 
   // levels holds, for each node ID, the times of the node's recent
-  // heartbeats, and the level that its column had just before the most recent
+  // heartbeats, and the level that the node had just before the most recent
   // one.
   var levels = {};
 
@@ -134,8 +137,8 @@
     return intervals[Math.floor(intervals.length / 2)];
   }
 
-  // levelOf returns the level of a node's column, from 0 when it is empty to
-  // 1 when it is full.
+  // levelOf returns the level of a node, from 0 when it is empty to 1 when it
+  // is full.
   function levelOf(nodeID, now) {
     var l = levels[nodeID];
     if (!l) return 0;
@@ -181,18 +184,6 @@
     }
   }
 
-  // roundRect fills a rectangle with rounded corners, or square ones if the
-  // browser can't round them.
-  function roundRect(g, x, y, w, h, r) {
-    g.beginPath();
-    if (g.roundRect) {
-      g.roundRect(x, y, w, h, r);
-    } else {
-      g.rect(x, y, w, h);
-    }
-    g.fill();
-  }
-
   function drawBeats() {
     if (!reducedMotion.matches) scrollCharts(performance.now());
 
@@ -211,38 +202,53 @@
 
       var g = canvas.getContext("2d");
       g.clearRect(0, 0, width, height);
-      g.fillStyle = window.getComputedStyle(canvas).color;
 
+      var style = window.getComputedStyle(canvas);
       var nodes = (canvas.getAttribute("data-nodes") || "").split(" ").filter(Boolean);
       var now = performance.now();
 
-      // The columns line up with the card's content, as the bar above does.
-      var side = 20 * ratio;
-      var gap = 3 * ratio;
-      var top = 8 * ratio;
-      var full = height - 2 * top;
-      var column = (width - 2 * side - gap * (nodes.length - 1)) / Math.max(nodes.length, 1);
-      var corner = Math.min(2 * ratio, column / 2);
+      if (nodes.length > 0) {
+        // The height of the line in the middle of each node's share.
+        var base = height - 2 * ratio;
+        var rise = height * 0.6;
+        var ys = nodes.map(function (id) {
+          return base - rise * levelOf(id, now);
+        });
 
-      for (var i = 0; i < nodes.length; i++) {
-        var x = side + i * (column + gap);
-        var level = levelOf(nodes[i], now);
-        var fill = full * level;
-
-        g.globalAlpha = 0.08;
-        roundRect(g, x, top, column, full, corner);
-
-        if (fill > 0) {
-          g.globalAlpha = 0.25 + 0.6 * level;
-          roundRect(g, x, top + full - fill, column, fill, Math.min(corner, fill / 2));
+        var points = [];
+        for (var x = 0; x <= width; x += 2 * ratio) {
+          // f is how far x is through the nodes, where node i's middle is at
+          // i. Between two middles, the line eases from one level to the
+          // next.
+          var f = (x / width) * nodes.length - 0.5;
+          var i = Math.max(0, Math.min(nodes.length - 1, Math.floor(f)));
+          var j = Math.min(nodes.length - 1, i + 1);
+          var t = Math.max(0, Math.min(1, f - i));
+          var ease = t * t * (3 - 2 * t);
+          points.push([x, ys[i] + (ys[j] - ys[i]) * ease]);
         }
-      }
 
-      g.globalAlpha = 1;
+        g.beginPath();
+        g.moveTo(0, height);
+        for (var k = 0; k < points.length; k++) g.lineTo(points[k][0], points[k][1]);
+        g.lineTo(width, height);
+        g.closePath();
+        g.fillStyle = style.getPropertyValue("--subsystem-soft");
+        g.fill();
+
+        g.beginPath();
+        for (var m = 0; m < points.length; m++) {
+          if (m === 0) g.moveTo(points[m][0], points[m][1]);
+          else g.lineTo(points[m][0], points[m][1]);
+        }
+        g.strokeStyle = style.color;
+        g.lineWidth = 1.5 * ratio;
+        g.stroke();
+      }
     }
 
-    // With reduced motion, the columns are redrawn once a second, so they
-    // step instead of draining smoothly.
+    // With reduced motion, the line is redrawn once a second, so it steps
+    // instead of draining smoothly.
     if (reducedMotion.matches) {
       window.setTimeout(drawBeats, 1000);
     } else {
