@@ -3,9 +3,9 @@
   <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
   <dt title="The node that owns this workload, computed from the live nodes that the inspector hears. During a handoff, nodes can briefly disagree.">Owner</dt><dd>{{template "owner" .DeliveredBy}}</dd>
   {{if .HasMessages}}
-  <dt>Messages</dt><dd data-watch="messages">{{num .Queue.Messages}} <span class="muted">({{num .Queue.Deadlines}} deadlines)</span></dd>
-  <dt>Due</dt><dd data-watch="due">{{num .Queue.Due}}{{if .Queue.Due}} <span class="muted">the oldest for {{dur (.Queue.LongestWait .Now)}}</span>{{end}}</dd>
-  <dt>Failing</dt><dd data-watch="failing">{{if .Queue.Failing}}<span class="tag bad">{{num .Queue.Failing}}</span> <span class="muted">up to {{num .Queue.MostFailures}} failures in a row</span>{{else}}<span class="tag ok">0</span>{{end}}</dd>
+  <dt>Messages</dt><dd>{{num .Queue.Messages}} <span class="muted">({{num .Queue.Deadlines}} deadlines)</span></dd>
+  <dt>Due</dt><dd>{{num .Queue.Due}}{{if .Queue.Due}} <span class="muted">the oldest for {{dur (.Queue.LongestWait .Now)}}</span>{{end}}</dd>
+  <dt>Failing</dt><dd>{{if .Queue.Failing}}<span class="tag bad">{{num .Queue.Failing}}</span> <span class="muted">up to {{num .Queue.MostFailures}} failures in a row</span>{{else}}<span class="tag ok">0</span>{{end}}</dd>
   {{end}}
 </dl>
 {{if and .HasMessages (.Queue.IsStalled .Now)}}

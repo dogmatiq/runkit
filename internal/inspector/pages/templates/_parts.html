@@ -45,7 +45,7 @@
         {{if .IsDeadline}}<div class="sub muted">for <a href="{{$f.Root}}handlers/{{id .HandlerKey}}/instances/{{seg .InstanceID}}">{{$f.HandlerName .HandlerKey}} {{.InstanceID}}</a></div>{{end}}</td>
       <td>{{template "mtype" $e.Type}}</td>
       <td>{{rel $f.Now .NextAttemptAt}}</td>
-      <td class="num">{{if .IsFailing}}<span class="tag bad" data-watch="failures-{{id .ID}}">{{.Failures}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="num">{{if .IsFailing}}<span class="tag bad">{{.Failures}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
       <td>{{if .IsFailing}}{{rel $f.Now .FirstFailedAt}}{{else}}<span class="muted">-</span>{{end}}</td>
       <td><a href="{{$f.Root}}queues/{{id .QueueID}}">{{icon "queue"}}<code>{{short .QueueID}}</code></a></td>
     </tr>
@@ -93,9 +93,9 @@
     <tr class="{{if .Progress.IsBehind}}row-due{{end}}">
       <td><a href="{{$f.Root}}handlers/{{id .Handler.Key}}">{{.Handler.Name}}</a></td>
       <td><a href="{{$f.Root}}streams/{{id .Progress.StreamID}}">{{icon "stream"}}<code>{{short .Progress.StreamID}}</code></a>{{if .Progress.IsRemote}} <span class="tag">remote</span>{{end}}</td>
-      <td class="num" data-watch="cp-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.CheckpointOffset}}</td>
-      <td class="num">{{if .Progress.IsRemote}}<span class="muted" title="The engine does not store the length of another engine's event stream">not known</span>{{else}}<span data-watch="len-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Length}}</span>{{end}}</td>
-      <td class="num">{{if .Progress.IsRemote}}<span class="muted">-</span>{{else if .Progress.IsBehind}}<span class="tag warn" data-watch="todo-{{id .Handler.Key}}-{{id .Progress.StreamID}}">{{num .Progress.Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}</td>
+      <td class="num">{{num .Progress.CheckpointOffset}}</td>
+      <td class="num">{{if .Progress.IsRemote}}<span class="muted" title="The engine does not store the length of another engine's event stream">not known</span>{{else}}<span>{{num .Progress.Length}}</span>{{end}}</td>
+      <td class="num">{{if .Progress.IsRemote}}<span class="muted">-</span>{{else if .Progress.IsBehind}}<span class="tag warn">{{num .Progress.Unhandled}}</span>{{else}}<span class="tag ok">0</span>{{end}}</td>
       <td>{{template "owner" .ConsumedBy}}</td>
     </tr>
   {{else}}
@@ -119,36 +119,36 @@
 
   {{if $h.Aggregate}}
   <div class="stats">
-    <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value" data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
+    <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
   </div>
   <div class="bar">{{bindings $s.Bindings "event stream" "event streams"}}</div>
   <div class="facts-line">
-    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "command" "commands"}} queued</span>
+    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "command" "commands"}} queued</span>
   </div>
   {{end}}
 
   {{if $h.Process}}
   <div class="stats">
-    <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value" data-watch="active-{{id $h.Key}}">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $s.Bindings.Instances "active instance" "active instances"}}</span></div>
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+    <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $s.Bindings.Instances "active instance" "active instances"}}</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
   </div>
   <div class="bar">{{bindings $s.Bindings "deadline queue" "deadline queues"}}</div>
   <div class="facts-line">
-    <span><strong data-watch="inst-{{id $h.Key}}">{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
-    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
+    <span><strong>{{template "count" $s.Instances}}</strong> {{noun $s.Instances.Count "instance" "instances"}} in all</span>
+    <span class="{{if $failing}}is-bad{{else if not $s.QueuedMessages}}is-zero{{end}}"><strong>{{compact $s.QueuedMessages}}</strong> {{noun $s.QueuedMessages "deadline" "deadlines"}} scheduled</span>
     {{if $s.HasHandleRate}}<span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span>{{end}}
   </div>
   {{end}}
 
   {{if eq $kind "integration"}}
   <div class="stats">
-    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value" data-watch="queued-{{id $h.Key}}">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value">{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "command" "commands"}} queued</span></div>
   </div>
   {{end}}
 
   {{if $h.Projection}}
   <div class="stats">
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value" data-watch="todo-{{id $h.Key}}">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value">{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">{{noun $todo "event" "events"}} to handle</span></div>
   </div>
   {{if $s.HasHandleRate}}<div class="facts-line"><span class="{{if not $s.HandleRate}}is-zero{{end}}"><strong>{{printf "%.1f" $s.HandleRate}}</strong> events handled/s</span></div>{{end}}
   {{end}}

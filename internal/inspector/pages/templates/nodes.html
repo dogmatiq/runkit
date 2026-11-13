@@ -18,8 +18,8 @@
       <code class="hcard-id" title="{{id .Node.ID}}">{{short .Node.ID}}</code>
     </header>
     <div class="stats">
-      <div class="stat{{if not $queues}} is-zero{{end}}"><span class="stat-value" data-watch="nq-{{id .Node.ID}}">{{$queues}}</span><span class="stat-label">{{noun $queues "queue" "queues"}} delivered</span></div>
-      <div class="stat{{if not $streams}} is-zero{{end}}"><span class="stat-value" data-watch="ns-{{id .Node.ID}}">{{$streams}}</span><span class="stat-label">{{noun $streams "event stream workload" "event stream workloads"}}</span></div>
+      <div class="stat{{if not $queues}} is-zero{{end}}"><span class="stat-value">{{$queues}}</span><span class="stat-label">{{noun $queues "queue" "queues"}} delivered</span></div>
+      <div class="stat{{if not $streams}} is-zero{{end}}"><span class="stat-value">{{$streams}}</span><span class="stat-label">{{noun $streams "event stream workload" "event stream workloads"}}</span></div>
     </div>
     {{if .Queues}}
     <ul class="workloads">

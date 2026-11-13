@@ -16,7 +16,7 @@
   {{range $s := .Obs.EventStreams}}
     <tr>
       <td><a href="{{$.Root}}streams/{{id .ID}}">{{icon "stream"}}<code>{{id .ID}}</code></a></td>
-      <td class="num" data-watch="len-{{id .ID}}">{{num .Length}}</td>
+      <td class="num">{{num .Length}}</td>
       <td>{{range $.Obs.Handlers}}{{$h := .Handler}}{{range .Progress}}{{if and (.StreamID.Equal $s.ID) .IsBehind}}<a class="tag warn" href="{{$.Root}}handlers/{{id $h.Key}}">{{$h.Name}} {{num .Unhandled}}</a> {{end}}{{end}}{{end}}</td>
     </tr>
   {{else}}

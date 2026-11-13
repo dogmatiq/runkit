@@ -6,27 +6,27 @@
   <a class="metric" href="{{.Root}}nodes">
     <span class="metric-icon" title="Cluster">{{icon "node"}}</span>
     {{if .Obs.LiveNodes.Known}}{{$n := len .Obs.LiveNodes.Nodes}}
-      <span class="metric-value" data-watch="nodes">{{$n}}</span>
+      <span class="metric-value">{{$n}}</span>
       <span class="metric-detail">{{if $n}}live {{if eq $n 1}}node{{else}}nodes{{end}}{{else}}<span class="is-bad-text">no live nodes</span>{{end}}</span>
     {{else}}
       <span class="metric-value is-unknown">?</span>
       <span class="metric-detail">listening for heartbeats</span>
     {{end}}
-    <svg class="trace" data-heartbeat-trace viewBox="0 0 300 48" preserveAspectRatio="none" aria-hidden="true"><path/></svg>
+    {{if .Obs.LiveNodes.Known}}<span class="node-blips">{{range .Obs.LiveNodes.Nodes}}<span class="pulse" id="blip-{{id .ID}}" data-node="{{id .ID}}" title="{{id .ID}}"></span>{{end}}</span>{{end}}
   </a>
 
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
   <a class="metric" href="{{.Root}}queues">
     <span class="metric-icon" title="Queues">{{icon "queue"}}</span>
-    <span class="metric-value" data-watch="messages" title="{{num $messages}}">{{compact $messages}}</span>
-    <span class="metric-detail">{{noun $messages "message" "messages"}} queued in {{plural (len .Obs.Queues) "queue" "queues"}}{{if $failing}}, <span class="is-bad-text" data-watch="failing">{{num $failing}} failing</span>{{end}}</span>
+    <span class="metric-value" title="{{num $messages}}">{{compact $messages}}</span>
+    <span class="metric-detail">{{noun $messages "message" "messages"}} queued in {{plural (len .Obs.Queues) "queue" "queues"}}{{if $failing}}, <span class="is-bad-text">{{num $failing}} failing</span>{{end}}</span>
     {{sparkline .Messages}}
   </a>
 
   {{$events := .Obs.Events}}
   <a class="metric" href="{{.Root}}streams">
     <span class="metric-icon" title="Events">{{icon "event"}}</span>
-    <span class="metric-value" data-watch="events">{{printf "%.1f" .CurrentRate}}</span>
+    <span class="metric-value">{{printf "%.1f" .CurrentRate}}</span>
     <span class="metric-detail">events per second, <span title="{{num $events}}">{{compact $events}}</span> recorded on {{plural (len .Obs.EventStreams) "event stream" "event streams"}}</span>
     <div class="metric-bar">{{streambar .Obs.EventStreams}}</div>
     {{sparkline .EventRate}}

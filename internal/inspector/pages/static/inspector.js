@@ -6,8 +6,7 @@
 // of a node that sent a heartbeat, so that node's indicators pulse.
 //
 // Every page works without this script. It only adds the live updates, the
-// color-mode control, the ticking relative times and the highlighting of
-// values that changed.
+// color-mode control and the ticking relative times.
 (function () {
   "use strict";
 
@@ -55,41 +54,6 @@
 
   tick();
   window.setInterval(tick, 500);
-
-  // The heartbeat trace.
-  //
-  // The cluster card shows a trace like a heart monitor. Each heartbeat that
-  // arrives, from any node, draws a spike that scrolls from right to left over
-  // the trace's window. The trace is drawn from the heartbeats that this page
-  // has received, so it starts empty when the page opens.
-
-  var traceWindow = 30000;
-  var beats = [];
-
-  function drawTrace() {
-    var path = document.querySelector("[data-heartbeat-trace] path");
-    if (!path) return;
-
-    var now = performance.now();
-    while (beats.length && now - beats[0] > traceWindow) beats.shift();
-
-    var width = 300;
-    var base = 38;
-    var d = "M0 " + base;
-
-    for (var i = 0; i < beats.length; i++) {
-      var x = width - ((now - beats[i]) / traceWindow) * width;
-      d += " L" + (x - 3).toFixed(1) + " " + base;
-      d += " L" + (x - 1).toFixed(1) + " " + (base - 26);
-      d += " L" + (x + 1).toFixed(1) + " " + (base + 6);
-      d += " L" + (x + 3).toFixed(1) + " " + base;
-    }
-
-    d += " L" + width + " " + base;
-    path.setAttribute("d", d);
-  }
-
-  window.setInterval(drawTrace, 100);
 
   // Heartbeats.
 
@@ -139,48 +103,39 @@
     });
 
     source.addEventListener("heartbeat", function (e) {
-      beats.push(performance.now());
       pulse(e.data);
     });
   }
 
   connect();
 
-  // Highlighting and open sections.
+  // Updates.
   //
-  // Before htmx replaces the live part of the page, remember the text of each
-  // element with a data-watch attribute, and which <details> elements are
-  // open. Afterwards, highlight each value that changed, and reopen the same
-  // <details> elements.
+  // Each update morphs the new page into the old one, so elements that have
+  // not changed stay as they are, and nothing flashes. A node's heartbeat
+  // blip is animated by a class that the server never renders, so the morph
+  // leaves an element's classes alone while it blips, and an update does not
+  // cut a blip short. After an update, <details> elements that were open are
+  // opened again.
 
-  var watched = {};
+  if (window.Idiomorph) {
+    window.Idiomorph.defaults.callbacks.beforeAttributeUpdated = function (name, node) {
+      return !(name === "class" && node.classList && node.classList.contains("beat"));
+    };
+  }
+
   var openDetails = {};
 
   body.addEventListener("htmx:beforeSwap", function () {
-    watched = {};
     openDetails = {};
 
-    var elements = document.querySelectorAll("[data-watch]");
-    for (var i = 0; i < elements.length; i++) {
-      watched[elements[i].getAttribute("data-watch")] = elements[i].textContent.trim();
-    }
-
     var details = document.querySelectorAll("details[id][open]");
-    for (var j = 0; j < details.length; j++) {
-      openDetails[details[j].id] = true;
+    for (var i = 0; i < details.length; i++) {
+      openDetails[details[i].id] = true;
     }
   });
 
   body.addEventListener("htmx:afterSwap", function () {
-    var elements = document.querySelectorAll("[data-watch]");
-    for (var i = 0; i < elements.length; i++) {
-      var key = elements[i].getAttribute("data-watch");
-      var before = watched[key];
-      if (before !== undefined && before !== elements[i].textContent.trim()) {
-        restartAnimation(elements[i], "changed");
-      }
-    }
-
     for (var id in openDetails) {
       var d = document.getElementById(id);
       if (d) d.open = true;

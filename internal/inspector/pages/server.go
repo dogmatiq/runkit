@@ -11,14 +11,20 @@ import (
 	"github.com/dogmatiq/runkit/internal/inspector/observe"
 )
 
-// htmxURL is the URL of the htmx script that every page loads. The layout
-// template has the same URL, with the script's integrity hash.
-const htmxURL = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
+const (
+	// htmxURL is the URL of the htmx script that every page loads. The layout
+	// template has the same URL, with the script's integrity hash.
+	htmxURL = "https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js"
+
+	// morphURL is the URL of the htmx extension that morphs each update into
+	// the page. The layout template has the same URL, with its integrity hash.
+	morphURL = "https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph-ext.min.js"
+)
 
 // contentSecurityPolicy allows the page to load the htmx script from its CDN,
 // and everything else only from the inspector.
 const contentSecurityPolicy = "default-src 'none'; " +
-	"script-src 'self' " + htmxURL + "; " +
+	"script-src 'self' " + htmxURL + " " + morphURL + "; " +
 	"style-src 'self'; " +
 	"font-src 'self'; " +
 	"img-src 'self' data:; " +

@@ -17,11 +17,11 @@
   {{range .Queues}}
     <tr class="{{if .IsStalled $.Now}}row-bad{{else if .Failing}}row-warn{{end}}">
       <td><a href="{{$.Root}}queues/{{id .ID}}">{{icon "queue"}}<code>{{short .ID}}</code></a></td>
-      <td class="num" data-watch="q-{{id .ID}}">{{num .Messages}}</td>
+      <td class="num">{{num .Messages}}</td>
       <td class="num">{{num .Deadlines}}</td>
-      <td class="num" data-watch="qd-{{id .ID}}">{{num .Due}}</td>
+      <td class="num">{{num .Due}}</td>
       <td>{{if .Due}}<span class="{{if .IsStalled $.Now}}tag bad{{end}}">{{dur (.LongestWait $.Now)}}</span>{{else}}<span class="muted">-</span>{{end}}</td>
-      <td class="num">{{if .Failing}}<span class="tag bad" data-watch="qf-{{id .ID}}">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+      <td class="num">{{if .Failing}}<span class="tag bad">{{num .Failing}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
       <td>{{if .Failing}}{{rel $.Now .FirstFailedAt}}{{else}}<span class="muted">-</span>{{end}}</td>
       <td>{{template "owner" .DeliveredBy}}</td>
     </tr>

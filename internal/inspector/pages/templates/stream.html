@@ -1,7 +1,7 @@
 {{define "stream.html"}}{{template "top" .}}
 <dl class="facts wide">
   <dt>ID</dt><dd><code>{{id .ID}}</code></dd>
-  <dt>Events</dt><dd data-watch="length">{{if .IsKnown}}{{num .Stream.Length}}{{else}}<span class="muted">not known</span>{{end}}</dd>
+  <dt>Events</dt><dd>{{if .IsKnown}}{{num .Stream.Length}}{{else}}<span class="muted">not known</span>{{end}}</dd>
 </dl>
 {{if .Progress}}
 <h2>Handlers</h2>

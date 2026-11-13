@@ -11,9 +11,10 @@
 <link rel="stylesheet" href="{{.Root}}static/inspector.css?v={{version}}">
 <script src="{{.Root}}static/theme.js?v={{version}}"></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.11/dist/htmx.min.js" integrity="sha384-2OatzQy1H+Zd/IIrjr1TcuDGqLXeHhbooAyJY1KdQMKnr4LZ22k31GBLdYKHmVjg" crossorigin="anonymous" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/idiomorph@0.8.0/dist/idiomorph-ext.min.js" integrity="sha384-+iBk70O0UWQdSjXQSQ7amSxXCrsWq/6UOtvC9rDo0p7telbTSOyttExq6QCFBzNk" crossorigin="anonymous" defer></script>
 <script src="{{.Root}}static/inspector.js?v={{version}}" defer></script>
 </head>
-<body data-live="{{.Root}}live" data-version="{{version}}">
+<body data-live="{{.Root}}live" data-version="{{version}}" hx-ext="morph">
 <header class="titlebar">
   <a class="brand" href="{{.Root}}">
     <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
@@ -37,7 +38,7 @@
     </button>
   </div>
 </header>
-<main id="live" class="page" hx-get="{{.Self}}" hx-trigger="observed from:body" hx-select="#live" hx-swap="outerHTML">
+<main id="live" class="page" hx-get="{{.Self}}" hx-trigger="observed from:body" hx-select="#live" hx-swap="morph:outerHTML">
 {{if ne .Section "overview"}}<h1 class="page-title">{{.Title}}</h1>{{end}}
 {{- end}}
 

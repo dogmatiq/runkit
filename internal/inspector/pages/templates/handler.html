@@ -3,8 +3,8 @@
 <dl class="facts wide">
   <dt>Type</dt><dd><span class="htype htype-{{htype $h.Type}}">{{htype $h.Type}}</span>{{if $h.IsDisabled}} <span class="tag">disabled</span>{{end}}</dd>
   <dt>Key</dt><dd><code>{{id $h.Key}}</code></dd>
-  {{if $h.HasInstances}}<dt>Instances</dt><dd data-watch="instances">{{template "count" .Summary.Instances}}</dd>{{end}}
-  {{if $h.HandlesEvents}}<dt>To handle</dt><dd data-watch="todo">{{if .Summary.Unhandled}}<span class="tag warn">{{plural .Summary.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
+  {{if $h.HasInstances}}<dt>Instances</dt><dd>{{template "count" .Summary.Instances}}</dd>{{end}}
+  {{if $h.HandlesEvents}}<dt>To handle</dt><dd>{{if .Summary.Unhandled}}<span class="tag warn">{{plural .Summary.Unhandled "event" "events"}}</span>{{else}}<span class="tag ok">up to date</span>{{end}}</dd>{{end}}
   {{if $h.Projection}}
     <dt>Last compacted</dt><dd>{{rel .Now .Summary.LastCompactedAt}} <span class="muted">or first run, before its first compaction</span></dd>
     <dt>Concurrency</dt><dd>{{if $h.MinimizesConcurrency}}minimized, so one node consumes every event stream for it{{else}}not minimized, so rendezvous hashing chooses the node that consumes each event stream for it{{end}}</dd>
