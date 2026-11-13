@@ -76,6 +76,7 @@ var templateFuncs = template.FuncMap{
 	"add":       func(a, b int) int { return a + b },
 	"list":      func(values ...any) []any { return values },
 	"plural":    countOf,
+	"round":     func(f float64) int { return int(math.Round(f)) },
 	"noun":      nounFor,
 }
 
