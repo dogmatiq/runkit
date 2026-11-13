@@ -78,6 +78,8 @@ var templateFuncs = template.FuncMap{
 	"plural":    countOf,
 	"round":     func(f float64) int { return int(math.Round(f)) },
 	"noun":      nounFor,
+	"logo":      logo,
+	"versions":  func() moduleVersions { return versions },
 }
 
 // nounFor returns the singular form of a noun if n is 1, and the plural form

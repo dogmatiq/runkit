@@ -31,6 +31,9 @@
   --space-8: 64px;
 
   --radius: 12px;
+
+  /* The width of the page's content, and of the title bar's and footer's. */
+  --page-width: 1280px;
 }
 
 :root {
@@ -270,18 +273,30 @@ h3 {
 
 /* The title bar. */
 
+/*
+ * The title bar's background spans the window, and its content has the page's
+ * width and is centered, so the brand lines up with the left edge of the page
+ * and the controls with its right edge, however wide the window is.
+ */
+
 .titlebar {
   position: sticky;
   top: 0;
   z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 24px;
-  height: 52px;
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   backdrop-filter: saturate(1.4) blur(10px);
   border-bottom: 1px solid var(--border);
+}
+
+.titlebar-inner {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  box-sizing: border-box;
+  max-width: var(--page-width);
+  height: 52px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 .brand {
@@ -298,11 +313,10 @@ h3 {
 }
 
 .mark {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.5;
+  width: 24px;
+  height: auto;
+  flex: none;
+  fill: currentColor;
 }
 
 .brand-tool {
@@ -378,7 +392,7 @@ h3 {
 /* The page. */
 
 .page {
-  max-width: 1280px;
+  max-width: var(--page-width);
   margin: 0 auto;
   padding: 24px 24px 48px;
 }
@@ -400,12 +414,46 @@ h3 {
 }
 
 .footer {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 16px 24px 32px;
+  border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
-  border-top: 1px solid var(--border);
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  box-sizing: border-box;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 16px 24px 32px;
+}
+
+.footer p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.footer a {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.footer-mark {
+  width: 16px;
+  height: auto;
+  flex: none;
+  fill: currentColor;
+}
+
+.footer-version {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
 }
 
 /*
@@ -1210,7 +1258,7 @@ a.tag:hover {
 }
 
 @media (max-width: 720px) {
-  .titlebar {
+  .titlebar-inner {
     flex-wrap: wrap;
     height: auto;
     gap: 6px 12px;
@@ -1227,7 +1275,7 @@ a.tag:hover {
     padding: 16px 16px 40px;
   }
 
-  .footer {
+  .footer-inner {
     padding: 16px;
   }
 

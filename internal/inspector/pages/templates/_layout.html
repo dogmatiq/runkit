@@ -18,8 +18,9 @@
 </head>
 <body data-live="{{.Root}}live" data-version="{{version}}" hx-ext="morph">
 <header class="titlebar">
-  <a class="brand" href="{{.Root}}">
-    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+<div class="titlebar-inner">
+  <a class="brand" href="{{.Root}}" title="Application {{.App.Identity.GetName}}, key {{id .App.Identity.GetKey}}">
+    {{logo "mark"}}
     <span class="brand-app">{{.App.Identity.GetName}}</span>
     <span class="brand-tool">inspector</span>
   </a>
@@ -27,7 +28,7 @@
     <a href="{{.Root}}" {{if eq .Section "overview"}}aria-current="page"{{end}}>{{icon "overview"}}Overview</a>
     <a href="{{.Root}}cluster" {{if eq .Section "cluster"}}aria-current="page"{{end}}>{{icon "cluster"}}Cluster</a>
     <a href="{{.Root}}queues" {{if eq .Section "queues"}}aria-current="page"{{end}}>{{icon "queue"}}Queues</a>
-    <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>{{icon "stream"}}Event streams</a>
+    <a href="{{.Root}}streams" {{if eq .Section "streams"}}aria-current="page"{{end}}>{{icon "stream"}}Streams</a>
     <a href="{{.Root}}aggregates" {{if eq .Section "aggregates"}}aria-current="page"{{end}}>{{icon "aggregate"}}Aggregates</a>
     <a href="{{.Root}}processes" {{if eq .Section "processes"}}aria-current="page"{{end}}>{{icon "process"}}Processes</a>
     <a href="{{.Root}}integrations" {{if eq .Section "integrations"}}aria-current="page"{{end}}>{{icon "integration"}}Integrations</a>
@@ -39,6 +40,7 @@
       <span class="theme-label">auto</span>
     </button>
   </div>
+</div>
 </header>
 <main id="live" class="page" hx-get="{{.Self}}" hx-trigger="observed from:body" hx-select="#live" hx-swap="morph:outerHTML">
 {{if ne .Section "overview"}}<h1 class="page-title">{{.Title}}</h1>{{end}}
@@ -47,8 +49,14 @@
 {{define "bottom" -}}
 </main>
 <footer class="footer">
-  Read-only. Every query runs in a read-only transaction. Linked with
-  {{icon "application"}}<code>{{.App.Identity.GetName}}</code> <code class="muted">{{id .App.Identity.GetKey}}</code>.
+  <div class="footer-inner">
+    <p class="footer-powered">
+      {{logo "footer-mark"}}
+      <span>Powered by <a href="https://github.com/dogmatiq/dogma">Dogma</a>{{with versions}}{{if .Dogma}} <span class="footer-version">{{.Dogma}}</span>{{end}}{{end}}
+      and <a href="https://github.com/dogmatiq/runkit">runkit</a>{{with versions}}{{if .Runkit}} <span class="footer-version">{{.Runkit}}</span>{{end}}{{end}}</span>
+    </p>
+    <p class="footer-copyright">&copy; 2026 James Harris</p>
+  </div>
 </footer>
 </body>
 </html>
