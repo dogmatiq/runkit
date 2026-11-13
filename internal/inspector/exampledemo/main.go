@@ -13,7 +13,9 @@
 //	go run . postgres://user:password@localhost:5432/postgres
 //
 // It serves the bank at http://127.0.0.1:8071/ and the inspector at
-// http://127.0.0.1:8071/inspector/.
+// http://127.0.0.1:8071/inspector/. While it runs, it keeps executing the
+// commands that the bank's customers would cause, so there is always work for
+// the inspector to show.
 //
 // It runs the cluster with [democluster.Start], which creates a new database
 // for it and drops the database when the command stops. The application's
@@ -38,6 +40,7 @@ import (
 	"github.com/dogmatiq/example/ui"
 	"github.com/dogmatiq/example/ui/projections"
 	"github.com/dogmatiq/runkit/internal/inspector/democluster"
+	"golang.org/x/sync/errgroup"
 )
 
 // listenAddress is the address of the bank and the inspector.
@@ -107,7 +110,18 @@ func run(ctx context.Context, serverDSN string) error {
 		},
 	)
 
-	err = democluster.Serve(ctx, listenAddress, mux, "/", "/inspector/")
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return democluster.Serve(ctx, listenAddress, mux, "/", "/inspector/")
+	})
+
+	g.Go(func() error {
+		executeCommands(ctx, cluster)
+		return ctx.Err()
+	})
+
+	err = g.Wait()
 
 	if waitErr := cluster.Wait(); !errors.Is(waitErr, context.Canceled) {
 		err = errors.Join(err, waitErr)
