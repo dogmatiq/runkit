@@ -122,7 +122,7 @@
   {{if $h.Aggregate}}
   <div class="stats">
     <div class="stat{{if not $s.Instances.Count}} is-zero{{end}}"><span class="stat-value">{{template "count" $s.Instances}}</span><span class="stat-label">{{noun $s.Instances.Count "instance" "instances"}}</span></div>
-    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">queued</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">command backlog</span></div>
   </div>
   {{bindings $s.Bindings "streams" "event stream" "event streams"}}
   {{end}}
@@ -130,7 +130,7 @@
   {{if $h.Process}}
   <div class="stats">
     <div class="stat{{if not $s.Bindings.Instances}} is-zero{{end}}"><span class="stat-value">{{compact $s.Bindings.Instances}}{{if $s.Bindings.IsAtLeast}}+{{end}}</span><span class="stat-label">in progress</span></div>
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">to handle</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">event backlog</span></div>
     <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "deadline"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">{{noun $s.QueuedMessages "deadline" "deadlines"}}</span></div>
   </div>
   {{bindings $s.Bindings "queues" "deadline queue" "deadline queues"}}
@@ -138,13 +138,13 @@
 
   {{if eq $kind "integration"}}
   <div class="stats">
-    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">queued</span></div>
+    <div class="stat{{if $failing}} is-bad{{else if not $s.QueuedMessages}} is-zero{{end}}"><span class="stat-value hint-queues">{{icon "command"}}{{compact $s.QueuedMessages}}</span><span class="stat-label">command backlog</span></div>
   </div>
   {{end}}
 
   {{if $h.Projection}}
   <div class="stats">
-    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">to handle</span></div>
+    <div class="stat{{if not $todo}} is-zero{{end}}"><span class="stat-value hint-streams">{{icon "event"}}{{compact $todo}}{{if $s.UnhandledIsAtLeast}}+{{end}}</span><span class="stat-label">event backlog</span></div>
   </div>
   {{end}}
 
