@@ -80,6 +80,15 @@ type Observation struct {
 	Handlers []HandlerSummary
 }
 
+// QueuedMessages returns the total number of messages in the observed queues.
+func (o *Observation) QueuedMessages() uint64 {
+	var n uint64
+	for _, q := range o.Queues {
+		n += uint64(q.Messages)
+	}
+	return n
+}
+
 // Events returns the total number of events on the observed event streams.
 func (o *Observation) Events() uint64 {
 	var n uint64
@@ -202,16 +211,19 @@ type Sample struct {
 	At time.Time
 
 	// Events is the total number of events on the observed event streams.
-	Events Counter
+	Events Total
+
+	// QueuedMessages is the total number of messages in the observed queues.
+	QueuedMessages Total
 
 	// RemovedMessages is the number of messages removed from the queues since
 	// PostgreSQL's statistics were last reset.
-	RemovedMessages Counter
+	RemovedMessages Total
 }
 
-// Counter is the value of a total that usually only grows, such as the number
-// of events recorded, as one observation read it.
-type Counter struct {
+// Total is one total, such as the number of events recorded, as one
+// observation read it.
+type Total struct {
 	// Value is the total.
 	Value uint64
 
@@ -378,11 +390,15 @@ func (o *Observer) publish(obs *Observation) {
 		o.history,
 		Sample{
 			At: obs.At,
-			Events: Counter{
+			Events: Total{
 				Value:   obs.Events(),
 				IsKnown: obs.EventStreamsErr == nil,
 			},
-			RemovedMessages: Counter{
+			QueuedMessages: Total{
+				Value:   obs.QueuedMessages(),
+				IsKnown: obs.QueuesErr == nil,
+			},
+			RemovedMessages: Total{
 				Value:   obs.RemovedMessages,
 				IsKnown: obs.RemovedMessagesErr == nil,
 			},

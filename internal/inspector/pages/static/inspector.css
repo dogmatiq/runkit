@@ -473,11 +473,17 @@ h3 {
   color: var(--faint);
 }
 
+/*
+ * A detail always takes two lines, so that one that wraps, such as when a
+ * count of failing messages appears, does not move the cards below.
+ */
 .metric-detail {
   position: relative;
   z-index: 1;
+  min-height: calc(2 * 1.5em);
   margin-top: var(--space-2);
   font-size: var(--text-sm);
+  line-height: 1.5;
   color: var(--muted);
 }
 

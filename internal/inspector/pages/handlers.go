@@ -44,26 +44,30 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, f frame) {
 	eventRates := rate(
 		history,
 		chartWindow,
-		func(s observe.Sample) observe.Counter { return s.Events },
+		func(s observe.Sample) observe.Total { return s.Events },
 	)
 
 	removalRates := rate(
 		history,
 		chartWindow,
-		func(s observe.Sample) observe.Counter { return s.RemovedMessages },
+		func(s observe.Sample) observe.Total { return s.RemovedMessages },
 	)
 
 	data := struct {
 		frame
 		EventRates               []float64
 		EventsPerMinute          float64
-		RemovalRates             []float64
+		QueuedMessages           []float64
 		RemovedMessagesPerMinute float64
 	}{
-		frame:                    f,
-		EventRates:               eventRates,
-		EventsPerMinute:          perMinute(eventRates),
-		RemovalRates:             removalRates,
+		frame:           f,
+		EventRates:      eventRates,
+		EventsPerMinute: perMinute(eventRates),
+		QueuedMessages: series(
+			history,
+			chartWindow,
+			func(s observe.Sample) observe.Total { return s.QueuedMessages },
+		),
 		RemovedMessagesPerMinute: perMinute(removalRates),
 	}
 

@@ -18,14 +18,11 @@
   {{$messages := 0}}{{$failing := 0}}{{range .Obs.Queues}}{{$messages = add $messages .Messages}}{{$failing = add $failing .Failing}}{{end}}
   <a class="metric subsystem-queues" href="{{.Root}}queues">
     <span class="metric-icon" title="Queues">{{icon "queue"}}</span>
-    {{if .Obs.RemovedMessagesErr}}
-      <span class="metric-value is-unknown" title="{{.Obs.RemovedMessagesErr}}">?</span>
-    {{else}}
-      <span class="metric-value" title="Messages delivered, and deadlines removed when their process instance ended, from PostgreSQL's table statistics">{{compact (round .RemovedMessagesPerMinute)}}</span>
-    {{end}}
-    <span class="metric-detail">messages removed per minute, <span title="{{num $messages}}">{{compact $messages}}</span> queued in {{plural (len .Obs.Queues) "queue" "queues"}}{{if $failing}}, <span class="is-bad-text">{{num $failing}} failing</span>{{end}}</span>
+    <span class="metric-value" title="{{num $messages}}">{{compact $messages}}</span>
+    <span class="metric-detail">{{noun $messages "message" "messages"}} queued in {{plural (len .Obs.Queues) "queue" "queues"}},
+      {{if .Obs.RemovedMessagesErr}}<span title="{{.Obs.RemovedMessagesErr}}">?</span>{{else}}<span title="Messages delivered, and deadlines removed when their process instance ended, from PostgreSQL's table statistics">{{compact (round .RemovedMessagesPerMinute)}}</span>{{end}} removed per minute{{if $failing}}, <span class="is-bad-text">{{num $failing}} failing</span>{{end}}</span>
     <div class="metric-bar">{{queuebar .Obs.Queues}}</div>
-    {{sparkline .RemovalRates}}
+    {{sparkline .QueuedMessages}}
   </a>
 
   {{$events := .Obs.Events}}

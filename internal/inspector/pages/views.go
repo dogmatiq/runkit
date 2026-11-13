@@ -272,7 +272,7 @@ func format(v any) (p payloadView) {
 // rate returns the change per second in a counter between each pair of
 // consecutive samples, over the given window. It skips each pair in which
 // either sample could not read the counter.
-func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Counter) []float64 {
+func rate(samples []observe.Sample, window time.Duration, counter func(observe.Sample) observe.Total) []float64 {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -310,6 +310,26 @@ func rate(samples []observe.Sample, window time.Duration, counter func(observe.S
 	}
 
 	return rates
+}
+
+// series returns the value of a total in each sample over the given window. It
+// skips each sample that could not read the total.
+func series(samples []observe.Sample, window time.Duration, total func(observe.Sample) observe.Total) []float64 {
+	if len(samples) == 0 {
+		return nil
+	}
+
+	since := samples[len(samples)-1].At.Add(-window)
+
+	var values []float64
+
+	for _, s := range samples {
+		if t := total(s); t.IsKnown && !s.At.Before(since) {
+			values = append(values, float64(t.Value))
+		}
+	}
+
+	return values
 }
 
 // perMinute returns the average of the most recent few of the given rates per
