@@ -739,9 +739,8 @@ layer, as the logging guide requires.
   each difference the inventory shows, propose one rule, with the examples that
   break it. Expect rules for field names, field order, which fields are
   documented, and the order of fields in struct literals. Record each agreed
-  rule in the shared skills in [dogmatiq/agent-config][agent-config], not only
-  in the code. The rules go there as one batch, in a pull request that the
-  maintainer asks for when the batch is ready, because they may decide not to.
+  rule below. The rules are specific to this project, so they don't go in the
+  shared skills in [dogmatiq/agent-config][agent-config].
 - [ ] **Step 3: Apply the rules in rename-only commits**, one rule per commit,
   so each diff shows a single mechanical change. Run `make test` after each.
 - [ ] **Step 4: Stop for review** after each commit.
@@ -772,6 +771,11 @@ The rules agreed so far, each applied in its own commit:
    and `FailurePolicy`. A struct that holds several fields of one kind, such as
    a consumer's `EngineFailurePolicy` and `DeliveryFailurePolicy`, qualifies
    each.
+5. **A logger is named for its role.** A logger field, parameter or local is
+   `engineLogger` or `appLogger`, or is named for its job if it is neither: a
+   helper's `target`, a function's `base`, a test's `testLogger`. It is never a
+   bare `logger`. The one exception is the public `WithLogger(logger)`, which
+   sets both loggers.
 
 ---
 

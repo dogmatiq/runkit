@@ -128,13 +128,13 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 	}
 }
 
-// newLoggerForHandler returns the given logger with the attributes that
+// newLoggerForHandler returns the base logger with the attributes that
 // identify the given handler.
 func newLoggerForHandler(
-	logger *slog.Logger,
+	base *slog.Logger,
 	handlerConfig config.Handler,
 ) *slog.Logger {
-	return logger.With(
+	return base.With(
 		xslog.HandlerIdentity(
 			handlerConfig.Identity(),
 			handlerConfig.HandlerType(),

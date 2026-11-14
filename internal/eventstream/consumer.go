@@ -121,7 +121,7 @@ func (c *Consumer) startStreamConsumer(
 	ctx context.Context,
 	streamID *uuidpb.UUID,
 ) {
-	logger := c.EngineLogger.With(
+	engineLogger := c.EngineLogger.With(
 		xslog.UUID("stream_id", streamID),
 	)
 
@@ -131,8 +131,8 @@ func (c *Consumer) startStreamConsumer(
 	c.group.Go(func() error {
 		defer stopped.Set()
 
-		logger.DebugContext(ctx, "started consuming event stream")
-		defer logger.DebugContext(ctx, "stopped consuming event stream")
+		engineLogger.DebugContext(ctx, "started consuming event stream")
+		defer engineLogger.DebugContext(ctx, "stopped consuming event stream")
 
 		// sinkFailures tracks the failures of the sink, apart from failures to
 		// read the stream and checkpoint conflicts, which [supervisor.Run]
@@ -142,7 +142,7 @@ func (c *Consumer) startStreamConsumer(
 		sinkFailures := &failure.Tracker{
 			Description:  "dispatch events",
 			Policy:       c.DispatchFailurePolicy,
-			EngineLogger: logger,
+			EngineLogger: engineLogger,
 		}
 		defer sinkFailures.Complete()
 
@@ -150,7 +150,7 @@ func (c *Consumer) startStreamConsumer(
 			ctx,
 			"consume event stream",
 			c.EngineFailurePolicy,
-			logger,
+			engineLogger,
 			func(ctx context.Context) error {
 				for {
 					err := c.consume(ctx, streamID, sinkFailures)
@@ -185,7 +185,7 @@ func (c *Consumer) startStreamConsumer(
 						return err
 					}
 
-					logger.DebugContext(
+					engineLogger.DebugContext(
 						ctx,
 						"event stream left the catalog, waiting for it to return",
 					)

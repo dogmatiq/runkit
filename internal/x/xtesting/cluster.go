@@ -27,11 +27,11 @@ import (
 //
 // It must only be used from the test's goroutine.
 type Cluster struct {
-	t       testing.TB
-	db      *sql.DB
-	app     dogma.Application
-	options []runkit.EngineOption
-	logger  *slog.Logger
+	t          testing.TB
+	db         *sql.DB
+	app        dogma.Application
+	options    []runkit.EngineOption
+	testLogger *slog.Logger
 
 	ctx    context.Context
 	stop   context.CancelFunc
@@ -75,14 +75,14 @@ func StartCluster(
 	ctx, stop := context.WithCancel(t.Context())
 
 	c := &Cluster{
-		t:       t,
-		db:      db,
-		app:     app,
-		options: options,
-		logger:  spruce.NewTestLogger(t),
-		ctx:     ctx,
-		stop:    stop,
-		members: map[*runkit.Engine]*clusterMember{},
+		t:          t,
+		db:         db,
+		app:        app,
+		options:    options,
+		testLogger: spruce.NewTestLogger(t),
+		ctx:        ctx,
+		stop:       stop,
+		members:    map[*runkit.Engine]*clusterMember{},
 	}
 	t.Cleanup(c.Stop)
 
@@ -171,7 +171,7 @@ func (c *Cluster) start() *runkit.Engine {
 			[]runkit.EngineOption{
 				runkit.WithProjectionCompactInterval(ProjectionCompactInterval),
 				runkit.WithListenAddress("127.0.0.1:0"),
-				runkit.WithLogger(c.logger.With("node", idx)),
+				runkit.WithLogger(c.testLogger.With("node", idx)),
 			},
 			c.options...,
 		)...,
