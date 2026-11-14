@@ -46,6 +46,10 @@ const (
 	// a heartbeat before the others consider it offline.
 	heartbeatTimeout = 5 * heartbeatInterval
 
+	// connectionMaxIdleTime is how long a database connection can sit idle in
+	// the pool before the pool closes it.
+	connectionMaxIdleTime = 1 * time.Minute
+
 	// eventStreamCacheSize is the number of recent events cached per event
 	// stream for delivery to consumers that are keeping up with the stream.
 	eventStreamCacheSize = 100
@@ -177,12 +181,7 @@ type Engine struct {
 // sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db is nil or uses any
 // other driver.
 //
-// The engine uses many of db's connections at once. Each attempt to deliver a
-// command or deadline uses one, up to the limit that
-// [WithMessageQueueConcurrency] sets. By default, db keeps only two idle
-// connections and closes any others when they're returned, so the engine would
-// open a new connection for most deliveries. Call [sql.DB.SetMaxIdleConns]
-// with the same value as [sql.DB.SetMaxOpenConns].
+// [Engine.Run] sets the limits on the database's connection pool.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -230,6 +229,21 @@ func New(
 // It must be called at most once.
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.stopped.Set()
+
+	// There is no limit on open connections. Each message queue delivery
+	// attempt holds a connection until its handler returns, so a limit would
+	// let attempts starve the engine's other work. The heartbeat in particular
+	// must not wait for an attempt to finish, or the node is considered
+	// offline.
+	//
+	// There is no limit on idle connections either, so the pool keeps as many
+	// connections as the engine has used at once, instead of closing them and
+	// opening new ones for the next queries. A connection is closed after it
+	// has been idle for [connectionMaxIdleTime], so the pool shrinks when the
+	// load drops.
+	e.db.SetMaxOpenConns(0)
+	e.db.SetMaxIdleConns(-1)
+	e.db.SetConnMaxIdleTime(connectionMaxIdleTime)
 
 	e.appConfig = runtimeconfig.FromApplication(e.app)
 

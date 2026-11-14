@@ -79,6 +79,10 @@ events.
     process handler. Use `WithMessageQueueConcurrency()` to raise it.
   - An integration handler that prefers `MinimizeConcurrency` may briefly
     handle two commands at once while engines join or leave a cluster.
+- `Engine.Run()` now configures the database pool with unlimited connections and
+  an idle timeout, which closes each connection that has been idle for one
+  minute, so `WithMessageQueueConcurrency()` naturally determines how many
+  connections are kept open for deliveries.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`
