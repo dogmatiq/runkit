@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/dogmatiq/dogma"
+	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
@@ -29,6 +30,16 @@ func Identity(k string, v *identitypb.Identity, extra ...slog.Attr) slog.Attr {
 	}
 
 	return slog.Group(k, attrs...)
+}
+
+// HandlerIdentity returns the "handler" attribute, which holds a handler's name,
+// key and type.
+func HandlerIdentity(identity *identitypb.Identity, handlerType config.HandlerType) slog.Attr {
+	return Identity(
+		"handler",
+		identity,
+		slog.String("type", handlerType.String()),
+	)
 }
 
 // Envelope returns an [slog.Attr] for a message envelope.

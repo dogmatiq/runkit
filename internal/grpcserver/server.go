@@ -9,14 +9,18 @@ import (
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
 )
 
 // Server serves gRPC requests from other engines.
 type Server struct {
-	// Address is the TCP address to listen on.
-	Address string
+	// Listen opens a listener for ListenAddress, which is the TCP address to
+	// listen on. If Listen is nil, [net.Listen] is used.
+	Listen        func(network, address string) (net.Listener, error)
+	ListenAddress string
 
 	// EventStreamConsumerAPI is the implementation of the
 	// [messaginggrpc.EventStreamConsumerAPI] service to serve.
@@ -25,11 +29,11 @@ type Server struct {
 	// Options are the options used to create the underlying gRPC server.
 	Options []grpc.ServerOption
 
+	// EngineFailurePolicy is how the engine responds to failures to serve gRPC requests.
+	EngineFailurePolicy failure.Policy
+
 	// EngineLogger is the target for log messages produced by the server.
 	EngineLogger *slog.Logger
-
-	// Listen opens a listener. If it is nil, [net.Listen] is used.
-	Listen func(network, address string) (net.Listener, error)
 
 	addr cosyne.Future[net.Addr]
 }
@@ -44,7 +48,13 @@ func (s *Server) ListenAddr(ctx context.Context) (net.Addr, error) {
 //
 // It must be called at most once.
 func (s *Server) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, s.EngineLogger, "serve gRPC requests", s.serve)
+	return supervisor.Run(
+		ctx,
+		"serve gRPC requests",
+		s.EngineFailurePolicy,
+		s.EngineLogger,
+		s.serve,
+	)
 }
 
 // serve accepts connections until ctx is canceled or serving fails.
@@ -100,9 +110,9 @@ func (s *Server) listen() (lis net.Listener, err error) {
 			return nil, err
 		}
 	} else {
-		lis, err = listen("tcp", s.Address)
+		lis, err = listen("tcp", s.ListenAddress)
 		if err != nil {
-			return nil, supervisor.Fatal(err)
+			return nil, xerrors.Fatal(err)
 		}
 
 		s.addr.Store(lis.Addr())

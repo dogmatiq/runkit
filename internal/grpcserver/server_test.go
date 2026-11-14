@@ -9,6 +9,7 @@ import (
 
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	. "github.com/dogmatiq/runkit/internal/grpcserver"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -21,9 +22,6 @@ func TestServer(t *testing.T) {
 		listeners := make(chan net.Listener, 1)
 
 		server := &Server{
-			Address:                ":0",
-			EventStreamConsumerAPI: messaginggrpc.UnimplementedEventStreamConsumerAPIServer{},
-			EngineLogger:           spruce.NewTestLogger(t),
 			Listen: func(network, address string) (net.Listener, error) {
 				lis, err := net.Listen(network, address)
 				if err == nil {
@@ -34,6 +32,10 @@ func TestServer(t *testing.T) {
 				}
 				return lis, err
 			},
+			ListenAddress:          ":0",
+			EventStreamConsumerAPI: messaginggrpc.UnimplementedEventStreamConsumerAPIServer{},
+			EngineFailurePolicy:    xtesting.FailurePolicy(),
+			EngineLogger:           spruce.NewTestLogger(t),
 		}
 
 		ctx, cancel := context.WithCancel(t.Context())

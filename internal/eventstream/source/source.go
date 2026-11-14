@@ -65,6 +65,6 @@ type Source interface {
 // an empty set would match none, so asking for one is a mistake.
 func panicIfEmpty(types *uuidcollection.Set) {
 	if types != nil && types.IsEmpty() {
-		panic("message types must not be empty")
+		panic("event types must not be empty")
 	}
 }

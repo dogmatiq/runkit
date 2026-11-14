@@ -12,7 +12,9 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
 
@@ -26,6 +28,9 @@ type Catalog struct {
 	// CacheSize is the number of each stream's most recent events to cache,
 	// per source. It must be positive.
 	CacheSize int
+
+	// EngineFailurePolicy is how the engine responds to failures to watch the sources.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for the engine's records about the catalog
 	// and the sources it watches.
@@ -80,7 +85,7 @@ func (c *Catalog) Consume(
 	fn func(Segment) error,
 ) error {
 	if types.IsEmpty() {
-		panic("message types must not be empty")
+		panic("event types must not be empty")
 	}
 
 	c.m.Lock()
@@ -99,10 +104,10 @@ func (c *Catalog) Consume(
 			return ErrStreamNotFound
 		}
 
-		if f.Types != nil {
-			if unwatched := types.Diff(f.Types); !unwatched.IsEmpty() {
+		if f.EventTypeIDs != nil {
+			if unwatched := types.Diff(f.EventTypeIDs); !unwatched.IsEmpty() {
 				panic(fmt.Sprintf(
-					"event stream %s is not watched for message types %s",
+					"cannot consume event stream %s: Catalog.Watch was not given event types %s for it",
 					streamID,
 					unwatched,
 				))
@@ -134,7 +139,7 @@ func (c *Catalog) Consume(
 // them again before returning. Once it returns, no call to the source that the
 // catalog made is in progress, and the catalog makes no more.
 //
-// types is the set of message types to deliver from the source, or nil to
+// types is the set of event types to deliver from the source, or nil to
 // deliver every type.
 func (c *Catalog) Watch(
 	ctx context.Context,
@@ -183,8 +188,9 @@ func (c *Catalog) Watch(
 
 	return supervisor.Run(
 		ctx,
-		engineLogger,
 		"watch event stream source",
+		c.EngineFailurePolicy,
+		engineLogger,
 		func(ctx context.Context) error {
 			for {
 				err := src.Watch(
@@ -199,8 +205,8 @@ func (c *Catalog) Watch(
 				// A source that can no longer deliver a stream contiguously,
 				// such as when the catalog falls behind under load, is
 				// expected. A new watch begins each stream where it stands, so
-				// the source is watched again at once rather than as though it
-				// had failed.
+				// the source is watched again immediately rather than as though
+				// it had failed.
 				if errors.Is(err, source.ErrNotContiguous) {
 					engineLogger.DebugContext(
 						ctx,
@@ -213,7 +219,7 @@ func (c *Catalog) Watch(
 				// A source that does not offer event streams is unlikely to do
 				// otherwise soon.
 				if errors.Is(err, errors.ErrUnsupported) {
-					return supervisor.Deterministic(err)
+					return xerrors.Deterministic(err)
 				}
 
 				// Neither is a source that delivers an invalid segment, which
@@ -224,7 +230,7 @@ func (c *Catalog) Watch(
 						"received an invalid segment from an event stream source",
 						xslog.Error(err),
 					)
-					return supervisor.Deterministic(err)
+					return xerrors.Deterministic(err)
 				}
 
 				if err == nil && ctx.Err() == nil {
@@ -251,12 +257,12 @@ func (c *Catalog) add(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	f := &feed{
-		ID:     id,
-		Source: src,
-		Types:  types,
-		cache:  cache.New(c.CacheSize, begin),
-		ctx:    ctx,
-		cancel: cancel,
+		ID:           id,
+		Source:       src,
+		EventTypeIDs: types,
+		cache:        cache.New(c.CacheSize, begin),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	cs, ok := c.streams.Get(id)

@@ -28,8 +28,9 @@ func TestNode(t *testing.T) {
 	// sent before the bus is listening is lost.
 	setup := func(t *testing.T) *signal.Bus {
 		signals := &signal.Bus{
-			DB:           xtesting.NewDatabase(t),
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  xtesting.NewDatabase(t),
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		// Once the bus is listening it signals every watcher, whatever its
@@ -49,11 +50,13 @@ func TestNode(t *testing.T) {
 		interval, timeout time.Duration,
 	) *Node {
 		return &Node{
-			ID:           uuidpb.Generate(),
-			Signals:      signals,
-			Interval:     interval,
-			Timeout:      timeout,
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  signals.DB,
+			Signals:             signals,
+			ID:                  uuidpb.Generate(),
+			HeartbeatInterval:   interval,
+			HeartbeatTimeout:    timeout,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 	}
 
@@ -94,8 +97,9 @@ func TestNode(t *testing.T) {
 		db.Close()
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		n := newNode(t, signals, interval, timeout)
@@ -188,7 +192,7 @@ func TestNode(t *testing.T) {
 		start(t, r)
 	}
 
-	t.Run("it reports whether this node is responsible for a workload", func(t *testing.T) {
+	t.Run("it reports whether this node owns the workload with a key", func(t *testing.T) {
 		signals := setup(t)
 
 		n := newNode(t, signals, interval, timeout)
@@ -197,17 +201,17 @@ func TestNode(t *testing.T) {
 		start(t, n)
 		stopOther := start(t, other)
 
-		workload := workloadFor(t, other, n)
-		expectNodeResponsibleFor(t, n, workload, false)
+		key := keyFor(t, other, n)
+		expectNodeOwnsWorkload(t, n, key, false)
 
 		stopOther()
-		expectNodeResponsibleFor(t, n, workload, true)
+		expectNodeOwnsWorkload(t, n, key, true)
 
 		rejoin(t, signals, other)
-		expectNodeResponsibleFor(t, n, workload, false)
+		expectNodeOwnsWorkload(t, n, key, false)
 	})
 
-	t.Run("it makes exactly one node responsible for each workload", func(t *testing.T) {
+	t.Run("it makes exactly one node the owner of the workload with each key", func(t *testing.T) {
 		signals := setup(t)
 
 		nodes := []*Node{
@@ -232,11 +236,11 @@ func TestNode(t *testing.T) {
 		}
 
 		for range 20 {
-			expectExactlyOneResponsible(t, uuidpb.Generate(), nodes)
+			expectExactlyOneOwner(t, uuidpb.Generate(), nodes)
 		}
 	})
 
-	t.Run("it is responsible for nothing once it stops", func(t *testing.T) {
+	t.Run("it doesn't own any workloads after it stops", func(t *testing.T) {
 		signals := setup(t)
 
 		n := newNode(t, signals, interval, timeout)
@@ -245,19 +249,110 @@ func TestNode(t *testing.T) {
 		stop := start(t, n)
 		start(t, other)
 
-		workload := workloadFor(t, n, other)
-		expectNodeResponsibleFor(t, n, workload, true)
+		key := keyFor(t, n, other)
+		expectNodeOwnsWorkload(t, n, key, true)
 
 		stop()
 
-		m, _ := n.Membership().Load()
+		liveNodes, _ := n.LiveNodes().Load()
 
-		if m.LocalNodeIsResponsibleFor(workload) {
-			t.Fatal("stopped node is responsible for a workload")
+		if n.OwnsWorkload(key, liveNodes) {
+			t.Fatal("stopped node owns a workload")
 		}
 
-		if !m.Peers().IsEmpty() {
-			t.Fatalf("stopped node has peers: %s", m.Peers())
+		if !liveNodes.IsEmpty() {
+			t.Fatalf("stopped node sees live nodes: %s", liveNodes)
+		}
+	})
+
+	t.Run("it makes the node whose ID is the key the owner of the workload with that key", func(t *testing.T) {
+		signals := setup(t)
+
+		// If only scores counted, all four nodes would own the workloads whose
+		// keys are their own IDs in only one run in 256.
+		nodes := []*Node{
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+		}
+
+		for _, n := range nodes {
+			start(t, n)
+		}
+
+		expectEachOther(t, nodes)
+
+		for _, n := range nodes {
+			if got := expectSameWorkloadOwner(t, n.ID, nodes); !got.Equal(n.ID) {
+				t.Fatalf("unexpected owner of the workload with key %s: got %s", n.ID, got)
+			}
+		}
+	})
+
+	t.Run("it scores a key normally when no live node has that ID", func(t *testing.T) {
+		signals := setup(t)
+
+		nodes := []*Node{
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+		}
+
+		for _, n := range nodes {
+			start(t, n)
+		}
+
+		stopped := newNode(t, signals, interval, timeout)
+		stop := start(t, stopped)
+
+		expectEachOther(t, append(nodes, stopped))
+		stop()
+		expectEachOther(t, nodes)
+
+		if got := expectSameWorkloadOwner(t, stopped.ID, nodes); got.Equal(stopped.ID) {
+			t.Fatal("stopped node owns the workload whose key is its own ID")
+		}
+	})
+
+	t.Run("it returns the same workload owner on every node", func(t *testing.T) {
+		signals := setup(t)
+
+		nodes := []*Node{
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+			newNode(t, signals, interval, timeout),
+		}
+
+		for _, n := range nodes {
+			start(t, n)
+		}
+
+		expectEachOther(t, nodes)
+
+		for range 20 {
+			expectSameWorkloadOwner(t, uuidpb.Generate(), nodes)
+		}
+	})
+
+	t.Run("it returns false when there are no live nodes", func(t *testing.T) {
+		signals := setup(t)
+
+		n := newNode(t, signals, interval, timeout)
+		stop := start(t, n)
+
+		key := uuidpb.Generate()
+		expectNodeOwnsWorkload(t, n, key, true)
+
+		stop()
+
+		liveNodes, _ := n.LiveNodes().Load()
+
+		if got, ok := FindWorkloadOwner(key, liveNodes); ok {
+			t.Fatalf("unexpected workload owner: got %s", got)
+		}
+
+		if got, ok := FindWorkloadOwner(n.ID, liveNodes); ok {
+			t.Fatalf("unexpected owner of the workload whose key is the stopped node's ID: got %s", got)
 		}
 	})
 
@@ -271,8 +366,8 @@ func TestNode(t *testing.T) {
 		xtesting.GoE(t, existing.Run)
 
 		// Wait for the existing node to hear its own heartbeat, at which point
-		// it is responsible for any workload, being the only live node.
-		expectNodeResponsibleFor(t, existing, uuidpb.Generate(), true)
+		// it owns every workload, being the only live node.
+		expectNodeOwnsWorkload(t, existing, uuidpb.Generate(), true)
 
 		joining := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, joining.Run)
@@ -294,74 +389,81 @@ func expectPeers(
 	xtesting.WaitForObservable(
 		t,
 		fmt.Sprintf("the node to have peers %s", expected),
-		n.Membership(),
-		func(m *Membership) bool {
-			return m.Peers().IsEqual(expected)
+		n.LiveNodes(),
+		func(liveNodes *uuidcollection.Set) bool {
+			peers := uuidcollection.NewSet()
+
+			for id := range liveNodes.All() {
+				if !id.Equal(n.ID) {
+					peers.Add(id)
+				}
+			}
+
+			return peers.IsEqual(expected)
 		},
 	)
 }
 
-func expectNodeResponsibleFor(
+func expectNodeOwnsWorkload(
 	t testing.TB,
 	n *Node,
-	workload *uuidpb.UUID,
+	key *uuidpb.UUID,
 	want bool,
 ) {
 	t.Helper()
 
 	xtesting.WaitForObservable(
 		t,
-		fmt.Sprintf("the node's responsibility for workload %s to be %t", workload, want),
-		n.Membership(),
-		func(m *Membership) bool {
-			return m.LocalNodeIsResponsibleFor(workload) == want
+		fmt.Sprintf("the node's ownership of the workload with key %s to be %t", key, want),
+		n.LiveNodes(),
+		func(liveNodes *uuidcollection.Set) bool {
+			return n.OwnsWorkload(key, liveNodes) == want
 		},
 	)
 }
 
-func expectExactlyOneResponsible(
+func expectExactlyOneOwner(
 	t testing.TB,
-	workload *uuidpb.UUID,
+	key *uuidpb.UUID,
 	nodes []*Node,
 ) {
 	t.Helper()
 
 	xtesting.WaitFor(
 		t,
-		fmt.Sprintf("exactly one node to be responsible for workload %s", workload),
+		fmt.Sprintf("exactly one node to own the workload with key %s", key),
 		func() bool {
-			return len(responsibleNodes(workload, nodes)) == 1
+			return len(workloadOwners(key, nodes)) == 1
 		},
 	)
 }
 
-// responsibleNodes returns the nodes that are responsible for the given
-// workload, according to their own memberships.
-func responsibleNodes(workload *uuidpb.UUID, nodes []*Node) []*Node {
-	var responsible []*Node
+// workloadOwners returns the nodes that own the workload with the given key,
+// according to their own memberships.
+func workloadOwners(key *uuidpb.UUID, nodes []*Node) []*Node {
+	var owners []*Node
 
 	for _, n := range nodes {
-		m, _ := n.Membership().Load()
+		liveNodes, _ := n.LiveNodes().Load()
 
-		if m.LocalNodeIsResponsibleFor(workload) {
-			responsible = append(responsible, n)
+		if n.OwnsWorkload(key, liveNodes) {
+			owners = append(owners, n)
 		}
 	}
 
-	return responsible
+	return owners
 }
 
-// workloadFor returns a workload that the responsible node is responsible for
-// while it and the other nodes are live. All of the nodes must be running, and
-// no others.
-func workloadFor(
+// keyFor returns the key of a workload that the given owner owns while it and
+// the other nodes are live. All of the nodes must be running, and no others.
+func keyFor(
 	t testing.TB,
-	responsible *Node,
+	owner *Node,
 	others ...*Node,
 ) *uuidpb.UUID {
 	t.Helper()
 
-	nodes := append([]*Node{responsible}, others...)
+	nodes := append([]*Node{owner}, others...)
 
 	for _, n := range nodes {
 		var peers []*uuidpb.UUID
@@ -375,10 +477,71 @@ func workloadFor(
 	}
 
 	for {
-		workload := uuidpb.Generate()
+		key := uuidpb.Generate()
 
-		if got := responsibleNodes(workload, nodes); len(got) == 1 && got[0] == responsible {
-			return workload
+		if got := workloadOwners(key, nodes); len(got) == 1 && got[0] == owner {
+			return key
 		}
 	}
+}
+
+// expectEachOther waits until each of the given nodes has the others, and no
+// other nodes, as its peers.
+func expectEachOther(t testing.TB, nodes []*Node) {
+	t.Helper()
+
+	for _, n := range nodes {
+		var peers []*uuidpb.UUID
+		for _, p := range nodes {
+			if p != n {
+				peers = append(peers, p.ID)
+			}
+		}
+
+		expectPeers(t, n, peers...)
+	}
+}
+
+// expectSameWorkloadOwner waits until every given node returns the same owner
+// for the workload with the given key, and that node is the only one that
+// reports that it owns the workload. It returns the owner's ID.
+func expectSameWorkloadOwner(
+	t testing.TB,
+	key *uuidpb.UUID,
+	nodes []*Node,
+) *uuidpb.UUID {
+	t.Helper()
+
+	var owner *uuidpb.UUID
+
+	xtesting.WaitFor(
+		t,
+		fmt.Sprintf("every node to agree on the owner of the workload with key %s", key),
+		func() bool {
+			owner = nil
+
+			for _, n := range nodes {
+				liveNodes, _ := n.LiveNodes().Load()
+
+				got, ok := FindWorkloadOwner(key, liveNodes)
+				if !ok {
+					return false
+				}
+
+				if owner == nil {
+					owner = got
+				} else if !got.Equal(owner) {
+					return false
+				}
+
+				if n.OwnsWorkload(key, liveNodes) != n.ID.Equal(got) {
+					return false
+				}
+			}
+
+			return true
+		},
+	)
+
+	return owner
 }

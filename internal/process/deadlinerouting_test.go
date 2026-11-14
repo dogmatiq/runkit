@@ -418,8 +418,9 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	// for delivery (this is just to speed up the test).
 	if _, err := db.ExecContext(
 		t.Context(),
-		`UPDATE process.deadlines SET
-			deliver_at = deliver_at - INTERVAL '1 second'`,
+		`UPDATE messagequeue.messages SET
+			next_attempt_at = next_attempt_at - INTERVAL '1 second'
+		WHERE handler_key IS NOT NULL`,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +444,8 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 				1,
 				db,
 				`SELECT COUNT(*)
-				FROM process.deadlines`,
+				FROM messagequeue.messages
+				WHERE handler_key IS NOT NULL`,
 			)
 		},
 		dogma.ViaProcess(

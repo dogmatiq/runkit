@@ -2,28 +2,11 @@ package runkit
 
 import (
 	"log/slog"
+	"runtime"
 	"time"
 
+	"github.com/dogmatiq/runkit/internal/failure"
 	"google.golang.org/grpc"
-)
-
-const (
-	// DefaultProjectionCompactInterval is the default minimum time between
-	// successful projection compactions.
-	DefaultProjectionCompactInterval = 6 * time.Hour
-
-	// DefaultProjectionCompactTimeout is the default maximum time a projection
-	// is given to compact its data in a single attempt.
-	DefaultProjectionCompactTimeout = 10 * time.Minute
-
-	// DefaultHandleTimeout is the default maximum time an application message
-	// handler is given to handle a single message.
-	DefaultHandleTimeout = 1 * time.Minute
-
-	// DefaultRouteTimeout is the default maximum time an application message
-	// handler is given to decide where a message is delivered, or where
-	// consumption of an event stream resumes.
-	DefaultRouteTimeout = 10 * time.Second
 )
 
 // EngineOption is a function that configures an [Engine].
@@ -170,5 +153,178 @@ func WithRouteTimeout(timeout time.Duration) EngineOption {
 
 	return func(e *Engine) {
 		e.routeTimeout = timeout
+	}
+}
+
+// WithMessageQueueConcurrency is an [EngineOption] that sets the maximum
+// number of commands and deadlines that the engine attempts to deliver at
+// once, across all handlers.
+//
+// If it is not provided [DefaultMessageQueueConcurrency] is used. It panics if
+// n is not positive.
+func WithMessageQueueConcurrency(n int) EngineOption {
+	if n <= 0 {
+		panic("message queue concurrency must be positive")
+	}
+
+	return func(e *Engine) {
+		e.messageQueueConcurrency = n
+	}
+}
+
+// WithMessageQueueContentionDelay is an [EngineOption] that sets how long the
+// engine waits before it attempts to deliver a command or deadline again, if
+// the delivery is contended.
+//
+// A delivery is deemed "contended" if it would have to wait for another
+// delivery to finish. For example, two commands for one aggregate instance
+// can't be handled at once, and an integration that prefers
+// [dogma.MinimizeConcurrency] handles one command at a time. The engine
+// delivers other messages in the meantime.
+//
+// If it is not provided [DefaultMessageQueueContentionDelay] is used. It
+// panics if delay is not positive.
+func WithMessageQueueContentionDelay(delay time.Duration) EngineOption {
+	if delay <= 0 {
+		panic("message queue contention delay must be positive")
+	}
+
+	return func(e *Engine) {
+		e.messageQueueContentionDelay = delay
+	}
+}
+
+// DefaultProjectionCompactInterval returns the minimum time between successful
+// projection compactions, unless [WithProjectionCompactInterval] is used.
+func DefaultProjectionCompactInterval() time.Duration {
+	return 6 * time.Hour
+}
+
+// DefaultProjectionCompactTimeout returns the maximum time a projection is
+// given to compact its data in a single attempt, unless
+// [WithProjectionCompactTimeout] is used.
+func DefaultProjectionCompactTimeout() time.Duration {
+	return 10 * time.Minute
+}
+
+// DefaultHandleTimeout returns the maximum time an application message handler
+// is given to handle a single message, unless [WithHandleTimeout] is used.
+func DefaultHandleTimeout() time.Duration {
+	return 1 * time.Minute
+}
+
+// DefaultRouteTimeout returns the maximum time an application message handler
+// is given to decide where a message is delivered, or where consumption of an
+// event stream resumes, unless [WithRouteTimeout] is used.
+func DefaultRouteTimeout() time.Duration {
+	return 10 * time.Second
+}
+
+// DefaultMessageQueueContentionDelay returns the time that the engine waits
+// before it attempts to deliver a command or deadline again, if the delivery is
+// contended, unless [WithMessageQueueContentionDelay] is used.
+func DefaultMessageQueueContentionDelay() time.Duration {
+	return 200 * time.Millisecond
+}
+
+// DefaultMessageQueueConcurrency returns the maximum number of commands and
+// deadlines that the engine attempts to deliver at once, unless
+// [WithMessageQueueConcurrency] is used.
+func DefaultMessageQueueConcurrency() int {
+	return 10 * runtime.GOMAXPROCS(0)
+}
+
+// FailurePolicy describes how the engine responds to failures that occur while
+// performing work.
+type FailurePolicy = failure.Policy
+
+// DefaultFailurePolicy returns the failure policy that the engine uses for each
+// kind of work.
+//
+// See:
+//   - [WithEngineFailurePolicy]
+//   - [WithMessageQueueDeliveryFailurePolicy]
+//   - [WithEventStreamDispatchFailurePolicy]
+//   - [WithProjectionCompactionFailurePolicy]
+func DefaultFailurePolicy() FailurePolicy {
+	return FailurePolicy{
+		RetryDelay:                   100 * time.Millisecond,
+		TransientRetryDelayLimit:     15 * time.Second,
+		DeterministicRetryDelayLimit: 5 * time.Minute,
+		ErrorLogThreshold:            30 * time.Second,
+	}
+}
+
+// WithEngineFailurePolicy is an [EngineOption] that sets how the engine
+// responds to failures of its own work, such as losing its connection to the
+// database, or being unable to read an event stream.
+//
+// If it is not provided [DefaultFailurePolicy] is used. It panics if any field
+// of policy is not positive.
+func WithEngineFailurePolicy(policy FailurePolicy) EngineOption {
+	validateFailurePolicy(policy)
+
+	return func(e *Engine) {
+		e.engineFailurePolicy = policy
+	}
+}
+
+// WithMessageQueueDeliveryFailurePolicy is an [EngineOption] that sets how the
+// engine responds to failures to deliver a command or deadline to its handler.
+//
+// If it is not provided [DefaultFailurePolicy] is used. It panics if any field
+// of policy is not positive.
+func WithMessageQueueDeliveryFailurePolicy(policy FailurePolicy) EngineOption {
+	validateFailurePolicy(policy)
+
+	return func(e *Engine) {
+		e.messageQueueDeliveryFailurePolicy = policy
+	}
+}
+
+// WithEventStreamDispatchFailurePolicy is an [EngineOption] that sets how the
+// engine responds to failures to dispatch events from event streams to process
+// and projection message handlers.
+//
+// If it is not provided [DefaultFailurePolicy] is used. It panics if any field
+// of policy is not positive.
+func WithEventStreamDispatchFailurePolicy(policy FailurePolicy) EngineOption {
+	validateFailurePolicy(policy)
+
+	return func(e *Engine) {
+		e.eventStreamDispatchFailurePolicy = policy
+	}
+}
+
+// WithProjectionCompactionFailurePolicy is an [EngineOption] that sets how the
+// engine responds to failures of a projection message handler to compact its
+// data.
+//
+// If it is not provided [DefaultFailurePolicy] is used. It panics if any field
+// of policy is not positive.
+func WithProjectionCompactionFailurePolicy(policy FailurePolicy) EngineOption {
+	validateFailurePolicy(policy)
+
+	return func(e *Engine) {
+		e.projectionCompactionFailurePolicy = policy
+	}
+}
+
+// validateFailurePolicy panics if any field of policy is not positive.
+func validateFailurePolicy(policy FailurePolicy) {
+	if policy.RetryDelay <= 0 {
+		panic("failure policy RetryDelay must be positive")
+	}
+
+	if policy.TransientRetryDelayLimit <= 0 {
+		panic("failure policy TransientRetryDelayLimit must be positive")
+	}
+
+	if policy.DeterministicRetryDelayLimit <= 0 {
+		panic("failure policy DeterministicRetryDelayLimit must be positive")
+	}
+
+	if policy.ErrorLogThreshold <= 0 {
+		panic("failure policy ErrorLogThreshold must be positive")
 	}
 }

@@ -4,16 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/dogmatiq/enginekit/envelope"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
-// addCommandsToQueue inserts any commands scheduled by the handler into the
-// command queue.
-func addCommandsToQueue(
+// addCommandsToQueues adds any commands executed by the handler to the queues
+// that the given router chooses.
+func addCommandsToQueues(
 	ctx context.Context,
 	tx *sql.Tx,
+	router *messagequeue.Router,
 	packer *envelope.EffectPacker,
 ) error {
 	commandEnvelopes, ok := packer.Seal()
@@ -22,13 +25,20 @@ func addCommandsToQueue(
 	}
 
 	for commandEnvelope := range commandEnvelopes.All() {
+		queueID, err := router.RouteCommandToQueue(ctx, tx, commandEnvelope)
+		if err != nil {
+			return err
+		}
+
 		if _, err := tx.ExecContext(
 			ctx,
-			`SELECT commandqueue.add($1, $2, $3, $4)`,
+			`SELECT messagequeue.add_command($1, $2, $3, $4, $5, $6)`,
 			xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(queueID),
 			xsql.Envelope(commandEnvelope),
 			commandEnvelope.GetBody().GetIdempotencyKey(),
+			time.Now(),
 		); err != nil {
 			return fmt.Errorf("unable to add command to queue: %w", err)
 		}

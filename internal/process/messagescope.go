@@ -15,15 +15,15 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
+	CommandPacker        *envelope.EffectPacker
+	DeadlinePacker       *envelope.EffectPacker
+	Mutated              bool
+	Ended                bool
 	instanceID           string
 	root                 dogma.ProcessRoot
-	mutated              bool
-	ended                bool
-	commandPacker        *envelope.EffectPacker
-	deadlinePacker       *envelope.EffectPacker
+	outboundMessageTypes map[reflect.Type]struct{}
 	engineLogger         *slog.Logger
 	appLogger            *slog.Logger
-	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *messageScope) Now() time.Time {
@@ -36,10 +36,10 @@ func (s *messageScope) Log(format string, args ...any) {
 	s.engineLogger.Debug(
 		"handler logged a message",
 		slog.String("text", text),
-		instanceLogAttr(s.instanceID, s.root, s.ended),
+		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
 
-	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root, s.ended))
+	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root, s.Ended))
 }
 
 func (s *messageScope) InstanceID() string {
@@ -47,26 +47,26 @@ func (s *messageScope) InstanceID() string {
 }
 
 func (s *messageScope) Mutate(fn func(dogma.ProcessRoot)) {
-	if s.ended {
+	if s.Ended {
 		panic("cannot mutate process instance after it has ended")
 	}
 
 	fn(s.root)
-	s.mutated = true
+	s.Mutated = true
 
-	s.engineLogger.Debug("handler mutated the process instance", instanceLogAttr(s.instanceID, s.root, s.ended))
-	s.appLogger.Info("process instance mutated", instanceLogAttr(s.instanceID, s.root, s.ended))
+	s.engineLogger.Debug("handler mutated the process instance", instanceLogAttr(s.instanceID, s.root, s.Ended))
+	s.appLogger.Info("process instance mutated", instanceLogAttr(s.instanceID, s.root, s.Ended))
 }
 
 func (s *messageScope) End() {
-	s.ended = true
+	s.Ended = true
 
-	s.engineLogger.Debug("handler ended the process instance", instanceLogAttr(s.instanceID, s.root, s.ended))
-	s.appLogger.Info("process instance ended", instanceLogAttr(s.instanceID, s.root, s.ended))
+	s.engineLogger.Debug("handler ended the process instance", instanceLogAttr(s.instanceID, s.root, s.Ended))
+	s.appLogger.Info("process instance ended", instanceLogAttr(s.instanceID, s.root, s.Ended))
 }
 
 func (s *messageScope) ExecuteCommand(c dogma.Command) {
-	if s.ended {
+	if s.Ended {
 		panic("cannot execute command after process instance has ended")
 	}
 
@@ -74,7 +74,7 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 		panic(fmt.Sprintf("this handler is not configured to execute commands of type %T", c))
 	}
 
-	commandEnvelope := s.commandPacker.PackCommand(c)
+	commandEnvelope := s.CommandPacker.PackCommand(c)
 
 	if err := c.Validate(
 		xmessage.ValidationScope{
@@ -88,18 +88,18 @@ func (s *messageScope) ExecuteCommand(c dogma.Command) {
 	s.engineLogger.Debug(
 		"handler executed a command",
 		xslog.Envelope("produced_message", commandEnvelope),
-		instanceLogAttr(s.instanceID, s.root, s.ended),
+		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
 
 	s.appLogger.Info(
 		c.MessageDescription(),
 		xslog.Envelope("produced_message", commandEnvelope),
-		instanceLogAttr(s.instanceID, s.root, s.ended),
+		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
 }
 
 func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
-	if s.ended {
+	if s.Ended {
 		panic("cannot schedule deadline after process instance has ended")
 	}
 
@@ -107,7 +107,7 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		panic(fmt.Sprintf("this handler is not configured to schedule deadlines of type %T", d))
 	}
 
-	deadlineEnvelope := s.deadlinePacker.PackDeadline(d, envelope.WithScheduledFor(t))
+	deadlineEnvelope := s.DeadlinePacker.PackDeadline(d, envelope.WithScheduledFor(t))
 
 	if err := d.Validate(
 		xmessage.ValidationScope{
@@ -121,12 +121,12 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 	s.engineLogger.Debug(
 		"handler scheduled a deadline",
 		xslog.Envelope("produced_message", deadlineEnvelope),
-		instanceLogAttr(s.instanceID, s.root, s.ended),
+		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
 
 	s.appLogger.Info(
 		d.MessageDescription(),
 		xslog.Envelope("produced_message", deadlineEnvelope),
-		instanceLogAttr(s.instanceID, s.root, s.ended),
+		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
 }

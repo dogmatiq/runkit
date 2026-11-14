@@ -1,3 +1,9 @@
+# Each test package opens many short-lived database connections. On macOS, too
+# many packages running at once use up the local ports, because each closed
+# connection holds its port in TIME_WAIT for about 30 seconds. Running one package
+# at a time is a stopgap until the tests open fewer connections. See https://github.com/dogmatiq/runkit/issues/126.
+GO_TEST_ARGS = -failfast -p 1
+
 GO_TEST_COVERAGE_ARGS = -coverpkg=./...
 
 -include .makefiles/Makefile

@@ -9,15 +9,15 @@ import (
 // Buffered returns a logger that holds the records written to it until the
 // returned function is called.
 //
-// The function writes the records to the given logger, in the order they were
+// The function writes the records to the target logger, in the order they were
 // made, keeping each record's time and the attributes and groups added to the
 // logger that made it. Loggers derived from the returned logger share its
 // records.
-func Buffered(logger *slog.Logger) (*slog.Logger, func(context.Context)) {
+func Buffered(target *slog.Logger) (*slog.Logger, func(context.Context)) {
 	records := &bufferedRecords{}
 
 	h := &bufferHandler{
-		target:  logger.Handler(),
+		target:  target.Handler(),
 		records: records,
 	}
 

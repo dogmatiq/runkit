@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -21,10 +22,8 @@ type Compactor struct {
 	// DB is the database connection used to coordinate compaction.
 	DB *sql.DB
 
-	// Handler is the projection to compact.
-	Handler dogma.ProjectionMessageHandler
-
-	// Identity is the identity of the handler.
+	// Handler is the projection to compact, and Identity is its identity.
+	Handler  dogma.ProjectionMessageHandler
 	Identity *identitypb.Identity
 
 	// Interval is the minimum time between successful compactions.
@@ -33,6 +32,10 @@ type Compactor struct {
 	// Timeout is the maximum time the handler is given to compact the
 	// projection in a single attempt.
 	Timeout time.Duration
+
+	// FailurePolicy is how the engine responds to failures to compact the
+	// projection.
+	FailurePolicy failure.Policy
 
 	// EngineLogger is the target for the engine's records about the compactor.
 	EngineLogger *slog.Logger
@@ -55,7 +58,13 @@ func (c *Compactor) Run(ctx context.Context) error {
 		panic("compaction timeout must be positive")
 	}
 
-	return supervisor.Run(ctx, c.EngineLogger, "compact projection", c.run)
+	return supervisor.Run(
+		ctx,
+		"compact projection",
+		c.FailurePolicy,
+		c.EngineLogger,
+		c.run,
+	)
 }
 
 // run attempts to compact the projection once per interval until ctx is
@@ -64,6 +73,20 @@ func (c *Compactor) Run(ctx context.Context) error {
 // The handler is expected to compact incrementally, so a failed attempt is
 // retried without waiting for the next interval.
 func (c *Compactor) run(ctx context.Context) error {
+	// An attempt compacts only if it can lock the handler's row, so the row has
+	// to exist before the first attempt.
+	if _, err := c.DB.ExecContext(
+		ctx,
+		`INSERT INTO projection.handlers (
+			handler_key
+		)
+		VALUES ($1)
+		ON CONFLICT (handler_key) DO NOTHING`,
+		xsql.UUID(c.Identity.GetKey()),
+	); err != nil {
+		return fmt.Errorf("unable to insert handler: %w", err)
+	}
+
 	for {
 		if err := c.tryCompact(ctx); err != nil {
 			return err

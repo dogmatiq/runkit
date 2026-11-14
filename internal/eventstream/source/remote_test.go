@@ -574,8 +574,8 @@ func TestRemote(t *testing.T) {
 			cancel()
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -1042,8 +1042,8 @@ func TestRemote(t *testing.T) {
 			cancel()
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -1106,8 +1106,9 @@ func TestRemote(t *testing.T) {
 		calls <- openCall(nil, segment(streamA, 3, 3))
 
 		catalog := &eventstream.Catalog{
-			CacheSize:    10,
-			EngineLogger: spruce.NewTestLogger(t),
+			CacheSize:           10,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		xtesting.GoE(
@@ -1185,8 +1186,9 @@ func TestRemote(t *testing.T) {
 			}
 
 			catalog := &eventstream.Catalog{
-				CacheSize:    10,
-				EngineLogger: spruce.NewTestLogger(t),
+				CacheSize:           10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        spruce.NewTestLogger(t),
 			}
 
 			xtesting.GoE(

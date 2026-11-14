@@ -70,8 +70,7 @@ ON eventstream.events (
 -- processing for a specific handler/stream pair. Stream IDs may refer to local
 -- or remote streams.
 --
--- The failures and resume_at columns are retained for compatibility with the
--- event pump used by older engines.
+-- The failures and resume_at columns are not used.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
     handler_key       uuid        NOT NULL,
