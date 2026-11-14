@@ -32,24 +32,23 @@ type EventSink struct {
 	// DB is the database that stores process state and checkpoint offsets.
 	DB *sql.DB
 
-	// Handler is the process message handler to which events are dispatched.
-	Handler dogma.ProcessMessageHandler[dogma.ProcessRoot]
-
-	// Identity is the identity of the process handler.
-	Identity *identitypb.Identity
-
-	// Packer packs commands and deadlines produced by the handler.
-	Packer *envelope.Packer
+	// Packer packs commands and deadlines produced by the handler, and
+	// OutboundMessageTypes contains the types that the handler is allowed to
+	// produce.
+	Packer               *envelope.Packer
+	OutboundMessageTypes map[reflect.Type]struct{}
 
 	// QueueRouter chooses the queues for commands and deadlines produced by the
 	// handler.
 	QueueRouter *messagequeue.Router
 
+	// Handler is the process message handler to which events are dispatched, and
+	// Identity is its identity.
+	Handler  dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity *identitypb.Identity
+
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
-
-	// OutboundMessageTypes contains the types the handler is allowed to produce.
-	OutboundMessageTypes map[reflect.Type]struct{}
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// event.
@@ -262,8 +261,6 @@ func (s *EventSink) dispatch(
 
 	scope := &eventScope{
 		messageScope{
-			instanceID: inst.ID,
-			root:       inst.Root,
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
@@ -274,9 +271,11 @@ func (s *EventSink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			instanceID:           inst.ID,
+			root:                 inst.Root,
+			outboundMessageTypes: s.OutboundMessageTypes,
 			engineLogger:         engineLogger,
 			appLogger:            appLogger,
-			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetCreatedAt().AsTime(),
 	}

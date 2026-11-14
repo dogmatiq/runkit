@@ -45,9 +45,9 @@ func Run(
 ) error {
 	failures := &failure.Tracker{
 		Description:  description,
+		QuietPeriod:  quietPeriod,
 		Policy:       policy,
 		EngineLogger: engineLogger,
-		QuietPeriod:  quietPeriod,
 	}
 	defer failures.Complete()
 

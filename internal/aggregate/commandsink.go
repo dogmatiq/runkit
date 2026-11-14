@@ -24,18 +24,15 @@ import (
 // CommandSink is a [messagequeue.Sink] that delivers commands to a
 // [dogma.AggregateMessageHandler].
 type CommandSink struct {
-	// Handler is the aggregate message handler to which commands are
-	// delivered.
-	Handler dogma.AggregateMessageHandler[dogma.AggregateRoot]
-
-	// Identity is the identity of the aggregate handler.
-	Identity *identitypb.Identity
-
-	// Packer packs events produced by the handler.
-	Packer *envelope.Packer
-
-	// OutboundMessageTypes contains the types the handler is allowed to produce.
+	// Packer packs events produced by the handler, and OutboundMessageTypes
+	// contains the types that the handler is allowed to produce.
+	Packer               *envelope.Packer
 	OutboundMessageTypes map[reflect.Type]struct{}
+
+	// Handler is the aggregate message handler to which commands are delivered,
+	// and Identity is its identity.
+	Handler  dogma.AggregateMessageHandler[dogma.AggregateRoot]
+	Identity *identitypb.Identity
 }
 
 // Deliver delivers the command in the given envelope to the handler.
@@ -94,12 +91,12 @@ func (s *CommandSink) Deliver(
 			s.Handler.HandleCommand(
 				inst.Root,
 				&commandScope{
+					packer:               packer,
+					outboundMessageTypes: s.OutboundMessageTypes,
 					instanceID:           inst.ID,
 					root:                 inst.Root,
-					packer:               packer,
 					engineLogger:         engineLogger,
 					appLogger:            appLogger,
-					outboundMessageTypes: s.OutboundMessageTypes,
 				},
 				commandForHandling,
 			)

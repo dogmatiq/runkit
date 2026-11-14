@@ -38,8 +38,8 @@ func TestConnector(t *testing.T) {
 		}
 
 		connector := &Connector{
-			Discover:            discover,
 			EventStreams:        catalog,
+			Discover:            discover,
 			EventTypeIDs:        types,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
 			EngineLogger:        spruce.NewTestLogger(t),

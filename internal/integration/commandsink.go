@@ -25,18 +25,15 @@ import (
 // CommandSink is a [messagequeue.Sink] that delivers commands to a
 // [dogma.IntegrationMessageHandler].
 type CommandSink struct {
-	// Handler is the integration message handler to which commands are
-	// delivered.
-	Handler dogma.IntegrationMessageHandler
-
-	// Identity is the identity of the integration handler.
-	Identity *identitypb.Identity
-
-	// Packer packs events produced by the handler.
-	Packer *envelope.Packer
-
-	// OutboundMessageTypes contains the types the handler is allowed to produce.
+	// Packer packs events produced by the handler, and OutboundMessageTypes
+	// contains the types that the handler is allowed to produce.
+	Packer               *envelope.Packer
 	OutboundMessageTypes map[reflect.Type]struct{}
+
+	// Handler is the integration message handler to which commands are delivered,
+	// and Identity is its identity.
+	Handler  dogma.IntegrationMessageHandler
+	Identity *identitypb.Identity
 
 	// Concurrency is the handler's concurrency preference.
 	//
@@ -81,9 +78,9 @@ func (s *CommandSink) Deliver(
 
 	scope := &commandScope{
 		packer:               packer,
+		outboundMessageTypes: s.OutboundMessageTypes,
 		engineLogger:         engineLogger,
 		appLogger:            appLogger,
-		outboundMessageTypes: s.OutboundMessageTypes,
 	}
 
 	called, err := s.handleCommand(ctx, scope, commandForHandling)

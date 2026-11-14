@@ -14,12 +14,12 @@ import (
 
 // commandScope implements [dogma.AggregateCommandScope].
 type commandScope struct {
+	packer               *envelope.EffectPacker
+	outboundMessageTypes map[reflect.Type]struct{}
 	instanceID           string
 	root                 dogma.AggregateRoot
-	packer               *envelope.EffectPacker
 	engineLogger         *slog.Logger
 	appLogger            *slog.Logger
-	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *commandScope) Now() time.Time {

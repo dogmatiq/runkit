@@ -15,15 +15,15 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
-	instanceID           string
-	root                 dogma.ProcessRoot
-	Mutated              bool
-	Ended                bool
 	CommandPacker        *envelope.EffectPacker
 	DeadlinePacker       *envelope.EffectPacker
+	Mutated              bool
+	Ended                bool
+	instanceID           string
+	root                 dogma.ProcessRoot
+	outboundMessageTypes map[reflect.Type]struct{}
 	engineLogger         *slog.Logger
 	appLogger            *slog.Logger
-	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *messageScope) Now() time.Time {

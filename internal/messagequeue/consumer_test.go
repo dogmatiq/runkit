@@ -41,9 +41,9 @@ func TestConsumer(t *testing.T) {
 
 		newNode := func() *cluster.Node {
 			return &cluster.Node{
-				ID:                  uuidpb.Generate(),
 				DB:                  db,
 				Signals:             signals,
+				ID:                  uuidpb.Generate(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    1 * time.Second,
 				EngineFailurePolicy: xtesting.FailurePolicy(),

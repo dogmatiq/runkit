@@ -23,6 +23,12 @@ type Tracker struct {
 	// instance of the work it is.
 	Description string
 
+	// QuietPeriod is how long the work must go without failing after a success
+	// before a streak ends.
+	//
+	// If it's zero, a streak ends at the success itself.
+	QuietPeriod time.Duration
+
 	// Policy is how the tracker responds to each failure of the work.
 	Policy Policy
 
@@ -30,12 +36,6 @@ type Tracker struct {
 	//
 	// Its attributes must identify the work.
 	EngineLogger *slog.Logger
-
-	// QuietPeriod is how long the work must go without failing after a success
-	// before a streak ends.
-	//
-	// If it's zero, a streak ends at the success itself.
-	QuietPeriod time.Duration
 
 	// m guards the fields below it.
 	m sync.Mutex

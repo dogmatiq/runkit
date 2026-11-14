@@ -27,13 +27,13 @@ func TestCommandSink(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			sink := &CommandSink{
-				Handler: &stubs.IntegrationMessageHandlerStub{
-					HandleCommandFunc: handle,
-				},
-				Identity: identitypb.New("<handler>", uuidpb.Generate()),
 				Packer: &envelope.Packer{
 					Application: identitypb.New("<app>", uuidpb.Generate()),
 				},
+				Handler: &stubs.IntegrationMessageHandlerStub{
+					HandleCommandFunc: handle,
+				},
+				Identity:      identitypb.New("<handler>", uuidpb.Generate()),
 				Concurrency:   dogma.MinimizeConcurrency,
 				HandleTimeout: time.Minute,
 			}

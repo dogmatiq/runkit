@@ -317,9 +317,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.node = &cluster.Node{
-		ID:                  e.nodeID,
 		DB:                  e.db,
 		Signals:             e.signals,
+		ID:                  e.nodeID,
 		HeartbeatInterval:   heartbeatInterval,
 		HeartbeatTimeout:    heartbeatTimeout,
 		EngineFailurePolicy: e.engineFailurePolicy,
@@ -346,17 +346,17 @@ func (e *Engine) Run(ctx context.Context) error {
 	localEventStreams := &source.Local{
 		DB:                  e.db,
 		Node:                e.node,
-		EngineFailurePolicy: e.engineFailurePolicy,
-		EngineLogger:        e.engineLogger,
 		SegmentSize:         eventStreamSegmentSize,
 		BufferSize:          eventStreamBufferSize,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	var server *grpcserver.Server
 
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
-			Address: e.listenAddress,
+			ListenAddress: e.listenAddress,
 			EventStreamConsumerAPI: &source.Server{
 				// The server provides only the application's own streams, so
 				// that it never relays events recorded by a remote engine's
@@ -403,8 +403,8 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	for _, d := range e.remoteEngineDiscoverers {
 		connector := &remoteengine.Connector{
-			Discover:            d,
 			EventStreams:        e.eventStreams,
+			Discover:            d,
 			EventTypeIDs:        eventTypeIDs,
 			EngineFailurePolicy: e.engineFailurePolicy,
 			EngineLogger:        e.engineLogger,

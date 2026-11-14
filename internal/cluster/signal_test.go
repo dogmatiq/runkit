@@ -28,9 +28,9 @@ func TestNode_AttachSignal(t *testing.T) {
 
 		return db, func() *Node {
 			return &Node{
-				ID:                  uuidpb.Generate(),
 				DB:                  db,
 				Signals:             signals,
+				ID:                  uuidpb.Generate(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    100 * time.Millisecond,
 				EngineFailurePolicy: xtesting.FailurePolicy(),

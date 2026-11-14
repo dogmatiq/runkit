@@ -21,6 +21,10 @@ import (
 // Connector runs a function that discovers remote engines, and connects the
 // engine to each remote engine while it is available.
 type Connector struct {
+	// EventStreams is the catalog to which each available remote engine's
+	// event streams are added.
+	EventStreams *eventstream.Catalog
+
 	// Discover adds and removes remote engines as they become available and
 	// unavailable, as described by
 	// [github.com/dogmatiq/runkit.RemoteEngineDiscoverer].
@@ -28,10 +32,6 @@ type Connector struct {
 		ctx context.Context,
 		add func(description string, conn grpc.ClientConnInterface) (remove func()),
 	) error
-
-	// EventStreams is the catalog to which each available remote engine's
-	// event streams are added.
-	EventStreams *eventstream.Catalog
 
 	// EventTypeIDs is the set of event types to deliver from each remote
 	// engine.

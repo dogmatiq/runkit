@@ -740,10 +740,22 @@ layer, as the logging guide requires.
   break it. Expect rules for field names, field order, which fields are
   documented, and the order of fields in struct literals. Record each agreed
   rule in the shared skills in [dogmatiq/agent-config][agent-config], not only
-  in the code.
+  in the code. The rules go there as one batch, in a pull request that the
+  maintainer asks for when the batch is ready, because they may decide not to.
 - [ ] **Step 3: Apply the rules in rename-only commits**, one rule per commit,
   so each diff shows a single mechanical change. Run `make test` after each.
 - [ ] **Step 4: Stop for review** after each commit.
+
+The rules agreed so far, each applied in its own commit:
+
+1. **Field order.** The exported fields of a struct that a caller fills in
+   come in this order: the domain dependencies, from least specific to most
+   specific, then configuration, then cross-cutting dependencies, which are the
+   loggers. A failure policy is configuration. Unexported fields follow all of
+   the exported ones, after a blank line. Fields that are the same thing, such
+   as a handler and its identity, or a listener and its address, sit together
+   and share one comment, even if the rule would otherwise put them in
+   different groups. Struct literals follow the struct's order.
 
 ---
 

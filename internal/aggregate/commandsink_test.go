@@ -22,15 +22,15 @@ func TestCommandSink(t *testing.T) {
 
 			db := xtesting.NewDatabase(t)
 			sink := &CommandSink{
+				Packer: &envelope.Packer{
+					Application: identitypb.New("<app>", uuidpb.Generate()),
+				},
 				Handler: &stubs.AggregateMessageHandlerStub[dogma.AggregateRoot]{
 					RouteCommandToInstanceFunc: func(dogma.Command) string {
 						return ""
 					},
 				},
 				Identity: identitypb.New("<handler>", uuidpb.Generate()),
-				Packer: &envelope.Packer{
-					Application: identitypb.New("<app>", uuidpb.Generate()),
-				},
 			}
 
 			tx, err := db.BeginTx(t.Context(), nil)

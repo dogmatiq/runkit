@@ -17,8 +17,10 @@ import (
 
 // Server serves gRPC requests from other engines.
 type Server struct {
-	// Address is the TCP address to listen on.
-	Address string
+	// Listen opens a listener for ListenAddress, which is the TCP address to
+	// listen on. If Listen is nil, [net.Listen] is used.
+	Listen        func(network, address string) (net.Listener, error)
+	ListenAddress string
 
 	// EventStreamConsumerAPI is the implementation of the
 	// [messaginggrpc.EventStreamConsumerAPI] service to serve.
@@ -32,9 +34,6 @@ type Server struct {
 
 	// EngineLogger is the target for log messages produced by the server.
 	EngineLogger *slog.Logger
-
-	// Listen opens a listener. If it is nil, [net.Listen] is used.
-	Listen func(network, address string) (net.Listener, error)
 
 	addr cosyne.Future[net.Addr]
 }
@@ -111,7 +110,7 @@ func (s *Server) listen() (lis net.Listener, err error) {
 			return nil, err
 		}
 	} else {
-		lis, err = listen("tcp", s.Address)
+		lis, err = listen("tcp", s.ListenAddress)
 		if err != nil {
 			return nil, xerrors.Fatal(err)
 		}

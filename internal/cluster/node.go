@@ -34,14 +34,14 @@ const (
 // It keeps track of which nodes are live, and delivers cluster-wide signals.
 // See [Node.LiveNodes] and [Node.AttachSignal].
 type Node struct {
-	// ID is the ID of this node, which must be unique within the cluster.
-	ID *uuidpb.UUID
-
 	// DB is the database whose signals the node listens for.
 	DB *sql.DB
 
 	// Signals is the bus used to send and receive heartbeat signals.
 	Signals *signal.Bus
+
+	// ID is the ID of this node, which must be unique within the cluster.
+	ID *uuidpb.UUID
 
 	// HeartbeatInterval is the time between the heartbeats that this node
 	// sends.

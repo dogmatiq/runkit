@@ -40,9 +40,9 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:                  uuidpb.Generate(),
 			DB:                  signals.DB,
 			Signals:             signals,
+			ID:                  uuidpb.Generate(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -475,9 +475,9 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 	}
 	xtesting.GoE(t, signals.Run)
 	node := &cluster.Node{
-		ID:                  uuidpb.Generate(),
 		DB:                  signals.DB,
 		Signals:             signals,
+		ID:                  uuidpb.Generate(),
 		HeartbeatInterval:   20 * time.Millisecond,
 		HeartbeatTimeout:    100 * time.Millisecond,
 		EngineFailurePolicy: xtesting.FailurePolicy(),

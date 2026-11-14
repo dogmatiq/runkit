@@ -24,11 +24,9 @@ import (
 // It reports the handler's checkpoint offset for each stream, and consumption of
 // the stream resumes from that offset.
 type EventSink struct {
-	// Handler is the projection message handler to which events are
-	// dispatched.
-	Handler dogma.ProjectionMessageHandler
-
-	// Identity is the identity of the projection handler.
+	// Handler is the projection message handler to which events are dispatched,
+	// and Identity is its identity.
+	Handler  dogma.ProjectionMessageHandler
 	Identity *identitypb.Identity
 
 	// Concurrency is the handler's concurrency preference.

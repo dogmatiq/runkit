@@ -35,9 +35,9 @@ func TestTracker(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
 				Description:  "<work>",
+				QuietPeriod:  30 * time.Second,
 				Policy:       testPolicy,
 				EngineLogger: spruce.NewTestLogger(t),
-				QuietPeriod:  30 * time.Second,
 			}
 
 			failures.WorkFailed(t.Context(), failure)
@@ -53,9 +53,9 @@ func TestTracker(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
 				Description:  "<work>",
+				QuietPeriod:  30 * time.Second,
 				Policy:       testPolicy,
 				EngineLogger: spruce.NewTestLogger(t),
-				QuietPeriod:  30 * time.Second,
 			}
 
 			failures.WorkFailed(t.Context(), failure)
@@ -71,9 +71,9 @@ func TestTracker(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
 				Description:  "<work>",
+				QuietPeriod:  30 * time.Second,
 				Policy:       testPolicy,
 				EngineLogger: spruce.NewTestLogger(t),
-				QuietPeriod:  30 * time.Second,
 			}
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -94,9 +94,9 @@ func TestTracker(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
 				Description:  "<work>",
+				QuietPeriod:  30 * time.Second,
 				Policy:       testPolicy,
 				EngineLogger: spruce.NewTestLogger(t),
-				QuietPeriod:  30 * time.Second,
 			}
 
 			failures.WorkFailed(t.Context(), failure)
@@ -112,9 +112,9 @@ func TestTracker(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			failures := &Tracker{
 				Description:  "<work>",
+				QuietPeriod:  time.Millisecond,
 				Policy:       testPolicy,
 				EngineLogger: spruce.NewTestLogger(t),
-				QuietPeriod:  time.Millisecond,
 			}
 
 			var g sync.WaitGroup

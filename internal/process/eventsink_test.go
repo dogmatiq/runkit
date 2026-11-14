@@ -174,13 +174,6 @@ func newEventSink(t testing.TB, db *sql.DB) *EventSink {
 
 	return &EventSink{
 		DB: db,
-		Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
-			NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
-			RouteEventToInstanceFunc: func(context.Context, dogma.Event) (string, bool, error) {
-				return "<instance>", true, nil
-			},
-		},
-		Identity: identitypb.New("<handler>", uuidpb.Generate()),
 		Packer: &envelope.Packer{
 			Application: identitypb.New("<app>", uuidpb.Generate()),
 		},
@@ -188,6 +181,13 @@ func newEventSink(t testing.TB, db *sql.DB) *EventSink {
 			NodeID:          uuidpb.Generate(),
 			CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
 		},
+		Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
+			NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
+			RouteEventToInstanceFunc: func(context.Context, dogma.Event) (string, bool, error) {
+				return "<instance>", true, nil
+			},
+		},
+		Identity:      identitypb.New("<handler>", uuidpb.Generate()),
 		HandleTimeout: time.Minute,
 		RouteTimeout:  10 * time.Second,
 		EngineLogger:  spruce.NewTestLogger(t),

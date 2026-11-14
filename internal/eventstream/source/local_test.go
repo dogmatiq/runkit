@@ -40,9 +40,9 @@ func TestLocal(t *testing.T) {
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:                  uuidpb.Generate(),
 			DB:                  db,
 			Signals:             signals,
+			ID:                  uuidpb.Generate(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -54,10 +54,10 @@ func TestLocal(t *testing.T) {
 		src := &Local{
 			DB:                  db,
 			Node:                node,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        logger,
 			SegmentSize:         segmentSize,
 			BufferSize:          bufferSize,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		return src
@@ -551,8 +551,8 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				EngineFailurePolicy: xtesting.FailurePolicy(),
 				SegmentSize:         10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
 			}
 
 			defer func() {
@@ -1027,8 +1027,8 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				EngineFailurePolicy: xtesting.FailurePolicy(),
 				SegmentSize:         10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
 			}
 
 			defer func() {
@@ -1077,9 +1077,9 @@ func TestLocal(t *testing.T) {
 
 			src := &Local{
 				DB:                  db,
+				SegmentSize:         10,
 				EngineFailurePolicy: xtesting.FailurePolicy(),
 				EngineLogger:        spruce.NewTestLogger(t),
-				SegmentSize:         10,
 			}
 
 			types := uuidcollection.NewSet(

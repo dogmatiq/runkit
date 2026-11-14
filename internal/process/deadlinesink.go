@@ -22,22 +22,20 @@ import (
 // DeadlineSink is a [messagequeue.Sink] that delivers deadlines to a
 // [dogma.ProcessMessageHandler].
 type DeadlineSink struct {
-	// Handler is the process message handler to which deadlines are
-	// delivered.
-	Handler dogma.ProcessMessageHandler[dogma.ProcessRoot]
-
-	// Identity is the identity of the process handler.
-	Identity *identitypb.Identity
-
-	// Packer packs commands and deadlines produced by the handler.
-	Packer *envelope.Packer
+	// Packer packs commands and deadlines produced by the handler, and
+	// OutboundMessageTypes contains the types that the handler is allowed to
+	// produce.
+	Packer               *envelope.Packer
+	OutboundMessageTypes map[reflect.Type]struct{}
 
 	// QueueRouter chooses the queues for commands and deadlines produced by the
 	// handler.
 	QueueRouter *messagequeue.Router
 
-	// OutboundMessageTypes contains the types the handler is allowed to produce.
-	OutboundMessageTypes map[reflect.Type]struct{}
+	// Handler is the process message handler to which deadlines are delivered, and
+	// Identity is its identity.
+	Handler  dogma.ProcessMessageHandler[dogma.ProcessRoot]
+	Identity *identitypb.Identity
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// deadline.
@@ -109,8 +107,6 @@ func (s *DeadlineSink) Deliver(
 
 	scope := &deadlineScope{
 		messageScope{
-			instanceID: inst.ID,
-			root:       inst.Root,
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
@@ -121,9 +117,11 @@ func (s *DeadlineSink) Deliver(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			instanceID:           inst.ID,
+			root:                 inst.Root,
+			outboundMessageTypes: s.OutboundMessageTypes,
 			engineLogger:         engineLogger,
 			appLogger:            appLogger,
-			outboundMessageTypes: s.OutboundMessageTypes,
 		},
 		env.GetBody().GetScheduledFor().AsTime(),
 	}

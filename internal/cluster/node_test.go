@@ -50,9 +50,9 @@ func TestNode(t *testing.T) {
 		interval, timeout time.Duration,
 	) *Node {
 		return &Node{
-			ID:                  uuidpb.Generate(),
 			DB:                  signals.DB,
 			Signals:             signals,
+			ID:                  uuidpb.Generate(),
 			HeartbeatInterval:   interval,
 			HeartbeatTimeout:    timeout,
 			EngineFailurePolicy: xtesting.FailurePolicy(),

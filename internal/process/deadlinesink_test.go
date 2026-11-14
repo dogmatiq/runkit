@@ -31,6 +31,11 @@ func TestDeadlineSink(t *testing.T) {
 		}
 
 		sink := &DeadlineSink{
+			Packer: packer,
+			QueueRouter: &messagequeue.Router{
+				NodeID:          uuidpb.Generate(),
+				CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
+			},
 			Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
 				NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
 				HandleDeadlineFunc: func(
@@ -43,12 +48,7 @@ func TestDeadlineSink(t *testing.T) {
 					return nil
 				},
 			},
-			Identity: identity,
-			Packer:   packer,
-			QueueRouter: &messagequeue.Router{
-				NodeID:          uuidpb.Generate(),
-				CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
-			},
+			Identity:      identity,
 			HandleTimeout: time.Minute,
 		}
 

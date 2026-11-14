@@ -22,10 +22,8 @@ type Compactor struct {
 	// DB is the database connection used to coordinate compaction.
 	DB *sql.DB
 
-	// Handler is the projection to compact.
-	Handler dogma.ProjectionMessageHandler
-
-	// Identity is the identity of the handler.
+	// Handler is the projection to compact, and Identity is its identity.
+	Handler  dogma.ProjectionMessageHandler
 	Identity *identitypb.Identity
 
 	// Interval is the minimum time between successful compactions.

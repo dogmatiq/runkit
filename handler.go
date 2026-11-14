@@ -27,10 +27,10 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		e.addQueueSink(
 			handlerConfig,
 			&aggregate.CommandSink{
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
 			},
 		)
 
@@ -38,10 +38,10 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		e.addQueueSink(
 			handlerConfig,
 			&integration.CommandSink{
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
 				Packer:               e.packer,
 				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
 				Concurrency:          handlerConfig.ConcurrencyPreference(),
 				HandleTimeout:        e.handleTimeout,
 			},
@@ -53,12 +53,12 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 			EventStreams: e.eventStreams,
 			Sink: &process.EventSink{
 				DB:                   e.db,
+				Packer:               e.packer,
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				QueueRouter:          e.queueRouter,
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				QueueRouter:          e.queueRouter,
 				EventTypes:           inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 				RouteTimeout:         e.routeTimeout,
 				EngineLogger:         engineLogger,
@@ -76,11 +76,11 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		e.addQueueSink(
 			handlerConfig,
 			&process.DeadlineSink{
+				Packer:               e.packer,
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				QueueRouter:          e.queueRouter,
 				Handler:              handlerConfig.Interface(),
 				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				QueueRouter:          e.queueRouter,
-				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
 				HandleTimeout:        e.handleTimeout,
 			},
 		)

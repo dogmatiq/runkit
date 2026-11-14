@@ -15,9 +15,9 @@ import (
 // commandScope implements [dogma.IntegrationCommandScope].
 type commandScope struct {
 	packer               *envelope.EffectPacker
+	outboundMessageTypes map[reflect.Type]struct{}
 	engineLogger         *slog.Logger
 	appLogger            *slog.Logger
-	outboundMessageTypes map[reflect.Type]struct{}
 }
 
 func (s *commandScope) Now() time.Time {

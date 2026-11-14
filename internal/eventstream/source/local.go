@@ -35,13 +35,6 @@ type Local struct {
 	// streams are created and when events are appended to them.
 	Node *cluster.Node
 
-	// EngineFailurePolicy is how the engine responds to failures to discover and follow event
-	// streams.
-	EngineFailurePolicy failure.Policy
-
-	// EngineLogger is the target for log messages produced by the source.
-	EngineLogger *slog.Logger
-
 	// SegmentSize is the maximum number of events delivered in one segment,
 	// which is also the number of events read per query. It must be positive.
 	SegmentSize int
@@ -50,6 +43,13 @@ type Local struct {
 	// [Local.Watch]. A call that falls further behind than this ends with an
 	// error that wraps [ErrNotContiguous]. It must be positive.
 	BufferSize int
+
+	// EngineFailurePolicy is how the engine responds to failures to discover and follow event
+	// streams.
+	EngineFailurePolicy failure.Policy
+
+	// EngineLogger is the target for log messages produced by the source.
+	EngineLogger *slog.Logger
 
 	// m guards the offsets and watchers fields.
 	m sync.Mutex
