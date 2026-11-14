@@ -96,12 +96,15 @@ func TestCatalog(t *testing.T) {
 		db, catalog := setup(t)
 		q1 := uuidpb.Generate()
 		q2 := uuidpb.Generate()
+		q3 := uuidpb.Generate()
 		addMessage(t, db, q1)
 		addMessage(t, db, q2)
+		addMessage(t, db, q2)
+		addMessage(t, db, q3)
 
 		xtesting.GoE(t, catalog.Run)
 
-		waitForQueueIDs(t, catalog, q1, q2)
+		waitForQueueIDs(t, catalog, q1, q2, q3)
 	})
 
 	t.Run("it includes a queue once a message is added to it", func(t *testing.T) {

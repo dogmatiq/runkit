@@ -84,10 +84,37 @@ func (c *Catalog) run(ctx context.Context) error {
 
 // load returns the IDs of the queues that have messages.
 func (c *Catalog) load(ctx context.Context) (*uuidcollection.Set, error) {
+	// The query reads one entry of the messages_by_queue index for each
+	// queue, so its cost depends on the number of queues, not the number of
+	// messages. PostgreSQL can't skip from one distinct value to the next in
+	// an index by itself (a "loose index scan"), so the query does the
+	// skipping: it finds the lowest queue ID, then repeatedly finds the
+	// lowest queue ID that is greater than the previous one. The last step
+	// finds no greater queue ID and yields NULL. The outer SELECT discards
+	// that NULL.
 	rows, err := c.DB.QueryContext(
 		ctx,
-		`SELECT DISTINCT queue_id
-		FROM messagequeue.messages`,
+		`WITH RECURSIVE queues AS (
+			(
+				SELECT queue_id
+				FROM messagequeue.messages
+				ORDER BY queue_id
+				LIMIT 1
+			)
+			UNION ALL
+			SELECT (
+				SELECT m.queue_id
+				FROM messagequeue.messages AS m
+				WHERE m.queue_id > q.queue_id
+				ORDER BY m.queue_id
+				LIMIT 1
+			)
+			FROM queues AS q
+			WHERE q.queue_id IS NOT NULL
+		)
+		SELECT queue_id
+		FROM queues
+		WHERE queue_id IS NOT NULL`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to query queues: %w", err)

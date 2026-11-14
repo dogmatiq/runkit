@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS messagequeue.messages (
 );
 
 -- Create an index for finding the next message to deliver in each queue, for
--- each message type that is routed to a handler.
+-- each message type that is routed to a handler, and for listing the queues
+-- that have messages.
 CREATE INDEX IF NOT EXISTS messages_by_queue
 ON messagequeue.messages (
     queue_id,
