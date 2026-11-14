@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 <!-- references -->
 
+[0.3.0 migration guide]: https://github.com/dogmatiq/runkit/blob/main/docs/MIGRATING-v0.3.0.md
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs
 [dogmatiq/protobuf]: https://github.com/dogmatiq/protobuf
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
@@ -15,7 +16,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
-This release extends remote event consumption to process handlers.
+This release extends remote event consumption to process handlers, and changes
+how engines deliver commands and deadlines, and how they retry and log failures.
+
+> [!IMPORTANT]
+> Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
+> stop every engine that uses it before calling `CreateSchema()`.
+>
+> See the [0.3.0 migration guide].
 
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
@@ -45,19 +53,49 @@ events.
 
 ### Added
 
-- Added support for process handlers consuming events from remote applications.
-- Added `WithHandleTimeout()`, `WithRouteTimeout()` and
-  `WithProjectionCompactTimeout()`, which limit how long the engine waits for
-  calls to application message handlers.
-- Added `DefaultHandleTimeout`, `DefaultRouteTimeout` and
-  `DefaultProjectionCompactTimeout`, which are the defaults for those options.
+- Added the ability for process handlers to consume events from remote
+  applications.
+- Added `FailurePolicy`, which describes how the engine responds to repeated
+  internal failures and errors produced by application handlers. The engine uses
+  several policies, which can be configured using new engine options:
+  - `WithEngineFailurePolicy()`
+  - `WithMessageQueueDeliveryFailurePolicy()`
+  - `WithEventStreamDispatchFailurePolicy()`
+  - `WithProjectionCompactionFailurePolicy()`
+  - All policies default to `DefaultFailurePolicy()`
+- Added engine options for configuring various timeouts:
+  - `WithHandleTimeout()`, which defaults to `DefaultHandleTimeout()`
+  - `WithRouteTimeout()`, which defaults to `DefaultRouteTimeout()`
+  - `WithProjectionCompactTimeout()`, which defaults to `DefaultProjectionCompactTimeout()`
+- Added engine options for configuring the engine's concurrency behavior:
+  - `WithMessageQueueConcurrency()`, which defaults to `DefaultMessageQueueConcurrency()`
+  - `WithMessageQueueContentionDelay()`, which defaults to `DefaultMessageQueueContentionDelay()`
 
 ### Changed
 
-- **[BC]** Process handlers added to an application now consume historical events.
-- The database schema has changed. Call `CreateSchema()` before running this
-  version. If the schema already exists, it applies the required modifications
-  while preserving existing data.
+- **[BC]** Process handlers added to an application now consume historical
+  events, instead of only new events.
+- **[BC]** The database schema has changed. Call `CreateSchema()` to migrate the
+  database before running this version.
+- **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
+  function.
+- Changed how commands and deadlines are delivered:
+  - By default, each engine now delivers at most 10 × `GOMAXPROCS` of them at
+    once across all handlers. That limit used to apply to each handler, so it's
+    now lower for an engine with more than one aggregate, integration or
+    process handler. Use `WithMessageQueueConcurrency()` to raise it.
+  - An integration handler that prefers `MinimizeConcurrency` may briefly
+    handle two commands at once while engines join or leave a cluster.
+- Changed how the engine retries and logs failures. An ordinary failure now
+  waits at most 15 seconds before a retry, instead of five minutes, and a streak
+  of consecutive failures logs one ERROR record, instead of one for every
+  failure. Failures that retrying can't fix, such as a panic in application
+  code, still wait up to five minutes. Use a custom `FailurePolicy` to change
+  these limits.
+- `Engine.Run()` now configures the database pool with unlimited connections and
+  an idle timeout, which closes each connection that has been idle for one
+  minute, so `WithMessageQueueConcurrency()` naturally determines how many
+  connections are kept open for deliveries.
 - Imposed a deadline on calls from the engine to these application message
   handler methods:
   - `ProcessMessageHandler.HandleEvent()`
@@ -74,6 +112,17 @@ events.
   description identifies the remote engine in log records.
   `StaticRemoteEngines()` describes each remote engine by its connection's
   target.
+
+### Fixed
+
+- Ending a process instance while one of its deadlines is being delivered no
+  longer causes an error.
+- Application log records from handling a command or deadline are written only
+  after the handling commits.
+- If a process root's `MarshalBinary()` method failed after handling a
+  deadline, the commands that the process executed were queued without its
+  other effects, and duplicated on each retry. Now they're queued only if the
+  other effects are saved too.
 
 ## [0.2.0] - 2026-11-06
 

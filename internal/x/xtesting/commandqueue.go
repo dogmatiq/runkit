@@ -29,7 +29,8 @@ func WaitForEmptyCommandQueue(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM commandqueue.commands`,
+		FROM messagequeue.messages
+		WHERE handler_key IS NULL`,
 	)
 }
 
@@ -48,7 +49,7 @@ func ExpectCommandIDToBeQueued(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM commandqueue.commands
+		FROM messagequeue.messages
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -67,7 +68,8 @@ func ExpectCommandToBeQueued(
 		t.Context(),
 		`SELECT
 			c.envelope
-		FROM commandqueue.commands AS c`,
+		FROM messagequeue.messages AS c
+		WHERE c.handler_key IS NULL`,
 	)
 	if err != nil {
 		t.Fatalf("unable to query events: %v", err)
@@ -113,7 +115,7 @@ func ExpectCommandToBeUnattempted(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM commandqueue.commands
+		FROM messagequeue.messages
 		WHERE message_id = $1
 		AND failures = 0`,
 		xsql.UUID(messageID),
@@ -136,7 +138,7 @@ func WaitForCommandToBeRemovedFromQueue(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM commandqueue.commands
+		FROM messagequeue.messages
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -157,16 +159,16 @@ func WaitForCommandToBePostponed(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM commandqueue.commands
+		FROM messagequeue.messages
 		WHERE message_id = $1
-		AND deliver_at > enqueued_at`,
+		AND next_attempt_at > scheduled_for`,
 		xsql.UUID(messageID),
 	)
 }
 
-// EnqueuePostponedCommand inserts a command directly into the command queue
-// with deliver_at set far in the future, so it will not be picked up by the
-// dequeue loop. It returns the envelope of the enqueued command.
+// EnqueuePostponedCommand inserts a command directly into a new queue with
+// next_attempt_at set far in the future, so the consumer doesn't attempt it.
+// It returns the envelope of the enqueued command.
 func EnqueuePostponedCommand(
 	t testing.TB,
 	x xsql.Executor,
@@ -174,21 +176,23 @@ func EnqueuePostponedCommand(
 ) *envelopepb.Envelope {
 	t.Helper()
 
-	env := packTestCommand(t, command)
+	env := PackCommand(t, command)
 
 	if _, err := x.ExecContext(
 		t.Context(),
-		`INSERT INTO commandqueue.commands (
+		`INSERT INTO messagequeue.messages (
 			message_id,
 			message_type_id,
+			queue_id,
 			envelope,
-			deliver_at
+			next_attempt_at
 		) VALUES (
-			$1, $2, $3,
+			$1, $2, $3, $4,
 			clock_timestamp() + INTERVAL '24 hours'
 		)`,
 		xsql.UUID(env.GetBody().GetMessageId()),
 		xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
+		xsql.UUID(uuidpb.Generate()),
 		xsql.Envelope(env),
 	); err != nil {
 		t.Fatal(err)
@@ -197,7 +201,9 @@ func EnqueuePostponedCommand(
 	return env
 }
 
-func packTestCommand(t testing.TB, command dogma.Command) *envelopepb.Envelope {
+// PackCommand returns a valid envelope containing the given command, from the
+// test application.
+func PackCommand(t testing.TB, command dogma.Command) *envelopepb.Envelope {
 	t.Helper()
 
 	mt, ok := dogma.RegisteredMessageTypeOf(command)

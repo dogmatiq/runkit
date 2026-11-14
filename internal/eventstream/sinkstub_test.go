@@ -10,7 +10,7 @@ import (
 
 // sinkStub is a test implementation of [Sink].
 type sinkStub struct {
-	WorkloadFunc         func(*uuidpb.UUID) *uuidpb.UUID
+	RendezvousKeyFunc    func(*uuidpb.UUID) *uuidpb.UUID
 	EventTypeIDsFunc     func() *uuidcollection.Set
 	CheckpointOffsetFunc func(context.Context, *uuidpb.UUID) (uint64, error)
 	ConsumeSegmentFunc   func(context.Context, uint64, Segment) (uint64, bool, error)
@@ -18,10 +18,10 @@ type sinkStub struct {
 
 var _ Sink = (*sinkStub)(nil)
 
-// Workload returns the rendezvous workload for the stream.
-func (s *sinkStub) Workload(streamID *uuidpb.UUID) *uuidpb.UUID {
-	if s.WorkloadFunc != nil {
-		return s.WorkloadFunc(streamID)
+// RendezvousKey returns the rendezvous key for the stream.
+func (s *sinkStub) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
+	if s.RendezvousKeyFunc != nil {
+		return s.RendezvousKeyFunc(streamID)
 	}
 	return streamID
 }

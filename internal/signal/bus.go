@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -28,6 +29,9 @@ const channel = "signal"
 type Bus struct {
 	// DB is the database used to send and receive signals.
 	DB *sql.DB
+
+	// EngineFailurePolicy is how the engine responds to failures to listen for signals.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for log messages produced by the bus.
 	EngineLogger *slog.Logger
@@ -119,7 +123,13 @@ func (b *Bus) Send(ctx context.Context, topic string) error {
 //
 // It must be called at most once. Watch may be called before Run.
 func (b *Bus) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, b.EngineLogger, "listen for signals", b.run)
+	return supervisor.Run(
+		ctx,
+		"listen for signals",
+		b.EngineFailurePolicy,
+		b.EngineLogger,
+		b.run,
+	)
 }
 
 // run holds a dedicated database connection with LISTEN active on the signal

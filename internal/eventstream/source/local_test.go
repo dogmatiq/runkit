@@ -14,6 +14,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -31,18 +32,32 @@ func TestLocal(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: logger,
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		xtesting.GoE(t, signals.Run)
 
+		node := &cluster.Node{
+			DB:                  db,
+			Signals:             signals,
+			ID:                  uuidpb.Generate(),
+			HeartbeatInterval:   20 * time.Millisecond,
+			HeartbeatTimeout:    100 * time.Millisecond,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
+		}
+
+		xtesting.GoE(t, node.Run)
+
 		src := &Local{
-			DB:           db,
-			Signals:      signals,
-			EngineLogger: logger,
-			SegmentSize:  segmentSize,
-			BufferSize:   bufferSize,
+			DB:                  db,
+			Node:                node,
+			SegmentSize:         segmentSize,
+			BufferSize:          bufferSize,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		return src
@@ -536,12 +551,13 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				SegmentSize: 10,
+				SegmentSize:         10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
 			}
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -1011,12 +1027,13 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				SegmentSize: 10,
+				SegmentSize:         10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
 			}
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -1059,9 +1076,10 @@ func TestLocal(t *testing.T) {
 			db.SetMaxOpenConns(1)
 
 			src := &Local{
-				DB:           db,
-				EngineLogger: spruce.NewTestLogger(t),
-				SegmentSize:  10,
+				DB:                  db,
+				SegmentSize:         10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        spruce.NewTestLogger(t),
 			}
 
 			types := uuidcollection.NewSet(

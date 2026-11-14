@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
-	"runtime"
 	"time"
 
 	"github.com/dogmatiq/cosyne"
@@ -16,26 +15,21 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/aggregate"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
-	"github.com/dogmatiq/runkit/internal/integration"
-	"github.com/dogmatiq/runkit/internal/messagepump"
-	"github.com/dogmatiq/runkit/internal/process"
-	"github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 )
 
@@ -51,6 +45,10 @@ const (
 	// heartbeatTimeout is the amount of time an engine can go without sending
 	// a heartbeat before the others consider it offline.
 	heartbeatTimeout = 5 * heartbeatInterval
+
+	// connectionMaxIdleTime is how long a database connection can sit idle in
+	// the pool before the pool closes it.
+	connectionMaxIdleTime = 1 * time.Minute
 
 	// eventStreamCacheSize is the number of recent events cached per event
 	// stream for delivery to consumers that are keeping up with the stream.
@@ -104,6 +102,32 @@ type Engine struct {
 	// event stream resumes.
 	routeTimeout time.Duration
 
+	// messageQueueConcurrency is the maximum number of commands and deadlines
+	// that the engine attempts to deliver at once.
+	messageQueueConcurrency int
+
+	// messageQueueContentionDelay is how long the engine waits before it
+	// attempts to deliver a command or deadline again, if the delivery needs a
+	// lock while something else holds it.
+	messageQueueContentionDelay time.Duration
+
+	// engineFailurePolicy is how the engine responds to failures of its own
+	// work.
+	engineFailurePolicy failure.Policy
+
+	// messageQueueDeliveryFailurePolicy is how the engine responds to failures
+	// to deliver a command or deadline to its handler.
+	messageQueueDeliveryFailurePolicy failure.Policy
+
+	// eventStreamDispatchFailurePolicy is how the engine responds to failures
+	// to dispatch events from event streams to process and projection message
+	// handlers.
+	eventStreamDispatchFailurePolicy failure.Policy
+
+	// projectionCompactionFailurePolicy is how the engine responds to failures
+	// of a projection message handler to compact its data.
+	projectionCompactionFailurePolicy failure.Policy
+
 	// listenAddress is the address to listen on for gRPC requests from other
 	// engines. If it is empty, the engine does not listen for gRPC requests.
 	listenAddress string
@@ -143,6 +167,16 @@ type Engine struct {
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
 
+	// queues keeps track of which queues have messages.
+	queues *messagequeue.Catalog
+
+	// queueRouter chooses the queue for each new message.
+	queueRouter *messagequeue.Router
+
+	// queueSinks maps the ID of each command and deadline type to the sink for
+	// messages of that type.
+	queueSinks uuidcollection.Map[messagequeue.Sink]
+
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
 
@@ -160,9 +194,10 @@ type Engine struct {
 
 // New returns a new engine that runs the given application.
 //
-// db must use the [pgx] driver, for example by opening it with
-// sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db is nil or uses any
-// other driver.
+// db must use the [pgx] driver. New panics if db is nil or uses any other
+// driver.
+//
+// [Engine.Run] sets the limit on the database's idle connections.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -185,12 +220,21 @@ func New(
 		app:             app,
 		db:              db,
 		nodeID:          uuidpb.Generate(),
-		compactInterval: DefaultProjectionCompactInterval,
-		compactTimeout:  DefaultProjectionCompactTimeout,
-		handleTimeout:   DefaultHandleTimeout,
-		routeTimeout:    DefaultRouteTimeout,
-		engineLogger:    slog.Default(),
-		appLogger:       slog.Default(),
+		compactInterval: DefaultProjectionCompactInterval(),
+		compactTimeout:  DefaultProjectionCompactTimeout(),
+		handleTimeout:   DefaultHandleTimeout(),
+		routeTimeout:    DefaultRouteTimeout(),
+
+		messageQueueConcurrency:     DefaultMessageQueueConcurrency(),
+		messageQueueContentionDelay: DefaultMessageQueueContentionDelay(),
+
+		engineFailurePolicy:               DefaultFailurePolicy(),
+		messageQueueDeliveryFailurePolicy: DefaultFailurePolicy(),
+		eventStreamDispatchFailurePolicy:  DefaultFailurePolicy(),
+		projectionCompactionFailurePolicy: DefaultFailurePolicy(),
+
+		engineLogger: slog.Default(),
+		appLogger:    slog.Default(),
 	}
 
 	for _, option := range options {
@@ -206,6 +250,21 @@ func New(
 // It must be called at most once.
 func (e *Engine) Run(ctx context.Context) error {
 	defer e.stopped.Set()
+
+	// There is no limit on open connections. Each message queue delivery
+	// attempt holds a connection until its handler returns, so a limit would
+	// let attempts starve the engine's other work. The heartbeat in particular
+	// must not wait for an attempt to finish, or the node is considered
+	// offline.
+	//
+	// There is no limit on idle connections either, so the pool keeps as many
+	// connections as the engine has used at once, instead of closing them and
+	// opening new ones for the next queries. A connection is closed after it
+	// has been idle for [connectionMaxIdleTime], so the pool shrinks when the
+	// load drops.
+	e.db.SetMaxOpenConns(0)
+	e.db.SetMaxIdleConns(-1)
+	e.db.SetConnMaxIdleTime(connectionMaxIdleTime)
 
 	e.appConfig = runtimeconfig.FromApplication(e.app)
 
@@ -244,43 +303,60 @@ func (e *Engine) Run(ctx context.Context) error {
 		Application: e.appConfig.Identity(),
 	}
 
-	e.setupCommandTypes()
+	e.commandTypes = executableCommandTypes(e.appConfig)
+
+	e.queueRouter = &messagequeue.Router{
+		NodeID:          e.nodeID,
+		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
+	}
 
 	e.signals = &signal.Bus{
-		DB:           e.db,
-		EngineLogger: e.engineLogger,
+		DB:                  e.db,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	e.node = &cluster.Node{
-		ID:           e.nodeID,
-		Signals:      e.signals,
-		Interval:     heartbeatInterval,
-		Timeout:      heartbeatTimeout,
-		EngineLogger: e.engineLogger,
+		DB:                  e.db,
+		Signals:             e.signals,
+		ID:                  e.nodeID,
+		HeartbeatInterval:   heartbeatInterval,
+		HeartbeatTimeout:    heartbeatTimeout,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	contexthook.Invoke(ctx, contexthook.Node{
 		Node: e.node,
 	})
 
+	e.queues = &messagequeue.Catalog{
+		DB:                  e.db,
+		Node:                e.node,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
+	}
+
 	e.eventStreams = &eventstream.Catalog{
-		CacheSize:    eventStreamCacheSize,
-		EngineLogger: e.engineLogger,
+		CacheSize:           eventStreamCacheSize,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	localEventStreams := &source.Local{
-		DB:           e.db,
-		Signals:      e.signals,
-		EngineLogger: e.engineLogger,
-		SegmentSize:  eventStreamSegmentSize,
-		BufferSize:   eventStreamBufferSize,
+		DB:                  e.db,
+		Node:                e.node,
+		SegmentSize:         eventStreamSegmentSize,
+		BufferSize:          eventStreamBufferSize,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	var server *grpcserver.Server
 
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
-			Address: e.listenAddress,
+			ListenAddress: e.listenAddress,
 			EventStreamConsumerAPI: &source.Server{
 				// The server provides only the application's own streams, so
 				// that it never relays events recorded by a remote engine's
@@ -288,19 +364,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				EventStreams:    localEventStreams,
 				MaxSegmentBytes: eventStreamMaxSegmentBytes,
 			},
-			Options:      e.grpcOptions,
-			EngineLogger: e.engineLogger,
-		}
-	}
-
-	// Initialize handler state in the database.
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if err := e.initializeHandler(ctx, handlerConfig); err != nil {
-			return fmt.Errorf(
-				"unable to initialize handler %s: %w",
-				handlerConfig.Identity(),
-				err,
-			)
+			Options:             e.grpcOptions,
+			EngineFailurePolicy: e.engineFailurePolicy,
+			EngineLogger:        e.engineLogger,
 		}
 	}
 
@@ -314,7 +380,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		return e.node.Run(ctx)
 	})
 
-	eventTypeIDs := e.consumedEventTypeIDs()
+	e.group.Go(func() error {
+		return e.queues.Run(ctx)
+	})
+
+	eventTypeIDs := consumedEventTypeIDs(e.appConfig)
 
 	// The application's own streams are watched only if the catalog consumes
 	// them for projections or processes, or the gRPC server serves them remotely.
@@ -333,10 +403,11 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	for _, d := range e.remoteEngineDiscoverers {
 		connector := &remoteengine.Connector{
-			Discover:     d,
-			EventStreams: e.eventStreams,
-			EventTypeIDs: eventTypeIDs,
-			EngineLogger: e.engineLogger,
+			EventStreams:        e.eventStreams,
+			Discover:            d,
+			EventTypeIDs:        eventTypeIDs,
+			EngineFailurePolicy: e.engineFailurePolicy,
+			EngineLogger:        e.engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -349,6 +420,23 @@ func (e *Engine) Run(ctx context.Context) error {
 			e.runHandler(ctx, handlerConfig)
 		}
 	}
+
+	queueConsumer := &messagequeue.Consumer{
+		DB:                    e.db,
+		Node:                  e.node,
+		Queues:                e.queues,
+		Sinks:                 e.queueSinks,
+		ConcurrencyLimit:      e.messageQueueConcurrency,
+		ContentionDelay:       e.messageQueueContentionDelay,
+		EngineFailurePolicy:   e.engineFailurePolicy,
+		DeliveryFailurePolicy: e.messageQueueDeliveryFailurePolicy,
+		EngineLogger:          e.engineLogger,
+		AppLogger:             e.appLogger,
+	}
+
+	e.group.Go(func() error {
+		return queueConsumer.Run(ctx)
+	})
 
 	if server == nil {
 		e.ready.Set()
@@ -444,277 +532,4 @@ func (e *Engine) waitUntilReady(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// setupCommandTypes builds a set of command types that the engine accepts for
-// execution.
-func (e *Engine) setupCommandTypes() {
-	inboundCommandRoutes := e.appConfig.
-		RouteSet().
-		Filter(
-			config.FilterByMessageDirection(config.InboundDirection),
-			config.FilterByMessageKind(message.CommandKind),
-		).
-		Routes()
-
-	e.commandTypes = map[reflect.Type]struct{}{}
-
-	for route := range inboundCommandRoutes {
-		typ := route.MessageType.Get().ReflectType()
-		e.commandTypes[typ] = struct{}{}
-	}
-}
-
-// initializeHandler initializes the engine's state for a handler.
-//
-// Even though they are not executed at runtime, it is called with
-// configurations for disabled handlers.
-func (e *Engine) initializeHandler(ctx context.Context, handlerConfig config.Handler) error {
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Projection:
-		return projection.InitializeHandler(ctx, e.db, handlerConfig)
-	default:
-		return nil
-	}
-}
-
-// runHandler runs the components that manage the given handler.
-func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
-	const (
-		backoffBase  = 10 * time.Millisecond
-		backoffCap   = 5 * time.Minute
-		pollInterval = 25 * time.Millisecond
-	)
-
-	engineLogger := e.newLoggerForHandler(e.engineLogger, handlerConfig)
-	appLogger := e.newLoggerForHandler(e.appLogger, handlerConfig)
-	workers := e.workerCountForHandler(handlerConfig)
-
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Aggregate:
-		pump := &messagepump.MessagePump{
-			Driver: &aggregate.CommandPump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
-
-	case *config.Integration:
-		pump := &messagepump.MessagePump{
-			Driver: &integration.CommandPump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Concurrency:          handlerConfig.ConcurrencyPreference(),
-				Packer:               e.packer,
-				CommandTypeIDs:       e.inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return pump.Run(ctx)
-		})
-
-	case *config.Process:
-		consumer := &eventstream.Consumer{
-			Node:         e.node,
-			EventStreams: e.eventStreams,
-			Sink: &process.Sink{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				EventTypes:           e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				RouteTimeout:         e.routeTimeout,
-				EngineLogger:         engineLogger,
-				AppLogger:            appLogger,
-			},
-			EngineLogger: engineLogger,
-		}
-
-		deadlinePump := &messagepump.MessagePump{
-			Driver: &process.DeadlinePump{
-				DB:                   e.db,
-				Handler:              handlerConfig.Interface(),
-				Identity:             handlerConfig.Identity(),
-				Packer:               e.packer,
-				DeadlineTypeIDs:      e.inboundMessageTypeIDsForHandler(handlerConfig, message.DeadlineKind),
-				OutboundMessageTypes: e.outboundMessageTypesForHandler(handlerConfig),
-				HandleTimeout:        e.handleTimeout,
-				AppLogger:            appLogger,
-			},
-			DB:           e.db,
-			Workers:      workers,
-			PollInterval: pollInterval,
-			BackoffBase:  backoffBase,
-			BackoffCap:   backoffCap,
-			EngineLogger: engineLogger,
-		}
-
-		e.group.Go(func() error {
-			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return deadlinePump.Run(ctx)
-		})
-
-	case *config.Projection:
-		var handlerLock *semaphore.Weighted
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			handlerLock = semaphore.NewWeighted(1)
-		}
-
-		consumer := &eventstream.Consumer{
-			Node:         e.node,
-			EventStreams: e.eventStreams,
-			Sink: &projection.Sink{
-				Handler:       handlerConfig.Interface(),
-				Identity:      handlerConfig.Identity(),
-				Concurrency:   handlerConfig.ConcurrencyPreference(),
-				EventTypes:    e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind),
-				HandlerLock:   handlerLock,
-				HandleTimeout: e.handleTimeout,
-				RouteTimeout:  e.routeTimeout,
-				EngineLogger:  engineLogger,
-				AppLogger:     appLogger,
-			},
-			EngineLogger: engineLogger,
-		}
-
-		compactor := &projection.Compactor{
-			DB:           e.db,
-			Handler:      handlerConfig.Interface(),
-			Identity:     handlerConfig.Identity(),
-			Interval:     e.compactInterval,
-			Timeout:      e.compactTimeout,
-			EngineLogger: engineLogger,
-			AppLogger:    appLogger,
-		}
-
-		e.group.Go(func() error {
-			return consumer.Run(ctx)
-		})
-
-		e.group.Go(func() error {
-			return compactor.Run(ctx)
-		})
-
-	default:
-		panic(fmt.Sprintf("unsupported handler type: %T", handlerConfig))
-	}
-}
-
-// newLoggerForHandler returns the given logger with the attributes that
-// identify the given handler.
-func (e *Engine) newLoggerForHandler(
-	logger *slog.Logger,
-	handlerConfig config.Handler,
-) *slog.Logger {
-	return logger.With(
-		xslog.Identity(
-			"handler",
-			handlerConfig.Identity(),
-			slog.String("type", handlerConfig.HandlerType().String()),
-		),
-	)
-}
-
-// workerCountForHandler returns the number of workers goroutines to run for the
-// given handler's message pump.
-func (e *Engine) workerCountForHandler(handlerConfig config.Handler) int {
-	switch handlerConfig := handlerConfig.(type) {
-	case *config.Integration:
-		if handlerConfig.ConcurrencyPreference() == dogma.MinimizeConcurrency {
-			return 1
-		}
-	}
-
-	return 10 * runtime.GOMAXPROCS(0)
-}
-
-// consumedEventTypeIDs returns the message type IDs of every event type that
-// is routed to a non-disabled handler within the application.
-func (e *Engine) consumedEventTypeIDs() *uuidcollection.Set {
-	messageTypeIDs := uuidcollection.NewSet()
-
-	for _, handlerConfig := range e.appConfig.Handlers() {
-		if handlerConfig.IsDisabled() {
-			continue
-		}
-
-		eventTypeIDs := e.inboundMessageTypeIDsForHandler(handlerConfig, message.EventKind)
-
-		for id := range eventTypeIDs.All() {
-			messageTypeIDs.Add(id)
-		}
-	}
-
-	return messageTypeIDs
-}
-
-// inboundMessageTypeIDsForHandler returns the message type IDs of all inbound
-// messages routed to the given handler. It is represented as a slice of UUID
-// strings for direct use in SQL queries.
-func (*Engine) inboundMessageTypeIDsForHandler(
-	handlerConfig config.Handler,
-	messageKind message.Kind,
-) *uuidcollection.Set {
-	inboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageKind(messageKind)).
-		Filter(config.FilterByMessageDirection(config.InboundDirection)).
-		Routes()
-
-	messageTypeIDs := &uuidcollection.Set{}
-
-	for route := range inboundRoutes {
-		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
-		messageTypeIDs.Add(messageTypeID)
-	}
-
-	return messageTypeIDs
-}
-
-// outboundMessageTypesForHandler returns the reflect.Types of all outbound
-// messages of the given kind routed from the given handler.
-func (*Engine) outboundMessageTypesForHandler(handlerConfig config.Handler) map[reflect.Type]struct{} {
-	outboundRoutes := handlerConfig.
-		RouteSet().
-		Filter(config.FilterByMessageDirection(config.OutboundDirection)).
-		Routes()
-
-	types := map[reflect.Type]struct{}{}
-
-	for route := range outboundRoutes {
-		types[route.MessageType.Get().ReflectType()] = struct{}{}
-	}
-
-	return types
 }

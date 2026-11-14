@@ -1,10 +1,16 @@
+-- A database created by 0.2.0 has these functions with an extra message_id
+-- parameter. CREATE OR REPLACE FUNCTION with a different argument list adds an
+-- overload rather than replacing the function, so the old versions are
+-- dropped first.
+DROP FUNCTION IF EXISTS aggregate.complete_without_events(uuid, uuid, text);
+DROP FUNCTION IF EXISTS aggregate.complete_with_events(uuid, uuid, text, uuid, uuid, bytea, eventstream.event[]);
+
 --------------------------------------------------------------------------------
--- The "complete_without_events" function removes a command from the queue when
--- no events were recorded during handling. It deletes the aggregate instance if
--- it has no bound event stream (i.e., no prior events have ever been recorded).
+-- The "complete_without_events" function deletes the aggregate instance after
+-- handling a command that recorded no events, if the instance has no event
+-- stream.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION aggregate.complete_without_events(
-    message_id  uuid,
     handler_key uuid,
     instance_id text
 )
@@ -17,18 +23,15 @@ BEGIN
     WHERE aggregate.instances.handler_key = complete_without_events.handler_key
     AND aggregate.instances.instance_id = complete_without_events.instance_id
     AND aggregate.instances.stream_id IS NULL;
-
-    PERFORM commandqueue.remove(complete_without_events.message_id);
 END;
 $$;
 
 --------------------------------------------------------------------------------
 -- The "complete_with_events" function appends events to an event stream,
--- optionally updates the aggregate instance snapshot, removes the originating
--- command from the queue, and binds a newly acquired stream if needed.
+-- optionally updates the aggregate instance snapshot, and binds a newly
+-- acquired stream if needed.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION aggregate.complete_with_events(
-    message_id      uuid,
     handler_key     uuid,
     instance_id     text,
     stream_id       uuid,
@@ -69,8 +72,5 @@ BEGIN
         WHERE aggregate.instances.handler_key = complete_with_events.handler_key
         AND aggregate.instances.instance_id = complete_with_events.instance_id;
     END IF;
-
-    -- Remove the command from the queue.
-    PERFORM commandqueue.remove(complete_with_events.message_id);
 END;
 $$;

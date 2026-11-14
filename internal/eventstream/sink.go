@@ -17,11 +17,12 @@ import (
 // updates with the effects of handling events so that concurrent consumption
 // does not apply an event more than once.
 type Sink interface {
-	// Workload returns the rendezvous workload used to choose which node
-	// consumes the stream with the given ID. It must return the same value
-	// for a given stream on every node. Streams with the same workload are
-	// assigned to the same node.
-	Workload(streamID *uuidpb.UUID) *uuidpb.UUID
+	// RendezvousKey returns the rendezvous key used to choose which node
+	// consumes the stream with the given ID.
+	//
+	// It must return the same key for a given stream on every node. If it
+	// returns the same key for two streams, the same node consumes both.
+	RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID
 
 	// EventTypeIDs returns the IDs of the event types that the sink consumes.
 	// The set must not be empty or modified after it is returned. Every type

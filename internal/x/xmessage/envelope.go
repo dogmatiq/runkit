@@ -11,6 +11,10 @@ import (
 
 // Unpack unmarshals an envelope from its binary representation and unpacks the
 // message within it (possibly multiple times).
+//
+// It returns a deterministic error on failure.
+//
+// See [xerrors.IsDeterministic].
 func Unpack[
 	T interface {
 		dogma.Message
@@ -27,11 +31,13 @@ func Unpack[
 	}
 
 	if err := env.UnmarshalBinary(data); err != nil {
-		return fmt.Errorf("unable to unmarshal envelope: %w", err)
+		return xerrors.Deterministic(
+			fmt.Errorf("unable to unmarshal envelope: %w", err),
+		)
 	}
 
 	if err := env.Validate(); err != nil {
-		return err
+		return xerrors.Deterministic(err)
 	}
 
 	return UnpackMessage(env, messages...)
@@ -42,8 +48,11 @@ func Unpack[
 // Unlike [Unpack], it does not unmarshal the envelope from binary; the caller
 // is responsible for ensuring the envelope is already populated and valid.
 //
-// It returns an [xerrors.PanicError] if the message's UnmarshalBinary or
-// Validate method panics.
+// It returns a deterministic error on failure, which wraps an
+// [xerrors.PanicError] if the message's UnmarshalBinary or Validate method
+// panics.
+//
+// See [xerrors.IsDeterministic].
 func UnpackMessage[
 	T interface {
 		dogma.Message
@@ -54,31 +63,34 @@ func UnpackMessage[
 	env *envelopepb.Envelope,
 	messages ...*T,
 ) error {
-	return xerrors.Recover(
-		func() error {
-			for idx := range messages {
-				m, err := envelope.Unpack[T](env)
-				if err != nil {
-					return err
-				}
-
-				if idx == 0 {
-					// Validate the message once; assume that subsequent
-					// unpacking of the same data _must_ be valid too.
-					s := ValidationScope{
-						IsNewMessage: false,
-						Envelope:     env,
-					}
-
-					if err := m.Validate(any(s).(S)); err != nil {
+	return xerrors.Deterministic(
+		xerrors.Recover(
+			func() error {
+				for idx := range messages {
+					m, err := envelope.Unpack[T](env)
+					if err != nil {
 						return err
 					}
+
+					if idx == 0 {
+						// Validate the message once; assume that
+						// subsequent unpacking of the same data _must_ be
+						// valid too.
+						s := ValidationScope{
+							IsNewMessage: false,
+							Envelope:     env,
+						}
+
+						if err := m.Validate(any(s).(S)); err != nil {
+							return err
+						}
+					}
+
+					*messages[idx] = m
 				}
 
-				*messages[idx] = m
-			}
-
-			return nil
-		},
+				return nil
+			},
+		),
 	)
 }

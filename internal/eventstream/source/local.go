@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
-	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -29,12 +31,9 @@ type Local struct {
 	// events.
 	DB *sql.DB
 
-	// Signals is the bus used to receive signals that event streams have been
-	// created and that events have been appended to them.
-	Signals *signal.Bus
-
-	// EngineLogger is the target for log messages produced by the source.
-	EngineLogger *slog.Logger
+	// Node is the node that receives the cluster-wide signals sent when event
+	// streams are created and when events are appended to them.
+	Node *cluster.Node
 
 	// SegmentSize is the maximum number of events delivered in one segment,
 	// which is also the number of events read per query. It must be positive.
@@ -44,6 +43,13 @@ type Local struct {
 	// [Local.Watch]. A call that falls further behind than this ends with an
 	// error that wraps [ErrNotContiguous]. It must be positive.
 	BufferSize int
+
+	// EngineFailurePolicy is how the engine responds to failures to discover and follow event
+	// streams.
+	EngineFailurePolicy failure.Policy
+
+	// EngineLogger is the target for log messages produced by the source.
+	EngineLogger *slog.Logger
 
 	// m guards the offsets and watchers fields.
 	m sync.Mutex
@@ -88,18 +94,20 @@ func (s *Local) Run(ctx context.Context) error {
 	// streams does not stop following those already known.
 	err := supervisor.Run(
 		ctx,
-		s.EngineLogger,
 		"discover event streams",
+		s.EngineFailurePolicy,
+		s.EngineLogger,
 		func(ctx context.Context) error {
 			return s.discover(
 				ctx,
 				known,
 				func(streamID *uuidpb.UUID) {
 					group.Go(
+						"deliver event stream",
+						s.EngineFailurePolicy,
 						s.EngineLogger.With(
 							xslog.UUID("stream_id", streamID),
 						),
-						"deliver event stream",
 						func(ctx context.Context) error {
 							return s.watchStream(ctx, streamID)
 						},
@@ -214,10 +222,12 @@ func (s *Local) discover(
 	known *uuidcollection.Set,
 	fn func(streamID *uuidpb.UUID),
 ) error {
-	signals, stop := s.Signals.Watch(ctx, "eventstream.create", 1)
-	defer stop()
+	var created cosyne.Signal
 
-	for range signals {
+	detach := s.Node.AttachSignal(ctx, "eventstream.create", &created)
+	defer detach()
+
+	for {
 		streamIDs, err := s.loadStreamIDs(ctx)
 		if err != nil {
 			return err
@@ -233,9 +243,11 @@ func (s *Local) discover(
 			known.Add(streamID)
 			fn(streamID)
 		}
-	}
 
-	return ctx.Err()
+		if err := created.WaitContext(ctx); err != nil {
+			return err
+		}
+	}
 }
 
 // loadStreamIDs returns the IDs of all event streams.
@@ -391,10 +403,16 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 		opened bool
 	)
 
-	signals, stop := s.Signals.Watch(ctx, "eventstream.append."+streamID.AsString(), 1)
-	defer stop()
+	var appended cosyne.Signal
 
-	for range signals {
+	detach := s.Node.AttachSignal(
+		ctx,
+		"eventstream.append."+streamID.AsString(),
+		&appended,
+	)
+	defer detach()
+
+	for {
 		if !opened {
 			begin, err := s.openStream(ctx, streamID)
 			if err != nil {
@@ -420,9 +438,11 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 				break
 			}
 		}
-	}
 
-	return ctx.Err()
+		if err := appended.WaitContext(ctx); err != nil {
+			return err
+		}
+	}
 }
 
 // openStream returns the offset from which [Local.deliverStream] delivers a

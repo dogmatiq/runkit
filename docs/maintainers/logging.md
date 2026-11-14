@@ -36,10 +36,22 @@ Every record carries a `layer` attribute, with the value `application` or
 one base that carries `node_id` and the application's identity, and each
 logger adds its own `layer`.
 
-The name of a field that holds a logger includes the logger's layer. Name the
-field `EngineLogger` or `AppLogger`, or `engineLogger` or `appLogger` if it's
-unexported. Never name a field `Logger` or `logger`, even on a type that has
-only one logger.
+The name of a field, parameter or variable that holds a logger includes the
+logger's layer. Name a field `EngineLogger` or `AppLogger`, or `engineLogger`
+or `appLogger` if it's unexported, and name a parameter or variable
+`engineLogger` or `appLogger`. Never use the name `Logger` or `logger`, even
+where only one logger is in scope.
+
+A logger carries only the context that's true of every record written through
+it, such as the layer, the node and the application. Any other context, such as
+which handler or which message a record is about, is added by the code that
+knows it, at the point where it knows it. That keeps each attribute in one
+place, and lets one logger serve code that works for many handlers.
+
+When other code decides whether some work counts, such as by committing its
+transaction, the code doing the work doesn't keep an application logger of its
+own. The deciding code passes one in with each call, so that it controls when
+the records are written.
 
 ## Attributes
 
@@ -52,7 +64,7 @@ only one logger.
 | `handled_message` | The metadata of the message being handled, on records about a delivery | The metadata of the message being handled, on records from a handler |
 | `produced_message` | The metadata of the message produced, on records about producing it | The metadata of the message produced |
 | Instance ID | The instance's ID, on records about an instance | The instance's ID, on records from an instance |
-| `delivery` group | The delivery's ID and attempt number | — |
+| `delivery` group | The ID of the message being delivered, on records about a delivery | — |
 | Stream | The stream's ID and offset, on records about a stream | — |
 
 A message is always described by its metadata, which is the attributes written
@@ -95,13 +107,17 @@ While a handler attempt runs, the two layers say different things.
 Every application record from a handler has the metadata of the message being
 handled, so a search on that message's ID finds everything it caused.
 
-Each scope buffers its application records for the attempt and writes them
-together, keeping the time of each call.
+The code that decides whether the handling of a message counts buffers the
+application records from that handling. It might decide by committing a
+transaction, or by seeing that the handler has moved its checkpoint past the
+message. It writes the records together if the handling counts, keeping the
+time of each call, and discards them if it doesn't.
 
 | Where | When the application records are written |
 | --- | --- |
-| Aggregate, integration and process handlers | After the attempt's transaction commits |
-| Projection `HandleEvent` | After `HandleEvent` returns successfully |
+| Aggregate and integration handlers, and process deadlines | After an attempt completes the delivery and its transaction commits |
+| Process events | After the attempt's transaction commits |
+| Projection `HandleEvent` | After `HandleEvent` returns successfully and moves the checkpoint past the event |
 | Projection `Compact` | Immediately, because the application compacts in its own storage, outside the engine's transaction |
 | `CommandExecutor` | After the command is in the queue |
 
@@ -119,8 +135,8 @@ ERROR means the engine can't do something it's meant to do and isn't
 recovering on its own. Use it for:
 
 - a deterministic failure, as soon as it happens
-- any other failure once its streak has lasted 30 seconds, counted from the
-  first failure in the streak
+- any other failure once its streak has lasted as long as the error log threshold,
+  counted from the first failure in the streak
 
 ### WARN
 
@@ -181,26 +197,46 @@ failure. Any failure it can't classify is treated as transient.
 | Event | Level |
 | --- | --- |
 | A deterministic failure, if the streak hasn't logged an ERROR | ERROR |
-| The first failure once the streak is 30 seconds old, if it hasn't logged an ERROR | ERROR |
+| The first failure once the streak is as old as the error log threshold, if it hasn't logged an ERROR | ERROR |
 | Any other failure | DEBUG |
 | Recovery, after the streak logged an ERROR | INFO |
 | Recovery, after a streak that logged no ERROR | DEBUG |
 | Shutdown during a streak | — |
 
 A streak logs at most one ERROR. Its log message describes the failure itself,
-like any other failure record. Every failure record has the `error` as an
-attribute. The ERROR record also has attributes for how long the streak has
-lasted and how many failures it has had.
+like any other failure record.
+
+The error log threshold and the delays between retries are set by the *failure
+policy* of each kind of work. The engine options `WithEngineFailurePolicy`,
+`WithMessageQueueDeliveryFailurePolicy`, `WithEventStreamDispatchFailurePolicy`
+and `WithProjectionCompactionFailurePolicy` set them. By default, the error
+threshold is 30 seconds.
+
+Failure and recovery records have these attributes, as well as the attributes
+that identify the work. Each duration starts or ends at the record's own time.
+
+| Attribute | Failure records | Recovery records |
+| --- | --- | --- |
+| `error` | The error | — |
+| `failures` | The number of failures in the streak, including this one | The number of failures in the streak |
+| `failing_since` | The time of the streak's first failure | The time of the streak's first failure |
+| `failing_for` | The time from the streak's first failure to this record | The time from the streak's first failure to this record |
+| `next_attempt_at` | The time of the next attempt | — |
+| `next_attempt_in` | The time from this record to the next attempt | — |
+| `succeeding_since` | — | The time of the first success after the last failure, if the work must succeed for a quiet period to recover |
+| `succeeding_for` | — | The time from that success to this record |
 
 A streak's ERROR is followed by its recovery record when the work succeeds
 again. Until then, the work is still failing, and later failures in the streak
-are logged at DEBUG.
+are logged as DEBUG records.
 
 A reader must be able to match a streak's ERROR record to its recovery record,
 and tell that pair apart from every other streak, including earlier streaks of
 the same work. Both records have the attributes that identify the work, plus
 one that distinguishes this streak, such as when it started or an attempt
-number. What that is depends on the work, but it must be there.
+number. What that is depends on the work, but it must be there. When the work
+can only fail in one streak, such as delivering one message, the attributes
+that identify the work also identify the streak.
 
 ### Many units failing together
 
@@ -212,6 +248,40 @@ DEBUG, only when that adds context the coordinator's record lacks, such as
 which stream or instance failed. Where no coordinator exists, each unit logs
 its own ERROR. Don't restructure code just to create a coordinator.
 
+## How the engine applies these rules
+
+These are some of the decisions that follow from the rules above, for the
+engine's main components. They aren't a complete list. For anything not
+covered here, the rules above decide.
+
+### Message queue
+
+Each engine runs one consumer, which delivers the commands and deadlines for
+every handler.
+
+- The consumer holds the engine's base loggers. It passes a logger for each
+  layer to the sink with each call, with the delivery's attributes added, so a
+  queue sink holds no loggers of its own.
+- Each sink describes itself with a log attribute, which identifies its
+  handler. The consumer adds it to its own records about deliveries to that
+  sink, and to the loggers it passes the sink, so a sink's records carry it
+  without the sink adding it.
+- The consumer commits each attempt, so it buffers that attempt's application
+  records, and writes them only if the attempt completes the delivery and its
+  transaction commits.
+- Every record that the consumer or a sink writes about an attempt has the
+  `delivery` group. A delivery can fail in only one streak, because its message
+  is removed when it completes, so the group also identifies the streak.
+- Any error from a sink, except a lock that another transaction holds, is a
+  failure of the delivery, and the delivery's streak logs it. An error from the
+  consumer's own work, such as finding the next messages or postponing a
+  delivery, is logged as a failure to consume the queues instead.
+
+### Projection compaction
+
+The application compacts in its own storage, outside the engine's transaction,
+so the compactor writes its application records immediately.
+
 ## Log messages
 
 - An engine record's log message is a constant, so that every occurrence of an
@@ -221,7 +291,7 @@ its own ERROR. Don't restructure code just to create a coordinator.
   a produced message's description or the text passed to `Log()`. That text is
   the content of the application's record, so it stays readable as it is.
 - Say what was observed, not what it might mean. A recovery record says how
-  long the work has been succeeding and after how many failures, and it
+  long the work was failing and after how many failures it succeeded, and it
   doesn't claim that the work is healthy.
 - Name things that a person running the engine knows about.
 - Put values in attributes, not in the log message.

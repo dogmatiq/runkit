@@ -3,7 +3,7 @@ module github.com/dogmatiq/runkit
 go 1.27.0
 
 require (
-	github.com/dogmatiq/cosyne v0.3.0
+	github.com/dogmatiq/cosyne v0.4.0
 	github.com/dogmatiq/dapper v0.7.0
 	github.com/dogmatiq/dogma v0.25.0
 	github.com/dogmatiq/enginekit v0.31.0

@@ -68,8 +68,9 @@ func TestCatalog(t *testing.T) {
 	// stream.
 	setup := func(t *testing.T, cacheSize int) *Catalog {
 		return &Catalog{
-			CacheSize:    cacheSize,
-			EngineLogger: spruce.NewTestLogger(t),
+			CacheSize:           cacheSize,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 	}
 
@@ -338,7 +339,7 @@ func TestCatalog(t *testing.T) {
 			expectCatalogToHave(t, c, streamID)
 		})
 
-		t.Run("it watches the source again at once when it is too slow for the source", func(t *testing.T) {
+		t.Run("it watches the source again immediately when it is too slow for the source", func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				c := setup(t, 10)
 
@@ -1133,8 +1134,9 @@ func TestCatalog(t *testing.T) {
 
 							supervisor.Run(
 								ctx,
-								spruce.NewTestLogger(t),
 								"<work>",
+								xtesting.FailurePolicy(),
+								spruce.NewTestLogger(t),
 								func(ctx context.Context) error {
 									return c.Consume(
 										ctx,
@@ -1420,7 +1422,7 @@ func TestCatalog(t *testing.T) {
 			}
 		})
 
-		t.Run("it returns ErrStreamNotFound at once for a stream the catalog does not have", func(t *testing.T) {
+		t.Run("it returns ErrStreamNotFound immediately for a stream the catalog does not have", func(t *testing.T) {
 			c := setup(t, 10)
 
 			err := c.Consume(

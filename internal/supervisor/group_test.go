@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -20,8 +21,9 @@ func TestGroup(t *testing.T) {
 		var calls atomic.Int32
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
 				calls.Add(1)
 				return nil
@@ -46,8 +48,9 @@ func TestGroup(t *testing.T) {
 			var calls atomic.Int32
 
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					if calls.Add(1) < 3 {
 						return errors.New("<error>")
@@ -86,8 +89,9 @@ func TestGroup(t *testing.T) {
 			var calls atomic.Int32
 
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					calls.Add(1)
 					return errors.New("<error>")
@@ -117,8 +121,9 @@ func TestGroup(t *testing.T) {
 		var calls atomic.Int32
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
 				calls.Add(1)
 				cancel()
@@ -143,8 +148,9 @@ func TestGroup(t *testing.T) {
 
 		for range 3 {
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					calls.Add(1)
 					return nil
@@ -164,11 +170,12 @@ func TestGroup(t *testing.T) {
 	t.Run("it returns a fatal error and stops the other functions", func(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 		group, ctx := WithContext(t.Context())
-		want := errors.New("<error>")
+		want := xerrors.Fatal(errors.New("<error>"))
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(ctx context.Context) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -176,10 +183,11 @@ func TestGroup(t *testing.T) {
 		)
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
-				return Fatal(want)
+				return want
 			},
 		)
 

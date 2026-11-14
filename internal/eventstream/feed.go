@@ -11,7 +11,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
-	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // feed serves consumers of one event stream from one [source.Source], whether
@@ -31,9 +31,9 @@ type feed struct {
 	// Source is the source that the feed comes from.
 	Source source.Source
 
-	// Types is the set of message types that the feed carries, or nil if it
-	// carries every type.
-	Types *uuidcollection.Set
+	// EventTypeIDs is the set of IDs of the event types that the feed carries,
+	// or nil if it carries every type.
+	EventTypeIDs *uuidcollection.Set
 
 	// cache holds the stream's most recent events.
 	cache *cache.Cache
@@ -272,7 +272,7 @@ func (f *feed) read(
 		if errors.Is(err, source.ErrUnrecognizedStream) ||
 			errors.Is(err, source.ErrOffsetOutOfRange) ||
 			errors.Is(err, source.ErrInvalidSegment) {
-			return cp, supervisor.Deterministic(err)
+			return cp, xerrors.Deterministic(err)
 		}
 
 		return cp, err

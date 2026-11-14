@@ -74,14 +74,20 @@ func (e *Engine) ExecuteCommand(
 		ctx,
 		e.db,
 		func(ctx context.Context, tx *sql.Tx) error {
+			queueID, err := e.queueRouter.RouteCommandToQueue(ctx, tx, commandEnvelope)
+			if err != nil {
+				return err
+			}
+
 			row := tx.QueryRowContext(
 				ctx,
 				`SELECT
 					actual_message_id,
 					enqueued
-				FROM commandqueue.add($1, $2, $3, $4)`,
+				FROM messagequeue.add_command($1, $2, $3, $4, $5)`,
 				xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+				xsql.UUID(queueID),
 				xsql.Envelope(commandEnvelope),
 				commandEnvelope.GetBody().GetIdempotencyKey(),
 			)
