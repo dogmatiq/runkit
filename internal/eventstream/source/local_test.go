@@ -746,8 +746,35 @@ func TestLocal(t *testing.T) {
 				},
 			)
 
+			// A pass of discovery that began before the failures started can
+			// still find the new stream, so that stream's empty segment may
+			// arrive before the events. Only the segments of the first stream
+			// are of interest here.
+			firstStreamSegments := make(chan Segment)
+			xtesting.GoE(
+				t,
+				func(ctx context.Context) error {
+					for {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case seg := <-segments:
+							if !seg.StreamID.Equal(streamID) {
+								continue
+							}
+
+							select {
+							case <-ctx.Done():
+								return ctx.Err()
+							case firstStreamSegments <- seg:
+							}
+						}
+					}
+				},
+			)
+
 			events := xtesting.AppendToEventStream(t, db, streamID, EventE1)
-			expectEnvelopes(t, segments, streamID, 0, 1, events...)
+			expectEnvelopes(t, firstStreamSegments, streamID, 0, 1, events...)
 		})
 
 		t.Run("it delivers an empty segment for an empty stream", func(t *testing.T) {
