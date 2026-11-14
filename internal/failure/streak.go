@@ -152,8 +152,13 @@ func (s *Streak) qualifiesForError(
 	return !now.Before(s.FirstFailedAt.Add(policy.ErrorLogThreshold))
 }
 
-// panicOnEngineBug panics if err shows a bug in the engine, when the program is
-// running under go test.
+// panicOnEngineBug panics if err shows a bug in the engine, but only when the
+// program is running under go test.
+//
+// The difference is intentional. In production, the failure is retried like any
+// other, so the engine recovers by itself. Under go test, the panic makes a
+// developer find out about the bug immediately, instead of seeing only a
+// retried failure.
 func panicOnEngineBug(err error) {
 	if !testing.Testing() {
 		return
