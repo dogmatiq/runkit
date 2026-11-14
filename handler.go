@@ -105,14 +105,14 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		}
 
 		compactor := &projection.Compactor{
-			DB:                      e.db,
-			Handler:                 handlerConfig.Interface(),
-			Identity:                handlerConfig.Identity(),
-			Interval:                e.compactInterval,
-			Timeout:                 e.compactTimeout,
-			CompactionFailurePolicy: e.projectionCompactionFailurePolicy,
-			EngineLogger:            engineLogger,
-			AppLogger:               appLogger,
+			DB:            e.db,
+			Handler:       handlerConfig.Interface(),
+			Identity:      handlerConfig.Identity(),
+			Interval:      e.compactInterval,
+			Timeout:       e.compactTimeout,
+			FailurePolicy: e.projectionCompactionFailurePolicy,
+			EngineLogger:  engineLogger,
+			AppLogger:     appLogger,
 		}
 
 		e.group.Go(func() error {

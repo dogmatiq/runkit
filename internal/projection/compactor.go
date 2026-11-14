@@ -33,8 +33,9 @@ type Compactor struct {
 	// projection in a single attempt.
 	Timeout time.Duration
 
-	// CompactionFailurePolicy is how the engine responds to failures to compact the projection.
-	CompactionFailurePolicy failure.Policy
+	// FailurePolicy is how the engine responds to failures to compact the
+	// projection.
+	FailurePolicy failure.Policy
 
 	// EngineLogger is the target for the engine's records about the compactor.
 	EngineLogger *slog.Logger
@@ -60,7 +61,7 @@ func (c *Compactor) Run(ctx context.Context) error {
 	return supervisor.Run(
 		ctx,
 		"compact projection",
-		c.CompactionFailurePolicy,
+		c.FailurePolicy,
 		c.EngineLogger,
 		c.run,
 	)

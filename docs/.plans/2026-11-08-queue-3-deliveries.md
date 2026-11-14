@@ -766,6 +766,12 @@ The rules agreed so far, each applied in its own commit:
    Go types. A name that would collide with the other, such
    as a sink's field and its `EventTypeIDs()` method, gets a qualifier on the
    field: `InboundEventTypeIDs`. Parameters keep `types`.
+4. **A struct that does one thing may use bare names.** When a struct's own
+   name says what its fields apply to, and it holds no other field of the same
+   kind, the fields need no qualifier: the `Compactor`'s `Interval`, `Timeout`
+   and `FailurePolicy`. A struct that holds several fields of one kind, such as
+   a consumer's `EngineFailurePolicy` and `DeliveryFailurePolicy`, qualifies
+   each.
 
 ---
 
