@@ -556,8 +556,8 @@ func TestLocal(t *testing.T) {
 			}
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -1032,8 +1032,8 @@ func TestLocal(t *testing.T) {
 			}
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 

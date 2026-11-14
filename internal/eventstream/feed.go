@@ -31,9 +31,9 @@ type feed struct {
 	// Source is the source that the feed comes from.
 	Source source.Source
 
-	// Types is the set of message types that the feed carries, or nil if it
-	// carries every type.
-	Types *uuidcollection.Set
+	// EventTypeIDs is the set of IDs of the event types that the feed carries,
+	// or nil if it carries every type.
+	EventTypeIDs *uuidcollection.Set
 
 	// cache holds the stream's most recent events.
 	cache *cache.Cache

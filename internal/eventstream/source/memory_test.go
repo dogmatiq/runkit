@@ -240,8 +240,8 @@ func TestMemory(t *testing.T) {
 			cancel()
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 
@@ -404,8 +404,8 @@ func TestMemory(t *testing.T) {
 			cancel()
 
 			defer func() {
-				if got := recover(); got != "message types must not be empty" {
-					t.Fatalf("unexpected panic: got %v, want %q", got, "message types must not be empty")
+				if got := recover(); got != "event types must not be empty" {
+					t.Fatalf("unexpected panic: got %v, want %q", got, "event types must not be empty")
 				}
 			}()
 

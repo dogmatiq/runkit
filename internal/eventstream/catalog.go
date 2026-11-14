@@ -85,7 +85,7 @@ func (c *Catalog) Consume(
 	fn func(Segment) error,
 ) error {
 	if types.IsEmpty() {
-		panic("message types must not be empty")
+		panic("event types must not be empty")
 	}
 
 	c.m.Lock()
@@ -104,10 +104,10 @@ func (c *Catalog) Consume(
 			return ErrStreamNotFound
 		}
 
-		if f.Types != nil {
-			if unwatched := types.Diff(f.Types); !unwatched.IsEmpty() {
+		if f.EventTypeIDs != nil {
+			if unwatched := types.Diff(f.EventTypeIDs); !unwatched.IsEmpty() {
 				panic(fmt.Sprintf(
-					"event stream %s is not watched for message types %s",
+					"cannot consume event stream %s: Catalog.Watch was not given event types %s for it",
 					streamID,
 					unwatched,
 				))
@@ -139,7 +139,7 @@ func (c *Catalog) Consume(
 // them again before returning. Once it returns, no call to the source that the
 // catalog made is in progress, and the catalog makes no more.
 //
-// types is the set of message types to deliver from the source, or nil to
+// types is the set of event types to deliver from the source, or nil to
 // deliver every type.
 func (c *Catalog) Watch(
 	ctx context.Context,
@@ -257,12 +257,12 @@ func (c *Catalog) add(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	f := &feed{
-		ID:     id,
-		Source: src,
-		Types:  types,
-		cache:  cache.New(c.CacheSize, begin),
-		ctx:    ctx,
-		cancel: cancel,
+		ID:           id,
+		Source:       src,
+		EventTypeIDs: types,
+		cache:        cache.New(c.CacheSize, begin),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	cs, ok := c.streams.Get(id)

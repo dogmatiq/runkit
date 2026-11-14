@@ -759,6 +759,13 @@ The rules agreed so far, each applied in its own commit:
 2. **A field is named for what it is.** A field never shares a name with a
    field of another meaning: the handler's `dogma.ConcurrencyPreference` is
    `ConcurrencyPreference`, and the consumer's limit is `ConcurrencyLimit`.
+3. **A set of IDs is named for its IDs.** A field that holds a set of message
+   type IDs, or a method that returns one, is named `…MessageTypeIDs`, or
+   `…EventTypeIDs`, `…CommandTypeIDs` or `…DeadlineTypeIDs` if the set holds
+   only one kind. It is never a bare `…TypeIDs`. `…Types` is for collections of
+   Go types. A name that would collide with the other, such
+   as a sink's field and its `EventTypeIDs()` method, gets a qualifier on the
+   field: `InboundEventTypeIDs`. Parameters keep `types`.
 
 ---
 

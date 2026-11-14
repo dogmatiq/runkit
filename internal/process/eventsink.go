@@ -47,8 +47,8 @@ type EventSink struct {
 	Handler  dogma.ProcessMessageHandler[dogma.ProcessRoot]
 	Identity *identitypb.Identity
 
-	// EventTypes is the set of IDs of the event types routed to the handler.
-	EventTypes *uuidcollection.Set
+	// InboundEventTypeIDs is the set of IDs of the event types routed to the handler.
+	InboundEventTypeIDs *uuidcollection.Set
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// event.
@@ -74,7 +74,7 @@ func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
 
 // EventTypeIDs returns the event types routed to the process.
 func (s *EventSink) EventTypeIDs() *uuidcollection.Set {
-	return s.EventTypes
+	return s.InboundEventTypeIDs
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream.
