@@ -645,7 +645,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 	)
 
 	// handler returns a process handler for one instance. Handling an event of
-	// type A schedules a deadline of type A, due at once. Handling that
+	// type A schedules a deadline of type A, due immediately. Handling that
 	// deadline, or an event of type B, mutates the root, executes a command
 	// and, for the deadline, schedules a deadline of type B.
 	//

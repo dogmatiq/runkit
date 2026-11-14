@@ -228,7 +228,7 @@ that identify the work. Each duration starts or ends at the record's own time.
 
 A streak's ERROR is followed by its recovery record when the work succeeds
 again. Until then, the work is still failing, and later failures in the streak
-are logged at DEBUG.
+are logged as DEBUG records.
 
 A reader must be able to match a streak's ERROR record to its recovery record,
 and tell that pair apart from every other streak, including earlier streaks of

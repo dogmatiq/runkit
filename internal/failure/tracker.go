@@ -56,7 +56,8 @@ type Tracker struct {
 	complete bool
 }
 
-// WorkFailed records a failure of the work.
+// WorkFailed adds a failure of the work to the streak in progress, or starts a
+// streak if none is in progress.
 //
 // It returns the time at which the next attempt may start. See
 // [Streak.Extend].
@@ -74,10 +75,10 @@ func (t *Tracker) WorkFailed(ctx context.Context, err error) time.Time {
 	return t.streak.Extend(ctx, t.Description, t.Policy, t.EngineLogger, err)
 }
 
-// WorkSucceeded records a success of the work.
+// WorkSucceeded ends the streak in progress, if there is one.
 //
-// If a streak is in progress, it ends at once if [Tracker.QuietPeriod] is zero.
-// Otherwise it ends when the quiet period passes without another failure.
+// The streak ends immediately if [Tracker.QuietPeriod] is zero. Otherwise it
+// ends when the quiet period passes without another failure.
 func (t *Tracker) WorkSucceeded(ctx context.Context) {
 	t.m.Lock()
 	defer t.m.Unlock()
@@ -124,7 +125,7 @@ func (t *Tracker) WorkSucceeded(ctx context.Context) {
 	t.quiet = timer
 }
 
-// Complete records that the work is complete, so no more attempts are made.
+// Complete marks the work as complete, so no more attempts are made.
 //
 // It cancels any quiet period in progress, and the work writes no more
 // records. It's called when the work stops for good, such as at shutdown.

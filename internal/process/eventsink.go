@@ -215,7 +215,7 @@ func (s *EventSink) consume(
 	return next, true, nil
 }
 
-// dispatch routes an event to its instance and applies its effects within tx.
+// dispatch routes an event to its instance and writes its effects within tx.
 func (s *EventSink) dispatch(
 	ctx context.Context,
 	tx *sql.Tx,

@@ -205,8 +205,8 @@ func (c *Catalog) Watch(
 				// A source that can no longer deliver a stream contiguously,
 				// such as when the catalog falls behind under load, is
 				// expected. A new watch begins each stream where it stands, so
-				// the source is watched again at once rather than as though it
-				// had failed.
+				// the source is watched again immediately rather than as though
+				// it had failed.
 				if errors.Is(err, source.ErrNotContiguous) {
 					engineLogger.DebugContext(
 						ctx,

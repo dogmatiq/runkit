@@ -255,9 +255,9 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 		return
 	}
 
-	// A failed send is logged only at DEBUG. If sends keep failing, this node
-	// stops hearing its own heartbeat, and expireNodes logs that at ERROR with
-	// this error, which says what failed.
+	// A failed send is logged only as a DEBUG record. If sends keep failing,
+	// this node stops hearing its own heartbeat, and expireNodes logs that as
+	// an ERROR with this error, which says what failed.
 	n.lastSendErr = fmt.Errorf("unable to send heartbeat: %w", err)
 
 	if ctx.Err() == nil {

@@ -689,7 +689,7 @@ the default ERROR threshold, and names the options.
 - [x] **Step 1: Restate the assumptions**
 - [x] **Step 2: Write the failing tests**
 - [x] **Step 3: Implement it, and add the options to `CHANGELOG.md`**
-- [ ] **Step 4: Stop for review**
+- [x] **Step 4: Stop for review**
 
 ---
 
@@ -705,7 +705,7 @@ verb, because "record" is a Dogma term, and the process event sink's
 word for aggregate roots. It writes its effects. For example, "WorkFailed adds a
 failure of the work to the streak in progress, or starts a streak".
 
-- [ ] **Step 1: Fix the wording**
+- [x] **Step 1: Fix the wording**
 - [ ] **Step 2: Stop for review**
 
 ---
