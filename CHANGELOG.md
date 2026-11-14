@@ -90,7 +90,7 @@ events.
   waits at most 15 seconds before a retry, instead of five minutes, and a streak
   of consecutive failures logs one ERROR record, instead of one for every
   failure. Failures that retrying can't fix, such as a panic in application
-  code, still wait up to five minutes. Use a custom`FailurePolicy` to change
+  code, still wait up to five minutes. Use a custom `FailurePolicy` to change
   these limits.
 - `Engine.Run()` now configures the database pool with unlimited connections and
   an idle timeout, which closes each connection that has been idle for one
