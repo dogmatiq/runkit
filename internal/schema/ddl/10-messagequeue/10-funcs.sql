@@ -10,13 +10,19 @@
 -- If idem_key has been seen before, the command is discarded and
 -- (original_message_id, FALSE) is returned, where original_message_id is the
 -- ID of the message that originally claimed the key.
+--
+-- queued_at is the time that the command was queued. It's the time at which the
+-- command first becomes due, and the caller supplies it from its own clock
+-- because the consumer compares next_attempt_at with that clock, not the
+-- database's.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION messagequeue.add_command(
     message_id      uuid,
     message_type_id uuid,
     queue_id        uuid,
     envelope        bytea,
-    idem_key        text
+    idem_key        text,
+    queued_at       timestamptz
 )
 RETURNS TABLE (actual_message_id uuid, enqueued boolean)
 LANGUAGE plpgsql
@@ -46,12 +52,16 @@ BEGIN
         message_id,
         message_type_id,
         queue_id,
-        envelope
+        envelope,
+        scheduled_for,
+        next_attempt_at
     ) VALUES (
         add_command.message_id,
         add_command.message_type_id,
         add_command.queue_id,
-        add_command.envelope
+        add_command.envelope,
+        add_command.queued_at,
+        add_command.queued_at
     );
 
     RETURN QUERY SELECT add_command.message_id, TRUE;

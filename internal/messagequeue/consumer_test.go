@@ -150,8 +150,9 @@ func TestConsumer(t *testing.T) {
 				message_type_id,
 				queue_id,
 				envelope,
+				scheduled_for,
 				next_attempt_at
-			) VALUES ($1, $2, $3, $4, $5)`,
+			) VALUES ($1, $2, $3, $4, $5, $5)`,
 			xsql.UUID(messageID),
 			xsql.UUID(typeID),
 			xsql.UUID(queueID),
@@ -1096,12 +1097,15 @@ func TestConsumer(t *testing.T) {
 				message_id,
 				message_type_id,
 				queue_id,
-				envelope
-			) VALUES ($1, $2, $3, $4)`,
+				envelope,
+				scheduled_for,
+				next_attempt_at
+			) VALUES ($1, $2, $3, $4, $5, $5)`,
 			xsql.UUID(env.GetBody().GetMessageId()),
 			xsql.UUID(typeID),
 			xsql.UUID(n.ID),
 			xsql.Envelope(env),
+			time.Now(),
 		)
 
 		exec(t, db, `ALTER TABLE messagequeue.unavailable RENAME TO messages`)

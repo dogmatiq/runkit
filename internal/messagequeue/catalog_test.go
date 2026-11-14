@@ -61,11 +61,14 @@ func TestCatalog(t *testing.T) {
 				message_id,
 				message_type_id,
 				queue_id,
-				envelope
-			) VALUES ($1, $2, $3, '\x00')`,
+				envelope,
+				scheduled_for,
+				next_attempt_at
+			) VALUES ($1, $2, $3, '\x00', $4, $4)`,
 			xsql.UUID(messageID),
 			xsql.UUID(uuidpb.Generate()),
 			xsql.UUID(queueID),
+			time.Now(),
 		); err != nil {
 			t.Fatal(err)
 		}

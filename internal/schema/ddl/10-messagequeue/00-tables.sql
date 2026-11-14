@@ -12,7 +12,10 @@ CREATE SCHEMA IF NOT EXISTS messagequeue;
 --
 -- "scheduled_for" is when the message was meant to be delivered, and never
 -- changes. "next_attempt_at" is the earliest time the next attempt may run, and
--- moves later each time an attempt is postponed.
+-- moves later each time an attempt is postponed. Neither has a default, because
+-- the consumer compares "next_attempt_at" with the clock of the engine that
+-- attempts the message, so the engine that adds a message must supply the times
+-- from its own clock, not the database's.
 --
 -- "failures", "first_failed_at" and "failure_logged_as_error" are the
 -- message's failure streak: the number of attempts that have failed since the
@@ -29,8 +32,8 @@ CREATE TABLE IF NOT EXISTS messagequeue.messages (
     failures                int         NOT NULL DEFAULT 0 CHECK (failures >= 0),
     first_failed_at         timestamptz,
     failure_logged_as_error boolean     NOT NULL DEFAULT false,
-    scheduled_for           timestamptz NOT NULL DEFAULT clock_timestamp(),
-    next_attempt_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+    scheduled_for           timestamptz NOT NULL,
+    next_attempt_at         timestamptz NOT NULL,
 
     CHECK ((handler_key IS NULL) = (instance_id IS NULL)),
     CHECK ((failures = 0) = (first_failed_at IS NULL)),

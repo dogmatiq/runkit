@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
@@ -177,6 +178,7 @@ func EnqueuePostponedCommand(
 	t.Helper()
 
 	env := PackCommand(t, command)
+	now := time.Now()
 
 	if _, err := x.ExecContext(
 		t.Context(),
@@ -185,15 +187,15 @@ func EnqueuePostponedCommand(
 			message_type_id,
 			queue_id,
 			envelope,
+			scheduled_for,
 			next_attempt_at
-		) VALUES (
-			$1, $2, $3, $4,
-			clock_timestamp() + INTERVAL '24 hours'
-		)`,
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
 		xsql.UUID(env.GetBody().GetMessageId()),
 		xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
 		xsql.UUID(uuidpb.Generate()),
 		xsql.Envelope(env),
+		now,
+		now.Add(24*time.Hour),
 	); err != nil {
 		t.Fatal(err)
 	}

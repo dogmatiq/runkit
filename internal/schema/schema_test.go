@@ -206,6 +206,39 @@ func TestCreate_doesNotRequireExclusiveCheckpointLock(t *testing.T) {
 	})
 }
 
+// TestAddCommand_usesQueuedAt verifies that a command is first due at the time
+// that the caller gives, not at the time of the database's clock.
+func TestAddCommand_usesQueuedAt(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`SELECT messagequeue.add_command(
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
+			'7a1c2e3f-4b5d-4c6e-8f70-91a2b3c4d5e6',
+			'5e4d3c2b-1a09-4f8e-9d7c-6b5a49382716',
+			'\x01',
+			'',
+			'2100-01-01T00:00:00Z'
+		)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the command is first due at the given time",
+		true,
+		db,
+		`SELECT scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
+			AND next_attempt_at = '2100-01-01T00:00:00Z'::timestamptz
+		FROM messagequeue.messages
+		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
+	)
+}
+
 // TestCreate_migratesQueues verifies that schema upgrades move pending commands
 // and deadlines from the tables of earlier versions into the queue.
 func TestCreate_migratesQueues(t *testing.T) {

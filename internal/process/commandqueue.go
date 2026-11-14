@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
@@ -31,12 +32,13 @@ func addCommandsToQueues(
 
 		if _, err := tx.ExecContext(
 			ctx,
-			`SELECT messagequeue.add_command($1, $2, $3, $4, $5)`,
+			`SELECT messagequeue.add_command($1, $2, $3, $4, $5, $6)`,
 			xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
 			xsql.UUID(queueID),
 			xsql.Envelope(commandEnvelope),
 			commandEnvelope.GetBody().GetIdempotencyKey(),
+			time.Now(),
 		); err != nil {
 			return fmt.Errorf("unable to add command to queue: %w", err)
 		}
