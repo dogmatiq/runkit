@@ -107,7 +107,7 @@ func TestConsumer(t *testing.T) {
 			Node:                  n,
 			Queues:                queues,
 			Sinks:                 sinks,
-			Concurrency:           concurrency,
+			ConcurrencyLimit:      concurrency,
 			ContentionDelay:       contentionDelay,
 			EngineFailurePolicy:   xtesting.FailurePolicy(),
 			DeliveryFailurePolicy: deliveryPolicy,

@@ -35,13 +35,13 @@ type CommandSink struct {
 	Handler  dogma.IntegrationMessageHandler
 	Identity *identitypb.Identity
 
-	// Concurrency is the handler's concurrency preference.
+	// ConcurrencyPreference is the handler's concurrency preference.
 	//
 	// If it's [dogma.MinimizeConcurrency], the sink makes one call at a time
 	// to the handler's HandleCommand method. While the handler is handling one
 	// command, [CommandSink.Deliver] returns [messagequeue.ErrBusy] for any
 	// other command, without calling the handler.
-	Concurrency dogma.ConcurrencyPreference
+	ConcurrencyPreference dogma.ConcurrencyPreference
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// command.
@@ -117,7 +117,7 @@ func (s *CommandSink) handleCommand(
 	scope *commandScope,
 	command dogma.Command,
 ) (bool, error) {
-	if s.Concurrency == dogma.MinimizeConcurrency {
+	if s.ConcurrencyPreference == dogma.MinimizeConcurrency {
 		if !s.handlerLock.TryLock() {
 			return false, nil
 		}

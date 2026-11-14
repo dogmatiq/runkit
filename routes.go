@@ -48,8 +48,8 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 			}
 		case *config.Integration:
 			handler = messagequeue.CommandHandler{
-				Key:         handlerConfig.Identity().GetKey(),
-				Concurrency: handlerConfig.ConcurrencyPreference(),
+				Key:                   handlerConfig.Identity().GetKey(),
+				ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
 			}
 		default:
 			continue

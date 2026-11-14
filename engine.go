@@ -426,7 +426,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Node:                  e.node,
 		Queues:                e.queues,
 		Sinks:                 e.queueSinks,
-		Concurrency:           e.messageQueueConcurrency,
+		ConcurrencyLimit:      e.messageQueueConcurrency,
 		ContentionDelay:       e.messageQueueContentionDelay,
 		EngineFailurePolicy:   e.engineFailurePolicy,
 		DeliveryFailurePolicy: e.messageQueueDeliveryFailurePolicy,

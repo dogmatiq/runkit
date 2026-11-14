@@ -33,9 +33,9 @@ func TestCommandSink(t *testing.T) {
 				Handler: &stubs.IntegrationMessageHandlerStub{
 					HandleCommandFunc: handle,
 				},
-				Identity:      identitypb.New("<handler>", uuidpb.Generate()),
-				Concurrency:   dogma.MinimizeConcurrency,
-				HandleTimeout: time.Minute,
+				Identity:              identitypb.New("<handler>", uuidpb.Generate()),
+				ConcurrencyPreference: dogma.MinimizeConcurrency,
+				HandleTimeout:         time.Minute,
 			}
 
 			env := xtesting.PackCommand(t, stubs.CommandA1)

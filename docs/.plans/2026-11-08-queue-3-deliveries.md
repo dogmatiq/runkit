@@ -756,6 +756,9 @@ The rules agreed so far, each applied in its own commit:
    as a handler and its identity, or a listener and its address, sit together
    and share one comment, even if the rule would otherwise put them in
    different groups. Struct literals follow the struct's order.
+2. **A field is named for what it is.** A field never shares a name with a
+   field of another meaning: the handler's `dogma.ConcurrencyPreference` is
+   `ConcurrencyPreference`, and the consumer's limit is `ConcurrencyLimit`.
 
 ---
 

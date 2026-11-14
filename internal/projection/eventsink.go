@@ -29,12 +29,12 @@ type EventSink struct {
 	Handler  dogma.ProjectionMessageHandler
 	Identity *identitypb.Identity
 
-	// Concurrency is the handler's concurrency preference.
+	// ConcurrencyPreference is the handler's concurrency preference.
 	//
 	// If it's [dogma.MinimizeConcurrency], [EventSink.RendezvousKey] returns the
 	// same key for every stream, and the sink makes one call at a time to the
 	// handler's HandleEvent method.
-	Concurrency dogma.ConcurrencyPreference
+	ConcurrencyPreference dogma.ConcurrencyPreference
 
 	// EventTypes is the set of IDs of the event types routed to the handler.
 	EventTypes *uuidcollection.Set
@@ -189,7 +189,7 @@ func (s *EventSink) handleEvent(
 	scope *eventScope,
 	event dogma.Event,
 ) (uint64, error) {
-	if s.Concurrency == dogma.MinimizeConcurrency {
+	if s.ConcurrencyPreference == dogma.MinimizeConcurrency {
 		if err := s.handlerLock.Lock(ctx); err != nil {
 			return 0, err
 		}
@@ -209,7 +209,7 @@ func (s *EventSink) handleEvent(
 // RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
 func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
-	if s.Concurrency == dogma.MinimizeConcurrency {
+	if s.ConcurrencyPreference == dogma.MinimizeConcurrency {
 		return s.Identity.GetKey()
 	}
 

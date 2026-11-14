@@ -27,7 +27,7 @@ func TestEventSink_rendezvousKey(t *testing.T) {
 				Identity: identitypb.NewIdentityBuilder().
 					WithKey(uuidpb.MustParse(handlerKey)).
 					Build(),
-				Concurrency: preference,
+				ConcurrencyPreference: preference,
 			}
 
 			for range 2 {

@@ -35,11 +35,11 @@ type Consumer struct {
 	// The consumer ignores queued messages of any other type.
 	Sinks uuidcollection.Map[Sink]
 
-	// Concurrency is the maximum number of messages that the consumer attempts
+	// ConcurrencyLimit is the maximum number of messages that the consumer attempts
 	// at once.
 	//
 	// It must be positive.
-	Concurrency int
+	ConcurrencyLimit int
 
 	// ContentionDelay is how long the consumer waits before it attempts a
 	// contended delivery again.
@@ -117,8 +117,8 @@ type Consumer struct {
 // It doesn't return until every attempt in progress has been made. It must be
 // called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
-	if c.Concurrency <= 0 {
-		panic("concurrency must be positive")
+	if c.ConcurrencyLimit <= 0 {
+		panic("concurrency limit must be positive")
 	}
 
 	if c.ContentionDelay <= 0 {
@@ -137,7 +137,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 	defer c.failures.Complete()
 
-	c.deliveryAttempted = make(chan deliveryAttempt, c.Concurrency)
+	c.deliveryAttempted = make(chan deliveryAttempt, c.ConcurrencyLimit)
 	defer func() {
 		for !c.attemptsInProgress.IsEmpty() {
 			a := <-c.deliveryAttempted
@@ -222,7 +222,7 @@ func (c *Consumer) attachQueueSignals(
 // It also reports whether the backlog is known to be empty. The backlog is the
 // set of messages in the given queues whose next attempt is due but that aren't
 // being attempted because there is insufficient concurrency headroom, as
-// limited by [Consumer.Concurrency].
+// limited by [Consumer.ConcurrencyLimit].
 //
 // It might not start any attempts, such as when the consumer is backing off or
 // at its concurrency limit, or when there are no messages that are due.
@@ -236,7 +236,7 @@ func (c *Consumer) startAttempts(
 		return time.After(backoff), false
 	}
 
-	headroom := c.Concurrency - c.attemptsInProgress.Len()
+	headroom := c.ConcurrencyLimit - c.attemptsInProgress.Len()
 
 	// The consumer is at its concurrency limit, so it waits for an attempt to
 	// be made.

@@ -51,16 +51,16 @@ func TestRouter(t *testing.T) {
 		handlers.Set(
 			commandTypeID(stubs.CommandB1),
 			CommandHandler{
-				Key:         integrationKey,
-				Concurrency: dogma.MinimizeConcurrency,
+				Key:                   integrationKey,
+				ConcurrencyPreference: dogma.MinimizeConcurrency,
 			},
 		)
 
 		handlers.Set(
 			commandTypeID(stubs.CommandC1),
 			CommandHandler{
-				Key:         uuidpb.Generate(),
-				Concurrency: dogma.MaximizeConcurrency,
+				Key:                   uuidpb.Generate(),
+				ConcurrencyPreference: dogma.MaximizeConcurrency,
 			},
 		)
 

@@ -38,11 +38,11 @@ type CommandHandler struct {
 	// integration handles the command type.
 	Aggregate dogma.AggregateMessageHandler[dogma.AggregateRoot]
 
-	// Concurrency is the handler's concurrency preference.
+	// ConcurrencyPreference is the handler's concurrency preference.
 	//
 	// It's [dogma.MaximizeConcurrency], the zero value, for an aggregate,
 	// which has no concurrency preference.
-	Concurrency dogma.ConcurrencyPreference
+	ConcurrencyPreference dogma.ConcurrencyPreference
 }
 
 // RouteCommandToQueue returns the ID of the queue for the command in the given
@@ -78,7 +78,7 @@ func (r *Router) RouteCommandToQueue(
 	if handler.Aggregate == nil {
 		// One node delivers all of the commands of an integration that
 		// minimizes concurrency.
-		if handler.Concurrency == dogma.MinimizeConcurrency {
+		if handler.ConcurrencyPreference == dogma.MinimizeConcurrency {
 			return handler.Key, nil
 		}
 
