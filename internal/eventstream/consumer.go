@@ -36,6 +36,13 @@ type Consumer struct {
 	// Sink is the destination to which segments of each stream are dispatched.
 	Sink Sink
 
+	// EngineFailurePolicy is how the engine responds to failures to read the event streams,
+	// and to checkpoint conflicts.
+	EngineFailurePolicy failure.Policy
+
+	// DispatchFailurePolicy is how the engine responds to failures of the sink.
+	DispatchFailurePolicy failure.Policy
+
 	// EngineLogger is the target for log messages produced by the consumer.
 	EngineLogger *slog.Logger
 
@@ -134,14 +141,16 @@ func (c *Consumer) startStreamConsumer(
 		// events leaves the streak open.
 		sinkFailures := &failure.Tracker{
 			Description:  "dispatch events",
+			Policy:       c.DispatchFailurePolicy,
 			EngineLogger: logger,
 		}
 		defer sinkFailures.Complete()
 
 		err := supervisor.Run(
 			ctx,
-			logger,
 			"consume event stream",
+			c.EngineFailurePolicy,
+			logger,
 			func(ctx context.Context) error {
 				for {
 					err := c.consume(ctx, streamID, sinkFailures)

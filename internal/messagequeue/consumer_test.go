@@ -14,6 +14,7 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/failure"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -32,19 +33,21 @@ func TestConsumer(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 		xtesting.GoE(t, signals.Run)
 
 		newNode := func() *cluster.Node {
 			return &cluster.Node{
-				ID:                uuidpb.Generate(),
-				DB:                db,
-				Signals:           signals,
-				HeartbeatInterval: 20 * time.Millisecond,
-				HeartbeatTimeout:  1 * time.Second,
-				EngineLogger:      spruce.NewTestLogger(t),
+				ID:                  uuidpb.Generate(),
+				DB:                  db,
+				Signals:             signals,
+				HeartbeatInterval:   20 * time.Millisecond,
+				HeartbeatTimeout:    1 * time.Second,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        spruce.NewTestLogger(t),
 			}
 		}
 
@@ -74,22 +77,25 @@ func TestConsumer(t *testing.T) {
 		)
 	}
 
-	// run runs a consumer of messages of typeID on the given node, with the
-	// given concurrency limit, and returns a function that stops it. The
-	// consumer passes each message to the given sink.
-	run := func(
+	// runWithPolicy runs a consumer of messages of typeID on the given node,
+	// with the given concurrency limit and failure policy for deliveries, and
+	// returns a function that stops it. The consumer passes each message to the
+	// given sink.
+	runWithPolicy := func(
 		t *testing.T,
 		db *sql.DB,
 		n *cluster.Node,
 		concurrency int,
+		deliveryPolicy failure.Policy,
 		s Sink,
 	) func() {
 		logger := spruce.NewTestLogger(t)
 
 		queues := &Catalog{
-			DB:           db,
-			Node:         n,
-			EngineLogger: logger,
+			DB:                  db,
+			Node:                n,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 		xtesting.GoE(t, queues.Run)
 
@@ -97,17 +103,31 @@ func TestConsumer(t *testing.T) {
 		sinks.Set(typeID, s)
 
 		consumer := &Consumer{
-			DB:              db,
-			Node:            n,
-			Queues:          queues,
-			Sinks:           sinks,
-			Concurrency:     concurrency,
-			ContentionDelay: contentionDelay,
-			EngineLogger:    logger,
-			AppLogger:       logger,
+			DB:                    db,
+			Node:                  n,
+			Queues:                queues,
+			Sinks:                 sinks,
+			Concurrency:           concurrency,
+			ContentionDelay:       contentionDelay,
+			EngineFailurePolicy:   xtesting.FailurePolicy(),
+			DeliveryFailurePolicy: deliveryPolicy,
+			EngineLogger:          logger,
+			AppLogger:             logger,
 		}
 
 		return xtesting.GoE(t, consumer.Run)
+	}
+
+	// run is runWithPolicy with the failure policy that the engine uses by
+	// default.
+	run := func(
+		t *testing.T,
+		db *sql.DB,
+		n *cluster.Node,
+		concurrency int,
+		s Sink,
+	) func() {
+		return runWithPolicy(t, db, n, concurrency, xtesting.FailurePolicy(), s)
 	}
 
 	// insertMessage adds a message of the given type, with the given envelope,
@@ -850,7 +870,16 @@ func TestConsumer(t *testing.T) {
 		}
 	}
 
-	t.Run("it postpones a deterministic failure by up to the deterministic limit", func(t *testing.T) {
+	// limitsPolicy is a failure policy whose limits differ from the default
+	// ones, so that the tests below show that the policy applies.
+	limitsPolicy := failure.Policy{
+		RetryDelay:                   time.Minute,
+		TransientRetryDelayLimit:     2 * time.Minute,
+		DeterministicRetryDelayLimit: 10 * time.Minute,
+		ErrorLogThreshold:            30 * time.Second,
+	}
+
+	t.Run("it postpones a deterministic failure by up to the policy's deterministic limit", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
@@ -860,12 +889,19 @@ func TestConsumer(t *testing.T) {
 		// the jitter makes it at least half of the limit.
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
 		setStreak(t, db, messageID, 20, time.Now(), true)
-		run(t, db, n, 10, failOnce(xerrors.Deterministic(errors.New("<error>"))))
+		runWithPolicy(
+			t,
+			db,
+			n,
+			10,
+			limitsPolicy,
+			failOnce(xerrors.Deterministic(errors.New("<error>"))),
+		)
 
-		expectNextAttemptWithin(t, db, messageID, 21, before, 150*time.Second, 5*time.Minute)
+		expectNextAttemptWithin(t, db, messageID, 21, before, 5*time.Minute, 10*time.Minute)
 	})
 
-	t.Run("it postpones any other failure by up to the transient limit", func(t *testing.T) {
+	t.Run("it postpones any other failure by up to the policy's transient limit", func(t *testing.T) {
 		t.Parallel()
 
 		db, n, _ := setup(t)
@@ -875,9 +911,16 @@ func TestConsumer(t *testing.T) {
 		// the jitter makes it at least half of the limit.
 		messageID := addMessage(t, db, n.ID, typeID, time.Now())
 		setStreak(t, db, messageID, 20, time.Now(), true)
-		run(t, db, n, 10, failOnce(errors.New("<error>")))
+		runWithPolicy(
+			t,
+			db,
+			n,
+			10,
+			limitsPolicy,
+			failOnce(errors.New("<error>")),
+		)
 
-		expectNextAttemptWithin(t, db, messageID, 21, before, 7500*time.Millisecond, 15*time.Second)
+		expectNextAttemptWithin(t, db, messageID, 21, before, time.Minute, 2*time.Minute)
 	})
 
 	t.Run("it postpones the delivery without a failure when the sink needs a row while another transaction holds that row's lock", func(t *testing.T) {

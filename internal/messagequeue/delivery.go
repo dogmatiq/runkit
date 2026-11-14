@@ -125,7 +125,7 @@ func (c *Consumer) attemptDelivery(
 	}
 
 	engineLogger.DebugContext(ctx, "message delivery completed")
-	d.Streak.End(ctx, engineLogger, deliveryDescription)
+	d.Streak.End(ctx, deliveryDescription, engineLogger)
 	flushLogs(ctx)
 
 	return true, nil
@@ -263,7 +263,13 @@ func (c *Consumer) postponeAfterFailure(
 
 	streakBefore := d.Streak
 	streakAfter := streakBefore
-	nextAttemptAt := streakAfter.Extend(ctx, failureLogger, deliveryDescription, cause)
+	nextAttemptAt := streakAfter.Extend(
+		ctx,
+		deliveryDescription,
+		c.DeliveryFailurePolicy,
+		failureLogger,
+		cause,
+	)
 
 	// The failure that the streak logs as an ERROR is written before the
 	// postponement stores that it was logged. If the engine stops in between,

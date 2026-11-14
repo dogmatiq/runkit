@@ -21,25 +21,28 @@ func TestCatalog(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: logger,
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:                uuidpb.Generate(),
-			DB:                db,
-			Signals:           signals,
-			HeartbeatInterval: 20 * time.Millisecond,
-			HeartbeatTimeout:  100 * time.Millisecond,
-			EngineLogger:      logger,
+			ID:                  uuidpb.Generate(),
+			DB:                  db,
+			Signals:             signals,
+			HeartbeatInterval:   20 * time.Millisecond,
+			HeartbeatTimeout:    100 * time.Millisecond,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 		xtesting.GoE(t, node.Run)
 
 		catalog := &Catalog{
-			DB:           db,
-			Node:         node,
-			EngineLogger: logger,
+			DB:                  db,
+			Node:                node,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		return db, catalog

@@ -14,10 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// maxDebugStreak is how long a streak of transient failures can last before
-// its next failure is logged as an ERROR.
-const maxDebugStreak = 30 * time.Second
-
 // Streak is the state of a streak of consecutive failures of one piece of work.
 //
 // A streak lasts from its first failure until the work recovers. The zero
@@ -46,21 +42,23 @@ type Streak struct {
 // It updates s to include the failure, and writes the failure record to
 // engineLogger. It's an ERROR record if none of the streak's failures has been
 // logged as an ERROR, and the failure is deterministic or the streak is at
-// least 30 seconds old. Otherwise, it's a DEBUG record.
+// least as old as policy.ErrorLogThreshold. Otherwise, it's a DEBUG record.
 //
 // The description is a verb phrase in its base form, such as "deliver
 // message". It completes the record's log message, "attempt to ... failed".
 //
 // The time of the next attempt is the time of the failure plus a random delay.
-// The delay is between half and all of a backoff, which doubles with each
-// failure in the streak, from 100 milliseconds up to 15 seconds, or up to 5
-// minutes if the failure is deterministic.
+// The delay is between half and all of a backoff, which starts at
+// policy.RetryDelay and doubles with each failure in the streak, up to
+// policy.TransientRetryDelayLimit, or policy.DeterministicRetryDelayLimit if
+// the failure is deterministic.
 //
 // See [xerrors.IsDeterministic].
 func (s *Streak) Extend(
 	ctx context.Context,
-	engineLogger *slog.Logger,
 	description string,
+	policy Policy,
+	engineLogger *slog.Logger,
 	err error,
 ) time.Time {
 	panicOnEngineBug(err)
@@ -68,15 +66,7 @@ func (s *Streak) Extend(
 	now := time.Now()
 	deterministic := xerrors.IsDeterministic(err)
 
-	limit := transientMaxDelay
-	if deterministic {
-		limit = deterministicMaxDelay
-	}
-
-	// The shift is capped so that it can't overflow. Any shift of 12 or more
-	// already exceeds both limits, so the cap doesn't change the delay.
-	backoff := min(baseDelay<<min(s.Failures, 32), limit)
-	delay := jitter(backoff)
+	delay := jitter(policy.backoff(s.Failures, deterministic))
 	nextAttemptAt := now.Add(delay)
 
 	if s.Failures == 0 {
@@ -85,7 +75,7 @@ func (s *Streak) Extend(
 	s.Failures++
 
 	level := slog.LevelDebug
-	if s.qualifiesForError(deterministic, now) {
+	if s.qualifiesForError(policy, deterministic, now) {
 		s.FailureLoggedAsError = true
 		level = slog.LevelError
 	}
@@ -117,8 +107,8 @@ func (s *Streak) Extend(
 // failures".
 func (s *Streak) End(
 	ctx context.Context,
-	engineLogger *slog.Logger,
 	description string,
+	engineLogger *slog.Logger,
 ) {
 	if s.Failures == 0 {
 		return
@@ -146,7 +136,11 @@ func (s *Streak) End(
 //
 // At most one of a streak's failures is logged as an ERROR. It must be called
 // after s.FirstFailedAt is set for the failure.
-func (s *Streak) qualifiesForError(deterministic bool, now time.Time) bool {
+func (s *Streak) qualifiesForError(
+	policy Policy,
+	deterministic bool,
+	now time.Time,
+) bool {
 	if s.FailureLoggedAsError {
 		return false
 	}
@@ -155,7 +149,7 @@ func (s *Streak) qualifiesForError(deterministic bool, now time.Time) bool {
 		return true
 	}
 
-	return !now.Before(s.FirstFailedAt.Add(maxDebugStreak))
+	return !now.Before(s.FirstFailedAt.Add(policy.ErrorLogThreshold))
 }
 
 // panicOnEngineBug panics if err shows a bug in the engine, when the program is

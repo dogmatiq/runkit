@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -27,6 +28,9 @@ type Catalog struct {
 	// CacheSize is the number of each stream's most recent events to cache,
 	// per source. It must be positive.
 	CacheSize int
+
+	// EngineFailurePolicy is how the engine responds to failures to watch the sources.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for the engine's records about the catalog
 	// and the sources it watches.
@@ -184,8 +188,9 @@ func (c *Catalog) Watch(
 
 	return supervisor.Run(
 		ctx,
-		engineLogger,
 		"watch event stream source",
+		c.EngineFailurePolicy,
+		engineLogger,
 		func(ctx context.Context) error {
 			for {
 				err := src.Watch(

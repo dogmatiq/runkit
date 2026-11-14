@@ -28,8 +28,9 @@ func TestNode(t *testing.T) {
 	// sent before the bus is listening is lost.
 	setup := func(t *testing.T) *signal.Bus {
 		signals := &signal.Bus{
-			DB:           xtesting.NewDatabase(t),
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  xtesting.NewDatabase(t),
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		// Once the bus is listening it signals every watcher, whatever its
@@ -49,12 +50,13 @@ func TestNode(t *testing.T) {
 		interval, timeout time.Duration,
 	) *Node {
 		return &Node{
-			ID:                uuidpb.Generate(),
-			DB:                signals.DB,
-			Signals:           signals,
-			HeartbeatInterval: interval,
-			HeartbeatTimeout:  timeout,
-			EngineLogger:      spruce.NewTestLogger(t),
+			ID:                  uuidpb.Generate(),
+			DB:                  signals.DB,
+			Signals:             signals,
+			HeartbeatInterval:   interval,
+			HeartbeatTimeout:    timeout,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 	}
 
@@ -95,8 +97,9 @@ func TestNode(t *testing.T) {
 		db.Close()
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		n := newNode(t, signals, interval, timeout)

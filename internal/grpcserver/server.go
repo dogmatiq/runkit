@@ -9,6 +9,7 @@ import (
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
@@ -25,6 +26,9 @@ type Server struct {
 
 	// Options are the options used to create the underlying gRPC server.
 	Options []grpc.ServerOption
+
+	// EngineFailurePolicy is how the engine responds to failures to serve gRPC requests.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for log messages produced by the server.
 	EngineLogger *slog.Logger
@@ -45,7 +49,13 @@ func (s *Server) ListenAddr(ctx context.Context) (net.Addr, error) {
 //
 // It must be called at most once.
 func (s *Server) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, s.EngineLogger, "serve gRPC requests", s.serve)
+	return supervisor.Run(
+		ctx,
+		"serve gRPC requests",
+		s.EngineFailurePolicy,
+		s.EngineLogger,
+		s.serve,
+	)
 }
 
 // serve accepts connections until ctx is canceled or serving fails.

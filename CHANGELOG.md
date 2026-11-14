@@ -21,8 +21,9 @@ how engines deliver commands and deadlines.
 
 > [!IMPORTANT]
 > Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
-> stop every engine that uses it before calling `CreateSchema()`. See the [0.3.0
-> migration guide].
+> stop every engine that uses it before calling `CreateSchema()`.
+>
+> See the [0.3.0 migration guide].
 
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
@@ -54,17 +55,21 @@ events.
 
 - Added the ability for process handlers to consume events from remote
   applications.
-- Added these engine options:
-  - `WithHandleTimeout()`, which defaults to `DefaultHandleTimeout`
-  - `WithRouteTimeout()`, which defaults to `DefaultRouteTimeout`
-  - `WithProjectionCompactTimeout()`, which defaults to
-    `DefaultProjectionCompactTimeout`
-  - `WithMessageQueueConcurrency()`, which defaults to 10 × `GOMAXPROCS`
-  - `WithMessageQueueContentionDelay()`, which defaults to
-    `DefaultMessageQueueContentionDelay`
-- Documented that the database passed to `New()` should keep as many idle
-  connections as it allows open. Its default of two idle connections can make
-  delivering commands and deadlines more than ten times slower.
+- Added `FailurePolicy`, which describes how the engine responds to repeated
+  internal failures and errors produced by application handlers. The engine uses
+  several policies, which can be configured using new engine options:
+  - `WithEngineFailurePolicy()`
+  - `WithMessageQueueDeliveryFailurePolicy()`
+  - `WithEventStreamDispatchFailurePolicy()`
+  - `WithProjectionCompactionFailurePolicy()`
+  - All policies default to `DefaultFailurePolicy()`
+- Added engine options for configuring various timeouts:
+  - `WithHandleTimeout()`, which defaults to `DefaultHandleTimeout()`
+  - `WithRouteTimeout()`, which defaults to `DefaultRouteTimeout()`
+  - `WithProjectionCompactTimeout()`, which defaults to `DefaultProjectionCompactTimeout()`
+- Added engine options for configuring the engine's concurrency behavior:
+  - `WithMessageQueueConcurrency()`, which defaults to `DefaultMessageQueueConcurrency()`
+  - `WithMessageQueueContentionDelay()`, which defaults to `DefaultMessageQueueContentionDelay()`
 
 ### Changed
 
@@ -72,6 +77,8 @@ events.
   events, instead of only new events.
 - **[BC]** The database schema has changed. Call `CreateSchema()` to migrate the
   database before running this version.
+- **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
+  function.
 - Changed how commands and deadlines are delivered:
   - By default, each engine now delivers at most 10 × `GOMAXPROCS` of them at
     once across all handlers. That limit used to apply to each handler, so it's

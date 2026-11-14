@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
-	"runtime"
 	"time"
 
 	"github.com/dogmatiq/cosyne"
@@ -23,6 +22,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
@@ -111,6 +111,23 @@ type Engine struct {
 	// lock while something else holds it.
 	messageQueueContentionDelay time.Duration
 
+	// engineFailurePolicy is how the engine responds to failures of its own
+	// work.
+	engineFailurePolicy failure.Policy
+
+	// messageQueueDeliveryFailurePolicy is how the engine responds to failures
+	// to deliver a command or deadline to its handler.
+	messageQueueDeliveryFailurePolicy failure.Policy
+
+	// eventStreamDispatchFailurePolicy is how the engine responds to failures
+	// to dispatch events from event streams to process and projection message
+	// handlers.
+	eventStreamDispatchFailurePolicy failure.Policy
+
+	// projectionCompactionFailurePolicy is how the engine responds to failures
+	// of a projection message handler to compact its data.
+	projectionCompactionFailurePolicy failure.Policy
+
 	// listenAddress is the address to listen on for gRPC requests from other
 	// engines. If it is empty, the engine does not listen for gRPC requests.
 	listenAddress string
@@ -177,11 +194,10 @@ type Engine struct {
 
 // New returns a new engine that runs the given application.
 //
-// db must use the [pgx] driver, for example by opening it with
-// sql.Open("pgx", dsn) or [stdlib.OpenDB]. It panics if db is nil or uses any
-// other driver.
+// db must use the [pgx] driver. New panics if db is nil or uses any other
+// driver.
 //
-// [Engine.Run] sets the limits on the database's connection pool.
+// [Engine.Run] sets the limit on the database's idle connections.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -204,13 +220,18 @@ func New(
 		app:             app,
 		db:              db,
 		nodeID:          uuidpb.Generate(),
-		compactInterval: DefaultProjectionCompactInterval,
-		compactTimeout:  DefaultProjectionCompactTimeout,
-		handleTimeout:   DefaultHandleTimeout,
-		routeTimeout:    DefaultRouteTimeout,
+		compactInterval: DefaultProjectionCompactInterval(),
+		compactTimeout:  DefaultProjectionCompactTimeout(),
+		handleTimeout:   DefaultHandleTimeout(),
+		routeTimeout:    DefaultRouteTimeout(),
 
-		messageQueueConcurrency:     10 * runtime.GOMAXPROCS(0),
-		messageQueueContentionDelay: DefaultMessageQueueContentionDelay,
+		messageQueueConcurrency:     DefaultMessageQueueConcurrency(),
+		messageQueueContentionDelay: DefaultMessageQueueContentionDelay(),
+
+		engineFailurePolicy:               DefaultFailurePolicy(),
+		messageQueueDeliveryFailurePolicy: DefaultFailurePolicy(),
+		eventStreamDispatchFailurePolicy:  DefaultFailurePolicy(),
+		projectionCompactionFailurePolicy: DefaultFailurePolicy(),
 
 		engineLogger: slog.Default(),
 		appLogger:    slog.Default(),
@@ -290,17 +311,19 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.signals = &signal.Bus{
-		DB:           e.db,
-		EngineLogger: e.engineLogger,
+		DB:                  e.db,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	e.node = &cluster.Node{
-		ID:                e.nodeID,
-		DB:                e.db,
-		Signals:           e.signals,
-		HeartbeatInterval: heartbeatInterval,
-		HeartbeatTimeout:  heartbeatTimeout,
-		EngineLogger:      e.engineLogger,
+		ID:                  e.nodeID,
+		DB:                  e.db,
+		Signals:             e.signals,
+		HeartbeatInterval:   heartbeatInterval,
+		HeartbeatTimeout:    heartbeatTimeout,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	contexthook.Invoke(ctx, contexthook.Node{
@@ -308,22 +331,25 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	e.queues = &messagequeue.Catalog{
-		DB:           e.db,
-		Node:         e.node,
-		EngineLogger: e.engineLogger,
+		DB:                  e.db,
+		Node:                e.node,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	e.eventStreams = &eventstream.Catalog{
-		CacheSize:    eventStreamCacheSize,
-		EngineLogger: e.engineLogger,
+		CacheSize:           eventStreamCacheSize,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
 	}
 
 	localEventStreams := &source.Local{
-		DB:           e.db,
-		Node:         e.node,
-		EngineLogger: e.engineLogger,
-		SegmentSize:  eventStreamSegmentSize,
-		BufferSize:   eventStreamBufferSize,
+		DB:                  e.db,
+		Node:                e.node,
+		EngineFailurePolicy: e.engineFailurePolicy,
+		EngineLogger:        e.engineLogger,
+		SegmentSize:         eventStreamSegmentSize,
+		BufferSize:          eventStreamBufferSize,
 	}
 
 	var server *grpcserver.Server
@@ -338,8 +364,9 @@ func (e *Engine) Run(ctx context.Context) error {
 				EventStreams:    localEventStreams,
 				MaxSegmentBytes: eventStreamMaxSegmentBytes,
 			},
-			Options:      e.grpcOptions,
-			EngineLogger: e.engineLogger,
+			Options:             e.grpcOptions,
+			EngineFailurePolicy: e.engineFailurePolicy,
+			EngineLogger:        e.engineLogger,
 		}
 	}
 
@@ -376,10 +403,11 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	for _, d := range e.remoteEngineDiscoverers {
 		connector := &remoteengine.Connector{
-			Discover:     d,
-			EventStreams: e.eventStreams,
-			EventTypeIDs: eventTypeIDs,
-			EngineLogger: e.engineLogger,
+			Discover:            d,
+			EventStreams:        e.eventStreams,
+			EventTypeIDs:        eventTypeIDs,
+			EngineFailurePolicy: e.engineFailurePolicy,
+			EngineLogger:        e.engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -394,14 +422,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	queueConsumer := &messagequeue.Consumer{
-		DB:              e.db,
-		Node:            e.node,
-		Queues:          e.queues,
-		Sinks:           e.queueSinks,
-		Concurrency:     e.messageQueueConcurrency,
-		ContentionDelay: e.messageQueueContentionDelay,
-		EngineLogger:    e.engineLogger,
-		AppLogger:       e.appLogger,
+		DB:                    e.db,
+		Node:                  e.node,
+		Queues:                e.queues,
+		Sinks:                 e.queueSinks,
+		Concurrency:           e.messageQueueConcurrency,
+		ContentionDelay:       e.messageQueueContentionDelay,
+		EngineFailurePolicy:   e.engineFailurePolicy,
+		DeliveryFailurePolicy: e.messageQueueDeliveryFailurePolicy,
+		EngineLogger:          e.engineLogger,
+		AppLogger:             e.appLogger,
 	}
 
 	e.group.Go(func() error {

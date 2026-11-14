@@ -68,8 +68,9 @@ func TestCatalog(t *testing.T) {
 	// stream.
 	setup := func(t *testing.T, cacheSize int) *Catalog {
 		return &Catalog{
-			CacheSize:    cacheSize,
-			EngineLogger: spruce.NewTestLogger(t),
+			CacheSize:           cacheSize,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 	}
 
@@ -1133,8 +1134,9 @@ func TestCatalog(t *testing.T) {
 
 							supervisor.Run(
 								ctx,
-								spruce.NewTestLogger(t),
 								"<work>",
+								xtesting.FailurePolicy(),
+								spruce.NewTestLogger(t),
 								func(ctx context.Context) error {
 									return c.Consume(
 										ctx,

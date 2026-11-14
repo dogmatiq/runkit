@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -22,6 +23,9 @@ type Catalog struct {
 	// Node is the node that receives the cluster-wide signal sent when
 	// messages are added to queues or moved between them.
 	Node *cluster.Node
+
+	// EngineFailurePolicy is how the engine responds to failures to observe the queues.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for the engine's records about observing
 	// the queues.
@@ -44,7 +48,13 @@ func (c *Catalog) QueueIDs() cosyne.ObservableR[*uuidcollection.Set] {
 //
 // It must be called at most once.
 func (c *Catalog) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.EngineLogger, "observe queues", c.run)
+	return supervisor.Run(
+		ctx,
+		"observe queues",
+		c.EngineFailurePolicy,
+		c.EngineLogger,
+		c.run,
+	)
 }
 
 // run reads the set of queues straight away, and again each time a message is

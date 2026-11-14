@@ -20,19 +20,21 @@ func TestNode_AttachSignal(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: spruce.NewTestLogger(t),
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 		xtesting.GoE(t, signals.Run)
 
 		return db, func() *Node {
 			return &Node{
-				ID:                uuidpb.Generate(),
-				DB:                db,
-				Signals:           signals,
-				HeartbeatInterval: 20 * time.Millisecond,
-				HeartbeatTimeout:  100 * time.Millisecond,
-				EngineLogger:      spruce.NewTestLogger(t),
+				ID:                  uuidpb.Generate(),
+				DB:                  db,
+				Signals:             signals,
+				HeartbeatInterval:   20 * time.Millisecond,
+				HeartbeatTimeout:    100 * time.Millisecond,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        spruce.NewTestLogger(t),
 			}
 		}
 	}

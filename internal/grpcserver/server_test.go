@@ -9,6 +9,7 @@ import (
 
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	. "github.com/dogmatiq/runkit/internal/grpcserver"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -23,6 +24,7 @@ func TestServer(t *testing.T) {
 		server := &Server{
 			Address:                ":0",
 			EventStreamConsumerAPI: messaginggrpc.UnimplementedEventStreamConsumerAPIServer{},
+			EngineFailurePolicy:    xtesting.FailurePolicy(),
 			EngineLogger:           spruce.NewTestLogger(t),
 			Listen: func(network, address string) (net.Listener, error) {
 				lis, err := net.Listen(network, address)

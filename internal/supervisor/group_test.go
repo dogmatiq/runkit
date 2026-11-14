@@ -21,8 +21,9 @@ func TestGroup(t *testing.T) {
 		var calls atomic.Int32
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
 				calls.Add(1)
 				return nil
@@ -47,8 +48,9 @@ func TestGroup(t *testing.T) {
 			var calls atomic.Int32
 
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					if calls.Add(1) < 3 {
 						return errors.New("<error>")
@@ -87,8 +89,9 @@ func TestGroup(t *testing.T) {
 			var calls atomic.Int32
 
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					calls.Add(1)
 					return errors.New("<error>")
@@ -118,8 +121,9 @@ func TestGroup(t *testing.T) {
 		var calls atomic.Int32
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
 				calls.Add(1)
 				cancel()
@@ -144,8 +148,9 @@ func TestGroup(t *testing.T) {
 
 		for range 3 {
 			group.Go(
-				logger,
 				"<work>",
+				testPolicy,
+				logger,
 				func(context.Context) error {
 					calls.Add(1)
 					return nil
@@ -168,8 +173,9 @@ func TestGroup(t *testing.T) {
 		want := xerrors.Fatal(errors.New("<error>"))
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(ctx context.Context) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -177,8 +183,9 @@ func TestGroup(t *testing.T) {
 		)
 
 		group.Go(
-			logger,
 			"<work>",
+			testPolicy,
+			logger,
 			func(context.Context) error {
 				return want
 			},

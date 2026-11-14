@@ -23,6 +23,9 @@ type Tracker struct {
 	// instance of the work it is.
 	Description string
 
+	// Policy is how the tracker responds to each failure of the work.
+	Policy Policy
+
 	// EngineLogger is the target for the work's records.
 	//
 	// Its attributes must identify the work.
@@ -68,7 +71,7 @@ func (t *Tracker) WorkFailed(ctx context.Context, err error) time.Time {
 
 	t.cancelQuietPeriod()
 
-	return t.streak.Extend(ctx, t.EngineLogger, t.Description, err)
+	return t.streak.Extend(ctx, t.Description, t.Policy, t.EngineLogger, err)
 }
 
 // WorkSucceeded records a success of the work.
@@ -150,7 +153,7 @@ func (t *Tracker) recover(ctx context.Context) {
 		)
 	}
 
-	t.streak.End(ctx, engineLogger, t.Description)
+	t.streak.End(ctx, t.Description, engineLogger)
 	t.succeedingSince = time.Time{}
 }
 

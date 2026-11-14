@@ -649,33 +649,46 @@ The public type is `FailurePolicy`, with these fields and defaults:
   seconds
 - `DeterministicRetryDelayLimit`, the longest delay after a deterministic
   failure, 5 minutes
-- `ErrorThreshold`, how old a streak of transient failures must be before a
+- `ErrorLogThreshold`, how old a streak of transient failures must be before a
   failure is logged as an ERROR, 30 seconds
 
-Every field must be positive, and each option panics otherwise. A caller
-copies a default policy and changes the fields it needs.
+Every field must be positive, and each option panics otherwise. Internal
+packages don't check their policies, because `engine.go` sets them.
 
-| Option | Covers |
-| --- | --- |
-| `WithMessageQueueDeliveryFailurePolicy` | command and deadline deliveries |
-| `WithEventStreamDispatchFailurePolicy` | the process and projection sinks handling events |
-| `WithProjectionCompactionFailurePolicy` | projection compaction |
-| `WithEngineFailurePolicy` | the engine's own work, including reading event streams |
+| Option | Covers | Field it sets |
+| --- | --- | --- |
+| `WithEngineFailurePolicy` | the engine's own work, including reading event streams | `EngineFailurePolicy` |
+| `WithMessageQueueDeliveryFailurePolicy` | command and deadline deliveries | `DeliveryFailurePolicy` |
+| `WithEventStreamDispatchFailurePolicy` | the process and projection sinks handling events | `DispatchFailurePolicy` |
+| `WithProjectionCompactionFailurePolicy` | projection compaction | `CompactionFailurePolicy` |
 
-Each option has a `Default...FailurePolicy` value, all the same for now.
-Internally, `failure.Policy` holds the same four values. `Streak.Extend` takes
-one as a parameter, `failure.Tracker` and `supervisor.Run` take one, and
-`engine.go` passes each group's policy to the packages in that group, in
-fields named `FailurePolicy`.
+`messagequeue.Consumer` and `eventstream.Consumer` each take two policies. The
+other components take `EngineFailurePolicy`, and `projection.Compactor` takes
+`CompactionFailurePolicy`.
+
+`FailurePolicy` is an alias for `failure.Policy`. Because godoc doesn't show
+the fields of an aliased type from another package, its doc comment describes
+each field. The default is one function, `DefaultFailurePolicy()`, which every
+option uses, so that adding a field to the policy later doesn't break callers
+who start from it. It's a function because a struct can't be a constant.
+Every other option's default is a function too, for symmetry and so that a
+default can change without breaking callers: `DefaultMessageQueueConcurrency()`
+is new, and the five default constants become functions. One of them,
+`DefaultProjectionCompactInterval`, was released as a constant, so it has a
+**[BC]** changelog entry. Each function returns a value that the caller owns.
+`Streak.Extend`, `Streak.End`, `supervisor.Run` and `supervisor.Group.Go` take
+the description first, then the policy, then the engine logger, and
+`failure.Tracker` has a `Policy` field. The `failure` package keeps no
+defaults.
 
 The quiet period after which `supervisor.Run` ends a streak has no option for
 now. The message queue's contention delay already has an option,
 `WithMessageQueueContentionDelay()`. The logging guide states 30 seconds as
 the default ERROR threshold, and names the options.
 
-- [ ] **Step 1: Restate the assumptions**
-- [ ] **Step 2: Write the failing tests**
-- [ ] **Step 3: Implement it, and add the options to `CHANGELOG.md`**
+- [x] **Step 1: Restate the assumptions**
+- [x] **Step 2: Write the failing tests**
+- [x] **Step 3: Implement it, and add the options to `CHANGELOG.md`**
 - [ ] **Step 4: Stop for review**
 
 ---

@@ -49,6 +49,13 @@ type Consumer struct {
 	// must be positive.
 	ContentionDelay time.Duration
 
+	// EngineFailurePolicy is how the engine responds to failures of the consumer itself, such as
+	// failures to find the next messages.
+	EngineFailurePolicy failure.Policy
+
+	// DeliveryFailurePolicy is how the engine responds to failures to deliver a message.
+	DeliveryFailurePolicy failure.Policy
+
 	// EngineLogger is the target for the engine's records about consuming the
 	// queues and delivering their messages.
 	EngineLogger *slog.Logger
@@ -125,6 +132,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	c.failures = &failure.Tracker{
 		Description:  "consume queue",
+		Policy:       c.EngineFailurePolicy,
 		EngineLogger: c.EngineLogger,
 	}
 	defer c.failures.Complete()

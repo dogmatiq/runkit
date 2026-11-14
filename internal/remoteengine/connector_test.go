@@ -32,15 +32,17 @@ func TestConnector(t *testing.T) {
 		discover func(context.Context, func(string, grpc.ClientConnInterface) func()) error,
 	) (*Connector, *eventstream.Catalog) {
 		catalog := &eventstream.Catalog{
-			CacheSize:    10,
-			EngineLogger: spruce.NewTestLogger(t),
+			CacheSize:           10,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		connector := &Connector{
-			Discover:     discover,
-			EventStreams: catalog,
-			EventTypeIDs: types,
-			EngineLogger: spruce.NewTestLogger(t),
+			Discover:            discover,
+			EventStreams:        catalog,
+			EventTypeIDs:        types,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        spruce.NewTestLogger(t),
 		}
 
 		return connector, catalog

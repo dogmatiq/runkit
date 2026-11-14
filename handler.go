@@ -64,7 +64,9 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				EngineLogger:         engineLogger,
 				AppLogger:            appLogger,
 			},
-			EngineLogger: engineLogger,
+			EngineFailurePolicy:   e.engineFailurePolicy,
+			DispatchFailurePolicy: e.eventStreamDispatchFailurePolicy,
+			EngineLogger:          engineLogger,
 		}
 
 		e.group.Go(func() error {
@@ -97,17 +99,20 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 				EngineLogger:  engineLogger,
 				AppLogger:     appLogger,
 			},
-			EngineLogger: engineLogger,
+			EngineFailurePolicy:   e.engineFailurePolicy,
+			DispatchFailurePolicy: e.eventStreamDispatchFailurePolicy,
+			EngineLogger:          engineLogger,
 		}
 
 		compactor := &projection.Compactor{
-			DB:           e.db,
-			Handler:      handlerConfig.Interface(),
-			Identity:     handlerConfig.Identity(),
-			Interval:     e.compactInterval,
-			Timeout:      e.compactTimeout,
-			EngineLogger: engineLogger,
-			AppLogger:    appLogger,
+			DB:                      e.db,
+			Handler:                 handlerConfig.Interface(),
+			Identity:                handlerConfig.Identity(),
+			Interval:                e.compactInterval,
+			Timeout:                 e.compactTimeout,
+			CompactionFailurePolicy: e.projectionCompactionFailurePolicy,
+			EngineLogger:            engineLogger,
+			AppLogger:               appLogger,
 		}
 
 		e.group.Go(func() error {

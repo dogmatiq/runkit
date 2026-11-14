@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
@@ -39,6 +40,9 @@ type Connector struct {
 	// an empty set of types would deliver events of every type.
 	EventTypeIDs *uuidcollection.Set
 
+	// EngineFailurePolicy is how the engine responds to failures to discover remote engines.
+	EngineFailurePolicy failure.Policy
+
 	// EngineLogger is the target for log messages produced by the connector and its
 	// connections to remote engines.
 	EngineLogger *slog.Logger
@@ -46,7 +50,13 @@ type Connector struct {
 
 // Run discovers remote engines until ctx is canceled.
 func (c *Connector) Run(ctx context.Context) error {
-	return supervisor.Run(ctx, c.EngineLogger, "discover remote engines", c.discover)
+	return supervisor.Run(
+		ctx,
+		"discover remote engines",
+		c.EngineFailurePolicy,
+		c.EngineLogger,
+		c.discover,
+	)
 }
 
 // discover calls Discover, watching each remote engine that it adds for event

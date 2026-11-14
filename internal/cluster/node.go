@@ -12,6 +12,7 @@ import (
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -52,6 +53,9 @@ type Node struct {
 	// It must be longer than [Node.HeartbeatInterval]. Heartbeats can be
 	// dropped, so it should span several intervals.
 	HeartbeatTimeout time.Duration
+
+	// EngineFailurePolicy is how the engine responds to failures to listen for signals.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for log messages produced by the node.
 	EngineLogger *slog.Logger
@@ -122,7 +126,13 @@ func (n *Node) Run(ctx context.Context) error {
 
 	g.Go(
 		func() error {
-			return supervisor.Run(ctx, n.EngineLogger, "listen for signals", n.listen)
+			return supervisor.Run(
+				ctx,
+				"listen for signals",
+				n.EngineFailurePolicy,
+				n.EngineLogger,
+				n.listen,
+			)
 		},
 	)
 

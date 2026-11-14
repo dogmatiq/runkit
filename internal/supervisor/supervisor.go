@@ -24,12 +24,12 @@ const quietPeriod = 30 * time.Second
 // fatal error to that caller.
 //
 // Any other error is recorded as a failure by a [failure.Tracker] with the
-// given description, and fn is called again at the time that the tracker
-// returns.
+// given policy and description, and fn is called again at the time that the
+// tracker returns.
 //
 // A deterministic error is logged as an ERROR unless its streak has already
-// logged one, and the delay after it is limited to 5 minutes instead of 15
-// seconds.
+// logged one, and the delay after it is limited by the policy's
+// DeterministicRetryDelayLimit instead of its TransientRetryDelayLimit.
 //
 // [Run] can't see whether fn is making progress, so a streak of failures ends
 // once fn has run for the quiet period without failing. If fn returns nil
@@ -38,12 +38,14 @@ const quietPeriod = 30 * time.Second
 // See [xerrors.IsFatal] and [xerrors.IsDeterministic].
 func Run(
 	ctx context.Context,
-	engineLogger *slog.Logger,
 	description string,
+	policy failure.Policy,
+	engineLogger *slog.Logger,
 	fn func(context.Context) error,
 ) error {
 	failures := &failure.Tracker{
 		Description:  description,
+		Policy:       policy,
 		EngineLogger: engineLogger,
 		QuietPeriod:  quietPeriod,
 	}

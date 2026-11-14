@@ -15,6 +15,7 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -33,6 +34,10 @@ type Local struct {
 	// Node is the node that receives the cluster-wide signals sent when event
 	// streams are created and when events are appended to them.
 	Node *cluster.Node
+
+	// EngineFailurePolicy is how the engine responds to failures to discover and follow event
+	// streams.
+	EngineFailurePolicy failure.Policy
 
 	// EngineLogger is the target for log messages produced by the source.
 	EngineLogger *slog.Logger
@@ -89,18 +94,20 @@ func (s *Local) Run(ctx context.Context) error {
 	// streams does not stop following those already known.
 	err := supervisor.Run(
 		ctx,
-		s.EngineLogger,
 		"discover event streams",
+		s.EngineFailurePolicy,
+		s.EngineLogger,
 		func(ctx context.Context) error {
 			return s.discover(
 				ctx,
 				known,
 				func(streamID *uuidpb.UUID) {
 					group.Go(
+						"deliver event stream",
+						s.EngineFailurePolicy,
 						s.EngineLogger.With(
 							xslog.UUID("stream_id", streamID),
 						),
-						"deliver event stream",
 						func(ctx context.Context) error {
 							return s.watchStream(ctx, streamID)
 						},

@@ -32,29 +32,32 @@ func TestLocal(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: logger,
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:                uuidpb.Generate(),
-			DB:                db,
-			Signals:           signals,
-			HeartbeatInterval: 20 * time.Millisecond,
-			HeartbeatTimeout:  100 * time.Millisecond,
-			EngineLogger:      logger,
+			ID:                  uuidpb.Generate(),
+			DB:                  db,
+			Signals:             signals,
+			HeartbeatInterval:   20 * time.Millisecond,
+			HeartbeatTimeout:    100 * time.Millisecond,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		xtesting.GoE(t, node.Run)
 
 		src := &Local{
-			DB:           db,
-			Node:         node,
-			EngineLogger: logger,
-			SegmentSize:  segmentSize,
-			BufferSize:   bufferSize,
+			DB:                  db,
+			Node:                node,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
+			SegmentSize:         segmentSize,
+			BufferSize:          bufferSize,
 		}
 
 		return src
@@ -548,7 +551,8 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				SegmentSize: 10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				SegmentSize:         10,
 			}
 
 			defer func() {
@@ -1023,7 +1027,8 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it panics when given an empty set of types", func(t *testing.T) {
 			src := &Local{
-				SegmentSize: 10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				SegmentSize:         10,
 			}
 
 			defer func() {
@@ -1071,9 +1076,10 @@ func TestLocal(t *testing.T) {
 			db.SetMaxOpenConns(1)
 
 			src := &Local{
-				DB:           db,
-				EngineLogger: spruce.NewTestLogger(t),
-				SegmentSize:  10,
+				DB:                  db,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        spruce.NewTestLogger(t),
+				SegmentSize:         10,
 			}
 
 			types := uuidcollection.NewSet(

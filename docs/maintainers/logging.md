@@ -135,8 +135,8 @@ ERROR means the engine can't do something it's meant to do and isn't
 recovering on its own. Use it for:
 
 - a deterministic failure, as soon as it happens
-- any other failure once its streak has lasted 30 seconds, counted from the
-  first failure in the streak
+- any other failure once its streak has lasted as long as the error log threshold,
+  counted from the first failure in the streak
 
 ### WARN
 
@@ -197,7 +197,7 @@ failure. Any failure it can't classify is treated as transient.
 | Event | Level |
 | --- | --- |
 | A deterministic failure, if the streak hasn't logged an ERROR | ERROR |
-| The first failure once the streak is 30 seconds old, if it hasn't logged an ERROR | ERROR |
+| The first failure once the streak is as old as the error log threshold, if it hasn't logged an ERROR | ERROR |
 | Any other failure | DEBUG |
 | Recovery, after the streak logged an ERROR | INFO |
 | Recovery, after a streak that logged no ERROR | DEBUG |
@@ -205,6 +205,12 @@ failure. Any failure it can't classify is treated as transient.
 
 A streak logs at most one ERROR. Its log message describes the failure itself,
 like any other failure record.
+
+The error log threshold and the delays between retries are set by the *failure
+policy* of each kind of work. The engine options `WithEngineFailurePolicy`,
+`WithMessageQueueDeliveryFailurePolicy`, `WithEventStreamDispatchFailurePolicy`
+and `WithProjectionCompactionFailurePolicy` set them. By default, the error
+threshold is 30 seconds.
 
 Failure and recovery records have these attributes, as well as the attributes
 that identify the work. Each duration starts or ends at the record's own time.

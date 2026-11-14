@@ -2,6 +2,7 @@ package failure_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -11,17 +12,28 @@ import (
 	"github.com/dogmatiq/spruce"
 )
 
+// testPolicy is the failure policy that the tests use unless they need a
+// particular value.
+var testPolicy = Policy{
+	RetryDelay:                   100 * time.Millisecond,
+	TransientRetryDelayLimit:     15 * time.Second,
+	DeterministicRetryDelayLimit: 5 * time.Minute,
+	ErrorLogThreshold:            30 * time.Second,
+}
+
 func TestStreak(t *testing.T) {
 	failure := errors.New("<error>")
 	deterministic := xerrors.Deterministic(failure)
 
-	t.Run("it returns the base delay for the first failure", func(t *testing.T) {
+	t.Run("it returns the policy's retry delay for the first failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			engineLogger := spruce.NewTestLogger(t)
+			policy := testPolicy
+			policy.RetryDelay = 8 * time.Second
 			var s Streak
 
-			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
-			expectNextAttempt(t, nextAttemptAt, 100*time.Millisecond)
+			nextAttemptAt := s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
+			expectNextAttempt(t, nextAttemptAt, 8*time.Second)
 		})
 	})
 
@@ -31,7 +43,7 @@ func TestStreak(t *testing.T) {
 			var s Streak
 
 			for i := range 10 {
-				nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
+				nextAttemptAt := s.Extend(t.Context(), "<work>", testPolicy, engineLogger, failure)
 				expectNextAttempt(t, nextAttemptAt, min(100*time.Millisecond<<i, 15*time.Second))
 			}
 		})
@@ -43,7 +55,7 @@ func TestStreak(t *testing.T) {
 			var s Streak
 
 			for i := range 14 {
-				nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
+				nextAttemptAt := s.Extend(t.Context(), "<work>", testPolicy, engineLogger, deterministic)
 				expectNextAttempt(t, nextAttemptAt, min(100*time.Millisecond<<i, 5*time.Minute))
 			}
 		})
@@ -57,8 +69,44 @@ func TestStreak(t *testing.T) {
 				FirstFailedAt: time.Now(),
 			}
 
-			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", deterministic)
+			nextAttemptAt := s.Extend(t.Context(), "<work>", testPolicy, engineLogger, deterministic)
 			expectNextAttempt(t, nextAttemptAt, 100*time.Millisecond<<10)
+		})
+	})
+
+	t.Run("it limits the delay to the policy's limits", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			engineLogger := spruce.NewTestLogger(t)
+			policy := testPolicy
+			policy.TransientRetryDelayLimit = 2 * time.Second
+			policy.DeterministicRetryDelayLimit = 4 * time.Second
+
+			transientStreak := Streak{
+				Failures:      20,
+				FirstFailedAt: time.Now(),
+			}
+			nextAttemptAt := transientStreak.Extend(t.Context(), "<work>", policy, engineLogger, failure)
+			expectNextAttempt(t, nextAttemptAt, 2*time.Second)
+
+			deterministicStreak := Streak{
+				Failures:      20,
+				FirstFailedAt: time.Now(),
+			}
+			nextAttemptAt = deterministicStreak.Extend(t.Context(), "<work>", policy, engineLogger, deterministic)
+			expectNextAttempt(t, nextAttemptAt, 4*time.Second)
+		})
+	})
+
+	t.Run("it limits the first delay to the limit", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			engineLogger := spruce.NewTestLogger(t)
+			policy := testPolicy
+			policy.RetryDelay = time.Minute
+			policy.TransientRetryDelayLimit = 10 * time.Second
+			var s Streak
+
+			nextAttemptAt := s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
+			expectNextAttempt(t, nextAttemptAt, 10*time.Second)
 		})
 	})
 
@@ -66,12 +114,28 @@ func TestStreak(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			engineLogger := spruce.NewTestLogger(t)
 			s := Streak{
-				Failures:      1000,
+				Failures:      math.MaxUint64 - 1,
 				FirstFailedAt: time.Now(),
 			}
 
-			nextAttemptAt := s.Extend(t.Context(), engineLogger, "<work>", failure)
+			nextAttemptAt := s.Extend(t.Context(), "<work>", testPolicy, engineLogger, failure)
 			expectNextAttempt(t, nextAttemptAt, 15*time.Second)
+		})
+	})
+
+	t.Run("it doesn't overflow with a very long retry delay and limit", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			engineLogger := spruce.NewTestLogger(t)
+			policy := testPolicy
+			policy.RetryDelay = time.Hour
+			policy.TransientRetryDelayLimit = math.MaxInt64
+			s := Streak{
+				Failures:      math.MaxUint64 - 1,
+				FirstFailedAt: time.Now(),
+			}
+
+			nextAttemptAt := s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
+			expectNextAttempt(t, nextAttemptAt, math.MaxInt64)
 		})
 	})
 
@@ -80,7 +144,7 @@ func TestStreak(t *testing.T) {
 			engineLogger := spruce.NewTestLogger(t)
 			var s Streak
 
-			s.Extend(t.Context(), engineLogger, "<work>", failure)
+			s.Extend(t.Context(), "<work>", testPolicy, engineLogger, failure)
 
 			if want := time.Now(); !s.FirstFailedAt.Equal(want) {
 				t.Fatalf("unexpected time of the first failure: got %s, want %s", s.FirstFailedAt, want)
@@ -103,7 +167,7 @@ func TestStreak(t *testing.T) {
 				FirstFailedAt: want,
 			}
 
-			s.Extend(t.Context(), engineLogger, "<work>", failure)
+			s.Extend(t.Context(), "<work>", testPolicy, engineLogger, failure)
 
 			if !s.FirstFailedAt.Equal(want) {
 				t.Fatalf("unexpected time of the first failure: got %s, want %s", s.FirstFailedAt, want)
@@ -121,7 +185,7 @@ func TestStreak(t *testing.T) {
 				engineLogger := spruce.NewTestLogger(t)
 				var s Streak
 
-				s.Extend(t.Context(), engineLogger, "<work>", deterministic)
+				s.Extend(t.Context(), "<work>", testPolicy, engineLogger, deterministic)
 
 				if !s.FailureLoggedAsError {
 					t.Fatal("expected the streak to have logged its ERROR")
@@ -129,19 +193,23 @@ func TestStreak(t *testing.T) {
 			})
 		})
 
-		t.Run("when the streak is 30 seconds old", func(t *testing.T) {
+		t.Run("when the streak is as old as the policy's error log threshold", func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				engineLogger := spruce.NewTestLogger(t)
+				policy := testPolicy
+				policy.ErrorLogThreshold = 10 * time.Second
 				var s Streak
 
-				s.Extend(t.Context(), engineLogger, "<work>", failure)
+				s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
+				time.Sleep(9 * time.Second)
+				s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
 
 				if s.FailureLoggedAsError {
-					t.Fatal("did not expect the streak to have logged its ERROR before it is 30 seconds old")
+					t.Fatal("did not expect the streak to have logged its ERROR before the threshold")
 				}
 
-				time.Sleep(30 * time.Second)
-				s.Extend(t.Context(), engineLogger, "<work>", failure)
+				time.Sleep(time.Second)
+				s.Extend(t.Context(), "<work>", policy, engineLogger, failure)
 
 				if !s.FailureLoggedAsError {
 					t.Fatal("expected the streak to have logged its ERROR")
@@ -155,8 +223,8 @@ func TestStreak(t *testing.T) {
 			engineLogger := spruce.NewTestLogger(t)
 			var s Streak
 
-			s.Extend(t.Context(), engineLogger, "<work>", deterministic)
-			s.End(t.Context(), engineLogger, "<work>")
+			s.Extend(t.Context(), "<work>", testPolicy, engineLogger, deterministic)
+			s.End(t.Context(), "<work>", engineLogger)
 
 			if s != (Streak{}) {
 				t.Fatalf("expected no streak to be in progress, got %+v", s)

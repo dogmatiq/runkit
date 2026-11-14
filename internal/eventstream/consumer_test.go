@@ -17,6 +17,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -32,23 +33,26 @@ func TestConsumer(t *testing.T) {
 		logger := spruce.NewTestLogger(t)
 
 		signals := &signal.Bus{
-			DB:           db,
-			EngineLogger: logger,
+			DB:                  db,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 		xtesting.GoE(t, signals.Run)
 
 		node := &cluster.Node{
-			ID:                uuidpb.Generate(),
-			DB:                signals.DB,
-			Signals:           signals,
-			HeartbeatInterval: 20 * time.Millisecond,
-			HeartbeatTimeout:  100 * time.Millisecond,
-			EngineLogger:      logger,
+			ID:                  uuidpb.Generate(),
+			DB:                  signals.DB,
+			Signals:             signals,
+			HeartbeatInterval:   20 * time.Millisecond,
+			HeartbeatTimeout:    100 * time.Millisecond,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		catalog := &Catalog{
-			CacheSize:    10,
-			EngineLogger: logger,
+			CacheSize:           10,
+			EngineFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:        logger,
 		}
 
 		handled := make(chan uint64, 10)
@@ -88,10 +92,12 @@ func TestConsumer(t *testing.T) {
 			return uuidcollection.NewSet(uuidpb.MustParse(mt.ID()))
 		}
 		consumer := &Consumer{
-			Node:         node,
-			EventStreams: catalog,
-			Sink:         sink,
-			EngineLogger: logger,
+			Node:                  node,
+			EventStreams:          catalog,
+			Sink:                  sink,
+			EngineFailurePolicy:   xtesting.FailurePolicy(),
+			DispatchFailurePolicy: xtesting.FailurePolicy(),
+			EngineLogger:          logger,
 		}
 
 		xtesting.GoE(t, consumer.Run)
@@ -315,15 +321,28 @@ func expectStreamIDs(
 // TestConsumer_partialSuccessReloadsDurableCheckpoint verifies that a failed
 // segment is retried from the sink's stored checkpoint rather than the beginning
 // of the segment or the offset returned with the error.
+//
+// It also verifies which failure policy applies to each failure. The policy
+// that shouldn't apply makes the consumer wait for ten minutes, so the test
+// times out unless the consumer waits by the other policy.
 func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
-	for _, failure := range []struct {
-		name string
-		err  error
+	quick := xtesting.FailurePolicy()
+	quick.RetryDelay = time.Millisecond
+
+	slow := xtesting.FailurePolicy()
+	slow.RetryDelay = 10 * time.Minute
+	slow.TransientRetryDelayLimit = 10 * time.Minute
+
+	for _, scenario := range []struct {
+		name     string
+		err      error
+		engine   failure.Policy
+		dispatch failure.Policy
 	}{
-		{"handling error", errors.New("later event failed")},
-		{"checkpoint conflict", nil},
+		{"handling error", errors.New("later event failed"), slow, quick},
+		{"checkpoint conflict", nil, quick, slow},
 	} {
-		t.Run(failure.name, func(t *testing.T) {
+		t.Run(scenario.name, func(t *testing.T) {
 			node := newConsumerNode(t)
 
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -331,8 +350,9 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 
 			logger := spruce.NewTestLogger(t)
 			catalog := &Catalog{
-				CacheSize:    10,
-				EngineLogger: logger,
+				CacheSize:           10,
+				EngineFailurePolicy: xtesting.FailurePolicy(),
+				EngineLogger:        logger,
 			}
 			src := &source.Memory{}
 			id := uuidpb.Generate()
@@ -393,7 +413,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 						// Earlier event transactions committed before the later failure.
 						durable = 4
 
-						return 0, false, failure.err
+						return 0, false, scenario.err
 					}
 
 					if cp != 4 || seg.Begin != 4 {
@@ -408,9 +428,11 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 			}
 
 			c := &Consumer{
-				EventStreams: catalog,
-				Sink:         sink,
-				EngineLogger: logger,
+				EventStreams:          catalog,
+				Sink:                  sink,
+				EngineFailurePolicy:   scenario.engine,
+				DispatchFailurePolicy: scenario.dispatch,
+				EngineLogger:          logger,
 			}
 
 			c.Node = node
@@ -447,17 +469,19 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 
 	logger := spruce.NewTestLogger(t)
 	signals := &signal.Bus{
-		DB:           xtesting.NewDatabase(t),
-		EngineLogger: logger,
+		DB:                  xtesting.NewDatabase(t),
+		EngineFailurePolicy: xtesting.FailurePolicy(),
+		EngineLogger:        logger,
 	}
 	xtesting.GoE(t, signals.Run)
 	node := &cluster.Node{
-		ID:                uuidpb.Generate(),
-		DB:                signals.DB,
-		Signals:           signals,
-		HeartbeatInterval: 20 * time.Millisecond,
-		HeartbeatTimeout:  100 * time.Millisecond,
-		EngineLogger:      logger,
+		ID:                  uuidpb.Generate(),
+		DB:                  signals.DB,
+		Signals:             signals,
+		HeartbeatInterval:   20 * time.Millisecond,
+		HeartbeatTimeout:    100 * time.Millisecond,
+		EngineFailurePolicy: xtesting.FailurePolicy(),
+		EngineLogger:        logger,
 	}
 	xtesting.GoE(t, node.Run)
 

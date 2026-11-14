@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -34,6 +35,9 @@ type Compactor struct {
 	// projection in a single attempt.
 	Timeout time.Duration
 
+	// CompactionFailurePolicy is how the engine responds to failures to compact the projection.
+	CompactionFailurePolicy failure.Policy
+
 	// EngineLogger is the target for the engine's records about the compactor.
 	EngineLogger *slog.Logger
 
@@ -55,7 +59,13 @@ func (c *Compactor) Run(ctx context.Context) error {
 		panic("compaction timeout must be positive")
 	}
 
-	return supervisor.Run(ctx, c.EngineLogger, "compact projection", c.run)
+	return supervisor.Run(
+		ctx,
+		"compact projection",
+		c.CompactionFailurePolicy,
+		c.EngineLogger,
+		c.run,
+	)
 }
 
 // run attempts to compact the projection once per interval until ctx is
