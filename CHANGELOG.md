@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 ## [Unreleased]
 
 This release extends remote event consumption to process handlers, and changes
-how engines deliver commands and deadlines.
+how engines deliver commands and deadlines, and how they retry and log failures.
 
 > [!IMPORTANT]
 > Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
@@ -86,6 +86,12 @@ events.
     process handler. Use `WithMessageQueueConcurrency()` to raise it.
   - An integration handler that prefers `MinimizeConcurrency` may briefly
     handle two commands at once while engines join or leave a cluster.
+- Changed how the engine retries and logs failures. An ordinary failure now
+  waits at most 15 seconds before a retry, instead of five minutes, and a streak
+  of consecutive failures logs one ERROR record, instead of one for every
+  failure. Failures that retrying can't fix, such as a panic in application
+  code, still wait up to five minutes. Use a custom`FailurePolicy` to change
+  these limits.
 - `Engine.Run()` now configures the database pool with unlimited connections and
   an idle timeout, which closes each connection that has been idle for one
   minute, so `WithMessageQueueConcurrency()` naturally determines how many
