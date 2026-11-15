@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+Schema version: v2.0.0 (new)
+
 This release extends remote event consumption to process handlers, and changes
 how engines deliver commands and deadlines, and how they retry and log failures.
 

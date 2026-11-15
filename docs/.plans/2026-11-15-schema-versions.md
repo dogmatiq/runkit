@@ -191,7 +191,7 @@ entries and a passing `make precommit`, and is presented with the design bullets
 it relies on. Tick a task off here with its pull request or commit when it is
 done.
 
-- [ ] **The schema version type and the changelog line.** PR or commit: —
+- [x] **The schema version type and the changelog line.** PR or commit: —
   - `internal/schema`: `Version` (parse, format, precedence, major, minor, patch,
     `CanRunOn`) and `CurrentVersion`.
   - `CHANGELOG.md`: the "Schema version:" line in `[Unreleased]`.
