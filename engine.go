@@ -202,7 +202,9 @@ type Engine struct {
 // db must use the [pgx] driver. New panics if db is nil or uses any other
 // driver.
 //
-// [Engine.Run] sets the limit on the database's idle connections.
+// [Engine.Run] allows unlimited open connections and retains up to twice the
+// message queue concurrency as idle connections, with a minimum of 16. Idle
+// connections expire after one minute.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -270,14 +272,13 @@ func (e *Engine) Run(ctx context.Context) error {
 	// let attempts starve the engine's other work. The heartbeat in particular
 	// must not wait for an attempt to finish, or the node is considered
 	// offline.
-	//
-	// There is no limit on idle connections either, so the pool keeps as many
-	// connections as the engine has used at once, instead of closing them and
-	// opening new ones for the next queries. A connection is closed after it
-	// has been idle for [connectionMaxIdleTime], so the pool shrinks when the
-	// load drops.
 	e.db.SetMaxOpenConns(0)
-	e.db.SetMaxIdleConns(-1)
+
+	// Retain idle connections for delivery bursts, with headroom for the
+	// heartbeat, notifications, and event-stream work even at low delivery
+	// concurrency. The pool also shrinks when a connection has been idle for
+	// [connectionMaxIdleTime].
+	e.db.SetMaxIdleConns(max(16, 2*e.messageQueueConcurrency))
 	e.db.SetConnMaxIdleTime(connectionMaxIdleTime)
 
 	e.appConfig = runtimeconfig.FromApplication(e.app)
