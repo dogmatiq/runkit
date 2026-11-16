@@ -248,6 +248,9 @@ func TestDeadlineSink(t *testing.T) {
 				s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
 				_ dogma.Deadline,
 			) error {
+				if got, want := s.MessageID(), env.GetBody().GetMessageId().AsStd(); got != want {
+					t.Errorf("unexpected message ID: got %s, want %s", got, want)
+				}
 				s.Mutate(func(dogma.ProcessRoot) {})
 				return nil
 			}

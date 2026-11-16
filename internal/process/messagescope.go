@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
@@ -15,6 +16,7 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
+	messageID            uuid.UUID
 	CommandPacker        *envelope.EffectPacker
 	DeadlinePacker       *envelope.EffectPacker
 	Mutated              bool
@@ -129,4 +131,8 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		xslog.Envelope("produced_message", deadlineEnvelope),
 		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
+}
+
+func (s *messageScope) MessageID() uuid.UUID {
+	return s.messageID
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
@@ -84,7 +85,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					handlerMutex.Lock()
 					defer handlerMutex.Unlock()
 
@@ -331,7 +332,7 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					m.Lock()
 					defer m.Unlock()
 
@@ -379,7 +380,7 @@ func TestEventStream_consumptionIsRetriedWhenDecodingAnEventPanics(t *testing.T)
 						dogma.HandlesEvent[*stubs.EventStub[panicsWhenDecoded]](),
 					)
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					attempts.Add(1)
 					return 0, nil
 				},

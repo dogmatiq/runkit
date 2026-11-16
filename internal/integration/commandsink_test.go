@@ -39,6 +39,12 @@ func TestCommandSink(t *testing.T) {
 			}
 
 			env := xtesting.PackCommand(t, stubs.CommandA1)
+			sink.Handler.(*stubs.IntegrationMessageHandlerStub).HandleCommandFunc = func(ctx context.Context, s dogma.IntegrationCommandScope, m dogma.Command) error {
+				if got, want := s.MessageID(), env.GetBody().GetMessageId().AsStd(); got != want {
+					t.Errorf("unexpected message ID: got %s, want %s", got, want)
+				}
+				return handle(ctx, s, m)
+			}
 			logger := spruce.NewTestLogger(t)
 
 			return func() error {

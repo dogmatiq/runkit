@@ -67,7 +67,7 @@ func messageType(v *uuidpb.UUID) slog.Attr {
 		UUID("id", v),
 	}
 
-	if t, ok := dogma.RegisteredMessageTypeByID(v.AsString()); ok {
+	if t, ok := dogma.RegisteredMessageTypeByID(v.AsStd()); ok {
 		attrs = append(
 			attrs,
 			slog.String("name", t.GoType().Elem().Name()),

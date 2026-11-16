@@ -22,7 +22,7 @@ func TestRouter(t *testing.T) {
 	// commandTypeID returns the ID of the given command's type.
 	commandTypeID := func(c dogma.Command) *uuidpb.UUID {
 		mt, _ := dogma.RegisteredMessageTypeOf(c)
-		return uuidpb.MustParse(mt.ID())
+		return uuidpb.FromStd(mt.ID())
 	}
 
 	// setup returns a router for a node with three handlers:

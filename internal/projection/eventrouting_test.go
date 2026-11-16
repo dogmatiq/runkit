@@ -345,12 +345,12 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 
 							switch e.Content {
 							case "B1":
-								if s.StreamID() != mixed.AsString() || s.Offset() != 1 {
+								if s.StreamID() != mixed.AsStd() || s.Offset() != 1 {
 									t.Errorf("unexpected position of B1: stream %s, offset %d", s.StreamID(), s.Offset())
 								}
 								handledB1.Set()
 							case "B2":
-								if s.StreamID() != onlyB.AsString() || s.Offset() != 0 {
+								if s.StreamID() != onlyB.AsStd() || s.Offset() != 0 {
 									t.Errorf("unexpected position of B2: stream %s, offset %d", s.StreamID(), s.Offset())
 								}
 								handledB2.Set()

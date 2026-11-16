@@ -3,6 +3,7 @@ package projection_test
 import (
 	"context"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 )
@@ -18,7 +19,7 @@ import (
 // The zero value is ready to use.
 type checkpointStore struct {
 	m       sync.Mutex
-	offsets map[string]uint64
+	offsets map[uuid.UUID]uint64
 }
 
 // HandleEvent handles an event as a projection that implements optimistic
@@ -50,7 +51,7 @@ func (c *checkpointStore) HandleEvent(
 	}
 
 	if c.offsets == nil {
-		c.offsets = map[string]uint64{}
+		c.offsets = map[uuid.UUID]uint64{}
 	}
 
 	next := s.Offset() + 1
@@ -62,7 +63,7 @@ func (c *checkpointStore) HandleEvent(
 // CheckpointOffset returns the stored checkpoint offset for the stream with the
 // given ID. It is suitable for use as
 // [stubs.ProjectionMessageHandlerStub].CheckpointOffsetFunc.
-func (c *checkpointStore) CheckpointOffset(_ context.Context, id string) (uint64, error) {
+func (c *checkpointStore) CheckpointOffset(_ context.Context, id uuid.UUID) (uint64, error) {
 	c.m.Lock()
 	defer c.m.Unlock()
 

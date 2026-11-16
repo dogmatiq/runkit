@@ -89,7 +89,7 @@ func TestConsumer(t *testing.T) {
 
 		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
 		sink.EventTypeIDsFunc = func() *uuidcollection.Set {
-			return uuidcollection.NewSet(uuidpb.MustParse(mt.ID()))
+			return uuidcollection.NewSet(uuidpb.FromStd(mt.ID()))
 		}
 		consumer := &Consumer{
 			Node:                  node,
@@ -277,7 +277,7 @@ func newSegment(
 					WithCreatedAt(timestamppb.Now()).
 					WithMessage(
 						envelopepb.NewMessageBuilder().
-							WithTypeId(uuidpb.MustParse(mt.ID())).
+							WithTypeId(uuidpb.FromStd(mt.ID())).
 							WithDescription(event.MessageDescription()).
 							WithData(data).
 							Build(),

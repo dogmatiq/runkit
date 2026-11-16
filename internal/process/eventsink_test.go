@@ -63,11 +63,14 @@ func TestEventSink_overlappingConsumers(t *testing.T) {
 	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
 	var calls int
 	s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleEventFunc = func(
-		context.Context,
-		dogma.ProcessRoot,
-		dogma.ProcessEventScope[dogma.ProcessRoot],
-		dogma.Event,
+		_ context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessEventScope[dogma.ProcessRoot],
+		_ dogma.Event,
 	) error {
+		if got, want := s.MessageID(), envs[0].GetBody().GetMessageId().AsStd(); got != want {
+			t.Errorf("unexpected message ID: got %s, want %s", got, want)
+		}
 		calls++
 		return nil
 	}

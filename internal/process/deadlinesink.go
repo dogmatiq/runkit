@@ -107,6 +107,7 @@ func (s *DeadlineSink) Deliver(
 
 	scope := &deadlineScope{
 		messageScope{
+			messageID: env.GetBody().GetMessageId().AsStd(),
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,

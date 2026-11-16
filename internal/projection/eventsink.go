@@ -71,7 +71,7 @@ func (s *EventSink) CheckpointOffset(
 			ctx, cancel := context.WithTimeout(ctx, s.RouteTimeout)
 			defer cancel()
 
-			return s.Handler.CheckpointOffset(ctx, streamID.AsString())
+			return s.Handler.CheckpointOffset(ctx, streamID.AsStd())
 		},
 	)
 	if err != nil {
@@ -150,7 +150,8 @@ func (s *EventSink) dispatch(
 	next, err := s.handleEvent(
 		ctx,
 		&eventScope{
-			streamID:         streamID.AsString(),
+			messageID:        env.GetBody().GetMessageId().AsStd(),
+			streamID:         streamID.AsStd(),
 			offset:           offset,
 			recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
 			checkpointOffset: cp,

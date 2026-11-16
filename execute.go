@@ -157,7 +157,7 @@ func (e *Engine) resolveExecuteCommandOptions(
 		case dogma.EventObserverOption:
 			eventObservers = append(eventObservers, opt.Observer())
 			eventTypes.Add(
-				uuidpb.MustParse(opt.EventType().ID()),
+				uuidpb.FromStd(opt.EventType().ID()),
 			)
 
 		default:

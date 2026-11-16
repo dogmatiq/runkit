@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
@@ -14,6 +15,7 @@ import (
 
 // commandScope implements [dogma.IntegrationCommandScope].
 type commandScope struct {
+	messageID            uuid.UUID
 	packer               *envelope.EffectPacker
 	outboundMessageTypes map[reflect.Type]struct{}
 	engineLogger         *slog.Logger
@@ -60,4 +62,8 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 		event.MessageDescription(),
 		xslog.Envelope("produced_message", eventEnvelope),
 	)
+}
+
+func (s *commandScope) MessageID() uuid.UUID {
+	return s.messageID
 }

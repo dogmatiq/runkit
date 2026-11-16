@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -49,7 +50,7 @@ func TestEventSink_rendezvousKey(t *testing.T) {
 // offset.
 func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	handler := &ProjectionMessageHandlerStub{
-		CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+		CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 			return 4, nil
 		},
 	}

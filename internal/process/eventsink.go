@@ -261,6 +261,7 @@ func (s *EventSink) dispatch(
 
 	scope := &eventScope{
 		messageScope{
+			messageID: env.GetBody().GetMessageId().AsStd(),
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,

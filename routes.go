@@ -6,7 +6,6 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 )
 
@@ -100,7 +99,7 @@ func inboundMessageTypeIDsForHandler(
 	messageTypeIDs := &uuidcollection.Set{}
 
 	for route := range inboundRoutes {
-		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
+		messageTypeID := route.MessageTypeID.Get().AsProto()
 		messageTypeIDs.Add(messageTypeID)
 	}
 

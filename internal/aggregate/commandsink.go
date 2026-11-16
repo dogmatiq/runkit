@@ -91,6 +91,7 @@ func (s *CommandSink) Deliver(
 			s.Handler.HandleCommand(
 				inst.Root,
 				&commandScope{
+					messageID:            env.GetBody().GetMessageId().AsStd(),
 					packer:               packer,
 					outboundMessageTypes: s.OutboundMessageTypes,
 					instanceID:           inst.ID,

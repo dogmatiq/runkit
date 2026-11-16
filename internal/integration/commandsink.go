@@ -77,6 +77,7 @@ func (s *CommandSink) Deliver(
 	)
 
 	scope := &commandScope{
+		messageID:            env.GetBody().GetMessageId().AsStd(),
 		packer:               packer,
 		outboundMessageTypes: s.OutboundMessageTypes,
 		engineLogger:         engineLogger,

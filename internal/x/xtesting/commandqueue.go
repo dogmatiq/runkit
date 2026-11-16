@@ -236,7 +236,7 @@ func PackCommand(t testing.TB, command dogma.Command) *envelopepb.Envelope {
 				WithCreatedAt(timestamppb.Now()).
 				WithMessage(
 					envelopepb.NewMessageBuilder().
-						WithTypeId(uuidpb.MustParse(mt.ID())).
+						WithTypeId(uuidpb.FromStd(mt.ID())).
 						WithDescription(command.MessageDescription()).
 						WithData(data).
 						Build(),

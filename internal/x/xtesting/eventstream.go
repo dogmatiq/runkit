@@ -319,7 +319,7 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 				WithCreatedAt(timestamppb.Now()).
 				WithMessage(
 					envelopepb.NewMessageBuilder().
-						WithTypeId(uuidpb.MustParse(mt.ID())).
+						WithTypeId(uuidpb.FromStd(mt.ID())).
 						WithDescription(event.MessageDescription()).
 						WithData(data).
 						Build(),
