@@ -23,6 +23,59 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestEngine_reusesIdleDatabaseConnections(t *testing.T) {
+	t.Parallel()
+	db := xtesting.NewDatabase(t)
+	cluster := xtesting.StartCluster(t, db, testApp(), 3, runkit.WithMessageQueueConcurrency(1))
+	defer cluster.Stop()
+
+	closedBefore := db.Stats().MaxIdleClosed
+	for range 20 {
+		var value int
+		if err := db.QueryRowContext(t.Context(), "SELECT 1").Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if closed := db.Stats().MaxIdleClosed - closedBefore; closed != 0 {
+		t.Fatalf("pool discarded %d connections instead of retaining them for reuse", closed)
+	}
+}
+
+func TestEngine_limitsIdleDatabaseConnections(t *testing.T) {
+	t.Parallel()
+	db := xtesting.NewDatabase(t)
+	cluster := xtesting.StartCluster(t, db, testApp(), 1, runkit.WithMessageQueueConcurrency(1))
+	defer cluster.Stop()
+
+	// Borrow a burst of connections simultaneously so they cannot all use the
+	// same connection. Returning the burst must release excess idle capacity.
+	var connections []*sql.Conn
+	defer func() {
+		for _, conn := range connections {
+			conn.Close()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+	defer cancel()
+	for range 32 {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, conn)
+	}
+
+	closedBefore := db.Stats().MaxIdleClosed
+	for _, conn := range connections {
+		if err := conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if db.Stats().MaxIdleClosed == closedBefore {
+		t.Fatal("pool retained all connections from the burst instead of limiting idle capacity")
+	}
+}
+
 func TestEngine(t *testing.T) {
 	t.Run("it does not listen for gRPC requests by default", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
