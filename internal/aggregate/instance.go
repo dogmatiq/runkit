@@ -104,7 +104,10 @@ func (i *instance) RecordEvents(
 func (i *instance) DeleteIfNoEvents(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(
 		ctx,
-		`SELECT aggregate.complete_without_events($1, $2)`,
+		`DELETE FROM aggregate.instances
+		WHERE handler_key = $1
+		AND instance_id = $2
+		AND stream_id IS NULL`,
 		xsql.UUID(i.HandlerKey),
 		i.ID,
 	); err != nil {

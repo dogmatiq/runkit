@@ -303,7 +303,7 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 	switch {
 	case ctx.Err() != nil:
 		// The consumer is stopping, so an error isn't a failure of the attempt.
-	case xsql.IsLockNotAvailableError(a.Err):
+	case xsql.IsLockNotAvailableError(ctx, a.Err):
 		// Another transaction holds the message's lock. Waiting for the
 		// contention delay stops the consumer from finding it locked again
 		// straight away, without the message counting toward the concurrency

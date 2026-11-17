@@ -38,6 +38,14 @@ const (
 	// the application when the engine starts.
 	applicationBindTimeout = 15 * time.Second
 
+	// schemaLockTimeout is the longest that a step of a schema migration waits
+	// for a lock while engines may be running.
+	schemaLockTimeout = 5 * time.Second
+
+	// schemaStatementTimeout is the longest that a statement of a schema
+	// migration's transaction runs while engines may be running.
+	schemaStatementTimeout = 30 * time.Second
+
 	// heartbeatInterval is the time between the heartbeats that each engine
 	// sends to the others in the cluster.
 	heartbeatInterval = 1 * time.Second

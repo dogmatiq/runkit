@@ -20,6 +20,12 @@ type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// TxBeginner is the interface for starting transactions, it is implemented by
+// both [sql.DB] and [sql.Conn].
+type TxBeginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 // ScannerValuer is an interface for values that can be stored in the database.
 type ScannerValuer interface {
 	driver.Value

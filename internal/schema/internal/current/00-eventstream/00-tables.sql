@@ -81,19 +81,3 @@ CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
 
     PRIMARY KEY (handler_key, stream_id)
 );
-
--- Remove the local-stream constraint from databases created by older engines.
--- Avoid taking an exclusive checkpoint-table lock once the upgrade is applied.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM pg_catalog.pg_constraint
-        WHERE conrelid = 'eventstream.handler_checkpoints'::regclass
-        AND conname = 'handler_checkpoints_stream_id_fkey'
-    ) THEN
-        ALTER TABLE eventstream.handler_checkpoints
-        DROP CONSTRAINT handler_checkpoints_stream_id_fkey;
-    END IF;
-END;
-$$;

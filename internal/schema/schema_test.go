@@ -3,13 +3,32 @@ package schema_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dogmatiq/runkit/internal/schema"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestCreateAndDrop(t *testing.T) {
+const (
+	testLockTimeout      = 5 * time.Second
+	testStatementTimeout = 30 * time.Second
+)
+
+func TestApplyAndDrop(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabaseWithoutSchema(t)
@@ -22,13 +41,13 @@ func TestCreateAndDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := schema.Create(t.Context(), db); err != nil {
+	if err := schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout); err != nil {
 		t.Fatal(err)
 	}
 
 	xtesting.ExpectQueryResult(
 		t,
-		"schema count increased after Create()",
+		"schema count increased after Apply()",
 		true,
 		db,
 		`SELECT COUNT(*) > $1
@@ -64,10 +83,29 @@ func TestCreateAndDrop(t *testing.T) {
 		`SELECT to_regclass('messagequeue.messages') IS NOT NULL`,
 	)
 
-	// Create() again to verify idempotency.
-	if err := schema.Create(t.Context(), db); err != nil {
-		t.Fatalf("schema creation is not idempotent: %s", err)
+	// Migrating again verifies idempotency.
+	if err := schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout); err != nil {
+		t.Fatalf("migration is not idempotent: %s", err)
 	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database is at the current schema version",
+		schema.TargetVersion.String(),
+		db,
+		`SELECT version
+		FROM runkit.schema_version`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"no migration is in progress",
+		true,
+		db,
+		`SELECT committed_migration IS NULL
+			AND committed_steps IS NULL
+		FROM runkit.schema_version`,
+	)
 
 	if err := schema.Drop(t.Context(), db); err != nil {
 		t.Fatal(err)
@@ -83,116 +121,240 @@ func TestCreateAndDrop(t *testing.T) {
 	)
 }
 
-// TestCreate_removesLocalStreamConstraint verifies that schema upgrades retain
-// existing process progress and allow checkpoint rows for remote streams.
-func TestCreate_removesLocalStreamConstraint(t *testing.T) {
+// TestApply_newerCompatibleDatabase verifies that a database whose schema
+// version is above the current one, with the same major number, is left alone.
+func TestApply_newerCompatibleDatabase(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
+
+	newer := fmt.Sprintf(
+		"v%d.%d.0",
+		schema.TargetVersion.Major(),
+		schema.TargetVersion.Minor()+1,
+	)
+
 	if _, err := db.ExecContext(
 		t.Context(),
-		`ALTER TABLE eventstream.handler_checkpoints
-		ADD CONSTRAINT handler_checkpoints_stream_id_fkey
-		FOREIGN KEY (stream_id) REFERENCES eventstream.streams(id);
-
-		INSERT INTO eventstream.streams (id)
-		VALUES ('3fc2f883-6016-4d34-b6dd-ad8cc195d3e5');
-
-		INSERT INTO eventstream.handler_checkpoints (
-			handler_key,
-			stream_id,
-			checkpoint_offset,
-			failures,
-			resume_at
-		) VALUES (
-			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
-			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5',
-			42,
-			3,
-			'2100-01-01T00:00:00Z'
-		);
-
-		INSERT INTO process.handlers (
-			handler_key,
-			has_checkpoint_offsets
-		) VALUES (
-			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
-			true
-		)`,
+		`UPDATE runkit.schema_version
+		SET version = $1,
+			applied_at = '2100-01-01T00:00:00Z'`,
+		newer,
 	); err != nil {
 		t.Fatal(err)
 	}
 
-	for range 2 {
-		if err := schema.Create(t.Context(), db); err != nil {
+	for _, offline := range []bool{false, true} {
+		if err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout); err != nil {
 			t.Fatal(err)
 		}
 
 		xtesting.ExpectQueryResult(
 			t,
-			"existing checkpoint and legacy retry state are preserved",
+			"the schema version is unchanged",
 			true,
 			db,
-			`SELECT checkpoint_offset = 42
-				AND failures = 3
-				AND resume_at = '2100-01-01T00:00:00Z'::timestamptz
-			FROM eventstream.handler_checkpoints
-			WHERE stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
+			`SELECT version = $1
+				AND applied_at = '2100-01-01T00:00:00Z'::timestamptz
+			FROM runkit.schema_version`,
+			newer,
 		)
 	}
+}
 
-	xtesting.ExpectQueryResult(
-		t,
-		"legacy handler registration is preserved",
-		true,
-		db,
-		`SELECT has_checkpoint_offsets
-		FROM process.handlers
-		WHERE handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'`,
-	)
+// TestApply_databaseWithNewerMajorNumber verifies that a database whose
+// schema version has a higher major number than the current one is refused.
+func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
+	t.Parallel()
 
-	// This stream is not present in the local streams table.
+	db := xtesting.NewDatabase(t)
+
+	newer := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()+1)
+
 	if _, err := db.ExecContext(
 		t.Context(),
-		`INSERT INTO eventstream.handler_checkpoints (
-			handler_key,
-			stream_id
-		) VALUES (
-			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
-			'02b888ed-e546-4fba-b524-426dfbbefac0'
-		)`,
+		`UPDATE runkit.schema_version
+		SET version = $1`,
+		newer,
 	); err != nil {
-		t.Fatalf("unable to checkpoint a remote stream: %v", err)
+		t.Fatal(err)
+	}
+
+	for _, offline := range []bool{false, true} {
+		err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "incompatible schema version") {
+			t.Fatalf("unexpected error: %s", err)
+		}
 	}
 
 	xtesting.ExpectQueryResult(
 		t,
-		"no replacement checkpoint table is created",
-		true,
+		"the schema version is unchanged",
+		newer,
 		db,
-		`SELECT to_regclass('process.checkpoints') IS NULL`,
+		`SELECT version
+		FROM runkit.schema_version`,
 	)
 }
 
-// TestCreate_doesNotRequireExclusiveCheckpointLock verifies that applying an
-// already-upgraded schema does not wait for checkpoint writes to finish.
-func TestCreate_doesNotRequireExclusiveCheckpointLock(t *testing.T) {
+// TestApply_raisingMajorNumberNeedsOffline verifies that migrating while
+// engines may be running refuses to raise the major number of the schema
+// version, and changes nothing.
+func TestApply_raisingMajorNumberNeedsOffline(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	err := schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "manual schema migration required") {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the old tables are still there",
+		true,
+		db,
+		`SELECT to_regclass('commandqueue.commands') IS NOT NULL
+			AND to_regclass('process.deadlines') IS NOT NULL
+			AND to_regclass('messagequeue.messages') IS NULL`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database has no schema of its own",
+		false,
+		db,
+		`SELECT EXISTS (
+			SELECT
+			FROM pg_namespace
+			WHERE nspname = 'runkit'
+		)`,
+	)
+}
+
+// TestApply_concurrentCalls verifies that calls to migrate the same database
+// at the same time all succeed.
+func TestApply_concurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+
+	var (
+		wg   sync.WaitGroup
+		errs = make([]error, 8)
+	)
+
+	for i := range errs {
+		wg.Go(func() {
+			errs[i] = schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout)
+		})
+	}
+
+	wg.Wait()
+
+	if err := errors.Join(errs...); err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database is at the current schema version",
+		schema.TargetVersion.String(),
+		db,
+		`SELECT version
+		FROM runkit.schema_version`,
+	)
+}
+
+// TestApply_doesNotWaitForOtherCallWhenSatisfied verifies that a call returns
+// without waiting for another call's migration to finish when the database is
+// already at a schema version that satisfies the target.
+func TestApply_doesNotWaitForOtherCallWhenSatisfied(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	// Lock a table that the migration needs to lock. The call to Apply that
+	// migrates the database then waits for the table, and holds the advisory
+	// lock while it waits.
+	blocker, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+
+	if _, err := blocker.ExecContext(
+		t.Context(),
+		`SELECT COUNT(*) FROM commandqueue.idempotency_keys`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated := make(chan error, 1)
+	go func() {
+		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
+	}()
+
+	waitForLockWaiters(t, db, 1)
+
+	// Record the target schema version. A database has this version recorded
+	// while a newer runkit version migrates it to a later one.
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE runkit.schema_version
+		SET version = $1`,
+		schema.TargetVersion.String(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+	defer cancel()
+
+	if err := schema.Apply(ctx, db, false, testLockTimeout, testStatementTimeout); err != nil {
+		t.Fatalf("unable to return while another call is migrating: %v", err)
+	}
+
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-migrated; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestApply_doesNotWaitForCheckpointWrites verifies that migrating a database
+// that is at the current schema version does not wait for checkpoint writes to
+// finish.
+func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
 
 	xtesting.Transact(t, db, func(tx *sql.Tx) {
-		// Keep the checkpoint write uncommitted while applying the schema
-		// through another database connection.
+		// Keep the checkpoint write uncommitted while migrating through
+		// another database connection.
 		if _, err := tx.ExecContext(
 			t.Context(),
 			`INSERT INTO eventstream.handler_checkpoints (
-                handler_key,
-                stream_id
-            ) VALUES (
-                '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
-                '02b888ed-e546-4fba-b524-426dfbbefac0'
-            )`,
+				handler_key,
+				stream_id
+			) VALUES (
+				'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+				'02b888ed-e546-4fba-b524-426dfbbefac0'
+			)`,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -200,8 +362,8 @@ func TestCreate_doesNotRequireExclusiveCheckpointLock(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
 		defer cancel()
 
-		if err := schema.Create(ctx, db); err != nil {
-			t.Fatalf("unable to apply schema during a checkpoint write: %v", err)
+		if err := schema.Apply(ctx, db, false, testLockTimeout, testStatementTimeout); err != nil {
+			t.Fatalf("unable to migrate during a checkpoint write: %v", err)
 		}
 	})
 }
@@ -239,40 +401,55 @@ func TestAddCommand_usesQueuedAt(t *testing.T) {
 	)
 }
 
-// TestCreate_migratesQueues verifies that schema upgrades move pending commands
-// and deadlines from the tables of earlier versions into the queue.
-func TestCreate_migratesQueues(t *testing.T) {
+// releasedVersions are the runkit versions that TestMigrate_fromReleased
+// upgrades a database from. They are the versions whose schema differs, so
+// v0.1.0 and v0.1.1 are omitted because they have the schema of v0.1.2.
+var releasedVersions = []string{"v0.1.2", "v0.2.0"}
+
+// TestMigrate_fromReleased verifies that migrating a database created by each
+// of the releasedVersions keeps its data, and produces the same schema as a new
+// database.
+func TestMigrate_fromReleased(t *testing.T) {
 	t.Parallel()
 
+	for _, version := range releasedVersions {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			testMigrateFrom(t, version)
+		})
+	}
+}
+
+// testMigrateFrom is the test of TestMigrate_fromReleased for one version.
+func testMigrateFrom(t *testing.T, version string) {
 	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, version)
+
 	if _, err := db.ExecContext(
 		t.Context(),
-		`CREATE SCHEMA commandqueue;
+		`INSERT INTO eventstream.streams (id)
+		VALUES ('3fc2f883-6016-4d34-b6dd-ad8cc195d3e5');
 
-		CREATE TABLE commandqueue.commands (
-			message_id      uuid        PRIMARY KEY,
-			message_type_id uuid        NOT NULL,
-			envelope        bytea       NOT NULL,
-			failures        int         NOT NULL DEFAULT 0,
-			enqueued_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
-			deliver_at      timestamptz NOT NULL DEFAULT clock_timestamp()
+		INSERT INTO eventstream.handler_checkpoints (
+			handler_key,
+			stream_id,
+			checkpoint_offset,
+			failures,
+			resume_at
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5',
+			42,
+			3,
+			'2100-01-01T00:00:00Z'
 		);
 
-		CREATE TABLE commandqueue.idempotency_keys (
-			idempotency_key text PRIMARY KEY,
-			message_id      uuid NOT NULL UNIQUE
-		);
-
-		CREATE SCHEMA process;
-
-		CREATE TABLE process.deadlines (
-			message_id      uuid        PRIMARY KEY,
-			message_type_id uuid        NOT NULL,
-			handler_key     uuid        NOT NULL,
-			instance_id     text        NOT NULL,
-			envelope        bytea       NOT NULL,
-			failures        int         NOT NULL DEFAULT 0,
-			deliver_at      timestamptz NOT NULL
+		INSERT INTO process.handlers (
+			handler_key,
+			has_checkpoint_offsets
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			true
 		);
 
 		INSERT INTO commandqueue.commands (
@@ -336,7 +513,7 @@ func TestCreate_migratesQueues(t *testing.T) {
 	}
 
 	for range 2 {
-		if err := schema.Create(t.Context(), db); err != nil {
+		if err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout); err != nil {
 			t.Fatal(err)
 		}
 
@@ -348,6 +525,54 @@ func TestCreate_migratesQueues(t *testing.T) {
 			`SELECT COUNT(*)
 			FROM messagequeue.messages`,
 		)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database is at the current schema version",
+		true,
+		db,
+		`SELECT version = $1
+			AND committed_migration IS NULL
+			AND committed_steps IS NULL
+		FROM runkit.schema_version`,
+		schema.TargetVersion.String(),
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"existing checkpoint and its legacy retry state are preserved",
+		true,
+		db,
+		`SELECT checkpoint_offset = 42
+			AND failures = 3
+			AND resume_at = '2100-01-01T00:00:00Z'::timestamptz
+		FROM eventstream.handler_checkpoints
+		WHERE stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"legacy handler registration is preserved",
+		true,
+		db,
+		`SELECT has_checkpoint_offsets
+		FROM process.handlers
+		WHERE handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'`,
+	)
+
+	// This stream is not present in the local streams table.
+	if _, err := db.ExecContext(
+		t.Context(),
+		`INSERT INTO eventstream.handler_checkpoints (
+			handler_key,
+			stream_id
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'02b888ed-e546-4fba-b524-426dfbbefac0'
+		)`,
+	); err != nil {
+		t.Fatalf("unable to checkpoint a remote stream: %v", err)
 	}
 
 	xtesting.ExpectQueryResult(
@@ -426,16 +651,6 @@ func TestCreate_migratesQueues(t *testing.T) {
 
 	xtesting.ExpectQueryResult(
 		t,
-		"the old tables are gone",
-		true,
-		db,
-		`SELECT to_regclass('commandqueue.commands') IS NULL
-			AND to_regclass('commandqueue.idempotency_keys') IS NULL
-			AND to_regclass('process.deadlines') IS NULL`,
-	)
-
-	xtesting.ExpectQueryResult(
-		t,
 		"the commandqueue schema is gone",
 		0,
 		db,
@@ -443,4 +658,359 @@ func TestCreate_migratesQueues(t *testing.T) {
 		FROM information_schema.schemata
 		WHERE schema_name = 'commandqueue'`,
 	)
+
+	got := dumpSchemaObjects(t, db)
+	want := dumpSchemaObjects(t, xtesting.NewDatabase(t))
+
+	for _, object := range difference(want, got) {
+		t.Errorf("the migrated database is missing:\n%s", object)
+	}
+
+	for _, object := range difference(got, want) {
+		t.Errorf("the migrated database has more than a new database:\n%s", object)
+	}
+}
+
+// TestMigrate_toV2_0_0_waitsForEngineWrites verifies that the migration to
+// schema version v2.0.0 doesn't lose a command that an engine built for the
+// earlier schema adds while the migration runs.
+func TestMigrate_toV2_0_0_waitsForEngineWrites(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	// Hold a lock on a table that the migration locks, so that the migration
+	// waits.
+	blocker, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+
+	if _, err := blocker.ExecContext(
+		t.Context(),
+		`SELECT COUNT(*) FROM commandqueue.idempotency_keys`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated := make(chan error, 1)
+	go func() {
+		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
+	}()
+
+	waitForLockWaiters(t, db, 1)
+
+	inserted := make(chan error, 1)
+	go func() {
+		_, err := db.ExecContext(
+			t.Context(),
+			`INSERT INTO commandqueue.commands (
+				message_id,
+				message_type_id,
+				envelope,
+				failures,
+				enqueued_at,
+				deliver_at
+			) VALUES (
+				'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
+				'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
+				'\x01',
+				0,
+				'2100-01-01T00:00:00Z',
+				'2100-01-01T00:00:00Z'
+			)`,
+		)
+		inserted <- err
+	}()
+
+	// Wait until the engine's insert has either finished or is waiting for a
+	// lock that the migration holds.
+	var (
+		insertErr      error
+		insertFinished bool
+	)
+	waitUntil(t, func() bool {
+		select {
+		case insertErr = <-inserted:
+			insertFinished = true
+			return true
+		default:
+			return countLockWaiters(t, db) >= 2
+		}
+	})
+
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-migrated; err != nil {
+		t.Fatal(err)
+	}
+
+	if !insertFinished {
+		insertErr = <-inserted
+	}
+
+	if insertErr != nil {
+		// The engine's write failed because the migration dropped the table,
+		// so the engine's caller knows that the command wasn't accepted. Any
+		// other error means that the insert never reached the table.
+		pgErr, ok := errors.AsType[*pgconn.PgError](insertErr)
+		if !ok || pgErr.Code != pgerrcode.UndefinedTable {
+			t.Fatalf("unexpected error from the engine's insert: %v", insertErr)
+		}
+
+		xtesting.ExpectQueryResult(
+			t,
+			"the command that the engine failed to add isn't in the queue",
+			0,
+			db,
+			`SELECT COUNT(*)
+			FROM messagequeue.messages`,
+		)
+
+		return
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the command that the engine added is in the queue",
+		1,
+		db,
+		`SELECT COUNT(*)
+		FROM messagequeue.messages`,
+	)
+}
+
+// TestMigrate_toV2_0_0_waitsForEngineDeliveries verifies that the migration to
+// schema version v2.0.0 doesn't copy a command that an engine built for the
+// earlier schema delivers while the migration runs.
+func TestMigrate_toV2_0_0_waitsForEngineDeliveries(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`INSERT INTO commandqueue.commands (
+			message_id,
+			message_type_id,
+			envelope,
+			failures,
+			enqueued_at,
+			deliver_at
+		) VALUES (
+			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
+			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
+			'\x01',
+			0,
+			'2100-01-01T00:00:00Z',
+			'2100-01-01T00:00:00Z'
+		)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// The engine deletes the command when it has delivered it, in a
+	// transaction that commits while the migration runs.
+	delivery, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer delivery.Rollback()
+
+	if _, err := delivery.ExecContext(
+		t.Context(),
+		`DELETE FROM commandqueue.commands`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated := make(chan error, 1)
+	go func() {
+		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
+	}()
+
+	waitForLockWaiters(t, db, 1)
+
+	if err := delivery.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-migrated; err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the delivered command isn't in the queue",
+		0,
+		db,
+		`SELECT COUNT(*)
+		FROM messagequeue.messages`,
+	)
+}
+
+// waitForLockWaiters waits until at least n of the given database's
+// connections are waiting for a lock.
+func waitForLockWaiters(t testing.TB, db *sql.DB, n int) {
+	t.Helper()
+
+	waitUntil(t, func() bool {
+		return countLockWaiters(t, db) >= n
+	})
+}
+
+// countLockWaiters returns the number of the given database's connections that
+// are waiting for a lock.
+func countLockWaiters(t testing.TB, db *sql.DB) int {
+	t.Helper()
+
+	var waiting int
+	if err := db.QueryRowContext(
+		t.Context(),
+		`SELECT COUNT(*)
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+		AND wait_event_type = 'Lock'`,
+	).Scan(&waiting); err != nil {
+		t.Fatal(err)
+	}
+
+	return waiting
+}
+
+// waitUntil calls done until it returns true, and fails the test if that
+// takes longer than a few seconds.
+func waitUntil(t testing.TB, done func() bool) {
+	t.Helper()
+
+	timeout := time.After(5 * time.Second)
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for !done() {
+		select {
+		case <-timeout:
+			t.Fatal("timed out waiting for the database")
+		case <-ticker.C:
+		}
+	}
+}
+
+// createSchemaOf creates the schema of the given runkit version in the given
+// database by applying the DDL of that runkit version, in the way that it did.
+//
+// It fails the test if it can't fetch that runkit version.
+func createSchemaOf(t testing.TB, db *sql.DB, version string) {
+	t.Helper()
+
+	out, err := exec.CommandContext(
+		t.Context(),
+		"go", "mod", "download", "-json",
+		"github.com/dogmatiq/runkit@"+version,
+	).Output()
+	if err != nil {
+		t.Fatalf("unable to fetch runkit %s: %s", version, err)
+	}
+
+	var module struct {
+		Dir string
+	}
+
+	if err := json.Unmarshal(out, &module); err != nil {
+		t.Fatal(err)
+	}
+
+	ddlFS := os.DirFS(module.Dir)
+
+	if err := xsql.Transact(
+		t.Context(),
+		db,
+		func(ctx context.Context, tx *sql.Tx) error {
+			// Released runkit versions lock the schema before applying the DDL.
+			if _, err := tx.ExecContext(
+				ctx,
+				`LOCK TABLE pg_catalog.pg_namespace IN SHARE ROW EXCLUSIVE MODE`,
+			); err != nil {
+				return err
+			}
+
+			return fs.WalkDir(
+				ddlFS,
+				"internal/schema/ddl",
+				func(path string, d fs.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						return err
+					}
+
+					ddl, err := fs.ReadFile(ddlFS, path)
+					if err != nil {
+						return err
+					}
+
+					_, err = tx.ExecContext(ctx, string(ddl))
+					return err
+				},
+			)
+		},
+	); err != nil {
+		t.Fatalf("unable to create the schema of runkit %s: %s", version, err)
+	}
+}
+
+// dumpObjectHeader matches the comment that pg_dump writes above each schema
+// object.
+var dumpObjectHeader = regexp.MustCompile(`(?m)^--\n-- Name: `)
+
+// dumpRestrictLine matches the lines that pg_dump writes with a randomly chosen
+// key, which differs between two dumps of the same schema.
+var dumpRestrictLine = regexp.MustCompile(`(?m)^\\(un)?restrict .*\n`)
+
+// dumpFooter is the comment that pg_dump writes at the end of its output.
+const dumpFooter = "--\n-- PostgreSQL database dump complete\n--\n"
+
+// dumpSchemaObjects returns the output of "pg_dump --schema-only" for the given
+// database, split into one string for each schema object, sorted.
+//
+// The first string is the text that precedes the first object.
+func dumpSchemaObjects(t testing.TB, db *sql.DB) []string {
+	t.Helper()
+
+	dump := dumpRestrictLine.ReplaceAllString(xtesting.DumpSchema(t, db), "")
+
+	if i := strings.LastIndex(dump, dumpFooter); i != -1 {
+		dump = dump[:i]
+	}
+
+	var objects []string
+
+	previous := 0
+	for _, loc := range dumpObjectHeader.FindAllStringIndex(dump, -1) {
+		objects = append(objects, strings.TrimSpace(dump[previous:loc[0]]))
+		previous = loc[0]
+	}
+
+	objects = append(objects, strings.TrimSpace(dump[previous:]))
+
+	slices.Sort(objects)
+
+	return objects
+}
+
+// difference returns the elements of a that are not in b.
+func difference(a, b []string) []string {
+	var result []string
+
+	for _, element := range a {
+		if !slices.Contains(b, element) {
+			result = append(result, element)
+		}
+	}
+
+	return result
 }

@@ -25,6 +25,3 @@ CREATE TABLE IF NOT EXISTS process.instances (
     PRIMARY KEY (handler_key, instance_id),
     CHECK (NOT ended OR state IS NULL)
 );
-
-ALTER TABLE process.instances
-ADD COLUMN IF NOT EXISTS deadline_queue_id uuid;

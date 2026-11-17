@@ -7,10 +7,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 <!-- references -->
 
-[0.3.0 migration guide]: https://github.com/dogmatiq/runkit/blob/main/docs/MIGRATING-v0.3.0.md
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs
 [dogmatiq/protobuf]: https://github.com/dogmatiq/protobuf
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
+[major schema upgrades]: https://github.com/dogmatiq/runkit/blob/main/README.md#major-schema-upgrades
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
@@ -22,10 +22,9 @@ This release extends remote event consumption to process handlers, and changes
 how engines deliver commands and deadlines, and how they retry and log failures.
 
 > [!IMPORTANT]
-> Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
-> stop every engine that uses it before calling `CreateSchema()`.
->
-> See the [0.3.0 migration guide].
+> This release includes breaking changes to the engine's SQL schema, so
+> upgrading a database from an earlier runkit version requires downtime. Follow
+> the steps in [major schema upgrades].
 
 > [!WARNING]
 > Adding a new process handler to an application can now trigger commands and
@@ -72,13 +71,22 @@ events.
 - Added engine options for configuring the engine's concurrency behavior:
   - `WithMessageQueueConcurrency()`, which defaults to `DefaultMessageQueueConcurrency()`
   - `WithMessageQueueContentionDelay()`, which defaults to `DefaultMessageQueueContentionDelay()`
+- Added `ApplySchemaOffline()`, which applies schema changes that need every
+  engine to be stopped.
+- Added schema versions. The database records the schema version that it has
+  reached, and each runkit version's changelog section states the schema
+  version that it needs.
 
 ### Changed
 
 - **[BC]** Process handlers added to an application now consume historical
   events, instead of only new events.
-- **[BC]** The database schema has changed. Call `CreateSchema()` to migrate the
-  database before running this version.
+- **[BC]** Renamed `CreateSchema()` to `ApplySchemaOnline()`. It no longer
+  applies a schema change that needs every engine to be stopped, and returns an
+  error instead. Use `ApplySchemaOffline()` for those.
+- **[BC]** The database schema has changed in a way that engines built for the
+  earlier schema can't run on. Stop every engine that uses the database, back it
+  up, and call `ApplySchemaOffline()` before running this runkit version.
 - **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
   function.
 - Changed how commands and deadlines are delivered:

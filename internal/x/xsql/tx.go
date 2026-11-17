@@ -12,7 +12,7 @@ import (
 // committed.
 func Transact(
 	ctx context.Context,
-	db *sql.DB,
+	db TxBeginner,
 	fn func(context.Context, *sql.Tx) error,
 ) (err error) {
 	defer func() {

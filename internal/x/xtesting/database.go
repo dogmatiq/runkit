@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -26,11 +28,67 @@ import (
 func NewDatabase(t testing.TB) *sql.DB {
 	db := openDatabase(t, nil)
 
-	if err := schema.Create(t.Context(), db); err != nil {
-		t.Fatalf("unable to apply database schema: %s", err)
-	}
+	ApplySchema(t, db)
 
 	return db
+}
+
+// ApplySchema brings the schema of the given database to the current schema
+// version, as the engine does, and fails the test if it can't.
+func ApplySchema(t testing.TB, db *sql.DB) {
+	t.Helper()
+
+	if err := schema.Apply(
+		t.Context(),
+		db,
+		false,
+		5*time.Second,
+		30*time.Second,
+	); err != nil {
+		t.Fatalf("unable to apply database schema: %s", err)
+	}
+}
+
+// DumpSchema returns the output of "pg_dump --schema-only" for the given
+// database, and fails the test if it can't run it.
+//
+// The output contains lines with a randomly chosen key, so the output for two
+// identical schemas is not necessarily identical.
+func DumpSchema(t testing.TB, db *sql.DB) string {
+	t.Helper()
+
+	var name string
+	if err := db.QueryRowContext(
+		t.Context(),
+		`SELECT current_database()`,
+	).Scan(&name); err != nil {
+		t.Fatalf("unable to read the database name: %s", err)
+	}
+
+	code, output, err := getContainer(t).Exec(
+		t.Context(),
+		[]string{
+			"pg_dump",
+			"--schema-only",
+			"--username", containerUsername,
+			"--dbname", name,
+		},
+		exec.Multiplexed(),
+	)
+	if err != nil {
+		t.Fatalf("unable to run pg_dump: %s", err)
+	}
+
+	dump, err := io.ReadAll(output)
+	if err != nil {
+		t.Fatalf("unable to read the output of pg_dump: %s", err)
+	}
+
+	if code != 0 {
+		t.Fatalf("pg_dump exited with code %d: %s", code, dump)
+	}
+
+	return string(dump)
 }
 
 // NewDatabaseWithFailingQueries returns a database pool like [NewDatabase],
@@ -50,9 +108,7 @@ func NewDatabaseWithFailingQueries(
 		},
 	)
 
-	if err := schema.Create(t.Context(), db); err != nil {
-		t.Fatalf("unable to apply database schema: %s", err)
-	}
+	ApplySchema(t, db)
 
 	return db
 }
@@ -173,6 +229,21 @@ func createTestDatabase(t testing.TB, dsn string) (dbName string) {
 	return dbName
 }
 
+const (
+	// containerUsername is the name of the PostgreSQL user that the tests
+	// connect as.
+	//
+	// It must not be the name of one of the engine's schemas, such as "runkit".
+	// The default PostgreSQL "search_path" includes a schema named after the
+	// connected user, which would let a query that omits the schema name
+	// succeed. The tests want every query to name its schema.
+	containerUsername = "dogmatiq-runkit-test"
+
+	// containerPassword is the password of the PostgreSQL user that the tests
+	// connect as.
+	containerPassword = "password"
+)
+
 var containerState struct {
 	mutex     sync.Mutex
 	container *postgres.PostgresContainer
@@ -193,12 +264,6 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		return containerState.container
 	}
 
-	// We don't use "dogma" as the username because the default PostgreSQL
-	// "search_path" would automatically find the "dogma" schema, but we want to
-	// make sure that all queries name the schema explicitly.
-	username := "dogmatiq-runkit-test"
-	password := "password"
-
 	container, err := postgres.Run(
 		t.Context(),
 		"postgres:18-alpine",
@@ -215,8 +280,8 @@ func getContainer(t testing.TB) *postgres.PostgresContainer {
 		),
 
 		postgres.BasicWaitStrategies(),
-		postgres.WithUsername(username),
-		postgres.WithPassword(password),
+		postgres.WithUsername(containerUsername),
+		postgres.WithPassword(containerPassword),
 		testcontainers.CustomizeRequest(testcontainers.GenericContainerRequest{
 			Cmd: []string{"-c", "max_connections=1000"},
 		}),
