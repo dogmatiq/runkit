@@ -37,7 +37,7 @@ func (c *Consumer) attemptDelivery(
 	queues *uuidcollection.Set,
 	messageID *uuidpb.UUID,
 ) (bool, error) {
-	tx, err := c.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, xsql.TxOptions)
 	if err != nil {
 		return false, fmt.Errorf("unable to begin transaction: %w", err)
 	}

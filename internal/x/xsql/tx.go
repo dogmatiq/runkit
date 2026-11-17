@@ -6,7 +6,22 @@ import (
 	"fmt"
 )
 
-// Transact executes the given function within a transaction.
+// TxOptions holds the options for each transaction that the engine begins.
+//
+// It sets the isolation level to READ COMMITTED, instead of leaving it to the
+// default that the database or the role may set. The engine's queries rely on
+// READ COMMITTED. Some of them take a lock and then read rows, and expect each
+// statement to see the rows that other transactions committed while it waited
+// for the lock. At REPEATABLE READ or SERIALIZABLE, each statement sees the
+// rows as they were when the transaction's first query started.
+//
+// Don't modify it.
+var TxOptions = &sql.TxOptions{
+	Isolation: sql.LevelReadCommitted,
+}
+
+// Transact executes the given function within a transaction that uses
+// [TxOptions].
 //
 // If fn returns an error the transaction is rolled back, otherwise it is
 // committed.
@@ -32,7 +47,7 @@ func Transact(
 		}
 	}()
 
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, TxOptions)
 	if err != nil {
 		return fmt.Errorf("unable to begin transaction: %w", err)
 	}

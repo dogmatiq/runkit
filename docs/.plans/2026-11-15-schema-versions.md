@@ -222,7 +222,7 @@ done.
     `CurrentVersion`, and says "(new)" only when the section below it differs,
     with sections before the line existed counting as `v1.0.0`).
 - [x] **The migration machinery, the migration to schema version v2.0.0, and the
-  public functions.** PR or commit: —
+  public functions.** PR or commit: b332499
   - Checked on PostgreSQL 18.3: both prepared-statement cases run outside a
     transaction, and `lock_timeout` cancels a concurrent index build that waits
     for older transactions, leaving an invalid index. So a `stmt` step sets
