@@ -76,7 +76,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		if m := r.Migrations[i]; stepsCompleted > len(m.Steps) {
 			return fmt.Errorf(
-				"invalid migration progress in the database: %d steps are recorded as completed for the migration to %s, which only has %d steps",
+				"invalid migration progress in the database: the number of completed steps is %d, but the migration to %s only has %d step(s)",
 				stepsCompleted,
 				m.Version,
 				len(m.Steps),

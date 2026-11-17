@@ -44,7 +44,13 @@ func Apply(
 	if err != nil {
 		return fmt.Errorf("unable to get a database connection: %w", err)
 	}
-	defer conn.Close()
+
+	// An upgrade changes the session of this connection, such as by holding
+	// the advisory lock and by removing the timeouts for a statement step. It
+	// undoes each change, but undoing one can fail. Closing the connection,
+	// rather than returning it to the pool, keeps those changes away from the
+	// engine's other queries.
+	defer xsql.Discard(conn)
 
 	// Read the schema version before waiting for the lock, so that a call that
 	// has nothing to change doesn't wait for another call's migration to
