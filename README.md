@@ -72,6 +72,9 @@ and its section of the changelog states which one.
   relies on every engine being stopped. If it fails part-way, calling it again
   carries on from where it stopped.
 
+The [schema upgrade flowcharts] show each outcome of applying the schema, and
+what to do next at each one.
+
 ### Upgrading
 
 > [!CAUTION]
@@ -114,3 +117,4 @@ Only a backup can undo the upgrade.
 [PostgreSQL]: https://www.postgresql.org/
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [projectionkit]: https://github.com/dogmatiq/projectionkit
+[schema upgrade flowcharts]: docs/schema-upgrades.md

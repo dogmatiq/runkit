@@ -98,10 +98,14 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   `migration` package knows nothing of files: it takes a list of steps and
   identifies a step by its position. A `tx` step sets `migrating_to` and
   `migration_steps_completed` in its own transaction, so the step and its record
-  commit together. A `stmt` step is idempotent (for an index: `IF NOT EXISTS`,
-  after dropping an invalid leftover), and sets them after it runs. A rerun
-  skips the completed steps of the recorded migration, in the order of
-  migrations by schema version and then steps by position.
+  commit together. A `stmt` step is idempotent (for an index: `IF NOT EXISTS`),
+  and sets them after it runs. An interrupted concurrent build leaves its index
+  invalid, and `IF NOT EXISTS` would skip over it, so an upgrade fails while any
+  index in the engine's schemas is invalid, and the error names each one. The
+  upgrade can't tell whether a step builds a given index again, so a person
+  decides whether to drop or rebuild each one. A rerun skips the completed steps
+  of the recorded migration, in the order of migrations by schema version and
+  then steps by position.
 - **Cleanup.** The last thing a successful migrate call does, in one
   transaction, is set `version` to `CurrentVersion`, `applied_at` to the time,
   and `migrating_to` and `migration_steps_completed` to NULL. A crash before
@@ -118,8 +122,12 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   both run outside a transaction.
 - **One lock.** A session-level advisory lock, with a distinctive two-integer
   key, is held on one connection for the whole migration, so that only one node
-  migrates at a time. It replaces the `LOCK TABLE pg_catalog.pg_namespace` that
-  `Create` takes today, and needs no special privilege.
+  migrates at a time. A call that waits for it polls `pg_try_advisory_lock`,
+  because a statement that waited inside `pg_advisory_lock` would be an open
+  transaction, and a concurrent index build in the call that holds the lock
+  waits for every older transaction to end. It replaces the
+  `LOCK TABLE pg_catalog.pg_namespace` that `Create` takes today, and needs no
+  special privilege.
 - **Timeouts follow the entry point.** `ApplySchemaOnline()` and `Run()` assume
   that engines may be running: a `tx` step runs with a lock timeout and a
   statement timeout, and a `stmt` step runs with no timeout, because it is long
@@ -229,8 +237,8 @@ done.
   - Checked on PostgreSQL 18.3: both prepared-statement cases run outside a
     transaction, and `lock_timeout` cancels a concurrent index build that waits
     for older transactions, leaving an invalid index. So a `stmt` step sets
-    `lock_timeout` and `statement_timeout` to 0 on its connection, and drops an
-    invalid leftover before it builds the index again.
+    `lock_timeout` and `statement_timeout` to 0 on its connection. An invalid
+    leftover stops the upgrade until a person drops or rebuilds it.
   - The `runkit.schema_version` table in
     `internal/schema/internal/bootstrap/bootstrap.sql`, which `schema.Apply`
     runs before it changes anything, so no migration can change it; the runner
@@ -406,9 +414,18 @@ done.
       change the schema, and a pooler in transaction mode, such as PgBouncer,
       can leave that lock held, so that later calls wait forever. From the
       [review of the migration implementation](2026-11-16-schema-migration-review.md).
+    - a flowchart in `docs/schema-upgrades.md` for resolving the invalid indexes
+      that block a migration. Whether an index needs to be dropped or rebuilt
+      depends on whether a runkit release builds it, so the chart has the
+      operator, with the application's developer, check the runkit releases.
 - [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream/00-tables.sql`, and test it in the upgrade test.
+
+Before the work merges, return to the flowcharts in `docs/schema-upgrades.md`
+with the user, and check them against the code as it is then. `Run` applying the
+schema changes what starts an online upgrade, and the user asked to revisit the
+diagrams then.
 
 Later, not part of these tasks: a test that runs the previous runkit version's
 engine against an upgraded database. I'd draft an issue and show it before

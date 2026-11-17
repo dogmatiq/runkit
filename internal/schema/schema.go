@@ -12,18 +12,10 @@ import (
 
 	"github.com/dogmatiq/runkit/internal/schema/internal/bootstrap"
 	"github.com/dogmatiq/runkit/internal/schema/internal/current"
+	"github.com/dogmatiq/runkit/internal/schema/internal/migrationlock"
 	"github.com/dogmatiq/runkit/internal/schema/internal/migrations"
 	"github.com/dogmatiq/runkit/internal/schema/internal/version"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
-)
-
-const (
-	// lockKey is the key of the advisory lock that a call to [Apply] holds
-	// while it migrates the database.
-	//
-	// Its high bit is clear because PostgreSQL's key is a signed 64-bit
-	// integer.
-	lockKey uint64 = 0x0_DA7ABA5E_BA221E2
 )
 
 // Apply brings the schema of the database to [TargetVersion], creating the
@@ -73,7 +65,7 @@ func Apply(
 		return err
 	}
 
-	release, err := lockDatabase(ctx, conn)
+	release, err := migrationlock.Acquire(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -95,6 +87,15 @@ func Apply(
 	// holds the lock. Before then, another call may have been part-way through
 	// an upgrade that leaves this call with nothing to do.
 	if err := checkCanUpgrade(currentVersion, migratingTo, TargetVersion, offline); err != nil {
+		return err
+	}
+
+	// An interrupted CREATE INDEX CONCURRENTLY leaves its index invalid, and
+	// queries ignore an invalid index. A step that builds the index again with
+	// IF NOT EXISTS would find the invalid index and do nothing. The upgrade
+	// can't tell whether a step builds a given index again, so it stops until a
+	// person drops or rebuilds each invalid index.
+	if err := checkIndexesAreValid(ctx, conn); err != nil {
 		return err
 	}
 
@@ -245,32 +246,48 @@ func identifySchemaVersions(
 	return version.Version{}, version.Version{}, nil
 }
 
-// lockDatabase takes the advisory lock that only one call to [Apply] holds at
-// a time, and returns a function that releases it.
-func lockDatabase(
-	ctx context.Context,
-	conn *sql.Conn,
-) (release func(), err error) {
-	if _, err := conn.ExecContext(
+// checkIndexesAreValid returns an error that names each invalid index in the
+// engine's schemas, if there are any.
+func checkIndexesAreValid(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(
 		ctx,
-		`SELECT pg_advisory_lock($1)`,
-		lockKey,
-	); err != nil {
-		// The lock might have been taken even though the call failed, such as
-		// when the context is canceled.
-		xsql.Discard(conn)
-		return nil, fmt.Errorf("unable to lock the database for migration: %w", err)
+		`SELECT format('%I.%I', n.nspname, c.relname)
+		FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE NOT i.indisvalid
+		AND n.nspname = ANY($1)
+		ORDER BY 1`,
+		schemaNames(),
+	)
+	if err != nil {
+		return fmt.Errorf("unable to look for invalid indexes: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("unable to look for invalid indexes: %w", err)
+		}
+
+		names = append(names, name)
 	}
 
-	return func() {
-		if _, err := conn.ExecContext(
-			context.WithoutCancel(ctx),
-			`SELECT pg_advisory_unlock($1)`,
-			lockKey,
-		); err != nil {
-			xsql.Discard(conn)
-		}
-	}, nil
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("unable to look for invalid indexes: %w", err)
+	}
+
+	if len(names) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"database schema migration requires human intervention: invalid indexes need to be dropped or rebuilt manually (%s)",
+		strings.Join(names, ", "),
+	)
 }
 
 // executeFile executes the SQL in the given file of [current.FS].

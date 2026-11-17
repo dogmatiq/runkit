@@ -347,6 +347,52 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 	)
 }
 
+// TestApply_invalidIndex verifies that a database that needs an upgrade is
+// refused while it has an invalid index in one of the engine's schemas, and
+// that the error names the index.
+func TestApply_invalidIndex(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	// A unique index built concurrently over duplicate values fails, and
+	// leaves the index invalid, as an interrupted build does.
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE TABLE eventstream.duplicates (value int);
+		INSERT INTO eventstream.duplicates VALUES (1), (1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE UNIQUE INDEX CONCURRENTLY duplicates_by_value
+		ON eventstream.duplicates (value)`,
+	); err == nil {
+		t.Fatal("expected the index build to fail")
+	}
+
+	err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "eventstream.duplicates_by_value") {
+		t.Fatalf("the error doesn't name the invalid index: %s", err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the old tables are still there",
+		true,
+		db,
+		`SELECT to_regclass('commandqueue.commands') IS NOT NULL
+			AND to_regclass('messagequeue.messages') IS NULL`,
+	)
+}
+
 // TestApply_raisingMajorNumberNeedsOffline verifies that migrating while
 // engines may be running refuses to raise the major number of the schema
 // version, and changes nothing.

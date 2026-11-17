@@ -427,6 +427,18 @@ The upgrade test can't catch any of this, because nothing interrupts its builds.
 
 **If the upgrade of old databases is dropped.** This finding would be unchanged.
 
+**Decision.** The second fix was made. The lock moved into its own package,
+`migrationlock`, whose `Acquire` polls `pg_try_advisory_lock`, so a call that
+waits for the lock has no statement open. A test there builds an index
+concurrently on the connection that holds the lock while another connection
+waits for it. With the blocking wait, that test failed with a deadlock. The
+first fix was replaced. Once it holds the lock, an upgrade fails while any index
+in the engine's schemas is invalid, and the error names each one. The upgrade
+can't tell whether a step builds a given index again, so the error says that the
+migration requires human intervention, and that each index needs to be dropped
+or rebuilt manually. Dropping every invalid index automatically was rejected,
+because it can drop an index that nothing builds again.
+
 ### 6. A transaction step can end its own transaction
 
 **What goes wrong.** `apply` in the runner sends the SQL of a transaction step,
