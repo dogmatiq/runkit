@@ -12,6 +12,10 @@ const (
 
 	// Statement is the kind of a step that holds one statement, which runs on
 	// its own outside any transaction.
+	//
+	// The statement and the record of the step commit separately, so a failure
+	// between them runs the statement again. It must therefore be safe to run
+	// twice, such as by using IF NOT EXISTS.
 	Statement
 )
 
