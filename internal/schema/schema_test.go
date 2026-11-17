@@ -186,7 +186,7 @@ func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible schema version") {
+		if !strings.Contains(err.Error(), "incompatible database schema") {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -228,7 +228,7 @@ func TestApply_migrationInProgressWithNewerMajorNumber(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible schema version") {
+		if !strings.Contains(err.Error(), "incompatible database schema") {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -328,7 +328,7 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible schema version") {
+		if !strings.Contains(err.Error(), "incompatible database schema") {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -361,7 +361,7 @@ func TestApply_raisingMajorNumberNeedsOffline(t *testing.T) {
 		t.Fatal("expected an error, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "manual schema migration required") {
+	if !strings.Contains(err.Error(), "major database schema upgrade required") {
 		t.Fatalf("unexpected error: %s", err)
 	}
 

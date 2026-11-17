@@ -69,14 +69,14 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		if i == -1 {
 			return fmt.Errorf(
-				"a migration to schema version %s is in progress, and this runkit version doesn't know it",
+				"incompatible database schema: the database has an in-progress migration to %s, which this runkit version doesn't include; it may come from a hotfix to a prior runkit version",
 				migratingTo,
 			)
 		}
 
 		if m := r.Migrations[i]; stepsCompleted > len(m.Steps) {
 			return fmt.Errorf(
-				"the database records %d completed steps of the migration to schema version %s, which only has %d",
+				"invalid migration progress in the database: %d steps are recorded as completed for the migration to %s, which only has %d steps",
 				stepsCompleted,
 				m.Version,
 				len(m.Steps),
@@ -91,6 +91,15 @@ func (r *Runner) Run(ctx context.Context) error {
 			completed := stepsCompleted + i + 1
 
 			if err := r.apply(ctx, m, s, completed); err != nil {
+				if xsql.IsStatementTimeoutError(ctx, err) && !r.Offline {
+					return fmt.Errorf(
+						"database schema migration timed out while applying step %s of the migration to %s: the step takes longer than is allowed while the application is running, so stop every instance of the application, then apply the upgrade offline: %w",
+						s.Name,
+						m.Version,
+						err,
+					)
+				}
+
 				return fmt.Errorf(
 					"unable to apply step %s of the migration to schema version %s: %w",
 					s.Name,
@@ -111,7 +120,8 @@ func (r *Runner) Run(ctx context.Context) error {
 // commits it if fn returns nil.
 //
 // Unless Offline is true, the transaction has a lock timeout and a statement
-// timeout.
+// timeout. If Offline is true, it has no timeout at all, including any
+// transaction timeout that the database or the role sets.
 func (r *Runner) Transact(
 	ctx context.Context,
 	fn func(context.Context, *sql.Tx) error,
@@ -139,6 +149,18 @@ func (r *Runner) Transact(
 				statementTimeout,
 			); err != nil {
 				return fmt.Errorf("unable to set the timeouts: %w", err)
+			}
+
+			// PostgreSQL ends a session whose transaction runs for longer than
+			// transaction_timeout. Nothing limits how long an offline step
+			// runs, so remove that limit too.
+			if r.Offline {
+				if _, err := tx.ExecContext(
+					ctx,
+					`SELECT set_config('transaction_timeout', '0', true)`,
+				); err != nil {
+					return fmt.Errorf("unable to remove the transaction timeout: %w", err)
+				}
 			}
 
 			return fn(ctx, tx)
@@ -197,7 +219,9 @@ func (r *Runner) applyStatement(ctx context.Context, m Migration, s Step, comple
 	defer func() {
 		_, resetErr := r.Conn.ExecContext(
 			context.WithoutCancel(ctx),
-			`RESET lock_timeout; RESET statement_timeout`,
+			`RESET lock_timeout;
+			RESET statement_timeout;
+			RESET transaction_timeout`,
 		)
 		err = errors.Join(err, resetErr)
 	}()
@@ -206,7 +230,8 @@ func (r *Runner) applyStatement(ctx context.Context, m Migration, s Step, comple
 		ctx,
 		`SELECT
 			set_config('lock_timeout', '0', false),
-			set_config('statement_timeout', '0', false)`,
+			set_config('statement_timeout', '0', false),
+			set_config('transaction_timeout', '0', false)`,
 	); err != nil {
 		return fmt.Errorf("unable to remove the timeouts: %w", err)
 	}

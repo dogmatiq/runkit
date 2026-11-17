@@ -31,14 +31,14 @@ func needsUpgrade(
 
 	case !target.CanUpgradeOffline(current):
 		return false, fmt.Errorf(
-			"incompatible schema version: this version of dogmatiq/runkit (%s, schema %s) is too old to work with the existing database schema (%s)",
+			"incompatible database schema: runkit %s (schema %s) is too old for the database, which is already at %s",
 			runkitVersion(),
-			target,
+			compatibleRange(target),
 			current,
 		)
 
 	case migratingTo.Major() > target.Major():
-		return false, migrationInProgressError(current, migratingTo, target)
+		return false, migrationInProgressError(migratingTo, target)
 
 	default:
 		return !target.IsSatisfiedBy(current), nil
@@ -60,13 +60,13 @@ func checkCanUpgrade(
 	case migratingTo.Compare(target) > 0:
 		// The target has no migration to a schema version above itself, so it
 		// can't finish this one.
-		return migrationInProgressError(current, migratingTo, target)
+		return migrationInProgressError(migratingTo, target)
 
 	case !current.IsZero() && !target.CanUpgradeOnline(current) && !offline:
 		return fmt.Errorf(
-			"manual schema migration required: this version of dogmatiq/runkit (%s, schema %s) requires a later major version of the schema than the existing database schema (%s)",
+			"major database schema upgrade required: runkit %s requires schema %s, but the database is at %s: stop every instance of the application, then apply the upgrade offline",
 			runkitVersion(),
-			target,
+			compatibleRange(target),
 			current,
 		)
 
@@ -77,14 +77,18 @@ func checkCanUpgrade(
 
 // migrationInProgressError returns the error for a database that the target
 // can't use or upgrade because of the migration in progress.
-func migrationInProgressError(
-	current, migratingTo, target version.Version,
-) error {
+func migrationInProgressError(migratingTo, target version.Version) error {
 	return fmt.Errorf(
-		"incompatible schema version: this version of dogmatiq/runkit (%s, schema %s) is too old to work with the existing database schema (%s), which is part-way through a migration to schema %s",
+		"incompatible database schema: runkit %s (schema %s) is too old for the database, which has an in-progress migration to %s",
 		runkitVersion(),
-		target,
-		current,
+		compatibleRange(target),
 		migratingTo,
 	)
+}
+
+// compatibleRange returns the schema versions that satisfy the target, written
+// as a caret range such as "^v2.0.0". A caret range matches the given version
+// and any later version that has the same major number.
+func compatibleRange(target version.Version) string {
+	return "^" + target.String()
 }

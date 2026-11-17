@@ -369,6 +369,65 @@ func TestRunner(t *testing.T) {
 		})
 	})
 
+	t.Run("func Run() with a transaction timeout", func(t *testing.T) {
+		// setTransactionTimeout sets a transaction timeout on the runner's
+		// connection, as a default of the database or the role would.
+		setTransactionTimeout := func(t *testing.T, runner *Runner) {
+			t.Helper()
+
+			if _, err := runner.Conn.ExecContext(
+				t.Context(),
+				`SET transaction_timeout = '100ms'`,
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		t.Run("it doesn't apply the transaction timeout to a transaction step when offline", func(t *testing.T) {
+			db := xtesting.NewDatabase(t)
+
+			runner := newRunner(
+				t,
+				db,
+				true,
+				Migration{
+					Version: version.Version{1, 0, 0},
+					Steps: []Step{
+						{Name: "sleep", Kind: Transaction, SQL: `SELECT pg_sleep(0.5)`},
+					},
+				},
+			)
+			setTransactionTimeout(t, runner)
+
+			if err := runner.Run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+
+		t.Run("it doesn't apply the transaction timeout to a statement step", func(t *testing.T) {
+			for _, offline := range []bool{false, true} {
+				db := xtesting.NewDatabase(t)
+
+				runner := newRunner(
+					t,
+					db,
+					offline,
+					Migration{
+						Version: version.Version{1, 0, 0},
+						Steps: []Step{
+							{Name: "sleep", Kind: Statement, SQL: `SELECT pg_sleep(0.5)`},
+						},
+					},
+				)
+				setTransactionTimeout(t, runner)
+
+				if err := runner.Run(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	})
+
 	t.Run("func Transact()", func(t *testing.T) {
 		t.Run("it commits the transaction if the function succeeds", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)

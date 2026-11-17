@@ -120,18 +120,20 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   key, is held on one connection for the whole migration, so that only one node
   migrates at a time. It replaces the `LOCK TABLE pg_catalog.pg_namespace` that
   `Create` takes today, and needs no special privilege.
-- **Timeouts follow the entry point.** `ApplySchemaOnline()` and `Run()`
-  assume that engines may be running: a `tx` step runs with a lock timeout and a
+- **Timeouts follow the entry point.** `ApplySchemaOnline()` and `Run()` assume
+  that engines may be running: a `tx` step runs with a lock timeout and a
   statement timeout, and a `stmt` step runs with no timeout, because it is long
-  by nature and doesn't block reads or writes. `ApplySchemaOffline()` applies
-  no timeout to any step, since nobody is querying. The values are constants in
-  `engine.go`, passed to the `schema` package as required fields. A migration
-  that can't get its lock in time fails and rolls back, and `Run` retries the
-  apply with backoff instead of returning the error. When a statement timeout
-  stops a step under `ApplySchemaOnline()` or `Run()`, the error says that the
-  change takes longer than is allowed while engines may be running, and to stop
-  every engine and call `ApplySchemaOffline()`, so that a wrong guess about a
-  step's cost becomes a clear human step and not an outage.
+  by nature and doesn't block reads or writes. `ApplySchemaOffline()` applies no
+  timeout to any step, since nobody is querying. That includes any
+  `transaction_timeout` that the database or the role sets. A `stmt` step never
+  has that timeout either. The values are constants in `engine.go`, passed to
+  the `schema` package as required fields. A migration that can't get its lock
+  in time fails and rolls back, and `Run` retries the apply with backoff instead
+  of returning the error. When a statement timeout stops a step under
+  `ApplySchemaOnline()` or `Run()`, the error says that the step takes longer
+  than is allowed while the application is running, and to stop every instance
+  of the application and apply the upgrade offline, so that a wrong guess about
+  a step's cost becomes a clear human step and not an outage.
 - **Allowed in a migration that raises only the minor or patch number**, because
   the cost doesn't grow with the data and the lock is brief: create a schema,
   table, function or trigger; add a column with no default or a constant
@@ -153,10 +155,12 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   - `ApplySchemaOnline()`: creates the schema on an empty database and applies
     changes that raise only the minor or patch number. It returns an error
     instead of applying a change that raises the major number, and the error
-    names `ApplySchemaOffline()` and says to stop every engine first. Doc
-    sentence: "ApplySchemaOnline brings the database's schema to the schema
-    version of this runkit version, creating the schema if the database has
-    none. It applies only changes that are safe while engines are running."
+    says to stop every instance of the application and apply the upgrade
+    offline. An error that reaches an application's operator names runkit, but
+    none of its functions. Doc sentence: "ApplySchemaOnline brings the
+    database's schema to the schema version of this runkit version, creating the
+    schema if the database has none. It applies only changes that are safe while
+    engines are running."
   - `ApplySchemaOffline()`: does what `ApplySchemaOnline()` does and also
     applies a schema change that raises the major number. Nothing checks that no
     engine is running; the name and the documentation say so. Doc sentence:
@@ -345,10 +349,12 @@ done.
     those after it, and keep the schema version. Never change, insert or remove
     a step before it, because a database may have completed those steps, and a
     rerun skips them by count." and "If a released migration completed with a
-    wrong result, fix it with a later migration."), schema versus cluster
-    compatibility, the consequence of raising the major number after 1.0, and
-    the Dialer versioning guide's rule that anything needing human intervention
-    is a major version.
+    wrong result, fix it with a later migration."), how a hotfix to a prior
+    runkit version gets its schema version, because the migration code assumes
+    that every runkit version contains every migration below its target, schema
+    versus cluster compatibility, the consequence of raising the major number
+    after 1.0, and the Dialer versioning guide's rule that anything needing
+    human intervention is a major version.
 - [ ] **`Run` applies the schema.** PR or commit: —
   - `engine.go` and the start-up sequence (`internal/application/bind.go` is
     where the engine binds the database today): the check and apply described

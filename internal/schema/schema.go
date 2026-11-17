@@ -133,13 +133,6 @@ func Apply(
 		}
 
 		if err := runner.Run(ctx); err != nil {
-			if xsql.IsStatementTimeoutError(ctx, err) && !offline {
-				return fmt.Errorf(
-					"%w: the change takes longer than is allowed while engines may be running: stop every engine that uses the database and call ApplySchemaOffline()",
-					err,
-				)
-			}
-
 			return err
 		}
 	}
