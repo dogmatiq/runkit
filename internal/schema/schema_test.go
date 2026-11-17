@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dogmatiq/runkit/internal/schema"
+	"github.com/dogmatiq/runkit/internal/schema/internal/version"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/jackc/pgerrcode"
@@ -83,9 +84,9 @@ func TestApplyAndDrop(t *testing.T) {
 		`SELECT to_regclass('messagequeue.messages') IS NOT NULL`,
 	)
 
-	// Migrating again verifies idempotency.
+	// A database at the target schema version needs no change.
 	if err := schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout); err != nil {
-		t.Fatalf("migration is not idempotent: %s", err)
+		t.Fatalf("unable to apply the schema again: %s", err)
 	}
 
 	xtesting.ExpectQueryResult(
@@ -118,6 +119,39 @@ func TestApplyAndDrop(t *testing.T) {
 		db,
 		`SELECT COUNT(*)
 		FROM information_schema.schemata`,
+	)
+}
+
+// TestApply_reappliesCurrent verifies that "current" can be applied to a
+// database that already has it. Every upgrade applies "current", including one
+// with no migrations to run, such as an upgrade that raises only the patch
+// number.
+//
+// The test changes [schema.TargetVersion], so it must not call t.Parallel().
+// Go runs the parallel tests only after every test that doesn't call it.
+func TestApply_reappliesCurrent(t *testing.T) {
+	db := xtesting.NewDatabase(t)
+
+	target := schema.TargetVersion
+	t.Cleanup(func() { schema.TargetVersion = target })
+
+	schema.TargetVersion = version.Version{
+		target.Major(),
+		target.Minor(),
+		target.Patch() + 1,
+	}
+
+	if err := schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout); err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database is at the new target schema version",
+		schema.TargetVersion,
+		db,
+		`SELECT version
+		FROM runkit.schema_version`,
 	)
 }
 

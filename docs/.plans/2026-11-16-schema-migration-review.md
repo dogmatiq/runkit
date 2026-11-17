@@ -546,6 +546,15 @@ database already has, which covers part of the gap. Without old databases, the
 upgrade test has no released schema to start from, and no test at all would
 apply `current/` to an existing database.
 
+**Decision.** The suggested fix was made. `TestApply_reappliesCurrent` raises
+`TargetVersion` by one patch number and calls `Apply` on a database that `Apply`
+created, so `current/` runs again with no migrations. With the `CREATE TYPE`
+statement from the reproduction added to `current/`, it failed with
+`type "review_probe" already exists`, while `TestApplyAndDrop` still passed. The
+comment in `TestApplyAndDrop` that claimed to verify idempotency was corrected.
+The test changes a package variable, so it doesn't run in parallel with the
+others.
+
 ## How the scenarios were run
 
 Each scenario was a throwaway test in `internal/schema` or in
