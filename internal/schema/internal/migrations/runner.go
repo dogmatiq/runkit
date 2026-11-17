@@ -119,12 +119,15 @@ func (r *Runner) Run(ctx context.Context) error {
 // Transact calls fn within a transaction on the runner's connection, and
 // commits it if fn returns nil.
 //
+// A call to fn's ExecContext fails if its SQL ends the transaction, such as
+// with COMMIT or ROLLBACK. Its QueryContext and QueryRowContext don't check.
+//
 // Unless Offline is true, the transaction has a lock timeout and a statement
 // timeout. If Offline is true, it has no timeout at all, including any
 // transaction timeout that the database or the role sets.
 func (r *Runner) Transact(
 	ctx context.Context,
-	fn func(context.Context, *sql.Tx) error,
+	fn func(context.Context, xsql.Executor) error,
 ) error {
 	r.validate()
 
@@ -163,7 +166,12 @@ func (r *Runner) Transact(
 				}
 			}
 
-			return fn(ctx, tx)
+			g, err := newGuardedTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+
+			return fn(ctx, g)
 		},
 	)
 }
@@ -197,7 +205,7 @@ func (r *Runner) apply(ctx context.Context, m Migration, s Step, completed int) 
 
 	return r.Transact(
 		ctx,
-		func(ctx context.Context, tx *sql.Tx) error {
+		func(ctx context.Context, tx xsql.Executor) error {
 			if _, err := tx.ExecContext(ctx, s.SQL); err != nil {
 				return err
 			}
@@ -205,6 +213,67 @@ func (r *Runner) apply(ctx context.Context, m Migration, s Step, completed int) 
 			return record(ctx, tx, m, completed)
 		},
 	)
+}
+
+// guardedTx is an [xsql.Executor] that runs statements in a transaction, and
+// fails each call to ExecContext whose SQL ends that transaction.
+//
+// A COMMIT or ROLLBACK in the SQL ends the transaction early, and PostgreSQL
+// only warns about it. The statements after it would then run outside the
+// transaction, each committing by itself.
+type guardedTx struct {
+	tx *sql.Tx
+	id string
+}
+
+// newGuardedTx returns a guardedTx for statements in tx.
+func newGuardedTx(ctx context.Context, tx *sql.Tx) (*guardedTx, error) {
+	id, err := transactionID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &guardedTx{tx, id}, nil
+}
+
+func (g *guardedTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	res, err := g.tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := transactionID(ctx, g.tx)
+	if err != nil {
+		return nil, err
+	}
+
+	if id != g.id {
+		return nil, errors.New("the SQL ended the transaction that it runs in, such as with COMMIT or ROLLBACK")
+	}
+
+	return res, nil
+}
+
+func (g *guardedTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return g.tx.QueryContext(ctx, query, args...)
+}
+
+func (g *guardedTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return g.tx.QueryRowContext(ctx, query, args...)
+}
+
+// transactionID returns the ID of the transaction that the connection is in.
+// Outside a transaction, each call returns a different ID.
+func transactionID(ctx context.Context, tx *sql.Tx) (string, error) {
+	var id string
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT pg_current_xact_id()::text`,
+	).Scan(&id); err != nil {
+		return "", fmt.Errorf("unable to read the transaction ID: %w", err)
+	}
+
+	return id, nil
 }
 
 // applyStatement applies a [Statement] step and records that the given number

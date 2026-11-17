@@ -486,6 +486,15 @@ then not be released.
 The upgrade test would have no released schema to start from until this release
 exists, so it would have to be rebuilt before it could catch such a step.
 
+**Decision.** The suggested fix was made in `Runner.Transact`, which every
+transaction of the migration goes through, rather than in `apply` alone. It
+reads `pg_current_xact_id()` when the transaction begins, and gives its function
+an executor that reads it again after each statement and fails if it has
+changed. That also covers the transaction that applies `current/` and records
+the target schema version. The runner tests cover a step wrapped in `BEGIN` and
+`COMMIT`, a step with `COMMIT` part-way, a step with `ROLLBACK` part-way, and
+`Transact` itself. All four failed without the check.
+
 ### 7. No test applies `current/` to a database that already has it
 
 **What goes wrong.** `Apply` runs `current/` whenever it upgrades a database, so

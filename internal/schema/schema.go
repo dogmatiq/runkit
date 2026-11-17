@@ -108,7 +108,7 @@ func Apply(
 
 	if err := runner.Transact(
 		ctx,
-		func(ctx context.Context, tx *sql.Tx) error {
+		func(ctx context.Context, tx xsql.Executor) error {
 			_, err := tx.ExecContext(ctx, bootstrap.SQL)
 			return err
 		},
@@ -140,7 +140,7 @@ func Apply(
 
 	return runner.Transact(
 		ctx,
-		func(ctx context.Context, tx *sql.Tx) error {
+		func(ctx context.Context, tx xsql.Executor) error {
 			if err := executeDirectory(ctx, tx, "."); err != nil {
 				return err
 			}
@@ -291,7 +291,7 @@ func checkIndexesAreValid(ctx context.Context, conn *sql.Conn) error {
 }
 
 // executeFile executes the SQL in the given file of [current.FS].
-func executeFile(ctx context.Context, tx *sql.Tx, path string) error {
+func executeFile(ctx context.Context, tx xsql.Executor, path string) error {
 	ddl, err := current.FS.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("unable to read embedded schema: %w", err)
@@ -306,7 +306,7 @@ func executeFile(ctx context.Context, tx *sql.Tx, path string) error {
 
 // executeDirectory executes the SQL in each file in the given directory of
 // [current.FS] and its subdirectories, in order of path.
-func executeDirectory(ctx context.Context, tx *sql.Tx, root string) error {
+func executeDirectory(ctx context.Context, tx xsql.Executor, root string) error {
 	return fs.WalkDir(
 		current.FS,
 		root,

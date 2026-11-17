@@ -134,6 +134,65 @@ func TestRunner(t *testing.T) {
 			)
 		})
 
+		// A transaction step that ends its transaction early.
+		cases := []struct {
+			Name string
+			SQL  string
+		}{
+			{
+				Name: "it fails a transaction step that is wrapped in BEGIN and COMMIT",
+				SQL: `
+					BEGIN;
+					CREATE TABLE public.a (id int);
+					COMMIT`,
+			},
+			{
+				Name: "it fails a transaction step that commits part-way",
+				SQL: `
+					CREATE TABLE public.a (id int);
+					COMMIT;
+					CREATE TABLE public.b (id int)`,
+			},
+			{
+				Name: "it fails a transaction step that rolls back part-way",
+				SQL: `
+					CREATE TABLE public.a (id int);
+					ROLLBACK;
+					CREATE TABLE public.b (id int)`,
+			},
+		}
+
+		for _, c := range cases {
+			t.Run(c.Name, func(t *testing.T) {
+				db := xtesting.NewDatabase(t)
+
+				runner := newRunner(
+					t,
+					db,
+					false,
+					Migration{
+						Version: version.Version{1, 0, 0},
+						Steps: []Step{
+							{Name: "create", Kind: Transaction, SQL: c.SQL},
+						},
+					},
+				)
+
+				if err := runner.Run(t.Context()); err == nil {
+					t.Fatal("expected an error, got nil")
+				}
+
+				xtesting.ExpectQueryResult(
+					t,
+					"the step is not recorded",
+					true,
+					db,
+					`SELECT migrating_to IS NULL
+					FROM runkit.schema_version`,
+				)
+			})
+		}
+
 		t.Run("it resumes after the last step that completed", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
@@ -435,7 +494,7 @@ func TestRunner(t *testing.T) {
 
 			if err := runner.Transact(
 				t.Context(),
-				func(ctx context.Context, tx *sql.Tx) error {
+				func(ctx context.Context, tx xsql.Executor) error {
 					return xsql.ExecOne(
 						ctx,
 						tx,
@@ -454,6 +513,45 @@ func TestRunner(t *testing.T) {
 				1,
 				db,
 				`SELECT migration_steps_completed
+				FROM runkit.schema_version`,
+			)
+		})
+
+		t.Run("it fails a statement that ends the transaction", func(t *testing.T) {
+			db := xtesting.NewDatabase(t)
+			runner := newRunner(t, db, false)
+
+			if err := runner.Transact(
+				t.Context(),
+				func(ctx context.Context, tx xsql.Executor) error {
+					if _, err := tx.ExecContext(
+						ctx,
+						`CREATE TABLE public.a (id int);
+						COMMIT`,
+					); err != nil {
+						return err
+					}
+
+					// The statement must fail, or this change commits by
+					// itself.
+					return xsql.ExecOne(
+						ctx,
+						tx,
+						`UPDATE runkit.schema_version
+						SET migrating_to = 'v1.0.0',
+							migration_steps_completed = 1`,
+					)
+				},
+			); err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+
+			xtesting.ExpectQueryResult(
+				t,
+				"the later change isn't made",
+				true,
+				db,
+				`SELECT migrating_to IS NULL
 				FROM runkit.schema_version`,
 			)
 		})
