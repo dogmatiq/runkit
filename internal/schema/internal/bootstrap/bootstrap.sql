@@ -17,18 +17,19 @@ CREATE SCHEMA IF NOT EXISTS runkit;
 -- "version" is the schema version that the database has reached, such as
 -- "v2.0.0", and "applied_at" is the time that it was reached.
 --
--- "committed_migration" and "committed_steps" are NULL, or both set while a
--- migration is in progress. They are the schema version of the migration whose
--- steps are being applied, and how many of its steps have committed.
--- "version" doesn't change until every migration has finished.
+-- "migrating_to" and "migration_steps_completed" are both NULL, or both set
+-- while a migration is in progress. "migrating_to" is the schema version of the
+-- migration in progress, and "migration_steps_completed" is how many of its
+-- steps have completed. "version" doesn't change until every migration has
+-- finished.
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS runkit.schema_version (
-    version             text        NOT NULL,
-    applied_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
-    committed_migration text,
-    committed_steps     int         CHECK (committed_steps > 0),
+    version                   text        NOT NULL,
+    applied_at                timestamptz NOT NULL DEFAULT clock_timestamp(),
+    migrating_to              text,
+    migration_steps_completed int         CHECK (migration_steps_completed > 0),
 
-    CHECK ((committed_migration IS NULL) = (committed_steps IS NULL))
+    CHECK ((migrating_to IS NULL) = (migration_steps_completed IS NULL))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS schema_version_singleton

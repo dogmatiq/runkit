@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/dogmatiq/runkit/internal/schema/internal/version"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -39,61 +41,56 @@ type Runner struct {
 // Run applies the migrations that haven't been applied, and stops at the first
 // step that fails.
 //
-// If the database records that steps of a migration committed in an earlier
-// run, it skips the migrations before that migration, and that many of its
-// steps.
+// If a migration is already in progress, it skips the migrations before that
+// one, and the steps of that one that have completed.
 //
 // A [Statement] step runs without a lock timeout or a statement timeout. A
 // [Transaction] step runs with the timeouts unless Offline is true.
 func (r *Runner) Run(ctx context.Context) error {
 	r.validate()
 
-	committedMigration, committedSteps, err := r.committed(ctx)
+	migratingTo, stepsCompleted, err := r.progress(ctx)
 	if err != nil {
 		return err
 	}
 
-	// resumeAt is the index of the migration whose steps committed, or zero if
-	// there is none.
-	resumeAt := 0
-	if committedMigration != "" {
-		resumeAt = -1
-		for i, m := range r.Migrations {
-			if m.Version.String() == committedMigration {
-				resumeAt = i
-			}
-		}
+	// pendingMigrations holds the migrations that have not yet been completed,
+	// starting with the migration that is currently in progress, if there is
+	// one.
+	pendingMigrations := r.Migrations
 
-		if resumeAt == -1 {
+	if !migratingTo.IsZero() {
+		i := slices.IndexFunc(
+			r.Migrations,
+			func(m Migration) bool {
+				return m.Version == migratingTo
+			},
+		)
+
+		if i == -1 {
 			return fmt.Errorf(
 				"a migration to schema version %s is in progress, and this runkit version doesn't know it",
-				committedMigration,
+				migratingTo,
 			)
 		}
 
-		if m := r.Migrations[resumeAt]; committedSteps > len(m.Steps) {
+		if m := r.Migrations[i]; stepsCompleted > len(m.Steps) {
 			return fmt.Errorf(
-				"the database records %d committed steps of the migration to schema version %s, which only has %d",
-				committedSteps,
+				"the database records %d completed steps of the migration to schema version %s, which only has %d",
+				stepsCompleted,
 				m.Version,
 				len(m.Steps),
 			)
 		}
+
+		pendingMigrations = r.Migrations[i:]
 	}
 
-	for i, m := range r.Migrations[resumeAt:] {
-		// Only the migration whose steps committed has steps to skip.
-		skip := 0
-		if i == 0 && committedMigration != "" {
-			skip = committedSteps
-		}
+	for _, m := range pendingMigrations {
+		for i, s := range m.Steps[stepsCompleted:] {
+			completed := stepsCompleted + i + 1
 
-		for j, s := range m.Steps {
-			if j < skip {
-				continue
-			}
-
-			if err := r.apply(ctx, m, s, j+1); err != nil {
+			if err := r.apply(ctx, m, s, completed); err != nil {
 				return fmt.Errorf(
 					"unable to apply step %s of the migration to schema version %s: %w",
 					s.Name,
@@ -102,6 +99,9 @@ func (r *Runner) Run(ctx context.Context) error {
 				)
 			}
 		}
+
+		// Only the first pending migration can have completed steps.
+		stepsCompleted = 0
 	}
 
 	return nil
@@ -146,30 +146,31 @@ func (r *Runner) Transact(
 	)
 }
 
-// committed returns the migration whose steps committed in an earlier run, and
-// how many of its steps committed. The migration is empty if there is none.
-func (r *Runner) committed(ctx context.Context) (string, int, error) {
+// progress returns the schema version of the migration in progress, and how
+// many of its steps have completed. The schema version is zero if no migration
+// is in progress.
+func (r *Runner) progress(ctx context.Context) (version.Version, int, error) {
 	var (
-		migration sql.NullString
-		steps     sql.NullInt32
+		migration sql.Null[version.Version]
+		steps     sql.Null[int]
 	)
 
 	if err := r.Conn.QueryRowContext(
 		ctx,
-		`SELECT committed_migration, committed_steps
+		`SELECT migrating_to, migration_steps_completed
 		FROM runkit.schema_version`,
 	).Scan(&migration, &steps); err != nil {
-		return "", 0, fmt.Errorf("unable to read the progress of the migration: %w", err)
+		return version.Version{}, 0, fmt.Errorf("unable to read the progress of the migration: %w", err)
 	}
 
-	return migration.String, int(steps.Int32), nil
+	return migration.V, steps.V, nil
 }
 
 // apply applies one step and records that the given number of the migration's
-// steps have committed.
-func (r *Runner) apply(ctx context.Context, m Migration, s Step, committed int) error {
+// steps have completed.
+func (r *Runner) apply(ctx context.Context, m Migration, s Step, completed int) error {
 	if s.Kind == Statement {
-		return r.applyStatement(ctx, m, s, committed)
+		return r.applyStatement(ctx, m, s, completed)
 	}
 
 	return r.Transact(
@@ -179,14 +180,14 @@ func (r *Runner) apply(ctx context.Context, m Migration, s Step, committed int) 
 				return err
 			}
 
-			return record(ctx, tx, m, committed)
+			return record(ctx, tx, m, completed)
 		},
 	)
 }
 
 // applyStatement applies a [Statement] step and records that the given number
-// of the migration's steps have committed.
-func (r *Runner) applyStatement(ctx context.Context, m Migration, s Step, committed int) (err error) {
+// of the migration's steps have completed.
+func (r *Runner) applyStatement(ctx context.Context, m Migration, s Step, completed int) (err error) {
 	// A statement step has no timeouts because it is long by nature, such as
 	// building an index, and it doesn't block reads or writes.
 	//
@@ -222,20 +223,20 @@ func (r *Runner) applyStatement(ctx context.Context, m Migration, s Step, commit
 		return err
 	}
 
-	return record(ctx, r.Conn, m, committed)
+	return record(ctx, r.Conn, m, completed)
 }
 
 // record records that the given number of the migration's steps have
-// committed.
-func record(ctx context.Context, x xsql.Executor, m Migration, committed int) error {
+// completed.
+func record(ctx context.Context, x xsql.Executor, m Migration, completed int) error {
 	return xsql.ExecOne(
 		ctx,
 		x,
 		`UPDATE runkit.schema_version
-		SET committed_migration = $1,
-			committed_steps = $2`,
-		m.Version.String(),
-		committed,
+		SET migrating_to = $1,
+			migration_steps_completed = $2`,
+		m.Version,
+		completed,
 	)
 }
 

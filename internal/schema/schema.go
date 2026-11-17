@@ -63,13 +63,13 @@ func Apply(
 	// version in its last transaction. A call records a version before then
 	// only for a database with no version recorded. It guesses v1.0.0 or
 	// v1.1.0, and the database is already at the guessed version.
-	currentVersion, err := identifyCurrentVersion(ctx, conn)
+	currentVersion, migratingTo, err := identifySchemaVersions(ctx, conn)
 	if err != nil {
 		return err
 	}
 
-	needsUpgrade, err := checkVersion(currentVersion, TargetVersion, offline)
-	if err != nil || !needsUpgrade {
+	needed, err := needsUpgrade(currentVersion, migratingTo, TargetVersion)
+	if err != nil || !needed {
 		return err
 	}
 
@@ -81,13 +81,20 @@ func Apply(
 
 	// Another call may have changed the schema while this one waited for the
 	// lock, so read the schema version again.
-	currentVersion, err = identifyCurrentVersion(ctx, conn)
+	currentVersion, migratingTo, err = identifySchemaVersions(ctx, conn)
 	if err != nil {
 		return err
 	}
 
-	needsUpgrade, err = checkVersion(currentVersion, TargetVersion, offline)
-	if err != nil || !needsUpgrade {
+	needed, err = needsUpgrade(currentVersion, migratingTo, TargetVersion)
+	if err != nil || !needed {
+		return err
+	}
+
+	// Decide whether this call can upgrade the database only now that it
+	// holds the lock. Before then, another call may have been part-way through
+	// an upgrade that leaves this call with nothing to do.
+	if err := checkCanUpgrade(currentVersion, migratingTo, TargetVersion, offline); err != nil {
 		return err
 	}
 
@@ -114,7 +121,7 @@ func Apply(
 			`INSERT INTO runkit.schema_version (version)
 			VALUES ($1)
 			ON CONFLICT ((TRUE)) DO NOTHING`,
-			currentVersion.String(),
+			currentVersion,
 		); err != nil {
 			return fmt.Errorf("unable to record the schema version: %w", err)
 		}
@@ -154,9 +161,9 @@ func Apply(
 				ON CONFLICT ((TRUE)) DO UPDATE
 				SET version = EXCLUDED.version,
 					applied_at = clock_timestamp(),
-					committed_migration = NULL,
-					committed_steps = NULL`,
-				TargetVersion.String(),
+					migrating_to = NULL,
+					migration_steps_completed = NULL`,
+				TargetVersion,
 			)
 		},
 	)
@@ -173,14 +180,20 @@ func Drop(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// identifyCurrentVersion reads the schema version in the database.
+// identifySchemaVersions returns the schema version that the database has
+// reached, and the schema version of the migration in progress, if there is
+// one.
 //
-// It returns the zero [version.Version] if the database has none of the
-// engine's tables.
+// It returns the zero [version.Version] for the database's schema version if
+// the database has none of the engine's tables, and for the migration's schema
+// version if no migration is in progress.
 //
 // Older runkit versions did not record the schema version in the database, so
 // it uses the presence of certain tables to make a best-effort guess.
-func identifyCurrentVersion(ctx context.Context, conn *sql.Conn) (version.Version, error) {
+func identifySchemaVersions(
+	ctx context.Context,
+	conn *sql.Conn,
+) (current, migratingTo version.Version, err error) {
 	var hasMigrations, hasStreams, hasAppIdentity bool
 
 	if err := conn.QueryRowContext(
@@ -194,50 +207,49 @@ func identifyCurrentVersion(ctx context.Context, conn *sql.Conn) (version.Versio
 		&hasStreams,
 		&hasAppIdentity,
 	); err != nil {
-		return version.Version{}, fmt.Errorf("unable to look for the engine's tables: %w", err)
+		return version.Version{}, version.Version{}, fmt.Errorf("unable to look for the engine's tables: %w", err)
 	}
 
 	if hasMigrations {
-		var text string
+		var (
+			v version.Version
+			m sql.Null[version.Version]
+		)
 
 		err := conn.QueryRowContext(
 			ctx,
-			`SELECT version
+			`SELECT version, migrating_to
 			FROM runkit.schema_version`,
-		).Scan(&text)
+		).Scan(&v, &m)
 
 		if err == nil {
-			v, err := version.Parse(text)
-			if err != nil {
-				return version.Version{}, fmt.Errorf("the database has an unusable schema version: %w", err)
-			}
-
 			if v.IsZero() {
-				return version.Version{}, errors.New("the database has an unusable schema version: the zero version is reserved for a database that has no schema")
+				return version.Version{}, version.Version{}, errors.New("the database has an unusable schema version: the zero version is reserved for a database that has no schema")
 			}
 
-			return v, nil
+			return v, m.V, nil
 		}
 
 		if !errors.Is(err, sql.ErrNoRows) {
-			return version.Version{}, fmt.Errorf("unable to read the schema version: %w", err)
+			return version.Version{}, version.Version{}, fmt.Errorf("unable to read the schema version: %w", err)
 		}
 	}
 
-	// The database has no record of its schema version. Make a best effort
-	// guess based on which tables exist.
+	// The database has no record of its schema version, so it has none of a
+	// migration in progress either. Make a best effort guess based on which
+	// tables exist.
 	switch {
 	case hasAppIdentity:
 		// runkit v0.2.0 added the application identity table, a new feature,
 		// making it schema v1.1.0.
-		return version.Version{1, 1, 0}, nil
+		return version.Version{1, 1, 0}, version.Version{}, nil
 	case hasStreams:
 		// The streams table has existed since runkit v0.1.x; this making it
 		// schema v1.0.0.
-		return version.Version{1, 0, 0}, nil
+		return version.Version{1, 0, 0}, version.Version{}, nil
 	}
 
-	return version.Version{}, nil
+	return version.Version{}, version.Version{}, nil
 }
 
 // lockDatabase takes the advisory lock that only one call to [Apply] holds at

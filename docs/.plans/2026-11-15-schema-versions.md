@@ -32,8 +32,8 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   version" only where it means the schema's.
 - **Names:** type `version.Version` in `internal/schema/internal/version`;
   variable `schema.TargetVersion`; method `CanRunOn`; table
-  `runkit.schema_version`, with the columns `committed_migration` and
-  `committed_steps`; directory `migrations/`; public functions
+  `runkit.schema_version`, with the columns `migrating_to` and
+  `migration_steps_completed`; directory `migrations/`; public functions
   `ApplySchemaOnline()` and `ApplySchemaOffline()`; internal `schema.Apply`.
   `CreateSchema()` is removed, and so is `DropSchema()`, in the task that
   collapses the schemas.
@@ -63,15 +63,14 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   (at most one, enforced by a unique index on the constant `true`) with
   `version` and `applied_at`: the schema version of the database and the time it
   was reached. They are set once, at the end of a successful migrate call. The
-  columns `committed_migration` (a schema version) and `committed_steps` (a
-  count) are NULL, or set together to the migration whose steps are being
-  applied and how many of its steps have committed, so a non-NULL
-  `committed_steps` means that a migration is in progress. Its table file lives
-  in `internal/schema/internal/bootstrap/bootstrap.sql`, which the migrate code
-  applies before it changes anything, so that the table exists. A database that
-  has no row is at `v1.0.0` or `v1.1.0`, as the next item says, and the migrate
-  call inserts the row, with that schema version and the time of the insert,
-  before the first step.
+  columns `migrating_to` (a schema version) and `migration_steps_completed` (a
+  count) are both NULL, or both set while a migration is in progress, to the
+  schema version of that migration and how many of its steps have completed. Its
+  table file lives in `internal/schema/internal/bootstrap/bootstrap.sql`, which
+  the migrate code applies before it changes anything, so that the table exists.
+  A database that has no row is at `v1.0.0` or `v1.1.0`, as the next item says,
+  and the migrate call inserts the row, with that schema version and the time of
+  the insert, before the first step.
 - **Starting point.** A database with no row in `runkit.schema_version` is
   guessed from its tables. If it has `application.identity` it is at `v1.1.0`,
   the v0.2.0 schema, which added that table and the signal triggers. Otherwise,
@@ -93,23 +92,23 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   keeps its `CREATE INDEX IF NOT EXISTS` with the same index names, so an index
   built by a step is found by `current/` and left alone.
 - **Steps.** A migration's steps run in the order of their file names' numbers,
-  whatever their kind, so `tx`, `stmt`, `stmt`, `tx` works. Each step file has
-  a two-digit number that no other file in the migration has and exactly one of
-  the suffixes, or the `schema` package panics when it loads the migrations.
-  The `migration` package knows nothing of files: it takes a list of steps and
-  identifies a step by its position. A `tx` step sets `committed_migration` and
-  `committed_steps` in its own transaction, so the step and its record commit
-  together. A `stmt` step is idempotent (for an index:
-  `IF NOT EXISTS`, after dropping an invalid leftover), and sets them after it
-  runs. A rerun skips the committed number of steps of the recorded migration,
-  in the order of migrations by schema version and then steps by position.
+  whatever their kind, so `tx`, `stmt`, `stmt`, `tx` works. Each step file has a
+  two-digit number that no other file in the migration has and exactly one of
+  the suffixes, or the `schema` package panics when it loads the migrations. The
+  `migration` package knows nothing of files: it takes a list of steps and
+  identifies a step by its position. A `tx` step sets `migrating_to` and
+  `migration_steps_completed` in its own transaction, so the step and its record
+  commit together. A `stmt` step is idempotent (for an index: `IF NOT EXISTS`,
+  after dropping an invalid leftover), and sets them after it runs. A rerun
+  skips the completed steps of the recorded migration, in the order of
+  migrations by schema version and then steps by position.
 - **Cleanup.** The last thing a successful migrate call does, in one
   transaction, is set `version` to `CurrentVersion`, `applied_at` to the time,
-  and `committed_migration` and `committed_steps` to NULL. A crash before that
-  leaves the count recorded and `version` unchanged, and the rerun skips every
-  committed step and finishes. If an unreleased migration gains or loses a step
-  between a failed run and its rerun, the count can skip the wrong steps; the
-  unreleased-edit rule covers that risk.
+  and `migrating_to` and `migration_steps_completed` to NULL. A crash before
+  that leaves the count recorded and `version` unchanged, and the rerun skips
+  every completed step and finishes. If an unreleased migration gains or loses a
+  step between a failed run and its rerun, the count can skip the wrong steps;
+  the unreleased-edit rule covers that risk.
 - **A `stmt` step has one statement because PostgreSQL checks it.** The runner
   prepares the file's text and then executes the prepared statement; the
   extended query protocol rejects more than one statement. No SQL parsing in Go
@@ -344,7 +343,7 @@ done.
     upgrades, the unreleased-edit rule and its risk, the rules for fixing a
     released migration ("To fix a step that fails, change only that step and
     those after it, and keep the schema version. Never change, insert or remove
-    a step before it, because a database may have committed those steps, and a
+    a step before it, because a database may have completed those steps, and a
     rerun skips them by count." and "If a released migration completed with a
     wrong result, fix it with a later migration."), schema versus cluster
     compatibility, the consequence of raising the major number after 1.0, and

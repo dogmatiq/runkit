@@ -281,6 +281,11 @@ the migration to v2.0.0, and this finding would have no case left. Steps would
 still run at the default isolation level. That would matter again for a later
 migration that locks rows or tables and then reads them.
 
+**Decision.** Every transaction that the engine begins now uses READ COMMITTED,
+through the options in `xsql.TxOptions`. That covers each migration transaction,
+so `Runner.Transact` needs no change of its own. With that change, both cases
+gave the right result at all three levels.
+
 ### 4. An engine can start while a migration raises the major number
 
 **What goes wrong.** The `version` column of `runkit.schema_version` doesn't
@@ -326,6 +331,18 @@ number must not stop an engine, because such a change is safe while engines are
 running.
 
 **If the upgrade of old databases is dropped.** This finding would be unchanged.
+
+**Decision.** The suggested fix was made. `identifyCurrentVersion`, since
+renamed `identifySchemaVersions`, also reads `committed_migration`, and
+`checkVersion`, since renamed `needsUpgrade`, refuses the database when that
+migration has a higher major number than the target schema version. `Apply` also
+refuses a database that it would have to upgrade, while a migration to a schema
+version above the target is in progress. It decides that once it holds the lock,
+in the new `checkCanUpgrade`, because it has no migration to that schema version
+and so can't finish the upgrade. In the reproduction, both calls to `Apply` then
+returned an error. The columns `committed_migration` and `committed_steps` were
+then renamed `migrating_to` and `migration_steps_completed`, so that their names
+say that the migration is in progress.
 
 ### 5. A rerun accepts an invalid index left by an interrupted build
 

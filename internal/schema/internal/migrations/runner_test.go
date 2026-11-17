@@ -89,8 +89,8 @@ func TestRunner(t *testing.T) {
 				"every step is recorded",
 				true,
 				db,
-				`SELECT committed_migration = 'v1.0.0'
-					AND committed_steps = 4
+				`SELECT migrating_to = 'v1.0.0'
+					AND migration_steps_completed = 4
 				FROM runkit.schema_version`,
 			)
 		})
@@ -129,12 +129,12 @@ func TestRunner(t *testing.T) {
 				"only the earlier step is recorded",
 				1,
 				db,
-				`SELECT committed_steps
+				`SELECT migration_steps_completed
 				FROM runkit.schema_version`,
 			)
 		})
 
-		t.Run("it resumes after the last step that committed", func(t *testing.T) {
+		t.Run("it resumes after the last step that completed", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			broken := Migration{
@@ -155,7 +155,7 @@ func TestRunner(t *testing.T) {
 				"the first step is recorded",
 				1,
 				db,
-				`SELECT committed_steps
+				`SELECT migration_steps_completed
 				FROM runkit.schema_version`,
 			)
 
@@ -185,12 +185,12 @@ func TestRunner(t *testing.T) {
 				"both steps are recorded",
 				2,
 				db,
-				`SELECT committed_steps
+				`SELECT migration_steps_completed
 				FROM runkit.schema_version`,
 			)
 		})
 
-		t.Run("it resumes in the migration of the last step that committed", func(t *testing.T) {
+		t.Run("it resumes in the migration of the last step that completed", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			first := Migration{
@@ -238,20 +238,20 @@ func TestRunner(t *testing.T) {
 				"the second migration's step is recorded",
 				true,
 				db,
-				`SELECT committed_migration = 'v2.0.0'
-					AND committed_steps = 1
+				`SELECT migrating_to = 'v2.0.0'
+					AND migration_steps_completed = 1
 				FROM runkit.schema_version`,
 			)
 		})
 
-		t.Run("it fails if the last step that committed belongs to an unknown migration", func(t *testing.T) {
+		t.Run("it fails if the last step that completed belongs to an unknown migration", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			if _, err := db.ExecContext(
 				t.Context(),
 				`UPDATE runkit.schema_version
-				SET committed_migration = 'v9.0.0',
-					committed_steps = 1`,
+				SET migrating_to = 'v9.0.0',
+					migration_steps_completed = 1`,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -281,14 +281,14 @@ func TestRunner(t *testing.T) {
 			)
 		})
 
-		t.Run("it fails if more steps committed than the migration has", func(t *testing.T) {
+		t.Run("it fails if more steps completed than the migration has", func(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			if _, err := db.ExecContext(
 				t.Context(),
 				`UPDATE runkit.schema_version
-				SET committed_migration = 'v1.0.0',
-					committed_steps = 2`,
+				SET migrating_to = 'v1.0.0',
+					migration_steps_completed = 2`,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -381,8 +381,8 @@ func TestRunner(t *testing.T) {
 						ctx,
 						tx,
 						`UPDATE runkit.schema_version
-						SET committed_migration = 'v1.0.0',
-							committed_steps = 1`,
+						SET migrating_to = 'v1.0.0',
+							migration_steps_completed = 1`,
 					)
 				},
 			); err != nil {
@@ -394,7 +394,7 @@ func TestRunner(t *testing.T) {
 				"the change is committed",
 				1,
 				db,
-				`SELECT committed_steps
+				`SELECT migration_steps_completed
 				FROM runkit.schema_version`,
 			)
 		})

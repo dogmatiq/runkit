@@ -3,6 +3,7 @@ package version
 
 import (
 	"cmp"
+	"database/sql/driver"
 	"fmt"
 	"strconv"
 	"strings"
@@ -111,6 +112,40 @@ func (v Version) CanUpgradeOffline(db Version) bool {
 // the database, which it can if they have the same major number.
 func (v Version) CanUpgradeOnline(db Version) bool {
 	return v.Major() == db.Major()
+}
+
+// Scan sets v to the schema version that the given database value holds. The
+// value must be text in the form that [Parse] accepts. It implements
+// [database/sql.Scanner], so a query can read a column into a [Version].
+//
+// It returns an error for a NULL. Use [database/sql.Null] for a column that
+// can be NULL.
+func (v *Version) Scan(src any) error {
+	var text string
+
+	switch src := src.(type) {
+	case string:
+		text = src
+	case []byte:
+		text = string(src)
+	default:
+		return fmt.Errorf("unable to scan a value of type %T as a schema version", src)
+	}
+
+	parsed, err := Parse(text)
+	if err != nil {
+		return err
+	}
+
+	*v = parsed
+
+	return nil
+}
+
+// Value returns the schema version as text in the form `vMAJOR.MINOR.PATCH`.
+// It implements [driver.Valuer], so a [Version] can be an argument of a query.
+func (v Version) Value() (driver.Value, error) {
+	return v.String(), nil
 }
 
 // String returns the schema version in the form `vMAJOR.MINOR.PATCH`.

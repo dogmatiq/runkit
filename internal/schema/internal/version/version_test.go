@@ -237,4 +237,77 @@ func TestVersion(t *testing.T) {
 			})
 		}
 	})
+	t.Run("func Scan()", func(t *testing.T) {
+		t.Run("it parses text", func(t *testing.T) {
+			cases := []struct {
+				Name string
+				Src  any
+			}{
+				{"string", "v1.12.3"},
+				{"byte slice", []byte("v1.12.3")},
+			}
+
+			for _, tc := range cases {
+				t.Run(tc.Name, func(t *testing.T) {
+					var v Version
+					if err := v.Scan(tc.Src); err != nil {
+						t.Fatal(err)
+					}
+
+					if want := mustParse(t, "v1.12.3"); v != want {
+						t.Fatalf("unexpected schema version: want %s, got %s", want, v)
+					}
+				})
+			}
+		})
+
+		t.Run("it returns an error for a value that isn't a schema version", func(t *testing.T) {
+			cases := []struct {
+				Name string
+				Src  any
+			}{
+				{"NULL", nil},
+				{"integer", int64(2)},
+				{"invalid text", "2.0.0"},
+			}
+
+			for _, tc := range cases {
+				t.Run(tc.Name, func(t *testing.T) {
+					v := mustParse(t, "v1.12.3")
+
+					if err := v.Scan(tc.Src); err == nil {
+						t.Fatal("expected an error, got nil")
+					}
+
+					if want := mustParse(t, "v1.12.3"); v != want {
+						t.Fatalf("the schema version changed: want %s, got %s", want, v)
+					}
+				})
+			}
+		})
+	})
+
+	t.Run("func Value()", func(t *testing.T) {
+		t.Run("it returns the text that Scan() accepts", func(t *testing.T) {
+			want := mustParse(t, "v1.12.3")
+
+			value, err := want.Value()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if value != "v1.12.3" {
+				t.Fatalf("unexpected value: want %q, got %v", "v1.12.3", value)
+			}
+
+			var got Version
+			if err := got.Scan(value); err != nil {
+				t.Fatal(err)
+			}
+
+			if got != want {
+				t.Fatalf("unexpected schema version: want %s, got %s", want, got)
+			}
+		})
+	})
 }

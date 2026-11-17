@@ -91,7 +91,7 @@ func TestApplyAndDrop(t *testing.T) {
 	xtesting.ExpectQueryResult(
 		t,
 		"the database is at the current schema version",
-		schema.TargetVersion.String(),
+		schema.TargetVersion,
 		db,
 		`SELECT version
 		FROM runkit.schema_version`,
@@ -102,8 +102,8 @@ func TestApplyAndDrop(t *testing.T) {
 		"no migration is in progress",
 		true,
 		db,
-		`SELECT committed_migration IS NULL
-			AND committed_steps IS NULL
+		`SELECT migrating_to IS NULL
+			AND migration_steps_completed IS NULL
 		FROM runkit.schema_version`,
 	)
 
@@ -201,6 +201,152 @@ func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
 	)
 }
 
+// TestApply_migrationInProgressWithNewerMajorNumber verifies that a database
+// is refused while a migration that raises the major number above the current
+// one is in progress, even though its recorded schema version is the current
+// one.
+func TestApply_migrationInProgressWithNewerMajorNumber(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+
+	newer := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()+1)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE runkit.schema_version
+		SET migrating_to = $1,
+			migration_steps_completed = 1`,
+		newer,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, offline := range []bool{false, true} {
+		err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "incompatible schema version") {
+			t.Fatalf("unexpected error: %s", err)
+		}
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the migration is still in progress",
+		true,
+		db,
+		`SELECT version = $1
+			AND migrating_to = $2
+			AND migration_steps_completed = 1
+		FROM runkit.schema_version`,
+		schema.TargetVersion,
+		newer,
+	)
+}
+
+// TestApply_migrationInProgressWithNewerMinorNumber verifies that a database
+// is accepted while a migration that raises only the minor number is in
+// progress, because such a change is safe while engines are running.
+func TestApply_migrationInProgressWithNewerMinorNumber(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+
+	newer := fmt.Sprintf(
+		"v%d.%d.0",
+		schema.TargetVersion.Major(),
+		schema.TargetVersion.Minor()+1,
+	)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE runkit.schema_version
+		SET migrating_to = $1,
+			migration_steps_completed = 1`,
+		newer,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, offline := range []bool{false, true} {
+		if err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the migration is still in progress",
+		true,
+		db,
+		`SELECT version = $1
+			AND migrating_to = $2
+			AND migration_steps_completed = 1
+		FROM runkit.schema_version`,
+		schema.TargetVersion,
+		newer,
+	)
+}
+
+// TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade verifies that a
+// database that needs an upgrade is refused while a migration to a schema
+// version above the current one is in progress, because this runkit version
+// has no such migration and so can't finish the upgrade.
+func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+
+	// An upgrade by a later runkit version, from a schema version with a lower
+	// major number, leaves the database like this if it stops after the
+	// migration to the current schema version.
+	older := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()-1)
+	newer := fmt.Sprintf(
+		"v%d.%d.0",
+		schema.TargetVersion.Major(),
+		schema.TargetVersion.Minor()+1,
+	)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE runkit.schema_version
+		SET version = $1,
+			migrating_to = $2,
+			migration_steps_completed = 1`,
+		older,
+		newer,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, offline := range []bool{false, true} {
+		err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "incompatible schema version") {
+			t.Fatalf("unexpected error: %s", err)
+		}
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the schema version and the migration in progress are unchanged",
+		true,
+		db,
+		`SELECT version = $1
+			AND migrating_to = $2
+			AND migration_steps_completed = 1
+		FROM runkit.schema_version`,
+		older,
+		newer,
+	)
+}
+
 // TestApply_raisingMajorNumberNeedsOffline verifies that migrating while
 // engines may be running refuses to raise the major number of the schema
 // version, and changes nothing.
@@ -269,7 +415,7 @@ func TestApply_concurrentCalls(t *testing.T) {
 	xtesting.ExpectQueryResult(
 		t,
 		"the database is at the current schema version",
-		schema.TargetVersion.String(),
+		schema.TargetVersion,
 		db,
 		`SELECT version
 		FROM runkit.schema_version`,
@@ -314,7 +460,7 @@ func TestApply_doesNotWaitForOtherCallWhenSatisfied(t *testing.T) {
 		t.Context(),
 		`UPDATE runkit.schema_version
 		SET version = $1`,
-		schema.TargetVersion.String(),
+		schema.TargetVersion,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -533,10 +679,10 @@ func testMigrateFrom(t *testing.T, version string) {
 		true,
 		db,
 		`SELECT version = $1
-			AND committed_migration IS NULL
-			AND committed_steps IS NULL
+			AND migrating_to IS NULL
+			AND migration_steps_completed IS NULL
 		FROM runkit.schema_version`,
-		schema.TargetVersion.String(),
+		schema.TargetVersion,
 	)
 
 	xtesting.ExpectQueryResult(
