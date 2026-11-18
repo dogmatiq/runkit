@@ -12,8 +12,11 @@ schema landed together in e30c230. Collapsing the engine's schemas into one
 landed in d338872. Flattening `current/` landed in 2104575. The maintainer
 document landed in 987d485. The operational documentation in the README landed
 in ee34a67. Dropping `failures` and `resume_at` (#127) landed in a23978b. Making
-the upgrade test need no change when a schema version is released is done and
-awaits review. After it, the changelog review before tagging v0.3.0 remains.
+the upgrade test need no change when a schema version is released landed in
+8a84c0e. Every task is done. The changelog review before tagging v0.3.0 is in
+review. It found that the migration to v2.0.0 failed on a database where
+projectionkit keeps its checkpoints in the `projection` schema, so the migration
+now drops only the old schemas that are empty.
 
 ## Context
 
@@ -554,7 +557,7 @@ done.
     `current/00-eventstream.sql` to `current/20-process.sql`, and the move step
     renames the table and its five constraints.
 - [x] **Upgrade test needs no change when a schema version is released.** PR or
-  commit: —
+  commit: 8a84c0e
   - Why: today, releasing a new schema version means adding the runkit version
     to `releasedVersions` by hand. The first time that happens, after v0.3.0,
     `createSchemaOf` and `testMigrateFrom` also break, because both assume the
