@@ -8,8 +8,9 @@ review of the migration machinery followed them. Its report is
 [2026-11-16-schema-migration-review.md](2026-11-16-schema-migration-review.md),
 and every finding in it has a decision, made in the commits listed under the
 second task. The automatic schema migration flowchart and `Run` applying the
-schema landed together in e30c230. The next task is collapsing the engine's
-schemas into one, then flattening `current/`.
+schema landed together in e30c230. Collapsing the engine's schemas into one
+landed in d338872. Flattening `current/` is done and awaits review; the
+next task after it is the maintainer document.
 
 ## Context
 
@@ -383,7 +384,7 @@ done.
     "Major schema upgrades". A README in `internal/schema/internal/current/`
     explains the directory and how the numbers in its names set the order. The
     operational documentation task builds on this section.
-- [ ] **Collapse the engine's schemas into one.** PR or commit: —
+- [x] **Collapse the engine's schemas into one.** PR or commit: d338872
   - Why: the engine's eight generic schema names (`process`, `application` and
     so on) can clash with the host application's own schemas, and
     `DropSchema()` drops each of them with `CASCADE`, which would destroy an
@@ -444,7 +445,7 @@ done.
     v0.3.0 the old schemas are gone.
   - The upgrade test already compares the migrated database with a new one, so
     it covers the result.
-- [ ] **Flatten `current/` into one file per component.** PR or commit: —
+- [x] **Flatten `current/` into one file per component.** PR or commit: —
   - Why: each subdirectory of `current/` matched one of the old schemas. Now
     that everything is in `runkit`, the subdirectories only group files, but
     they make the README explain two levels of ordering and why the files
@@ -524,7 +525,7 @@ done.
       [review of the migration implementation](2026-11-16-schema-migration-review.md).
 - [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
-  `current/00-eventstream/00-tables.sql`, and test it in the upgrade test.
+  `current/00-eventstream.sql`, and test it in the upgrade test.
 
 Before tagging v0.3.0, review the `[Unreleased]` section of `CHANGELOG.md` with
 the user, which they deferred until then. Known fixes: the entry "The database

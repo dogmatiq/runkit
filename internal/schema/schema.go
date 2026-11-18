@@ -187,7 +187,7 @@ func upgrade(
 	return runner.Transact(
 		ctx,
 		func(ctx context.Context, tx xsql.Executor) error {
-			if err := executeDirectory(ctx, tx, "."); err != nil {
+			if err := executeCurrent(ctx, tx); err != nil {
 				return err
 			}
 
@@ -305,22 +305,20 @@ func executeFile(ctx context.Context, tx xsql.Executor, path string) error {
 	return nil
 }
 
-// executeDirectory executes the SQL in each file in the given directory of
-// [current.FS] and its subdirectories, in order of path.
-func executeDirectory(ctx context.Context, tx xsql.Executor, root string) error {
-	return fs.WalkDir(
-		current.FS,
-		root,
-		func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return fmt.Errorf("unable to read embedded schema: %w", err)
-			}
+// executeCurrent executes the SQL in each file of [current.FS], in lexical
+// order of the file names.
+func executeCurrent(ctx context.Context, tx xsql.Executor) error {
+	files, err := fs.ReadDir(current.FS, ".")
+	if err != nil {
+		return fmt.Errorf("unable to read embedded schema: %w", err)
+	}
 
-			if d.IsDir() {
-				return nil
-			}
+	// ReadDir returns the files sorted by name.
+	for _, f := range files {
+		if err := executeFile(ctx, tx, f.Name()); err != nil {
+			return err
+		}
+	}
 
-			return executeFile(ctx, tx, path)
-		},
-	)
+	return nil
 }

@@ -5,8 +5,7 @@ package current
 
 import "embed"
 
-// FS holds the SQL files of the schema, one directory for each component of
-// the engine. The pattern leaves out this package's Go files.
+// FS holds the SQL files of the schema.
 //
-//go:embed */*
+//go:embed *.sql
 var FS embed.FS

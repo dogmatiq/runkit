@@ -12,17 +12,12 @@ and `CREATE OR REPLACE FUNCTION`.
 ## Order
 
 The engine's tables, functions and triggers are all in one PostgreSQL schema,
-`runkit`, which [`bootstrap.sql`] creates before this SQL runs. The
-subdirectories only group the SQL by the component of the engine that uses it.
+`runkit`, which [`bootstrap.sql`] creates before this SQL runs.
 
-The engine applies every file in one transaction. It goes through the
-subdirectories in lexical order of their names, and through the files in each
-subdirectory in lexical order of theirs. A file that uses an object from another
-file must come later in that order. For example, `20-aggregate/10-funcs.sql`
-uses the `event` type from `00-eventstream/10-funcs.sql`.
-
-Only the files in the subdirectories are applied. Files directly in this
-directory, such as this one and `embed.go`, aren't.
+The engine applies every SQL file in one transaction, in lexical order of the
+file names. A file that uses an object from another file must come later in
+that order. For example, `20-aggregate.sql` uses the `event` type from
+`00-eventstream.sql`.
 
 <!-- references -->
 
