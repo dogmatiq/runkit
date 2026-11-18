@@ -111,7 +111,7 @@ func (r *Router) RouteCommandToQueue(
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT stream_id
-		FROM aggregate.instances
+		FROM runkit.aggregate_instances
 		WHERE handler_key = $1
 		AND instance_id = $2`,
 		xsql.UUID(handler.Key),

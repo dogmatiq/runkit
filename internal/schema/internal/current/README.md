@@ -11,26 +11,21 @@ and `CREATE OR REPLACE FUNCTION`.
 
 ## Order
 
-Each subdirectory holds the SQL for one PostgreSQL schema. Its name is a
-two-digit number, a hyphen and the name of that PostgreSQL schema, such as
-`10-messagequeue`. Each file in it has a name made of a two-digit number, a
-hyphen and a short description, such as `00-tables.sql`.
+The engine's tables, functions and triggers are all in one PostgreSQL schema,
+`runkit`, which [`bootstrap.sql`] creates before this SQL runs. The
+subdirectories only group the SQL by the component of the engine that uses it.
 
-The engine applies every file in one transaction, in the order of their paths:
-the subdirectories in the order of their names, and each subdirectory's files in
-the order of theirs. So the numbers decide the order.
-
-- A PostgreSQL schema that another one refers to has a lower number. For
-  example, `20-aggregate` uses the `event` type from `00-eventstream`.
-- PostgreSQL schemas that don't refer to each other can share a number, such as
-  `20-aggregate` and `20-process`. Those are applied in alphabetical order.
-- Within a subdirectory, tables come first, then functions, then triggers:
-  `00-tables.sql`, `10-funcs.sql` and `20-triggers.sql`.
+The engine applies every file in one transaction. It goes through the
+subdirectories in lexical order of their names, and through the files in each
+subdirectory in lexical order of theirs. A file that uses an object from another
+file must come later in that order. For example, `20-aggregate/10-funcs.sql`
+uses the `event` type from `00-eventstream/10-funcs.sql`.
 
 Only the files in the subdirectories are applied. Files directly in this
 directory, such as this one and `embed.go`, aren't.
 
 <!-- references -->
 
+[`bootstrap.sql`]: ../bootstrap/bootstrap.sql
 [`version.go`]: ../../version.go
 [migrations]: ../migrations/

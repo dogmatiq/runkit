@@ -224,7 +224,7 @@ func (s *Local) discover(
 ) error {
 	var created cosyne.Signal
 
-	detach := s.Node.AttachSignal(ctx, "eventstream.create", &created)
+	detach := s.Node.AttachSignal(ctx, "event_stream_created", &created)
 	defer detach()
 
 	for {
@@ -255,7 +255,7 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 	rows, err := s.DB.QueryContext(
 		ctx,
 		`SELECT id
-		FROM eventstream.streams`,
+		FROM runkit.event_streams`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to query event streams: %w", err)
@@ -407,7 +407,7 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 
 	detach := s.Node.AttachSignal(
 		ctx,
-		"eventstream.append."+streamID.AsString(),
+		"events_appended."+streamID.AsString(),
 		&appended,
 	)
 	defer detach()
@@ -494,7 +494,7 @@ func (s *Local) loadWatchOffset(
 	row := s.DB.QueryRowContext(
 		ctx,
 		`SELECT next_offset
-		FROM eventstream.streams
+		FROM runkit.event_streams
 		WHERE id = $1`,
 		xsql.UUID(streamID),
 	)
@@ -553,7 +553,7 @@ func (s *Local) buildSegmentQuery(
 					0 AS position,
 					next_offset AS stream_offset,
 					NULL::bytea AS envelope
-				FROM eventstream.streams
+				FROM runkit.event_streams
 				WHERE id = '%s'
 			)
 			UNION ALL
@@ -562,7 +562,7 @@ func (s *Local) buildSegmentQuery(
 					1 AS position,
 					stream_offset,
 					envelope
-				FROM eventstream.events
+				FROM runkit.events
 				WHERE stream_id = '%s'
 					AND stream_offset >= $1
 					%s

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"strings"
 	"time"
 
 	"github.com/dogmatiq/runkit/internal/schema/internal/bootstrap"
@@ -210,12 +209,11 @@ func upgrade(
 	)
 }
 
-// Drop removes the engine's schema from the given database.
+// Drop drops the engine's PostgreSQL schema, named "runkit", and everything
+// in it.
 func Drop(ctx context.Context, db *sql.DB) error {
-	for _, schema := range schemaNames() {
-		if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
-			return fmt.Errorf("unable to drop schema: %w", err)
-		}
+	if _, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS runkit CASCADE`); err != nil {
+		return fmt.Errorf("unable to drop schema: %w", err)
 	}
 
 	return nil
@@ -325,23 +323,4 @@ func executeDirectory(ctx context.Context, tx xsql.Executor, root string) error 
 			return executeFile(ctx, tx, path)
 		},
 	)
-}
-
-// schemaNames returns the names of all schema managed by the engine.
-func schemaNames() []string {
-	entries, err := fs.ReadDir(current.FS, ".")
-	if err != nil {
-		panic(err)
-	}
-
-	names := []string{"runkit"}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			_, name, _ := strings.Cut(entry.Name(), "-")
-			names = append(names, name)
-		}
-	}
-
-	return names
 }

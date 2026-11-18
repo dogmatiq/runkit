@@ -81,7 +81,7 @@ func (c *Consumer) findNextMessagesOnce(
 		CROSS JOIN unnest($2::uuid[]) AS t(message_type_id)
 		CROSS JOIN LATERAL (
 			SELECT q.message_id, q.next_attempt_at
-			FROM messagequeue.messages AS q
+			FROM runkit.queued_messages AS q
 			WHERE q.queue_id = k.queue_id
 				AND q.message_type_id = t.message_type_id
 				AND q.message_id <> ALL($3::uuid[])

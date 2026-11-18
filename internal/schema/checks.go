@@ -65,7 +65,7 @@ func checkCanFinishMigration(migratingTo, highestAvailable version.Version) erro
 }
 
 // checkIndexesAreValid returns an error that names each invalid index in the
-// engine's schemas, if there are any.
+// engine's schema, if there are any.
 func checkIndexesAreValid(ctx context.Context, conn *sql.Conn) error {
 	rows, err := conn.QueryContext(
 		ctx,
@@ -74,9 +74,8 @@ func checkIndexesAreValid(ctx context.Context, conn *sql.Conn) error {
 		JOIN pg_class c ON c.oid = i.indexrelid
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE NOT i.indisvalid
-		AND n.nspname = ANY($1)
+		AND n.nspname = 'runkit'
 		ORDER BY 1`,
-		schemaNames(),
 	)
 	if err != nil {
 		return fmt.Errorf("unable to look for invalid indexes: %w", err)

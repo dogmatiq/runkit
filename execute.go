@@ -84,7 +84,7 @@ func (e *Engine) ExecuteCommand(
 				`SELECT
 					actual_message_id,
 					enqueued
-				FROM messagequeue.add_command($1, $2, $3, $4, $5, $6)`,
+				FROM runkit.enqueue_command($1, $2, $3, $4, $5, $6)`,
 				xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
 				xsql.UUID(queueID),
@@ -241,7 +241,7 @@ func pollForEvents(
 			e.stream_id,
 			e.stream_offset,
 			e.envelope
-		FROM eventstream.events AS e
+		FROM runkit.events AS e
 		LEFT JOIN offsets AS o
 			ON o.stream_id = e.stream_id
 		WHERE e.stream_offset >= COALESCE(o.next_offset, 0)

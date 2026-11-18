@@ -25,7 +25,7 @@ func TestBind(t *testing.T) {
 			"<app>",
 			db,
 			`SELECT name
-			FROM application.identity
+			FROM runkit.identity
 			WHERE key = $1`,
 			id.GetKey().AsString(),
 		)
@@ -49,7 +49,7 @@ func TestBind(t *testing.T) {
 			"<after>",
 			db,
 			`SELECT name
-			FROM application.identity`,
+			FROM runkit.identity`,
 		)
 	})
 
@@ -82,7 +82,7 @@ func TestBind(t *testing.T) {
 			"<bound>",
 			db,
 			`SELECT name
-			FROM application.identity`,
+			FROM runkit.identity`,
 		)
 	})
 

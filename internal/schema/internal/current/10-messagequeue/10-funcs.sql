@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- The "add_command" function queues a command.
+-- The "enqueue_command" function queues a command.
 --
 -- If idem_key is empty, the command is always queued and (message_id, TRUE) is
 -- returned.
@@ -16,7 +16,7 @@
 -- because the consumer compares next_attempt_at with that clock, not the
 -- database's.
 --------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION messagequeue.add_command(
+CREATE OR REPLACE FUNCTION runkit.enqueue_command(
     message_id      uuid,
     message_type_id uuid,
     queue_id        uuid,
@@ -28,27 +28,27 @@ RETURNS TABLE (actual_message_id uuid, enqueued boolean)
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF add_command.idem_key != '' THEN
-        INSERT INTO messagequeue.idempotency_keys (
+    IF enqueue_command.idem_key != '' THEN
+        INSERT INTO runkit.command_idempotency_keys (
             idempotency_key,
             message_id
         )
         VALUES (
-            add_command.idem_key,
-            add_command.message_id
+            enqueue_command.idem_key,
+            enqueue_command.message_id
         )
         ON CONFLICT (idempotency_key) DO NOTHING;
 
         IF NOT FOUND THEN
             RETURN QUERY
             SELECT k.message_id, FALSE
-            FROM messagequeue.idempotency_keys k
-            WHERE k.idempotency_key = add_command.idem_key;
+            FROM runkit.command_idempotency_keys k
+            WHERE k.idempotency_key = enqueue_command.idem_key;
             RETURN;
         END IF;
     END IF;
 
-    INSERT INTO messagequeue.messages (
+    INSERT INTO runkit.queued_messages (
         message_id,
         message_type_id,
         queue_id,
@@ -56,14 +56,14 @@ BEGIN
         scheduled_for,
         next_attempt_at
     ) VALUES (
-        add_command.message_id,
-        add_command.message_type_id,
-        add_command.queue_id,
-        add_command.envelope,
-        add_command.queued_at,
-        add_command.queued_at
+        enqueue_command.message_id,
+        enqueue_command.message_type_id,
+        enqueue_command.queue_id,
+        enqueue_command.envelope,
+        enqueue_command.queued_at,
+        enqueue_command.queued_at
     );
 
-    RETURN QUERY SELECT add_command.message_id, TRUE;
+    RETURN QUERY SELECT enqueue_command.message_id, TRUE;
 END;
 $$;

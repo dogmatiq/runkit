@@ -27,7 +27,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT id
-				FROM eventstream.streams`,
+				FROM runkit.event_streams`,
 			)
 			if err := row.Scan(xsql.UUID(streamID)); err != nil {
 				t.Fatalf("unable to find event stream: %v", err)
@@ -88,7 +88,7 @@ func TestEventStream_eventsAreDistributedAcrossStreams(t *testing.T) {
 			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT COUNT(*)
-				FROM eventstream.streams
+				FROM runkit.event_streams
 				WHERE next_offset > 0`,
 			)
 			if err := row.Scan(&distinctStreams); err != nil {

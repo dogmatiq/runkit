@@ -91,7 +91,7 @@ func TestRouter(t *testing.T) {
 
 			if err := db.QueryRowContext(
 				t.Context(),
-				`SELECT eventstream.acquire_for_write()`,
+				`SELECT runkit.acquire_event_stream()`,
 			).Scan(xsql.UUID(streamID)); err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestRouter(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO aggregate.instances (
+			`INSERT INTO runkit.aggregate_instances (
 				handler_key,
 				instance_id,
 				stream_id

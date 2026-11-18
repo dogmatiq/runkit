@@ -201,7 +201,7 @@ func (c *Consumer) attachQueueSignals(
 
 	for queueID := range queues.All() {
 		if !c.detachQueueSignal.Has(queueID) {
-			signal := "messagequeue." + queueID.AsString()
+			signal := "messages_enqueued." + queueID.AsString()
 			detach := c.Node.AttachSignal(ctx, signal, &c.messageAdded)
 			c.detachQueueSignal.Set(queueID, detach)
 		}

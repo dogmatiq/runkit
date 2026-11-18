@@ -422,7 +422,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO process.instances (
+			`INSERT INTO runkit.process_instances (
 				handler_key,
 				instance_id,
 				deadline_queue_id
@@ -446,7 +446,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 					1,
 					db,
 					`SELECT COUNT(*)
-					FROM process.instances
+					FROM runkit.process_instances
 					WHERE deadline_queue_id IS NOT NULL`,
 				)
 			},
@@ -470,7 +470,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 					1,
 					db,
 					`SELECT COUNT(*)
-					FROM process.instances
+					FROM runkit.process_instances
 					WHERE deadline_queue_id IS NOT NULL`,
 				)
 			},
@@ -490,8 +490,8 @@ func TestInstance_deadlineQueue(t *testing.T) {
 					1,
 					db,
 					`SELECT COUNT(*)
-					FROM messagequeue.messages AS m
-					INNER JOIN process.instances AS i
+					FROM runkit.queued_messages AS m
+					INNER JOIN runkit.process_instances AS i
 						ON i.handler_key = m.handler_key
 						AND i.instance_id = m.instance_id
 					WHERE m.queue_id = i.deadline_queue_id`,
@@ -518,7 +518,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 					1,
 					db,
 					`SELECT COUNT(*)
-					FROM messagequeue.messages
+					FROM runkit.queued_messages
 					WHERE queue_id = $1`,
 					queueID.AsString(),
 				)
@@ -582,7 +582,7 @@ func TestInstance_end(t *testing.T) {
 			t.Context(),
 			lockHolder,
 			`SELECT 1
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE handler_key = $1
 			AND instance_id = '<instance>'
 			FOR UPDATE`,
@@ -614,7 +614,7 @@ func TestInstance_end(t *testing.T) {
 		if err := db.QueryRowContext(
 			t.Context(),
 			`SELECT ended
-			FROM process.instances
+			FROM runkit.process_instances
 			WHERE handler_key = $1
 			AND instance_id = '<instance>'`,
 			xsql.UUID(sink.Identity.GetKey()),
@@ -737,7 +737,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 			want,
 			db,
 			`SELECT count(*)
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_type_id = $1`,
 			xsql.UUID(typeID),
 		)
@@ -755,7 +755,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 			db,
 			`SELECT EXISTS (
 				SELECT 1
-				FROM messagequeue.messages
+				FROM runkit.queued_messages
 				WHERE message_type_id = $1
 				AND failures >= 1
 			)`,
@@ -772,7 +772,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 		err := db.QueryRowContext(
 			t.Context(),
 			`SELECT state
-			FROM process.instances
+			FROM runkit.process_instances
 			WHERE handler_key = $1
 			AND instance_id = '<instance>'`,
 			handlerKey,
@@ -857,7 +857,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 					0,
 					db,
 					`SELECT count(*)
-					FROM messagequeue.messages
+					FROM runkit.queued_messages
 					WHERE message_type_id = $1`,
 					xsql.UUID(originalDeadlineTypeID),
 				)

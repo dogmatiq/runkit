@@ -1,12 +1,10 @@
-CREATE SCHEMA IF NOT EXISTS eventstream;
-
 --------------------------------------------------------------------------------
--- The "streams" table is the set of all event streams.
+-- The "event_streams" table is the set of all event streams.
 --
 -- The "next_offset" column is the next unused offset on the stream, which is
 -- equivalent to the number of events already on the stream.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS eventstream.streams (
+CREATE TABLE IF NOT EXISTS runkit.event_streams (
     id          uuid   PRIMARY KEY,
     next_offset bigint NOT NULL DEFAULT 0 CHECK (next_offset >= 0)
 );
@@ -15,12 +13,12 @@ CREATE TABLE IF NOT EXISTS eventstream.streams (
 -- The "events" table contains all events recorded by aggregate and integration
 -- handlers.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS eventstream.events (
+CREATE TABLE IF NOT EXISTS runkit.events (
     message_id            uuid        PRIMARY KEY,
     correlation_id        uuid        NOT NULL,
     message_type_id       uuid        NOT NULL,
     envelope              bytea       NOT NULL,
-    stream_id             uuid        NOT NULL REFERENCES eventstream.streams(id),
+    stream_id             uuid        NOT NULL REFERENCES runkit.event_streams(id),
     stream_offset         bigint      NOT NULL CHECK (stream_offset >= 0),
     aggregate_handler_key uuid,
     aggregate_instance_id text        CHECK (aggregate_instance_id != ''),
@@ -46,7 +44,7 @@ CREATE TABLE IF NOT EXISTS eventstream.events (
 -- It is used to reload aggregate root state. The WHERE clause excludes events
 -- recorded by integration handlers from the index.
 CREATE INDEX IF NOT EXISTS events_by_aggregate_instance
-ON eventstream.events (
+ON runkit.events (
     aggregate_handler_key,
     aggregate_instance_id,
     stream_offset
@@ -56,7 +54,7 @@ WHERE aggregate_handler_key IS NOT NULL;
 -- Create an index for finding events of a specific type by their offset within
 -- a stream.
 CREATE INDEX IF NOT EXISTS events_by_stream_and_offset
-ON eventstream.events (
+ON runkit.events (
     stream_id,
     message_type_id,
     stream_offset
@@ -72,7 +70,7 @@ ON eventstream.events (
 --
 -- The failures and resume_at columns are not used.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS eventstream.handler_checkpoints (
+CREATE TABLE IF NOT EXISTS runkit.handler_checkpoints (
     handler_key       uuid        NOT NULL,
     stream_id         uuid        NOT NULL,
     checkpoint_offset bigint      NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),

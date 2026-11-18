@@ -182,7 +182,7 @@ func (s *CommandSink) tryLockInstance(
 		ctx,
 		`WITH existing AS (
 			SELECT 1
-			FROM aggregate.instances
+			FROM runkit.aggregate_instances
 			WHERE handler_key = $1
 			AND instance_id = $2
 		), locked AS (
@@ -190,12 +190,12 @@ func (s *CommandSink) tryLockInstance(
 				stream_id,
 				snapshot_offset,
 				snapshot
-			FROM aggregate.instances
+			FROM runkit.aggregate_instances
 			WHERE handler_key = $1
 			AND instance_id = $2
 			FOR UPDATE SKIP LOCKED
 		), created AS (
-			INSERT INTO aggregate.instances (
+			INSERT INTO runkit.aggregate_instances (
 				handler_key,
 				instance_id
 			)

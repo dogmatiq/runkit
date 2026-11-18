@@ -40,7 +40,7 @@ func CreateEventStreams(
 
 		if _, err := x.ExecContext(
 			t.Context(),
-			`INSERT INTO eventstream.streams (id) VALUES ($1)`,
+			`INSERT INTO runkit.event_streams (id) VALUES ($1)`,
 			xsql.UUID(streamIDs[i]),
 		); err != nil {
 			t.Fatal(err)
@@ -83,12 +83,12 @@ func PopulateEventStreams(
 
 			if _, err := x.ExecContext(
 				t.Context(),
-				`SELECT eventstream.append(
+				`SELECT runkit.append_events_to_specific_stream(
 					$1,
 					$2,
 					NULL, -- aggregate handler key
 					NULL, -- aggregate instance ID
-					ARRAY[ROW($3, $4, $5)::eventstream.event]
+					ARRAY[ROW($3, $4, $5)::runkit.event]
 				)`,
 				xsql.UUID(streamID),
 				xsql.UUID(env.GetHeader().GetCorrelationId()),
@@ -143,12 +143,12 @@ func AppendToEventStream(
 
 		row := x.QueryRowContext(
 			t.Context(),
-			`SELECT eventstream.append(
+			`SELECT runkit.append_events_to_specific_stream(
 				$1,
 				$2,
 				NULL, -- aggregate handler key
 				NULL, -- aggregate instance ID
-				ARRAY[ROW($3, $4, $5)::eventstream.event]
+				ARRAY[ROW($3, $4, $5)::runkit.event]
 			)`,
 			xsql.UUID(streamID),
 			xsql.UUID(env.GetHeader().GetCorrelationId()),
@@ -189,7 +189,7 @@ func ExpectEventCount(
 		want,
 		q,
 		`SELECT COUNT(*)
-		FROM eventstream.events`,
+		FROM runkit.events`,
 	)
 }
 
@@ -209,7 +209,7 @@ func ExpectContiguousEvents(
 		`SELECT
 			e.stream_offset,
 			e.envelope
-		FROM eventstream.events AS e
+		FROM runkit.events AS e
 		WHERE e.stream_id = $1
 		AND e.stream_offset >= $2
 		ORDER BY e.stream_offset
@@ -279,8 +279,8 @@ func WaitForHandlerToConsumeAllEvents(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM eventstream.streams AS s
-		LEFT JOIN eventstream.handler_checkpoints AS h
+		FROM runkit.event_streams AS s
+		LEFT JOIN runkit.handler_checkpoints AS h
 			ON h.handler_key = $1
 			AND h.stream_id = s.id
 		WHERE COALESCE(h.checkpoint_offset, 0) < s.next_offset`,

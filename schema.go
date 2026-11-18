@@ -47,7 +47,8 @@ func ApplySchemaOffline(ctx context.Context, db *sql.DB) error {
 	)
 }
 
-// DropSchema drops the database schema used by the engine.
+// DropSchema drops the engine's PostgreSQL schema, named "runkit", and
+// everything in it.
 func DropSchema(ctx context.Context, db *sql.DB) error {
 	return schema.Drop(ctx, db)
 }

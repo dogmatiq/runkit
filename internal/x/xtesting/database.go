@@ -230,13 +230,13 @@ func createTestDatabase(t testing.TB, dsn string) (dbName string) {
 }
 
 const (
-	// containerUsername is the name of the PostgreSQL user that the tests
-	// connect as.
+	// containerUsername is the name of the PostgreSQL user that the tests use
+	// to connect.
 	//
-	// It must not be the name of one of the engine's schemas, such as "runkit".
-	// The default PostgreSQL "search_path" includes a schema named after the
-	// connected user, which would let a query that omits the schema name
-	// succeed. The tests want every query to name its schema.
+	// It must not be "runkit", the name of the engine's schema. The default
+	// PostgreSQL "search_path" includes a schema named after the connected
+	// user, which would let a query that omits the schema name succeed. The
+	// tests want every query to name its schema.
 	containerUsername = "dogmatiq-runkit-test"
 
 	// containerPassword is the password of the PostgreSQL user that the tests

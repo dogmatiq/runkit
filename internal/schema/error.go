@@ -77,7 +77,7 @@ func (e IncompatibleMigrationError) Error() string {
 }
 
 // InvalidIndexesError is returned when the database needs an upgrade and has
-// invalid indexes in the engine's schemas. The upgrade can't go ahead until a
+// invalid indexes in the engine's schema. The upgrade can't go ahead until a
 // person drops or rebuilds each of them.
 type InvalidIndexesError struct {
 	// Indexes are the names of the invalid indexes, each qualified by its

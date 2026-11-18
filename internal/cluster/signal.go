@@ -19,7 +19,7 @@ const notificationChannel = "signal"
 // that the target is notified each time the cluster-wide signal is, until the
 // returned function is called or ctx is canceled.
 //
-// A cluster-wide signal is a string, such as "messagequeue". It's notified by
+// A cluster-wide signal is a string, such as "messages_enqueued". It's notified by
 // sending a PostgreSQL notification, usually from a database trigger.
 //
 // Callers attach the signal before they first load the state they're

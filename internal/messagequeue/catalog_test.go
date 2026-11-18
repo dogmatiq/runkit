@@ -57,7 +57,7 @@ func TestCatalog(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO messagequeue.messages (
+			`INSERT INTO runkit.queued_messages (
 				message_id,
 				message_type_id,
 				queue_id,
@@ -136,7 +136,7 @@ func TestCatalog(t *testing.T) {
 		to := uuidpb.Generate()
 		if _, err := db.ExecContext(
 			t.Context(),
-			`UPDATE messagequeue.messages
+			`UPDATE runkit.queued_messages
 			SET queue_id = $2
 			WHERE message_id = $1`,
 			xsql.UUID(messageID),
@@ -160,7 +160,7 @@ func TestCatalog(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`DELETE FROM messagequeue.messages
+			`DELETE FROM runkit.queued_messages
 			WHERE message_id = $1`,
 			xsql.UUID(messageID),
 		); err != nil {

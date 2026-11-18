@@ -11,12 +11,12 @@ LOCK TABLE
 IN ACCESS EXCLUSIVE MODE;
 
 --------------------------------------------------------------------------------
--- The "messagequeue" tables are created as they are in "current/", which is
+-- The "queued_messages" table is created as it is in "current/", which is
 -- applied after this migration and doesn't alter tables that already exist.
+-- The "runkit" schema already exists, because "bootstrap.sql" creates it before
+-- any migration.
 --------------------------------------------------------------------------------
-CREATE SCHEMA messagequeue;
-
-CREATE TABLE messagequeue.messages (
+CREATE TABLE runkit.queued_messages (
     message_id              uuid        PRIMARY KEY,
     message_type_id         uuid        NOT NULL,
     queue_id                uuid        NOT NULL,
@@ -34,22 +34,22 @@ CREATE TABLE messagequeue.messages (
     CHECK (failures > 0 OR NOT failure_logged_as_error)
 );
 
-CREATE INDEX messages_by_queue
-ON messagequeue.messages (
+CREATE INDEX queued_messages_by_queue
+ON runkit.queued_messages (
     queue_id,
     message_type_id,
     next_attempt_at
 );
 
-CREATE INDEX messages_by_instance
-ON messagequeue.messages (
+CREATE INDEX queued_messages_by_instance
+ON runkit.queued_messages (
     handler_key,
     instance_id
 )
 WHERE handler_key IS NOT NULL;
 
 --------------------------------------------------------------------------------
--- Move the pending commands and deadlines into "messagequeue.messages".
+-- Move the pending commands and deadlines into "runkit.queued_messages".
 --
 -- A new message's queue ID is the ID of the node that produced it, but that
 -- isn't available here. The old tables don't record which node produced each
@@ -64,7 +64,7 @@ WHERE handler_key IS NOT NULL;
 -- A migrated deadline gets the time of its next attempt as its
 -- "scheduled_for", because its scheduled time is only in its envelope.
 --------------------------------------------------------------------------------
-INSERT INTO messagequeue.messages (
+INSERT INTO runkit.queued_messages (
     message_id,
     message_type_id,
     queue_id,
@@ -90,12 +90,23 @@ FROM commandqueue.commands;
 -- constraints as the new one, and it keeps every key after its command has been
 -- delivered, so copying its rows would take time in proportion to the history
 -- of the application, not to its backlog.
+--
+-- It's renamed first, and so are the constraints that PostgreSQL named after
+-- it, to match the names in a new database.
 --------------------------------------------------------------------------------
-ALTER TABLE commandqueue.idempotency_keys SET SCHEMA messagequeue;
+ALTER TABLE commandqueue.idempotency_keys RENAME TO command_idempotency_keys;
+ALTER TABLE commandqueue.command_idempotency_keys RENAME CONSTRAINT idempotency_keys_pkey TO command_idempotency_keys_pkey;
+ALTER TABLE commandqueue.command_idempotency_keys RENAME CONSTRAINT idempotency_keys_idempotency_key_not_null TO command_idempotency_keys_idempotency_key_not_null;
+ALTER TABLE commandqueue.command_idempotency_keys RENAME CONSTRAINT idempotency_keys_idempotency_key_check TO command_idempotency_keys_idempotency_key_check;
+ALTER TABLE commandqueue.command_idempotency_keys RENAME CONSTRAINT idempotency_keys_message_id_not_null TO command_idempotency_keys_message_id_not_null;
+ALTER TABLE commandqueue.command_idempotency_keys RENAME CONSTRAINT idempotency_keys_message_id_key TO command_idempotency_keys_message_id_key;
+ALTER TABLE commandqueue.command_idempotency_keys SET SCHEMA runkit;
 
-DROP SCHEMA commandqueue CASCADE;
+DROP TABLE commandqueue.commands;
+DROP FUNCTION commandqueue.add(uuid, uuid, bytea, text);
+DROP FUNCTION commandqueue.remove(uuid);
 
-INSERT INTO messagequeue.messages (
+INSERT INTO runkit.queued_messages (
     message_id,
     message_type_id,
     queue_id,

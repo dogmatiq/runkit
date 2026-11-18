@@ -130,7 +130,7 @@ major schema upgrade say so at the top.
 
 Only a backup can undo a major schema upgrade.
 
-- **Restore into an empty database, or drop the engine's schemas first.** A
+- **Restore into an empty database, or drop the engine's schema first.** A
   restore that only replaces the objects in the backup leaves every new object
   from the upgrade in place. For an upgrade from runkit `v0.2.0` or earlier,
   those objects include the `runkit` schema, which still records the new schema

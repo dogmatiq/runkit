@@ -313,8 +313,8 @@ func TestEngine_schema(t *testing.T) {
 		// over duplicate values fails, and leaves the index invalid.
 		if _, err := db.ExecContext(
 			t.Context(),
-			`CREATE TABLE eventstream.duplicates (value int);
-			INSERT INTO eventstream.duplicates VALUES (1), (1)`,
+			`CREATE TABLE runkit.duplicates (value int);
+			INSERT INTO runkit.duplicates VALUES (1), (1)`,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +322,7 @@ func TestEngine_schema(t *testing.T) {
 		if _, err := db.ExecContext(
 			t.Context(),
 			`CREATE UNIQUE INDEX CONCURRENTLY duplicates_by_value
-			ON eventstream.duplicates (value)`,
+			ON runkit.duplicates (value)`,
 		); err == nil {
 			t.Fatal("expected the index build to fail")
 		}
@@ -356,7 +356,7 @@ func TestEngine_schema(t *testing.T) {
 
 		if _, err := holder.ExecContext(
 			t.Context(),
-			`LOCK TABLE eventstream.streams IN ACCESS EXCLUSIVE MODE`,
+			`LOCK TABLE runkit.event_streams IN ACCESS EXCLUSIVE MODE`,
 		); err != nil {
 			t.Fatal(err)
 		}

@@ -72,7 +72,7 @@ func TestDeadlineSink(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO process.instances (
+			`INSERT INTO runkit.process_instances (
 				handler_key,
 				instance_id,
 				ended
@@ -143,7 +143,7 @@ func TestDeadlineSink(t *testing.T) {
 			if _, err := lockHolder.ExecContext(
 				t.Context(),
 				`SELECT 1
-				FROM process.instances
+				FROM runkit.process_instances
 				WHERE handler_key = $1
 				AND instance_id = '<instance>'
 				FOR UPDATE`,
@@ -212,7 +212,7 @@ func TestDeadlineSink(t *testing.T) {
 
 			if _, err := db.ExecContext(
 				t.Context(),
-				`INSERT INTO process.instances (
+				`INSERT INTO runkit.process_instances (
 					handler_key,
 					instance_id,
 					state

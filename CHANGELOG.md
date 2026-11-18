@@ -91,6 +91,10 @@ events.
 - **[BC]** The database schema has changed in a way that engines built for the
   earlier schema can't run on. Stop every engine that uses the database, back it
   up, and call `ApplySchemaOffline()` before running this runkit version.
+- Moved the engine's tables, functions and triggers into a single PostgreSQL
+  schema. They used to be spread across several schemas with generic names,
+  which could clash with the application's own schemas. `DropSchema()` now
+  drops only that one schema.
 - **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
   function.
 - Changed how commands and deadlines are delivered:

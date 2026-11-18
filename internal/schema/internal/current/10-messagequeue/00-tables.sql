@@ -1,8 +1,6 @@
-CREATE SCHEMA IF NOT EXISTS messagequeue;
-
 --------------------------------------------------------------------------------
--- The "messages" table holds the commands and deadlines that have not yet been
--- delivered.
+-- The "queued_messages" table holds the commands and deadlines that have not
+-- yet been delivered.
 --
 -- Each message belongs to a queue. A queue is the set of messages that a single
 -- node delivers, and its ID is the rendezvous key that decides which node that
@@ -22,7 +20,7 @@ CREATE SCHEMA IF NOT EXISTS messagequeue;
 -- message was queued, the time of the first of them, and whether one of them
 -- has been logged as an ERROR.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS messagequeue.messages (
+CREATE TABLE IF NOT EXISTS runkit.queued_messages (
     message_id              uuid        PRIMARY KEY,
     message_type_id         uuid        NOT NULL,
     queue_id                uuid        NOT NULL,
@@ -43,30 +41,30 @@ CREATE TABLE IF NOT EXISTS messagequeue.messages (
 -- Create an index for finding the next message to deliver in each queue, for
 -- each message type that is routed to a handler, and for listing the queues
 -- that have messages.
-CREATE INDEX IF NOT EXISTS messages_by_queue
-ON messagequeue.messages (
+CREATE INDEX IF NOT EXISTS queued_messages_by_queue
+ON runkit.queued_messages (
     queue_id,
     message_type_id,
     next_attempt_at
 );
 
 -- Create an index for finding the deadlines of a process instance.
-CREATE INDEX IF NOT EXISTS messages_by_instance
-ON messagequeue.messages (
+CREATE INDEX IF NOT EXISTS queued_messages_by_instance
+ON runkit.queued_messages (
     handler_key,
     instance_id
 )
 WHERE handler_key IS NOT NULL;
 
 --------------------------------------------------------------------------------
--- The "idempotency_keys" table is a write-only list of idempotency keys
+-- The "command_idempotency_keys" table is a write-only list of idempotency keys
 -- specified when executing a command with the dogma.WithIdempotencyKey()
 -- option.
 --
 -- It is used to deduplicate commands with the same key, even after they have
--- been delivered and deleted from the "messages" table.
+-- been delivered and deleted from the "queued_messages" table.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS messagequeue.idempotency_keys (
+CREATE TABLE IF NOT EXISTS runkit.command_idempotency_keys (
     idempotency_key text PRIMARY KEY CHECK (idempotency_key != ''),
     message_id      uuid NOT NULL UNIQUE
 );

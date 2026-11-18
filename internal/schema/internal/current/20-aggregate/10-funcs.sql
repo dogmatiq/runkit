@@ -1,15 +1,15 @@
 --------------------------------------------------------------------------------
--- The "complete_with_events" function appends events to an event stream,
+-- The "save_aggregate_instance" function appends events to an event stream,
 -- optionally updates the aggregate instance snapshot, and binds a newly
 -- acquired stream if needed.
 --------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION aggregate.complete_with_events(
+CREATE OR REPLACE FUNCTION runkit.save_aggregate_instance(
     handler_key     uuid,
     instance_id     text,
     stream_id       uuid,
     correlation_id  uuid,
     snapshot        bytea,
-    events          eventstream.event[]
+    events          runkit.event[]
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -18,31 +18,31 @@ DECLARE
     next_offset bigint;
 BEGIN
     -- If the instance has no bound stream, acquire one and bind it.
-    IF complete_with_events.stream_id IS NULL THEN
-        complete_with_events.stream_id := eventstream.acquire_for_write();
+    IF save_aggregate_instance.stream_id IS NULL THEN
+        save_aggregate_instance.stream_id := runkit.acquire_event_stream();
 
-        UPDATE aggregate.instances SET
-            stream_id = complete_with_events.stream_id
-        WHERE aggregate.instances.handler_key = complete_with_events.handler_key
-        AND aggregate.instances.instance_id = complete_with_events.instance_id;
+        UPDATE runkit.aggregate_instances AS i SET
+            stream_id = save_aggregate_instance.stream_id
+        WHERE i.handler_key = save_aggregate_instance.handler_key
+        AND i.instance_id = save_aggregate_instance.instance_id;
     END IF;
 
     -- Append events to the stream.
-    next_offset := eventstream.append(
-        complete_with_events.stream_id,
-        complete_with_events.correlation_id,
-        complete_with_events.handler_key,
-        complete_with_events.instance_id,
-        complete_with_events.events
+    next_offset := runkit.append_events_to_specific_stream(
+        save_aggregate_instance.stream_id,
+        save_aggregate_instance.correlation_id,
+        save_aggregate_instance.handler_key,
+        save_aggregate_instance.instance_id,
+        save_aggregate_instance.events
     );
 
     -- Update the snapshot if one was provided.
-    IF complete_with_events.snapshot IS NOT NULL THEN
-        UPDATE aggregate.instances SET
+    IF save_aggregate_instance.snapshot IS NOT NULL THEN
+        UPDATE runkit.aggregate_instances AS i SET
             snapshot_offset = next_offset - 1,
-            snapshot = complete_with_events.snapshot
-        WHERE aggregate.instances.handler_key = complete_with_events.handler_key
-        AND aggregate.instances.instance_id = complete_with_events.instance_id;
+            snapshot = save_aggregate_instance.snapshot
+        WHERE i.handler_key = save_aggregate_instance.handler_key
+        AND i.instance_id = save_aggregate_instance.instance_id;
     END IF;
 END;
 $$;

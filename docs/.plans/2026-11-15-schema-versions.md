@@ -7,9 +7,9 @@ upstream yet; nothing has landed on main. The first two tasks are done, and a
 review of the migration machinery followed them. Its report is
 [2026-11-16-schema-migration-review.md](2026-11-16-schema-migration-review.md),
 and every finding in it has a decision, made in the commits listed under the
-second task. The next tasks are the automatic schema migration flowchart and
-`Run` applying the schema, which the user moved forward so that the flowchart
-is true when it lands.
+second task. The automatic schema migration flowchart and `Run` applying the
+schema landed together in e30c230. The next task is collapsing the engine's
+schemas into one, then flattening `current/`.
 
 ## Context
 
@@ -46,8 +46,7 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   `runkit.schema_version`, with the columns `migrating_to` and
   `migration_steps_completed`; directory `migrations/`; public functions
   `ApplySchemaOnline()` and `ApplySchemaOffline()`; internal `schema.Apply`.
-  `CreateSchema()` is removed, and so is `DropSchema()`, in the task that
-  collapses the schemas.
+  `CreateSchema()` is removed, and `DropSchema()` stays.
 - **step** is one file in a migration's directory. Its file name starts with a
   two-digit number, which is unique within the migration and orders its steps,
   such as `10-add-queues.tx.sql`. A step whose file name has the suffix `tx`
@@ -335,7 +334,7 @@ done.
     statement that ends its transaction), 6ed9582 (a test that applies
     `current/` again), 78c4c13 (close the connection) and 39e1095 (a `stmt`
     step must be safe to run twice).
-- [ ] **The automatic schema migration flowchart.** PR or commit: —
+- [x] **The automatic schema migration flowchart.** PR or commit: e30c230
   - One flowchart, `docs/automatic-schema-migration.md` (drafted), titled
     "Automatic schema migration", replaces the two charts that were in
     `docs/schema-upgrades.md`. The user decided that it is the only chart: no
@@ -359,7 +358,7 @@ done.
   - Check it again once `Run` applies the schema. Until then, only the two
     functions make these checks, and the chart's first box, "Engine starts",
     isn't true yet.
-- [ ] **`Run` applies the schema.** PR or commit: —
+- [x] **`Run` applies the schema.** PR or commit: e30c230
   - `engine.go`: `Run` calls `schema.Apply` online, with the engine's timeout
     constants, before it binds the application. It tries again with the
     engine's failure policy after `xsql.IsLockNotAvailableError`, and returns
@@ -391,29 +390,29 @@ done.
     application schema with the same name. One schema has one name that can
     clash. Do it in this release, because the schema already needs downtime
     and is unreleased.
-  - The schema is called `runkit`. A table keeps its name unless it clashes
-    with another in the one schema, and then its name gets its component as a
-    prefix: `aggregate_instances`, `process_instances`, `process_handlers` and
-    `projection_handlers`. The other tables are `events`,
-    `handler_checkpoints`, `idempotency_keys`, `identity` and
-    `schema_version`. `eventstream.streams` becomes `event_streams`, because
-    `streams` doesn't say what it holds, and `messagequeue.messages` becomes
-    `queued_messages`, because `messages` could be read as every kind of
-    message, including events. Its indexes become `queued_messages_by_queue` and
-    `queued_messages_by_instance`. The functions and their
-    triggers lose their schema as a qualifier, so each was renamed, one at a
-    time, to say what it does without it. A trigger and its function share one
-    name. `eventstream.acquire_for_write` becomes `acquire_event_stream`,
-    `append` becomes `append_events_to_specific_stream`, `append_any` becomes
-    `append_events_to_any_stream`, `signal_create` becomes
+  - The schema is called `runkit`. A table keeps its name unless it clashes with
+    another in the one schema, and then its name gets its component as a prefix:
+    `aggregate_instances`, `process_instances`, `process_handlers` and
+    `projection_handlers`. The other tables are `events`, `handler_checkpoints`,
+    `identity` and `schema_version`. `eventstream.streams` becomes
+    `event_streams`, because `streams` doesn't say what it holds, and
+    `messagequeue.messages` becomes `queued_messages`, because `messages` could
+    be read as every kind of message, including events. `idempotency_keys`
+    becomes `command_idempotency_keys`, because Dogma's idempotency keys belong
+    to commands, and the name alone didn't say so. Its indexes become
+    `queued_messages_by_queue` and `queued_messages_by_instance`. The functions
+    and their triggers lose their schema as a qualifier, so each was renamed,
+    one at a time, to say what it does without it. A trigger and its function
+    share one name. `eventstream.acquire_for_write` becomes
+    `acquire_event_stream`, `append` becomes `append_events_to_specific_stream`,
+    `append_any` becomes `append_events_to_any_stream`, `signal_create` becomes
     `signal_event_stream_created`, `signal_append` becomes
     `signal_events_appended`, `messagequeue.add_command` becomes
     `enqueue_command`, `signal_add` becomes `signal_message_enqueued`,
     `signal_move` becomes `signal_message_queue_changed`, and
-    `aggregate.complete_with_events` becomes
-    `save_aggregate_instance`. The `event` type keeps its
-    name. `aggregate.complete_without_events` is removed, and the aggregate
-    package runs its single `DELETE` itself.
+    `aggregate.complete_with_events` becomes `save_aggregate_instance`. The
+    `event` type keeps its name. `aggregate.complete_without_events` is removed,
+    and the aggregate package runs its single `DELETE` itself.
   - The migration to schema version v2.0.0 moves each table of the v0.2.0
     schema with `ALTER TABLE ... SET SCHEMA`, which copies no rows,
     renames the tables and the auto-named indexes and constraints that need it,
@@ -427,17 +426,37 @@ done.
     `bootstrap.sql` creates them first, so the migration doesn't create the
     schema.
   - Every qualified name in the Go code, tests and docs changes (about 270
-    references in 35 Go files). The notification channel names such as
-    `eventstream.create` are not schema names and stay. The username note on
-    `containerUsername` follows.
-  - The public `DropSchema()` is removed, because it drops the schema with
-    `CASCADE` and nothing in the repository calls it. A **[BC]** `Removed`
-    entry tells a caller who needs it to run `DROP SCHEMA runkit CASCADE`
-    themselves. `schema.Drop` and `schemas()` are deleted, and a helper in
-    `internal/x/xtesting` runs the single `DROP SCHEMA IF EXISTS runkit
-    CASCADE` for the schema test.
+    references in 35 Go files). The signal names are renamed too, because
+    they no longer match a schema: `eventstream.create` becomes
+    `event_stream_created`, `eventstream.append.<stream-id>` becomes
+    `events_appended.<stream-id>`, and `messagequeue` and
+    `messagequeue.<queue-id>` become `messages_enqueued` and
+    `messages_enqueued.<queue-id>`. This is safe only because every engine must
+    be stopped for this release. The username note on `containerUsername`
+    follows.
+  - The public `DropSchema()` stays, because applications need it in their own
+    tests. It and `schema.Drop` run the single `DROP SCHEMA IF EXISTS runkit
+    CASCADE`, which can no longer drop an application schema that happens to
+    share a name with one of the engine's. `schemas()` is deleted.
+  - The invalid-index check looks only in `runkit`, not in the old schemas.
+    No released runkit version built an index concurrently, so a database
+    created by one has no invalid index of the engine's in them, and after
+    v0.3.0 the old schemas are gone.
   - The upgrade test already compares the migrated database with a new one, so
     it covers the result.
+- [ ] **Flatten `current/` into one file per component.** PR or commit: —
+  - Why: each subdirectory of `current/` matched one of the old schemas. Now
+    that everything is in `runkit`, the subdirectories only group files, but
+    they make the README explain two levels of ordering and why the files
+    directly in `current/` aren't applied.
+  - Each subdirectory becomes one file named after it, such as
+    `00-eventstream.sql`, holding its tables, then its functions, then its
+    triggers. `embed.go` embeds `*.sql`, `executeDirectory` reads one directory
+    instead of walking a tree, and the README says that the files are applied
+    in lexical order of their names. The later tasks in this plan that name a
+    file in `current/` are updated to the new names.
+  - It's a separate commit from the collapse, so that the collapse's diff of the
+    SQL shows its renames instead of whole files moving.
 - [ ] **Maintainer document (closes #96).** PR or commit: —
   - `docs/maintainers/schema.md`: the schema version and its meaning, the
     wording, the v0.1.0 floor, the deploy-impact rule and the list of operations

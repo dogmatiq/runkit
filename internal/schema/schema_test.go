@@ -81,7 +81,7 @@ func TestApplyAndDrop(t *testing.T) {
 		"the queue is created on a database that never had the old tables",
 		true,
 		db,
-		`SELECT to_regclass('messagequeue.messages') IS NOT NULL`,
+		`SELECT to_regclass('runkit.queued_messages') IS NOT NULL`,
 	)
 
 	// A database at the target schema version needs no change.
@@ -382,8 +382,8 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 }
 
 // TestApply_invalidIndex verifies that a database that needs an upgrade is
-// refused while it has an invalid index in one of the engine's schemas, and
-// that the error names the index.
+// refused while it has an invalid index in the engine's schema, and that the
+// error names the index.
 //
 // The database also needs an upgrade that raises the major number. An online
 // call must still report the index, because fixing it doesn't need the
@@ -391,15 +391,25 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 func TestApply_invalidIndex(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabaseWithoutSchema(t)
-	createSchemaOf(t, db, "v0.2.0")
+	db := xtesting.NewDatabase(t)
+
+	older := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()-1)
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`UPDATE runkit.schema_version
+		SET version = $1`,
+		older,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	// A unique index built concurrently over duplicate values fails, and
 	// leaves the index invalid, as an interrupted build does.
 	if _, err := db.ExecContext(
 		t.Context(),
-		`CREATE TABLE eventstream.duplicates (value int);
-		INSERT INTO eventstream.duplicates VALUES (1), (1)`,
+		`CREATE TABLE runkit.duplicates (value int);
+		INSERT INTO runkit.duplicates VALUES (1), (1)`,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +417,7 @@ func TestApply_invalidIndex(t *testing.T) {
 	if _, err := db.ExecContext(
 		t.Context(),
 		`CREATE UNIQUE INDEX CONCURRENTLY duplicates_by_value
-		ON eventstream.duplicates (value)`,
+		ON runkit.duplicates (value)`,
 	); err == nil {
 		t.Fatal("expected the index build to fail")
 	}
@@ -423,18 +433,18 @@ func TestApply_invalidIndex(t *testing.T) {
 			t.Fatalf("offline = %t: unexpected error: %s", offline, err)
 		}
 
-		if !slices.Contains(invalid.Indexes, "eventstream.duplicates_by_value") {
+		if !slices.Contains(invalid.Indexes, "runkit.duplicates_by_value") {
 			t.Fatalf("offline = %t: the error doesn't name the invalid index: %s", offline, err)
 		}
 	}
 
 	xtesting.ExpectQueryResult(
 		t,
-		"the old tables are still there",
-		true,
+		"the schema version is unchanged",
+		older,
 		db,
-		`SELECT to_regclass('commandqueue.commands') IS NOT NULL
-			AND to_regclass('messagequeue.messages') IS NULL`,
+		`SELECT version
+		FROM runkit.schema_version`,
 	)
 }
 
@@ -463,7 +473,7 @@ func TestApply_raisingMajorNumberNeedsOffline(t *testing.T) {
 		db,
 		`SELECT to_regclass('commandqueue.commands') IS NOT NULL
 			AND to_regclass('process.deadlines') IS NOT NULL
-			AND to_regclass('messagequeue.messages') IS NULL`,
+			AND to_regclass('runkit.queued_messages') IS NULL`,
 	)
 
 	xtesting.ExpectQueryResult(
@@ -585,7 +595,7 @@ func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 		// another database connection.
 		if _, err := tx.ExecContext(
 			t.Context(),
-			`INSERT INTO eventstream.handler_checkpoints (
+			`INSERT INTO runkit.handler_checkpoints (
 				handler_key,
 				stream_id
 			) VALUES (
@@ -605,16 +615,16 @@ func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 	})
 }
 
-// TestAddCommand_usesQueuedAt verifies that a command is first due at the time
-// that the caller gives, not at the time of the database's clock.
-func TestAddCommand_usesQueuedAt(t *testing.T) {
+// TestEnqueueCommand_usesQueuedAt verifies that a command is first due at the
+// time that the caller gives, not at the time of the database's clock.
+func TestEnqueueCommand_usesQueuedAt(t *testing.T) {
 	t.Parallel()
 
 	db := xtesting.NewDatabase(t)
 
 	if _, err := db.ExecContext(
 		t.Context(),
-		`SELECT messagequeue.add_command(
+		`SELECT runkit.enqueue_command(
 			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
 			'7a1c2e3f-4b5d-4c6e-8f70-91a2b3c4d5e6',
 			'5e4d3c2b-1a09-4f8e-9d7c-6b5a49382716',
@@ -633,7 +643,7 @@ func TestAddCommand_usesQueuedAt(t *testing.T) {
 		db,
 		`SELECT scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:00:00Z'::timestamptz
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
 	)
 }
@@ -760,7 +770,7 @@ func testMigrateFrom(t *testing.T, version string) {
 			4,
 			db,
 			`SELECT COUNT(*)
-			FROM messagequeue.messages`,
+			FROM runkit.queued_messages`,
 		)
 	}
 
@@ -784,7 +794,7 @@ func testMigrateFrom(t *testing.T, version string) {
 		`SELECT checkpoint_offset = 42
 			AND failures = 3
 			AND resume_at = '2100-01-01T00:00:00Z'::timestamptz
-		FROM eventstream.handler_checkpoints
+		FROM runkit.handler_checkpoints
 		WHERE stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
 	)
 
@@ -794,14 +804,14 @@ func testMigrateFrom(t *testing.T, version string) {
 		true,
 		db,
 		`SELECT has_checkpoint_offsets
-		FROM process.handlers
+		FROM runkit.process_handlers
 		WHERE handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'`,
 	)
 
 	// This stream is not present in the local streams table.
 	if _, err := db.ExecContext(
 		t.Context(),
-		`INSERT INTO eventstream.handler_checkpoints (
+		`INSERT INTO runkit.handler_checkpoints (
 			handler_key,
 			stream_id
 		) VALUES (
@@ -826,7 +836,7 @@ func testMigrateFrom(t *testing.T, version string) {
 			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:00:00Z'::timestamptz
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
 	)
 
@@ -840,7 +850,7 @@ func testMigrateFrom(t *testing.T, version string) {
 			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T00:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T00:05:00Z'::timestamptz
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e02'`,
 	)
 
@@ -858,7 +868,7 @@ func testMigrateFrom(t *testing.T, version string) {
 			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T01:00:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:00:00Z'::timestamptz
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e03'`,
 	)
 
@@ -872,7 +882,7 @@ func testMigrateFrom(t *testing.T, version string) {
 			AND NOT failure_logged_as_error
 			AND scheduled_for = '2100-01-01T01:05:00Z'::timestamptz
 			AND next_attempt_at = '2100-01-01T01:05:00Z'::timestamptz
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e04'`,
 	)
 
@@ -882,7 +892,7 @@ func testMigrateFrom(t *testing.T, version string) {
 		true,
 		db,
 		`SELECT message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'
-		FROM messagequeue.idempotency_keys
+		FROM runkit.command_idempotency_keys
 		WHERE idempotency_key = '<key>'`,
 	)
 
@@ -1005,7 +1015,7 @@ func TestMigrate_toV2_0_0_waitsForEngineWrites(t *testing.T) {
 			0,
 			db,
 			`SELECT COUNT(*)
-			FROM messagequeue.messages`,
+			FROM runkit.queued_messages`,
 		)
 
 		return
@@ -1017,7 +1027,7 @@ func TestMigrate_toV2_0_0_waitsForEngineWrites(t *testing.T) {
 		1,
 		db,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages`,
+		FROM runkit.queued_messages`,
 	)
 }
 
@@ -1087,7 +1097,7 @@ func TestMigrate_toV2_0_0_waitsForEngineDeliveries(t *testing.T) {
 		0,
 		db,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages`,
+		FROM runkit.queued_messages`,
 	)
 }
 
