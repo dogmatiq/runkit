@@ -8,6 +8,22 @@ CREATE TABLE IF NOT EXISTS runkit.process_handlers (
 );
 
 --------------------------------------------------------------------------------
+-- The "process_handler_checkpoints" table tracks per-stream checkpoint progress
+-- for each process handler.
+--
+-- A checkpoint row is locked while applying event effects to serialize
+-- processing for a specific handler/stream pair. Stream IDs may refer to local
+-- or remote streams.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS runkit.process_handler_checkpoints (
+    handler_key       uuid   NOT NULL,
+    stream_id         uuid   NOT NULL,
+    checkpoint_offset bigint NOT NULL DEFAULT 0 CHECK (checkpoint_offset >= 0),
+
+    PRIMARY KEY (handler_key, stream_id)
+);
+
+--------------------------------------------------------------------------------
 -- The "process_instances" table stores the state of each process instance.
 --
 -- "deadline_queue_id" is the queue that the instance's deadlines are added to,

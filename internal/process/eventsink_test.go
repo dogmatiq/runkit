@@ -133,7 +133,7 @@ func TestEventSink_failureRollsBack(t *testing.T) {
 				0,
 				db,
 				`SELECT COUNT(*)
-				FROM runkit.handler_checkpoints`,
+				FROM runkit.process_handler_checkpoints`,
 			)
 
 			handler.HandleEventFunc = nil
@@ -237,7 +237,7 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 
 	var fail atomic.Bool
 	db := xtesting.NewDatabaseWithFailingQueries(t, func(query string, _ []any) bool {
-		return fail.Load() && strings.Contains(query, "UPDATE runkit.handler_checkpoints")
+		return fail.Load() && strings.Contains(query, "UPDATE runkit.process_handler_checkpoints")
 	})
 	s := newEventSink(t, db)
 	s.OutboundMessageTypes = map[reflect.Type]struct{}{
@@ -266,7 +266,7 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 
 	for _, table := range []string{
 		"runkit.process_instances",
-		"runkit.handler_checkpoints",
+		"runkit.process_handler_checkpoints",
 		"runkit.queued_messages WHERE handler_key IS NULL",
 		"runkit.queued_messages WHERE handler_key IS NOT NULL",
 	} {
@@ -287,7 +287,7 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	}
 	for _, table := range []string{
 		"runkit.process_instances",
-		"runkit.handler_checkpoints",
+		"runkit.process_handler_checkpoints",
 		"runkit.queued_messages WHERE handler_key IS NULL",
 		"runkit.queued_messages WHERE handler_key IS NOT NULL",
 	} {

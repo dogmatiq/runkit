@@ -535,7 +535,7 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 				uint64(2),
 				db,
 				`SELECT checkpoint_offset
-				FROM runkit.handler_checkpoints
+				FROM runkit.process_handler_checkpoints
 				WHERE handler_key = $1
 				AND stream_id = $2`,
 				handlerKey,

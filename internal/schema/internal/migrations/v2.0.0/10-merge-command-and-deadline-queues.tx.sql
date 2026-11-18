@@ -134,13 +134,6 @@ FROM process.deadlines;
 DROP TABLE process.deadlines;
 
 --------------------------------------------------------------------------------
--- Allow checkpoints for the streams of other applications, which aren't in the
--- local "streams" table.
---------------------------------------------------------------------------------
-ALTER TABLE eventstream.handler_checkpoints
-DROP CONSTRAINT handler_checkpoints_stream_id_fkey;
-
---------------------------------------------------------------------------------
 -- Add the queue that a process instance's deadlines are added to.
 --------------------------------------------------------------------------------
 ALTER TABLE process.instances

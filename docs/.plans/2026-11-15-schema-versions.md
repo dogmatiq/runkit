@@ -10,8 +10,10 @@ and every finding in it has a decision, made in the commits listed under the
 second task. The automatic schema migration flowchart and `Run` applying the
 schema landed together in e30c230. Collapsing the engine's schemas into one
 landed in d338872. Flattening `current/` landed in 2104575. The maintainer
-document landed in 987d485. The next task is the operational documentation in
-the README.
+document landed in 987d485. The operational documentation in the README landed
+in ee34a67. Dropping `failures` and `resume_at` (#127) is done and awaits
+review; the next task after it is making the upgrade test need no change when a
+schema version is released.
 
 ## Context
 
@@ -493,7 +495,7 @@ done.
     version that isn't the latest with its major schema version, which replaces
     the hotfix rules. Cluster compatibility and the post-1.0 splitting guidance
     were removed.
-- [ ] **Operational documentation in the README.** PR or commit: —
+- [x] **Operational documentation in the README.** PR or commit: ee34a67
   - A "The database schema" section for the people who deploy and run an
     application, written from what the code does, after "Running an
     application". The example there no longer calls `ApplySchemaOnline()`,
@@ -540,9 +542,17 @@ done.
     on its tables, and `EXECUTE` on its functions. `xtesting.NewDatabase` now
     connects as a role with exactly those grants, so the whole test suite checks
     the list; tests that change the schema use `xtesting.NewDatabaseAsOwner`.
-- [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
+- [x] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream.sql`, and test it in the upgrade test.
+  - Review also moved the checkpoint changes out of the queue-merging step into
+    their own step, which runs after the move into the `runkit` schema, and
+    renamed `handler_checkpoints` to `process_handler_checkpoints`. The table
+    holds one process handler's offset in one event stream, and only the process
+    event sink uses it. The name follows `process_handlers` and
+    `process_instances`. The definition moved from
+    `current/00-eventstream.sql` to `current/20-process.sql`, and the move step
+    renames the table and its five constraints.
 - [ ] **Upgrade test needs no change when a schema version is released.** PR or
   commit: —
   - Why: today, releasing a new schema version means adding the runkit version

@@ -57,6 +57,13 @@ ALTER TABLE process.process_instances RENAME CONSTRAINT instances_instance_id_ch
 ALTER TABLE process.process_instances RENAME CONSTRAINT instances_ended_not_null TO process_instances_ended_not_null;
 ALTER TABLE process.process_instances RENAME CONSTRAINT instances_check TO process_instances_check;
 
+ALTER TABLE eventstream.handler_checkpoints RENAME TO process_handler_checkpoints;
+ALTER TABLE eventstream.process_handler_checkpoints RENAME CONSTRAINT handler_checkpoints_pkey TO process_handler_checkpoints_pkey;
+ALTER TABLE eventstream.process_handler_checkpoints RENAME CONSTRAINT handler_checkpoints_handler_key_not_null TO process_handler_checkpoints_handler_key_not_null;
+ALTER TABLE eventstream.process_handler_checkpoints RENAME CONSTRAINT handler_checkpoints_stream_id_not_null TO process_handler_checkpoints_stream_id_not_null;
+ALTER TABLE eventstream.process_handler_checkpoints RENAME CONSTRAINT handler_checkpoints_checkpoint_offset_not_null TO process_handler_checkpoints_checkpoint_offset_not_null;
+ALTER TABLE eventstream.process_handler_checkpoints RENAME CONSTRAINT handler_checkpoints_checkpoint_offset_check TO process_handler_checkpoints_checkpoint_offset_check;
+
 ALTER TABLE projection.handlers RENAME TO projection_handlers;
 ALTER TABLE projection.projection_handlers RENAME CONSTRAINT handlers_pkey TO projection_handlers_pkey;
 ALTER TABLE projection.projection_handlers RENAME CONSTRAINT handlers_handler_key_not_null TO projection_handlers_handler_key_not_null;
@@ -69,7 +76,7 @@ ALTER TABLE projection.projection_handlers RENAME CONSTRAINT handlers_last_compa
 ALTER TABLE application.identity SET SCHEMA runkit;
 ALTER TABLE eventstream.event_streams SET SCHEMA runkit;
 ALTER TABLE eventstream.events SET SCHEMA runkit;
-ALTER TABLE eventstream.handler_checkpoints SET SCHEMA runkit;
+ALTER TABLE eventstream.process_handler_checkpoints SET SCHEMA runkit;
 ALTER TABLE aggregate.aggregate_instances SET SCHEMA runkit;
 ALTER TABLE process.process_handlers SET SCHEMA runkit;
 ALTER TABLE process.process_instances SET SCHEMA runkit;

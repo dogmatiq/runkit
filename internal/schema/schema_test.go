@@ -595,7 +595,7 @@ func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 		// another database connection.
 		if _, err := tx.ExecContext(
 			t.Context(),
-			`INSERT INTO runkit.handler_checkpoints (
+			`INSERT INTO runkit.process_handler_checkpoints (
 				handler_key,
 				stream_id
 			) VALUES (
@@ -788,13 +788,11 @@ func testMigrateFrom(t *testing.T, version string) {
 
 	xtesting.ExpectQueryResult(
 		t,
-		"existing checkpoint and its legacy retry state are preserved",
+		"existing checkpoint is preserved",
 		true,
 		db,
 		`SELECT checkpoint_offset = 42
-			AND failures = 3
-			AND resume_at = '2100-01-01T00:00:00Z'::timestamptz
-		FROM runkit.handler_checkpoints
+		FROM runkit.process_handler_checkpoints
 		WHERE stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
 	)
 
@@ -811,7 +809,7 @@ func testMigrateFrom(t *testing.T, version string) {
 	// This stream is not present in the local streams table.
 	if _, err := db.ExecContext(
 		t.Context(),
-		`INSERT INTO runkit.handler_checkpoints (
+		`INSERT INTO runkit.process_handler_checkpoints (
 			handler_key,
 			stream_id
 		) VALUES (

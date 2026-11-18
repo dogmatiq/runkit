@@ -87,7 +87,7 @@ func (s *EventSink) CheckpointOffset(
 	err := s.DB.QueryRowContext(
 		ctx,
 		`SELECT checkpoint_offset
-		FROM runkit.handler_checkpoints
+		FROM runkit.process_handler_checkpoints
 		WHERE handler_key = $1
 		AND stream_id = $2`,
 		xsql.UUID(s.Identity.GetKey()),
@@ -148,13 +148,13 @@ func (s *EventSink) consume(
 		// overlapping first-time consumers cannot both commit the same effects.
 		if err := tx.QueryRowContext(
 			ctx,
-			`INSERT INTO runkit.handler_checkpoints (
+			`INSERT INTO runkit.process_handler_checkpoints (
 				handler_key,
 				stream_id
 			)
 			VALUES ($1, $2)
 			ON CONFLICT (handler_key, stream_id) DO UPDATE SET
-				checkpoint_offset = runkit.handler_checkpoints.checkpoint_offset
+				checkpoint_offset = runkit.process_handler_checkpoints.checkpoint_offset
 			RETURNING checkpoint_offset`,
 			xsql.UUID(s.Identity.GetKey()),
 			xsql.UUID(streamID),
@@ -190,7 +190,7 @@ func (s *EventSink) consume(
 		return xsql.ExecOne(
 			ctx,
 			tx,
-			`UPDATE runkit.handler_checkpoints SET
+			`UPDATE runkit.process_handler_checkpoints SET
 				checkpoint_offset = $3
 			WHERE handler_key = $1
 			AND stream_id = $2`,
