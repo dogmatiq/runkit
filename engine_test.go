@@ -263,7 +263,7 @@ func TestEngine_schema(t *testing.T) {
 	})
 
 	t.Run("it upgrades a schema that is behind in its minor version", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
+		db := xtesting.NewDatabaseAsOwner(t)
 		raiseTargetVersion(t, 1)
 
 		runUntilReady(t, db)
@@ -279,7 +279,7 @@ func TestEngine_schema(t *testing.T) {
 	})
 
 	t.Run("it returns an error if the schema is behind in its major version", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
+		db := xtesting.NewDatabaseAsOwner(t)
 		raiseTargetVersion(t, 0)
 
 		err := runUntilStopped(t, db)
@@ -289,7 +289,7 @@ func TestEngine_schema(t *testing.T) {
 	})
 
 	t.Run("it returns an error if the schema is ahead in its major version", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
+		db := xtesting.NewDatabaseAsOwner(t)
 
 		xtesting.ExecOne(
 			t,
@@ -306,7 +306,7 @@ func TestEngine_schema(t *testing.T) {
 	})
 
 	t.Run("it starts if an upgrade fails but it can run on the schema as it is", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
+		db := xtesting.NewDatabaseAsOwner(t)
 		raiseTargetVersion(t, 2)
 
 		// An invalid index stops the upgrade. A unique index built concurrently
@@ -343,7 +343,7 @@ func TestEngine_schema(t *testing.T) {
 	})
 
 	t.Run("it tries again after an upgrade step times out waiting for a lock", func(t *testing.T) {
-		db := xtesting.NewDatabase(t)
+		db := xtesting.NewDatabaseAsOwner(t)
 		raiseTargetVersion(t, 1)
 
 		// Applying the current schema changes this table, which needs a lock

@@ -23,7 +23,7 @@ example, use `ADD COLUMN IF NOT EXISTS`.
 
 ## Choosing the schema version
 
-The chart uses two terms:
+The chart uses three terms:
 
 - **Earlier releases** are all the released runkit versions with the same major
   schema version as the new release, not only the latest one. An application
@@ -31,6 +31,9 @@ The chart uses two terms:
   and after it.
 - A runkit version is **correct** with a schema if its engines do everything it
   promises, with no errors. Running slower doesn't make it incorrect.
+- A runkit version **uses** a table or column if its code reads from it or
+  writes to it, and uses a function if its code calls it. To find out, search
+  the code of each earlier release.
 
 Find each change in the chart. Raise the highest number that any of the changes
 reaches.
@@ -49,6 +52,7 @@ flowchart TD
 	function@{shape: diamond, label: "Is every earlier release still correct with it?"}
 	indexNeeded@{shape: diamond, label: "Is the new release correct without it?"}
 	functionNeeded@{shape: diamond, label: "Is the new release correct without it?"}
+	used@{shape: diamond, label: "Does an earlier release use it?"}
 
 	added@{shape: stadium, label: "Minor"}
 	columnAdded@{shape: stadium, label: "Minor"}
@@ -59,7 +63,9 @@ flowchart TD
 	functionOptional@{shape: stadium, label: "Patch"}
 	functionRequired@{shape: stadium, label: "Minor"}
 	incompatible@{shape: stadium, label: "Major"}
-	broken@{shape: stadium, label: "Major"}
+	usedMajor@{shape: stadium, label: "Major"}
+	unused@{shape: stadium, label: "Patch"}
+	retyped@{shape: stadium, label: "Major"}
 	signature@{shape: stadium, label: "Not allowed<br><small>create&nbsp;a&nbsp;function&nbsp;with&nbsp;a&nbsp;new&nbsp;name</small>"}
 	other@{shape: stadium, label: "Decide in review"}
 
@@ -78,7 +84,10 @@ flowchart TD
 	functionNeeded -->|Yes| functionOptional
 	functionNeeded -->|No| functionRequired
 	function -->|No| incompatible
-	change -->|Changed or removed something an earlier release uses| broken
+	change -->|Dropped or renamed a table, column or function| used
+	used -->|Yes| usedMajor
+	used -->|No| unused
+	change -->|Changed a column's type| retyped
 	change -->|Something else| other
 ```
 
@@ -155,9 +164,9 @@ one instead.
   gives the target, before any other text: `Schema version: v2.0.0 (new)`. Write
   `(new)` if the runkit version is the first with that schema version, and
   `(existing)` otherwise.
-- If the upgrade can take long enough to hold up a rollout, say so in the
-  change's entry, and describe the wait. For example, "the upgrade builds a new
-  index, which can take several minutes on a large database".
+- If the upgrade takes longer the more data the database holds, say so in the
+  change's entry, and say what it does. For example, "the upgrade builds a new
+  index over every event".
 - After you release a runkit version with a new schema version, add it to
   `releasedVersions`, in [`internal/schema/schema_test.go`]. Before you add a
   runkit version later than v0.2.0, change `createSchemaOf`, which reads the SQL

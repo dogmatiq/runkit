@@ -10,8 +10,8 @@ and every finding in it has a decision, made in the commits listed under the
 second task. The automatic schema migration flowchart and `Run` applying the
 schema landed together in e30c230. Collapsing the engine's schemas into one
 landed in d338872. Flattening `current/` landed in 2104575. The maintainer
-document is written and awaits review; the next task after it is the operational
-documentation in the README.
+document landed in 987d485. The next task is the operational documentation in
+the README.
 
 ## Context
 
@@ -257,8 +257,10 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   doesn't pick up the edit.
 - **Changelog.** Every runkit version's section has the line
   `Schema version: v2.0.0 (new)` or `(existing)`, as the first paragraph of the
-  section, before its `###` headings. A schema version whose upgrade can hold a
-  rollout says so in its entry, in terms of the wait and never of step kinds.
+  section, before its `###` headings. If a schema version's upgrade takes longer
+  the more data the database holds, its entry says so and says what the upgrade
+  does, never how long it takes, which depends on each deployment, and never in
+  terms of step kinds.
 
 ## Tasks
 
@@ -459,7 +461,7 @@ done.
     file in `current/` are updated to the new names.
   - It's a separate commit from the collapse, so that the collapse's diff of the
     SQL shows its renames instead of whole files moving.
-- [x] **Maintainer document (closes #96).** PR or commit: —
+- [x] **Maintainer document (closes #96).** PR or commit: 987d485
   - `docs/maintainers/schema.md`: the schema version and its meaning, the
     wording, the v0.1.0 floor, the deploy-impact rule and the list of operations
     allowed in a migration that raises only the minor or patch number, how to
@@ -531,6 +533,13 @@ done.
       change the schema, and a pooler in transaction mode, such as PgBouncer,
       can leave that lock held, so that later calls wait forever. From the
       [review of the migration implementation](2026-11-16-schema-migration-review.md).
+  - Review settled the README's "Restricting the engine's privileges" section:
+    to run the engine with a role that can't change the schema, call
+    `ApplySchemaOnline()` as a privileged role before each deploy, and grant the
+    engine's role `USAGE` on `runkit`, `SELECT`, `INSERT`, `UPDATE` and `DELETE`
+    on its tables, and `EXECUTE` on its functions. `xtesting.NewDatabase` now
+    connects as a role with exactly those grants, so the whole test suite checks
+    the list; tests that change the schema use `xtesting.NewDatabaseAsOwner`.
 - [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream.sql`, and test it in the upgrade test.

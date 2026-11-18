@@ -41,7 +41,7 @@ func newRunner(
 func TestRunner(t *testing.T) {
 	t.Run("func Run()", func(t *testing.T) {
 		t.Run("it applies steps of both kinds in order", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			runner := newRunner(
 				t,
@@ -96,7 +96,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it rejects a statement step with more than one statement", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			runner := newRunner(
 				t,
@@ -164,7 +164,7 @@ func TestRunner(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.Name, func(t *testing.T) {
-				db := xtesting.NewDatabase(t)
+				db := xtesting.NewDatabaseAsOwner(t)
 
 				runner := newRunner(
 					t,
@@ -195,7 +195,7 @@ func TestRunner(t *testing.T) {
 		}
 
 		t.Run("it resumes after the last step that completed", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			broken := Migration{
 				Version: version.Version{1, 0, 0},
@@ -251,7 +251,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it resumes in the migration of the last step that completed", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			first := Migration{
 				Version: version.Version{1, 0, 0},
@@ -305,7 +305,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it fails if the last step that completed belongs to an unknown migration", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			if _, err := db.ExecContext(
 				t.Context(),
@@ -343,7 +343,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it fails if more steps completed than the migration has", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			if _, err := db.ExecContext(
 				t.Context(),
@@ -394,7 +394,7 @@ func TestRunner(t *testing.T) {
 				},
 			}
 
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			err := newRunner(t, db, false, slow).Run(t.Context())
 			if _, ok := errors.AsType[StepTimeoutError](err); !ok {
@@ -407,7 +407,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it doesn't time out a statement step", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			runner := newRunner(
 				t,
@@ -442,7 +442,7 @@ func TestRunner(t *testing.T) {
 		}
 
 		t.Run("it doesn't apply the transaction timeout to a transaction step when offline", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 
 			runner := newRunner(
 				t,
@@ -464,7 +464,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("it doesn't apply the transaction timeout to a statement step", func(t *testing.T) {
 			for _, offline := range []bool{false, true} {
-				db := xtesting.NewDatabase(t)
+				db := xtesting.NewDatabaseAsOwner(t)
 
 				runner := newRunner(
 					t,
@@ -488,7 +488,7 @@ func TestRunner(t *testing.T) {
 
 	t.Run("func Transact()", func(t *testing.T) {
 		t.Run("it commits the transaction if the function succeeds", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 			runner := newRunner(t, db, false)
 
 			if err := runner.Transact(
@@ -517,7 +517,7 @@ func TestRunner(t *testing.T) {
 		})
 
 		t.Run("it fails a statement that ends the transaction", func(t *testing.T) {
-			db := xtesting.NewDatabase(t)
+			db := xtesting.NewDatabaseAsOwner(t)
 			runner := newRunner(t, db, false)
 
 			if err := runner.Transact(

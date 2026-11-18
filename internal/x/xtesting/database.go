@@ -22,12 +22,28 @@ import (
 )
 
 // NewDatabase returns a database pool that connects to an isolated test
-// database that has the engine's schema DDL applied.
+// database that has the engine's schema applied.
 //
-// The database is removed when the test ends.
+// The pool connects as a role that has only the privileges that the README's
+// "Restricting the engine's privileges" section lists, so it can't change the
+// schema. Use [NewDatabaseAsOwner] in a test that changes the schema.
 func NewDatabase(t testing.TB) *sql.DB {
-	db := openDatabase(t, nil)
+	t.Helper()
 
+	config := createDatabase(t)
+	owner := openPool(t, config, nil)
+	ApplySchema(t, owner)
+
+	return openPool(t, asEngineRole(t, config, owner), nil)
+}
+
+// NewDatabaseAsOwner returns a database pool that connects as the role that
+// owns the engine's schema, to an isolated test database that has the schema
+// applied.
+func NewDatabaseAsOwner(t testing.TB) *sql.DB {
+	t.Helper()
+
+	db := openPool(t, createDatabase(t), nil)
 	ApplySchema(t, db)
 
 	return db
@@ -95,38 +111,40 @@ func DumpSchema(t testing.TB, db *sql.DB) string {
 // except that each query for which the given function returns true fails
 // without being sent to the database.
 //
-// The function is called with the SQL and arguments of every query, including
-// those that apply the schema.
+// The function is called with the SQL and arguments of every query that the
+// pool sends. The schema is applied by a different pool, so the function isn't
+// called for those queries.
 func NewDatabaseWithFailingQueries(
 	t testing.TB,
 	fail func(query string, args []any) bool,
 ) *sql.DB {
-	db := openDatabase(
+	t.Helper()
+
+	config := createDatabase(t)
+	owner := openPool(t, config, nil)
+	ApplySchema(t, owner)
+
+	return openPool(
 		t,
+		asEngineRole(t, config, owner),
 		&queryFailer{
 			fail: fail,
 		},
 	)
-
-	ApplySchema(t, db)
-
-	return db
 }
 
 // NewDatabaseWithoutSchema returns a database pool that connects to an isolated
-// test database that does not have the engine's schema DDL applied.
+// test database that does not have the engine's schema applied.
 //
-// The database is removed when the test ends.
+// The pool connects as the database's owner, so it can create the schema.
 func NewDatabaseWithoutSchema(t testing.TB) *sql.DB {
 	t.Helper()
-	return openDatabase(t, nil)
+	return openPool(t, createDatabase(t), nil)
 }
 
-// openDatabase returns a database pool that connects to a new isolated test
-// database, and reports each query to the given tracer, if it is not nil.
-//
-// The database is removed when the test ends.
-func openDatabase(t testing.TB, tracer pgx.QueryTracer) *sql.DB {
+// createDatabase creates a new isolated test database, and returns the
+// configuration for connecting to it as its owner.
+func createDatabase(t testing.TB) *pgx.ConnConfig {
 	t.Helper()
 
 	container := getContainer(t)
@@ -144,6 +162,70 @@ func openDatabase(t testing.TB, tracer pgx.QueryTracer) *sql.DB {
 		t.Fatalf("unable to parse PostgreSQL connection string: %s", err)
 	}
 
+	return config
+}
+
+// asEngineRole creates a role that has only the privileges that the README's
+// "Restricting the engine's privileges" section lists, and returns a copy of
+// config that connects as that role. It uses owner, a pool that connects as the
+// database's owner, to create the role and to drop it.
+//
+// Roles belong to the whole PostgreSQL server, not to one database, so each
+// test gets a role with a name of its own. The role is dropped when the test
+// ends, after the pools that connect as it are closed and before owner is
+// closed.
+func asEngineRole(
+	t testing.TB,
+	config *pgx.ConnConfig,
+	owner *sql.DB,
+) *pgx.ConnConfig {
+	t.Helper()
+
+	name := "engine-" + uuidpb.Generate().AsString()
+	role := pgx.Identifier{name}.Sanitize()
+
+	if _, err := owner.ExecContext(
+		t.Context(),
+		`CREATE ROLE `+role+` LOGIN PASSWORD '`+containerPassword+`';
+		GRANT USAGE ON SCHEMA runkit TO `+role+`;
+		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA runkit TO `+role+`;
+		GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA runkit TO `+role,
+	); err != nil {
+		t.Fatalf("unable to create the engine's role: %s", err)
+	}
+
+	// Cleanup functions run in the reverse of the order in which they were
+	// registered. owner registered its cleanup before this one, and the pools
+	// that connect as the role register theirs after it.
+	t.Cleanup(func() {
+		if _, err := owner.ExecContext(
+			context.Background(),
+			`DROP OWNED BY `+role+`;
+			DROP ROLE `+role,
+		); err != nil {
+			t.Errorf("unable to drop the engine's role: %s", err)
+		}
+	})
+
+	config = config.Copy()
+	config.User = name
+	config.Password = containerPassword
+
+	return config
+}
+
+// openPool returns a database pool that connects with the given configuration,
+// and reports each query to the given tracer, if it is not nil.
+//
+// The pool is closed when the test ends.
+func openPool(
+	t testing.TB,
+	config *pgx.ConnConfig,
+	tracer pgx.QueryTracer,
+) *sql.DB {
+	t.Helper()
+
+	config = config.Copy()
 	config.Tracer = tracer
 
 	db := stdlib.OpenDB(*config)

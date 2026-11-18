@@ -29,6 +29,11 @@ handlers in the consuming application.
 The engine stores its state in [PostgreSQL]. The minimum supported version is
 PostgreSQL 18.
 
+> [!NOTE]
+> The engine doesn't work through a connection pooler in transaction mode, such
+> as Neon's pooled connection string or Supabase's port 6543. Use a direct
+> connection, or a pooler in session mode.
+
 Applications choose their own projection storage; the engine's PostgreSQL
 requirement does not constrain it. [projectionkit] provides adapters for building
 projections with several database systems.
@@ -59,10 +64,11 @@ runkit usually needs nothing more than deploying your application.
 ### Versioning
 
 The engine's schema has a version of its own, which is separate from the runkit
-version. The table `runkit.schema_version` holds the current schema version. The
-release notes of each runkit version document the schema version that the runkit
-version needs. Schema versions follow [semantic versioning], written with a `v`
-prefix, such as `v2.0.0`:
+version. The table `runkit.schema_version` holds the current schema version. To
+read it, run `SELECT version FROM runkit.schema_version`. The release notes of
+each runkit version document the schema version that the runkit version needs.
+Schema versions follow [semantic versioning], written with a `v` prefix, such as
+`v2.0.0`:
 
 - The **major** number goes up when the schema changes in a way that stops older
   engines from using it.
@@ -97,6 +103,30 @@ introduced in new major versions of runkit.
 Many upgrades are applied in a single transaction, so they either finish or
 change nothing. An upgrade with several steps can fail part-way through, and the
 next attempt carries on from the step where it stopped.
+
+### Restricting the engine's privileges
+
+By default, the engine creates and upgrades the schema itself, so its database
+role needs the `CREATE` privilege on the database, and must own the `runkit`
+schema and everything in it.
+
+To run the engine in production with a role that can't change the schema,
+manage the schema yourself:
+
+- Before you deploy a new runkit version, call [`ApplySchemaOnline()`] as a role
+  that can change the schema. When the engine starts, it then finds the schema
+  up to date, and doesn't change it.
+
+  ```go
+  if err := runkit.ApplySchemaOnline(ctx, schemaDB); err != nil {
+  	return err
+  }
+  ```
+
+- Grant the engine's role `USAGE` on the `runkit` schema, `SELECT`, `INSERT`,
+  `UPDATE` and `DELETE` on its tables, and `EXECUTE` on its functions. Grant the
+  same on the objects that each upgrade adds, or use `ALTER DEFAULT PRIVILEGES`
+  so that they get these privileges automatically.
 
 ### Major schema upgrades
 

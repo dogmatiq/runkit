@@ -130,7 +130,7 @@ func TestApplyAndDrop(t *testing.T) {
 // The test changes [schema.TargetVersion], so it must not call t.Parallel().
 // Go runs the parallel tests only after every test that doesn't call it.
 func TestApply_reappliesCurrent(t *testing.T) {
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	target := schema.TargetVersion
 	t.Cleanup(func() { schema.TargetVersion = target })
@@ -160,7 +160,7 @@ func TestApply_reappliesCurrent(t *testing.T) {
 func TestApply_newerCompatibleDatabase(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	newer := fmt.Sprintf(
 		"v%d.%d.0",
@@ -201,7 +201,7 @@ func TestApply_newerCompatibleDatabase(t *testing.T) {
 func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	newer := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()+1)
 
@@ -242,7 +242,7 @@ func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
 func TestApply_migrationInProgressWithNewerMajorNumber(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	newer := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()+1)
 
@@ -287,7 +287,7 @@ func TestApply_migrationInProgressWithNewerMajorNumber(t *testing.T) {
 func TestApply_migrationInProgressWithNewerMinorNumber(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	newer := fmt.Sprintf(
 		"v%d.%d.0",
@@ -332,7 +332,7 @@ func TestApply_migrationInProgressWithNewerMinorNumber(t *testing.T) {
 func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	// An upgrade by a later runkit version, from a schema version with a lower
 	// major number, leaves the database like this if it stops after the
@@ -391,7 +391,7 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 func TestApply_invalidIndex(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	older := fmt.Sprintf("v%d.0.0", schema.TargetVersion.Major()-1)
 
@@ -588,7 +588,7 @@ func TestApply_doesNotWaitForOtherCallWhenSatisfied(t *testing.T) {
 func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	xtesting.Transact(t, db, func(tx *sql.Tx) {
 		// Keep the checkpoint write uncommitted while migrating through
@@ -620,7 +620,7 @@ func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 func TestEnqueueCommand_usesQueuedAt(t *testing.T) {
 	t.Parallel()
 
-	db := xtesting.NewDatabase(t)
+	db := xtesting.NewDatabaseAsOwner(t)
 
 	if _, err := db.ExecContext(
 		t.Context(),
@@ -907,7 +907,7 @@ func testMigrateFrom(t *testing.T, version string) {
 	)
 
 	got := dumpSchemaObjects(t, db)
-	want := dumpSchemaObjects(t, xtesting.NewDatabase(t))
+	want := dumpSchemaObjects(t, xtesting.NewDatabaseAsOwner(t))
 
 	for _, object := range difference(want, got) {
 		t.Errorf("the migrated database is missing:\n%s", object)

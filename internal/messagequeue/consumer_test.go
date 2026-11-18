@@ -29,9 +29,9 @@ func TestConsumer(t *testing.T) {
 
 	// setup returns a database, a running node on it, and a function that
 	// returns another node on it, which isn't running.
-	setup := func(t *testing.T) (*sql.DB, *cluster.Node, func() *cluster.Node) {
-		db := xtesting.NewDatabase(t)
-
+	// setupWithDB starts a signal bus and a node that use db, and returns db,
+	// the node, and a function that creates further nodes.
+	setupWithDB := func(t *testing.T, db *sql.DB) (*sql.DB, *cluster.Node, func() *cluster.Node) {
 		signals := &signal.Bus{
 			DB:                  db,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -55,6 +55,12 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, n.Run)
 
 		return db, n, newNode
+	}
+
+	// setup is like setupWithDB, with a new database that has the engine's
+	// schema applied.
+	setup := func(t *testing.T) (*sql.DB, *cluster.Node, func() *cluster.Node) {
+		return setupWithDB(t, xtesting.NewDatabase(t))
 	}
 
 	// waitForLiveNodes waits until each of the given nodes is in the set of
@@ -1081,7 +1087,8 @@ func TestConsumer(t *testing.T) {
 	t.Run("it keeps running when it can't find the next messages", func(t *testing.T) {
 		t.Parallel()
 
-		db, n, _ := setup(t)
+		// The test renames a table, which only the schema's owner can do.
+		db, n, _ := setupWithDB(t, xtesting.NewDatabaseAsOwner(t))
 		h, attempted := record()
 		run(t, db, n, 10, h)
 
