@@ -220,7 +220,7 @@ func TestApply_databaseWithNewerMajorNumber(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible database schema") {
+		if _, ok := errors.AsType[schema.IncompatibleSchemaError](err); !ok {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -262,7 +262,7 @@ func TestApply_migrationInProgressWithNewerMajorNumber(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible database schema") {
+		if _, ok := errors.AsType[schema.IncompatibleMigrationError](err); !ok {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -362,7 +362,7 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 			t.Fatal("expected an error, got nil")
 		}
 
-		if !strings.Contains(err.Error(), "incompatible database schema") {
+		if _, ok := errors.AsType[schema.IncompatibleMigrationError](err); !ok {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	}
@@ -384,6 +384,10 @@ func TestApply_migrationInProgressOnDatabaseThatNeedsUpgrade(t *testing.T) {
 // TestApply_invalidIndex verifies that a database that needs an upgrade is
 // refused while it has an invalid index in one of the engine's schemas, and
 // that the error names the index.
+//
+// The database also needs an upgrade that raises the major number. An online
+// call must still report the index, because fixing it doesn't need the
+// application stopped, and the major upgrade does.
 func TestApply_invalidIndex(t *testing.T) {
 	t.Parallel()
 
@@ -408,13 +412,20 @@ func TestApply_invalidIndex(t *testing.T) {
 		t.Fatal("expected the index build to fail")
 	}
 
-	err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
-	if err == nil {
-		t.Fatal("expected an error, got nil")
-	}
+	for _, offline := range []bool{false, true} {
+		err := schema.Apply(t.Context(), db, offline, testLockTimeout, testStatementTimeout)
+		if err == nil {
+			t.Fatalf("offline = %t: expected an error, got nil", offline)
+		}
 
-	if !strings.Contains(err.Error(), "eventstream.duplicates_by_value") {
-		t.Fatalf("the error doesn't name the invalid index: %s", err)
+		invalid, ok := errors.AsType[schema.InvalidIndexesError](err)
+		if !ok {
+			t.Fatalf("offline = %t: unexpected error: %s", offline, err)
+		}
+
+		if !slices.Contains(invalid.Indexes, "eventstream.duplicates_by_value") {
+			t.Fatalf("offline = %t: the error doesn't name the invalid index: %s", offline, err)
+		}
 	}
 
 	xtesting.ExpectQueryResult(
@@ -441,7 +452,7 @@ func TestApply_raisingMajorNumberNeedsOffline(t *testing.T) {
 		t.Fatal("expected an error, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "major database schema upgrade required") {
+	if _, ok := errors.AsType[schema.OfflineUpgradeRequiredError](err); !ok {
 		t.Fatalf("unexpected error: %s", err)
 	}
 

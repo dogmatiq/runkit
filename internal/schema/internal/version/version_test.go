@@ -186,57 +186,6 @@ func TestVersion(t *testing.T) {
 		}
 	})
 
-	t.Run("func CanUpgradeOffline()", func(t *testing.T) {
-		cases := []struct {
-			Name     string
-			Target   string
-			Database string
-			Want     bool
-		}{
-			{"same schema version", "v2.1.3", "v2.1.3", true},
-			{"database has a newer minor", "v2.1.3", "v2.2.0", true},
-			{"database has an older minor", "v2.1.3", "v2.0.9", true},
-			{"database has an older major", "v2.1.3", "v1.9.0", true},
-			{"database has a newer major", "v2.1.3", "v3.0.0", false},
-		}
-
-		for _, tc := range cases {
-			t.Run(tc.Name, func(t *testing.T) {
-				target := mustParse(t, tc.Target)
-				database := mustParse(t, tc.Database)
-
-				if got := target.CanUpgradeOffline(database); got != tc.Want {
-					t.Fatalf("%s.CanUpgradeOffline(%s): want %t, got %t", target, database, tc.Want, got)
-				}
-			})
-		}
-	})
-
-	t.Run("func CanUpgradeOnline()", func(t *testing.T) {
-		cases := []struct {
-			Name     string
-			Target   string
-			Database string
-			Want     bool
-		}{
-			{"same schema version", "v2.1.3", "v2.1.3", true},
-			{"database has a newer minor", "v2.1.3", "v2.2.0", true},
-			{"database has an older minor", "v2.1.3", "v2.0.9", true},
-			{"database has an older major", "v2.1.3", "v1.9.0", false},
-			{"database has a newer major", "v2.1.3", "v3.0.0", false},
-		}
-
-		for _, tc := range cases {
-			t.Run(tc.Name, func(t *testing.T) {
-				target := mustParse(t, tc.Target)
-				database := mustParse(t, tc.Database)
-
-				if got := target.CanUpgradeOnline(database); got != tc.Want {
-					t.Fatalf("%s.CanUpgradeOnline(%s): want %t, got %t", target, database, tc.Want, got)
-				}
-			})
-		}
-	})
 	t.Run("func Scan()", func(t *testing.T) {
 		t.Run("it parses text", func(t *testing.T) {
 			cases := []struct {

@@ -100,20 +100,6 @@ func (v Version) IsSatisfiedBy(db Version) bool {
 	return v.Major() == db.Major() && v.Compare(db) <= 0
 }
 
-// CanUpgradeOffline reports whether the runkit version with this schema version
-// can upgrade a database at the given schema version while no engine is using
-// it, which it can unless the database has a higher major number.
-func (v Version) CanUpgradeOffline(db Version) bool {
-	return v.Major() >= db.Major()
-}
-
-// CanUpgradeOnline reports whether the runkit version with this schema version
-// can upgrade a database at the given schema version while engines are using
-// the database, which it can if they have the same major number.
-func (v Version) CanUpgradeOnline(db Version) bool {
-	return v.Major() == db.Major()
-}
-
 // Scan sets v to the schema version that the given database value holds. The
 // value must be text in the form that [Parse] accepts. It implements
 // [database/sql.Scanner], so a query can read a column into a [Version].

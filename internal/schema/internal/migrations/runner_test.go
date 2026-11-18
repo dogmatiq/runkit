@@ -3,7 +3,7 @@ package migrations_test
 import (
 	"context"
 	"database/sql"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
@@ -178,8 +178,9 @@ func TestRunner(t *testing.T) {
 					},
 				)
 
-				if err := runner.Run(t.Context()); err == nil {
-					t.Fatal("expected an error, got nil")
+				err := runner.Run(t.Context())
+				if _, ok := errors.AsType[StepFailedError](err); !ok {
+					t.Fatalf("unexpected error: %v", err)
 				}
 
 				xtesting.ExpectQueryResult(
@@ -327,8 +328,9 @@ func TestRunner(t *testing.T) {
 				},
 			)
 
-			if err := runner.Run(t.Context()); err == nil {
-				t.Fatal("expected an error, got nil")
+			err := runner.Run(t.Context())
+			if _, ok := errors.AsType[UnknownMigrationError](err); !ok {
+				t.Fatalf("unexpected error: %v", err)
 			}
 
 			xtesting.ExpectQueryResult(
@@ -370,8 +372,9 @@ func TestRunner(t *testing.T) {
 				},
 			)
 
-			if err := runner.Run(t.Context()); err == nil {
-				t.Fatal("expected an error, got nil")
+			err := runner.Run(t.Context())
+			if _, ok := errors.AsType[InvalidProgressError](err); !ok {
+				t.Fatalf("unexpected error: %v", err)
 			}
 
 			xtesting.ExpectQueryResult(
@@ -394,12 +397,8 @@ func TestRunner(t *testing.T) {
 			db := xtesting.NewDatabase(t)
 
 			err := newRunner(t, db, false, slow).Run(t.Context())
-			if err == nil {
-				t.Fatal("expected an error, got nil")
-			}
-
-			if !strings.Contains(err.Error(), "statement timeout") {
-				t.Fatalf("unexpected error: %s", err)
+			if _, ok := errors.AsType[StepTimeoutError](err); !ok {
+				t.Fatalf("unexpected error: %v", err)
 			}
 
 			if err := newRunner(t, db, true, slow).Run(t.Context()); err != nil {

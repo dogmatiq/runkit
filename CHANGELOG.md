@@ -76,6 +76,10 @@ events.
 - Added schema versions. The database records the schema version that it has
   reached, and each runkit version's changelog section states the schema
   version that it needs.
+- Added automatic schema migration. `Engine.Run()` creates the engine's schema,
+  or upgrades it with the changes that are safe while engines are running,
+  before the engine starts. If an upgrade fails, but the engine can run on the
+  existing schema, `Engine.Run()` logs the failure and starts the engine anyway.
 
 ### Changed
 

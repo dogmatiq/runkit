@@ -12,9 +12,9 @@ Run message-driven, event-sourced [Dogma] applications in production.
 </div>
 
 This repository provides a [Dogma engine]. It is embedded in your application's
-Go binary and orchestrates message delivery, state persistence, and the execution
-of application logic. PostgreSQL provides persistence and coordination between
-nodes running the same application.
+Go binary and orchestrates message delivery, state persistence, and the
+execution of application logic. PostgreSQL provides persistence and coordination
+between nodes running the same application.
 
 Run multiple engine instances for the same application against a shared database
 to form a cluster. Work is distributed across nodes and reassigned as nodes join
@@ -39,12 +39,6 @@ Pass your application and a database connection opened with the [pgx] driver to
 `runkit.New()`:
 
 ```go
-// Create or update the engine's PostgreSQL schema. This is separate from
-// running the engine so it can use different database credentials.
-if err := runkit.ApplySchemaOnline(ctx, db); err != nil {
-	return err
-}
-
 engine := runkit.New(myDogmaApp, db)
 
 // Run blocks until the context is canceled. It returns an error if the
@@ -52,69 +46,111 @@ engine := runkit.New(myDogmaApp, db)
 return engine.Run(ctx)
 ```
 
-## Major schema upgrades
+## Database schema
 
-Some runkit versions change the database schema so that engines from earlier
-runkit versions can no longer use the database. Upgrading to one of them needs
-every engine to be stopped. The [changelog] section of such a runkit version
-starts with a note that links here.
+The engine keeps its state in tables of its own, in the PostgreSQL database that
+you give it. The SQL files in the [current schema] directory define those
+tables, and the functions and triggers that go with them.
 
-### How schema changes are applied
+The engine is a library, so its schema comes with it, and a new runkit version
+may change the schema. The engine makes those changes itself, so upgrading
+runkit usually needs nothing more than deploying your application.
 
-The database records its schema version, such as `v2.0.0`, in the table
-`runkit.schema_version`. Each runkit version needs a particular schema version,
-and its section of the changelog states which one.
+### Versioning
 
-- `ApplySchemaOnline()` applies only the changes that are safe while engines are
-  running. If the new schema version has a higher major number, it returns an
-  error and changes nothing.
-- `ApplySchemaOffline()` also applies a change that raises the major number. It
-  relies on every engine being stopped. If it fails part-way, calling it again
-  carries on from where it stopped.
+The engine's schema has a version of its own, which is separate from the runkit
+version. The table `runkit.schema_version` holds the current schema version. The
+release notes of each runkit version document the schema version that the runkit
+version needs. Schema versions follow [semantic versioning], written with a `v`
+prefix, such as `v2.0.0`:
 
-The [schema upgrade flowcharts] show each outcome of applying the schema, and
-what to do next at each one.
+- The **major** number goes up when the schema changes in a way that stops older
+  engines from using it.
+- The **minor** number goes up when the schema gains something new. Older
+  engines keep working.
+- The **patch** number goes up when the schema changes without changing what it
+  does, such as a new index that makes a query faster.
 
-### Upgrading
+This means that an engine works with a schema that's newer than the engine
+needs, as long as the major number is the same. When one engine upgrades the
+schema, the older engines that share the database keep running. For example, an
+engine that needs `v2.1.0` works with a database at `v2.4.0`, but not with one
+at `v3.0.0`.
+
+After runkit `v1.0.0` is released, new major versions of the schema will only be
+introduced in new major versions of runkit.
+
+### Upgrades
+
+- When the engine starts, it creates the schema if necessary, or upgrades an
+  older schema if that's safe to do while other engines are running. If the
+  upgrade isn't safe, the engine stops with an error. The [automatic schema
+  migration flowchart] illustrates how the engine decides what to do.
+- [`ApplySchemaOnline()`] does what the engine does automatically, without
+  running the engine. It's intended for deployments where the engine's runtime
+  database credentials aren't allowed to change the schema, and a separate
+  deployment step calls it with credentials that are.
+- [`ApplySchemaOffline()`] does the same, and can also apply a major schema
+  upgrade, which raises the major number of the schema version. Every engine
+  must be stopped before it's called, as [major schema upgrades] explains.
+
+Many upgrades are applied in a single transaction, so they either finish or
+change nothing. An upgrade with several steps can fail part-way through, and the
+next attempt carries on from the step where it stopped.
+
+### Major schema upgrades
+
+A major schema upgrade brings the schema to a new major version, which stops
+older engines from using it. The release notes of a runkit version that needs a
+major schema upgrade say so at the top.
+
+#### How to upgrade
 
 > [!CAUTION]
-> `ApplySchemaOffline()` doesn't check whether any engine is running. An engine
-> that runs during the upgrade can write to a table while the upgrade changes or
-> removes it, and what it writes can be lost. Stop every engine that uses the
-> database before calling it.
+> An engine that runs during the upgrade can write to a table while the upgrade
+> changes or removes it, and what it writes can be lost.
+> [`ApplySchemaOffline()`] doesn't check whether any engine is running, so stop
+> every engine that uses the database before calling it.
 
 1. Stop every engine that uses the database, and back up the database.
-2. Call `ApplySchemaOffline()` from the new runkit version, once. Call it from
-   something that runs by itself, such as a deployment step, and keep
-   `ApplySchemaOnline()` as your application's call at startup.
+2. Call [`ApplySchemaOffline()`] from the new runkit version, once. Call it from
+   a separate program or deployment step, not from your application's startup
+   code.
 3. If it returns an error, correct the cause and call it again.
 4. Once it has returned without an error, start the engines of the new runkit
-   version, and keep engines from earlier runkit versions stopped. An engine
-   from runkit v0.3.0 or later refuses to start if its application calls
-   `ApplySchemaOnline()` at startup, as the example above does. Nothing else
-   stops such an engine, and an engine from runkit v0.2.0 or earlier never
-   refuses.
+   version. Engines from earlier runkit versions now refuse to start on this
+   database.
 
-### Rolling back
+> [!WARNING]
+> Versions of runkit prior to `v0.3.0` don't check the schema version, so they
+> start without an error. What they do after that is unpredictable, and can
+> include losing data. Keep them stopped.
 
-Only a backup can undo the upgrade.
+#### Rolling back
+
+Only a backup can undo a major schema upgrade.
 
 - **Restore into an empty database, or drop the engine's schemas first.** A
-  restore that replaces only the objects in the backup leaves every new object
-  from the upgrade in place. After an upgrade from runkit v0.2.0 or earlier,
-  that includes the `runkit` schema with the new schema version, so a later call
-  to `ApplySchemaOffline()` changes nothing.
+  restore that only replaces the objects in the backup leaves every new object
+  from the upgrade in place. For an upgrade from runkit `v0.2.0` or earlier,
+  those objects include the `runkit` schema, which still records the new schema
+  version, so a later call to [`ApplySchemaOffline()`] changes nothing.
 - **If engines have run since the upgrade, restore or rebuild projections too.**
-  The restore removes the events recorded since the upgrade. A projection that
-  handled them still has their offsets as its checkpoint, so it skips the events
-  that are later recorded at those offsets.
+  Restoring the backup removes the events recorded since the upgrade. Each
+  projection keeps its checkpoints in its own storage, which the restore doesn't
+  touch, so a checkpoint can be past the new end of a stream. The projection
+  then skips the new events that are recorded at those offsets.
 
 <!-- references -->
 
-[changelog]: CHANGELOG.md
+[`ApplySchemaOffline()`]: https://pkg.go.dev/github.com/dogmatiq/runkit#ApplySchemaOffline
+[`ApplySchemaOnline()`]: https://pkg.go.dev/github.com/dogmatiq/runkit#ApplySchemaOnline
+[automatic schema migration flowchart]: docs/automatic-schema-migration.md
+[major schema upgrades]: #major-schema-upgrades
+[current schema]: internal/schema/internal/current/
 [dogma]: https://github.com/dogmatiq/dogma
 [dogma engine]: https://github.com/dogmatiq/dogma/blob/main/docs/glossary.md#engine
 [PostgreSQL]: https://www.postgresql.org/
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [projectionkit]: https://github.com/dogmatiq/projectionkit
-[schema upgrade flowcharts]: docs/schema-upgrades.md
+[semantic versioning]: https://semver.org/

@@ -68,19 +68,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		)
 
 		if i == -1 {
-			return fmt.Errorf(
-				"incompatible database schema: the database has an in-progress migration to %s, which this runkit version doesn't include; it may come from a hotfix to a prior runkit version",
-				migratingTo,
-			)
+			return UnknownMigrationError{
+				MigratingTo: migratingTo,
+			}
 		}
 
 		if m := r.Migrations[i]; stepsCompleted > len(m.Steps) {
-			return fmt.Errorf(
-				"invalid migration progress in the database: the number of completed steps is %d, but the migration to %s only has %d step(s)",
-				stepsCompleted,
-				m.Version,
-				len(m.Steps),
-			)
+			return InvalidProgressError{
+				MigratingTo:    m.Version,
+				StepsCompleted: stepsCompleted,
+				StepCount:      len(m.Steps),
+			}
 		}
 
 		pendingMigrations = r.Migrations[i:]
@@ -92,20 +90,18 @@ func (r *Runner) Run(ctx context.Context) error {
 
 			if err := r.apply(ctx, m, s, completed); err != nil {
 				if xsql.IsStatementTimeoutError(ctx, err) && !r.Offline {
-					return fmt.Errorf(
-						"database schema migration timed out while applying step %s of the migration to %s: the step takes longer than is allowed while the application is running, so stop every instance of the application, then apply the upgrade offline: %w",
-						s.Name,
-						m.Version,
-						err,
-					)
+					return StepTimeoutError{
+						MigratingTo: m.Version,
+						StepName:    s.Name,
+						Cause:       err,
+					}
 				}
 
-				return fmt.Errorf(
-					"unable to apply step %s of the migration to schema version %s: %w",
-					s.Name,
-					m.Version,
-					err,
-				)
+				return StepFailedError{
+					MigratingTo: m.Version,
+					StepName:    s.Name,
+					Cause:       err,
+				}
 			}
 		}
 

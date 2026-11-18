@@ -8,8 +8,9 @@ import (
 )
 
 // ApplySchemaOnline brings the database's schema to the schema version of
-// this runkit version, creating the schema if the database has none. It applies
-// only changes that are safe while engines are running.
+// this runkit version, creating the schema if the database doesn't have one
+// yet. It applies only the changes that are safe to apply while engines are
+// running.
 //
 // If the schema change needs every engine to be stopped, it returns an error
 // that says so, and changes nothing. Use [ApplySchemaOffline] in that case.

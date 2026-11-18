@@ -1,4 +1,4 @@
-package migrationlock_test
+package upgradelock_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/dogmatiq/runkit/internal/schema/internal/migrationlock"
+	. "github.com/dogmatiq/runkit/internal/schema/internal/upgradelock"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 

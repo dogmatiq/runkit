@@ -1,5 +1,16 @@
 # Plan: schema versions, migrations and `Run` applying the schema (#103, closes #96)
 
+## Where the work stands
+
+All work is on the branch `schema-versions`, which has no pull request and no
+upstream yet; nothing has landed on main. The first two tasks are done, and a
+review of the migration machinery followed them. Its report is
+[2026-11-16-schema-migration-review.md](2026-11-16-schema-migration-review.md),
+and every finding in it has a decision, made in the commits listed under the
+second task. The next tasks are the automatic schema migration flowchart and
+`Run` applying the schema, which the user moved forward so that the flowchart
+is true when it lands.
+
 ## Context
 
 Table changes are hand-written guards that pile up in `internal/schema/ddl`
@@ -47,14 +58,14 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
 ## Settled design
 
 - **Schema version.** Plain semver with a `v` prefix, such as `v2.0.0`, and no
-  build metadata. `schema.CurrentVersion` is the schema version of this runkit
+  build metadata. `schema.TargetVersion` is the schema version of this runkit
   version; this release is `v2.0.0`. The pairing of schema versions with runkit
   versions lives in the changelog sections.
 - **Meaning.** A higher major number: engines built for an earlier major number
   can't run, and the deploy needs a human to stop them first. A higher minor
   number: additive, and older engines keep running. A higher patch number:
   nothing an engine can observe.
-- **Rule.** `schema.CurrentVersion.CanRunOn(databaseSchemaVersion)`: the major
+- **Rule.** `schema.TargetVersion.CanRunOn(databaseSchemaVersion)`: the major
   numbers are equal and the database's minor number is at least the engine's;
   the patch number is ignored. Doc sentence: "CanRunOn reports whether the
   runkit version with this schema version can run on a database at the given
@@ -79,9 +90,9 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   that upgrades directly. A database without `eventstream.streams` is new.
 - **`current/` is the schema.** The directory `internal/schema/internal/current`
   (renamed from `ddl`) describes the complete schema as it is at
-  `CurrentVersion`, in plain SQL grouped by PostgreSQL schema, and is applied to
+  `TargetVersion`, in plain SQL grouped by PostgreSQL schema, and is applied to
   every database that a migrate call changes. Doc sentence: "Each file under
-  `current/` defines part of the database schema as it is at `CurrentVersion`:
+  `current/` defines part of the database schema as it is at `TargetVersion`:
   its tables, functions and triggers." `migrations/` holds one directory for
   each schema version that has to change an existing database, named for the
   schema version it produces, such as `v2.0.0`. A schema version that only adds
@@ -95,8 +106,8 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   whatever their kind, so `tx`, `stmt`, `stmt`, `tx` works. Each step file has a
   two-digit number that no other file in the migration has and exactly one of
   the suffixes, or the `schema` package panics when it loads the migrations. The
-  `migration` package knows nothing of files: it takes a list of steps and
-  identifies a step by its position. A `tx` step sets `migrating_to` and
+  runner knows nothing of files: it takes a list of steps and identifies a step
+  by its position. A `tx` step sets `migrating_to` and
   `migration_steps_completed` in its own transaction, so the step and its record
   commit together. A `stmt` step is idempotent (for an index: `IF NOT EXISTS`),
   and sets them after it runs. An interrupted concurrent build leaves its index
@@ -105,9 +116,14 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   upgrade can't tell whether a step builds a given index again, so a person
   decides whether to drop or rebuild each one. A rerun skips the completed steps
   of the recorded migration, in the order of migrations by schema version and
-  then steps by position.
+  then steps by position. A `stmt` step's doc comment says that it must be safe
+  to run twice. Every transaction that the runner opens, including the bootstrap
+  and the one that applies `current/`, fails a statement that ends it, such as
+  `COMMIT` or `ROLLBACK`, by comparing `pg_current_xact_id()` after each
+  statement. Every engine transaction, the runner's included, uses READ
+  COMMITTED, through `xsql.TxOptions`.
 - **Cleanup.** The last thing a successful migrate call does, in one
-  transaction, is set `version` to `CurrentVersion`, `applied_at` to the time,
+  transaction, is set `version` to `TargetVersion`, `applied_at` to the time,
   and `migrating_to` and `migration_steps_completed` to NULL. A crash before
   that leaves the count recorded and `version` unchanged, and the rerun skips
   every completed step and finishes. If an unreleased migration gains or loses a
@@ -120,14 +136,39 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   real database. The first implementation work checks on PostgreSQL 18 that a
   prepared `CREATE INDEX CONCURRENTLY` and a prepared `DO` block that commits
   both run outside a transaction.
-- **One lock.** A session-level advisory lock, with a distinctive two-integer
-  key, is held on one connection for the whole migration, so that only one node
+- **One lock.** A session-level advisory lock, with one distinctive 64-bit key
+  in the package `internal/schema/internal/upgradelock`, is held on one
+  connection for the whole migration, so that only one node
   migrates at a time. A call that waits for it polls `pg_try_advisory_lock`,
   because a statement that waited inside `pg_advisory_lock` would be an open
   transaction, and a concurrent index build in the call that holds the lock
   waits for every older transaction to end. It replaces the
   `LOCK TABLE pg_catalog.pg_namespace` that `Create` takes today, and needs no
-  special privilege.
+  special privilege. `Apply` reads the schema version before it waits for the
+  lock, so that a call with nothing to do doesn't wait, and reads it again once
+  it holds the lock. It decides whether it can upgrade only then: before that,
+  another call may be part-way through an upgrade that leaves it nothing to do.
+  It closes its connection when it returns, instead of returning it to the
+  pool, so that no change to the session reaches the engine's other queries.
+- **Refusals.** Each error names runkit and gives the versions in one form, such
+  as `runkit v0.3.0 (schema ^v2.0.0)`. `Apply` refuses a database whose schema
+  version, or migration in progress, has a higher major number than the
+  target; a migration in progress above the target, once it holds the lock; a
+  migration in progress that this runkit version doesn't include, which may
+  come from a hotfix to a prior runkit version; a recorded count of completed
+  steps above the migration's steps; and, once it holds the lock, any invalid
+  index in the engine's schemas. Once it holds the lock it checks, in this
+  order: a migration in progress above the target, invalid indexes, and then
+  an upgrade that raises the major number while online. The last is the only
+  refusal that costs downtime to get past, so the problems that can be fixed
+  while the application runs are reported before it. Each of these refusals
+  from the `schema` package is its own exported error type, with the versions
+  or index names as fields, so that code can tell them apart with
+  `errors.AsType`. The runner's three distinct errors (a migration in progress
+  that this runkit version doesn't include, invalid recorded progress, and a
+  step that timed out online) are types too, defined in the `migrations`
+  package. Nothing outside `internal/schema` can import that package, so when
+  the engine needs one of them, give it a name in `schema` with a type alias.
 - **Timeouts follow the entry point.** `ApplySchemaOnline()` and `Run()` assume
   that engines may be running: a `tx` step runs with a lock timeout and a
   statement timeout, and a `stmt` step runs with no timeout, because it is long
@@ -167,8 +208,8 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
     offline. An error that reaches an application's operator names runkit, but
     none of its functions. Doc sentence: "ApplySchemaOnline brings the
     database's schema to the schema version of this runkit version, creating the
-    schema if the database has none. It applies only changes that are safe while
-    engines are running."
+    schema if the database doesn't have one yet. It applies only the changes
+    that are safe to apply while engines are running."
   - `ApplySchemaOffline()`: does what `ApplySchemaOnline()` does and also
     applies a schema change that raises the major number. Nothing checks that no
     engine is running; the name and the documentation say so. Doc sentence:
@@ -185,18 +226,20 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
     saying that the database's schema version is newer than this engine can run
     on and pointing to the changelog. The `schema` package returns errors, and
     the engine decides what to log.
-  - A database at or above `CurrentVersion` by precedence needs no change, which
-    covers a newer compatible database. Operators with strict DDL control call
-    `ApplySchemaOnline()` from their pipeline first, and `Run` then never
-    attempts DDL.
+  - A database whose schema version satisfies `TargetVersion` (the same major
+    number, and at or above it) needs no change, which covers a newer compatible
+    database. A higher major number is refused. Operators with strict DDL
+    control call `ApplySchemaOnline()` from their pipeline first, and `Run` then
+    never attempts DDL.
 - **Invariants checked by the package itself.** When it loads the embedded
   migrations it panics if a directory name isn't a schema version of the form
-  `vX.Y.Z`, repeats a core, or is above `CurrentVersion`, or if a step lacks a
-  suffix or a two-digit number, or two steps of a migration have the same
-  number. Every test that migrates exercises this, so no test reaches into
-  unexported state. The runner lives with the migration files in the package
-  `internal/schema/internal/migrations`, and takes a list of steps, so tests can
-  use synthetic migrations, including a failing step that a rerun resumes.
+  `vX.Y.Z` or repeats a core, or if a step lacks a suffix or a two-digit number,
+  or two steps of a migration have the same number. Every test that migrates
+  exercises this, so no test reaches into unexported state. `TestTargetVersion`
+  checks that no migration is above `TargetVersion`. The runner lives with the
+  migration files in the package `internal/schema/internal/migrations`, and
+  takes a list of steps, so tests can use synthetic migrations, including a
+  failing step that a rerun resumes.
 - **Major numbers and the module.** A change that raises the major number
   comes with a **[BC]** changelog entry
   that names the engines to stop. Before 1.0 that is a minor runkit version;
@@ -227,10 +270,10 @@ done.
 
 - [x] **The schema version type and the changelog line.** PR or commit: d122b5f
   - `internal/schema`: `Version` (parse, format, precedence, major, minor,
-    patch, `CanRunOn`) and `CurrentVersion`.
+    patch, `CanRunOn`) and `TargetVersion`.
   - `CHANGELOG.md`: the "Schema version:" line in `[Unreleased]`.
   - Tests: `CanRunOn`; the changelog line (the topmost section's line equals
-    `CurrentVersion`, and says "(new)" only when the section below it differs,
+    `TargetVersion`, and says "(new)" only when the section below it differs,
     with sections before the line existed counting as `v1.0.0`).
 - [x] **The migration machinery, the migration to schema version v2.0.0, and the
   public functions.** PR or commit: b332499
@@ -284,6 +327,63 @@ done.
     change to the major number; an `Added` entry for `ApplySchemaOffline()`.
     "this version" in the existing entry becomes "this runkit version".
     `docs/MIGRATING-v0.3.0.md` step 3 names the new function.
+  - Follow-ups from the review of the migration machinery, each its own commit:
+    666bd65 (READ COMMITTED), 31b7a44 (refuse a migration in progress that this
+    runkit version can't finish), 702096e (errors worded for an application's
+    operator), 4ef5c45 (the polled lock, the invalid-index refusal, and the
+    operator flowcharts in `docs/schema-upgrades.md`), f43ab0c (fail a
+    statement that ends its transaction), 6ed9582 (a test that applies
+    `current/` again), 78c4c13 (close the connection) and 39e1095 (a `stmt`
+    step must be safe to run twice).
+- [ ] **The automatic schema migration flowchart.** PR or commit: —
+  - One flowchart, `docs/automatic-schema-migration.md` (drafted), titled
+    "Automatic schema migration", replaces the two charts that were in
+    `docs/schema-upgrades.md`. The user decided that it is the only chart: no
+    chart of how a migration is applied, no table of errors, and no flowchart
+    for resolving invalid indexes.
+  - It shows what the engine does to the schema when it starts. Every check,
+    before and after the lock, ending in the engine running, or stopping
+    because a newer engine is required or because a person has to intervene.
+    The migration itself is one step, followed by whether it succeeded. The
+    engine never applies an offline upgrade, so the chart has no question about
+    it; the summary says what `ApplySchemaOnline()` and `ApplySchemaOffline()`
+    do differently.
+  - Its reader is primarily the application's developer. It says "the engine",
+    its questions are full sentences, each outcome is an event that says what
+    the engine does, every branch leaves a decision box, a loop returns to an
+    action box rather than into a decision, each edge into an outcome has its
+    own box so that no edges cross, each outcome starts with 🟢 when the engine
+    runs or 🛑 when it stops, each box that loops back starts with 🔄, and its
+    loop is a dotted arrow. The box about invalid indexes links to PostgreSQL's
+    documentation with an HTML link in its label, which GitHub renders.
+  - Check it again once `Run` applies the schema. Until then, only the two
+    functions make these checks, and the chart's first box, "Engine starts",
+    isn't true yet.
+- [ ] **`Run` applies the schema.** PR or commit: —
+  - `engine.go`: `Run` calls `schema.Apply` online, with the engine's timeout
+    constants, before it binds the application. It tries again with the
+    engine's failure policy after `xsql.IsLockNotAvailableError`, and returns
+    any other error, except one it can run despite.
+  - `schema.Apply` returns every error after it decides to upgrade wrapped in
+    an `UpgradeFailedError`, with `Current`, `Required` and the cause, and the
+    cause's message unchanged. If `Required.CanRunOn(Current)`, `Run` logs the
+    error as an ERROR and starts. In practice that is a database behind only in
+    its patch version.
+  - The runner returns a `StepFailedError` for a failed step, beside
+    `StepTimeoutError`.
+  - Tests in `engine_test.go`: an empty database; behind in the minor version;
+    behind in the major version; ahead in the major version; a failed upgrade
+    that the engine can run despite, using an invalid index; a retry after a
+    lock timeout. None asserts on log output.
+  - `CHANGELOG.md`: an `Added` entry for automatic schema migration. The
+    README example no longer calls `ApplySchemaOnline()`.
+  - `Run()`'s doc comment states the contract.
+  - README: a "Database schema" section says what the engine's schema is and
+    links the current schema, then has "Versioning" (the scheme, in plain
+    words), "Upgrades" (automatic and by function, linking the flowchart) and
+    "Major schema upgrades". A README in `internal/schema/internal/current/`
+    explains the directory and how the numbers in its names set the order. The
+    operational documentation task builds on this section.
 - [ ] **Collapse the engine's schemas into one.** PR or commit: —
   - Why: the engine's eight generic schema names (`process`, `application` and
     so on) can clash with the host application's own schemas, and
@@ -363,23 +463,12 @@ done.
     versus cluster compatibility, the consequence of raising the major number
     after 1.0, and the Dialer versioning guide's rule that anything needing
     human intervention is a major version.
-- [ ] **`Run` applies the schema.** PR or commit: —
-  - `engine.go` and the start-up sequence (`internal/application/bind.go` is
-    where the engine binds the database today): the check and apply described
-    under `Run`, with the lock-timeout retry and backoff, errors that name
-    schema versions, and the failure log through `engineLogger`. The timeout
-    constants live in `engine.go`.
-  - Tests: `Run` on an empty database; behind in the minor number; behind in the
-    major number; ahead in the major number; behind in the patch number with a
-    role that can't apply it (if the test database allows creating roles); a
-    retry after a lock timeout. None asserts on log output.
-  - `CHANGELOG.md`: an `Added` entry that `Run` applies schema changes that are
-    safe.
-  - `Run()`'s doc comment states the contract.
 - [ ] **Operational documentation in the README.** PR or commit: —
   - A "The database schema" section for the people who deploy and run an
     application, written from what the code does, after "Running an
-    application". The example there reduces to `New()` and `Run()`. It covers:
+    application". The example there no longer calls `ApplySchemaOnline()`,
+    because `Run` applies the schema. Applying it separately, with different
+    database credentials, is covered under strict DDL control. It covers:
     - what the schema version is, that the engine records it in
       `runkit.schema_version`, how to read it (`SELECT version FROM
       runkit.schema_version`), and that each runkit version's changelog section
@@ -414,18 +503,16 @@ done.
       change the schema, and a pooler in transaction mode, such as PgBouncer,
       can leave that lock held, so that later calls wait forever. From the
       [review of the migration implementation](2026-11-16-schema-migration-review.md).
-    - a flowchart in `docs/schema-upgrades.md` for resolving the invalid indexes
-      that block a migration. Whether an index needs to be dropped or rebuilt
-      depends on whether a runkit release builds it, so the chart has the
-      operator, with the application's developer, check the runkit releases.
 - [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream/00-tables.sql`, and test it in the upgrade test.
 
-Before the work merges, return to the flowcharts in `docs/schema-upgrades.md`
-with the user, and check them against the code as it is then. `Run` applying the
-schema changes what starts an online upgrade, and the user asked to revisit the
-diagrams then.
+Before tagging v0.3.0, review the `[Unreleased]` section of `CHANGELOG.md` with
+the user, which they deferred until then. Known fixes: the entry "The database
+schema has changed in a way that engines built for the earlier schema can't run
+on" says "engines built for", but runkit is the engine, and its clause is
+object-first. The README now refers to "release notes" rather than the
+changelog, because readers may arrive from GitHub's release page.
 
 Later, not part of these tasks: a test that runs the previous runkit version's
 engine against an upgraded database. I'd draft an issue and show it before
@@ -444,11 +531,14 @@ implementation comments and the maintainer document.
 ## Critical files
 
 `internal/schema/schema.go`, `internal/schema/schema_test.go`,
-`internal/schema/internal/current/**` (renamed from `ddl`), new
-`internal/schema/internal/migrations/`, a new internal
-runner package, `engine.go`, `internal/application/bind.go`, `schema.go`,
-`README.md`, `CHANGELOG.md`, new
-`docs/maintainers/schema.md`.
+`internal/schema/version.go`, `internal/schema/checks.go` (the checks that
+`Apply` makes before it changes anything), `internal/schema/error.go` (the error
+types that those checks return), `internal/schema/internal/current/**` (renamed
+from `ddl`), `internal/schema/internal/migrations/` (the migrations and the
+runner), `internal/schema/internal/upgradelock/`,
+`internal/schema/internal/version/`, `internal/x/xsql/tx.go`, `engine.go`,
+`internal/application/bind.go`, `schema.go`, `README.md`, `CHANGELOG.md`,
+`docs/automatic-schema-migration.md`, new `docs/maintainers/schema.md`.
 
 ## Verification
 

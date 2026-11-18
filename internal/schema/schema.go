@@ -6,20 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/dogmatiq/runkit/internal/schema/internal/bootstrap"
 	"github.com/dogmatiq/runkit/internal/schema/internal/current"
-	"github.com/dogmatiq/runkit/internal/schema/internal/migrationlock"
 	"github.com/dogmatiq/runkit/internal/schema/internal/migrations"
+	"github.com/dogmatiq/runkit/internal/schema/internal/upgradelock"
 	"github.com/dogmatiq/runkit/internal/schema/internal/version"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // Apply brings the schema of the database to [TargetVersion], creating the
-// schema if the database has none.
+// schema if the database doesn't have one yet.
 //
 // It does nothing if the database is at a schema version that [TargetVersion]
 // can run on and isn't behind it. Only one call changes a database at a time.
@@ -34,6 +33,10 @@ import (
 // lockTimeout is the longest that a step waits for a lock, and stmtTimeout is
 // the longest that a statement of a transaction runs. Both apply only when
 // offline is false.
+//
+// Once Apply has decided that the database needs an upgrade, it returns any
+// error wrapped in an [UpgradeFailedError], which holds the database's schema
+// version.
 func Apply(
 	ctx context.Context,
 	db *sql.DB,
@@ -71,7 +74,7 @@ func Apply(
 		return err
 	}
 
-	release, err := migrationlock.Acquire(ctx, conn)
+	release, err := upgradelock.Acquire(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -89,10 +92,40 @@ func Apply(
 		return err
 	}
 
+	if err := upgrade(
+		ctx,
+		conn,
+		currentVersion,
+		migratingTo,
+		offline,
+		lockTimeout,
+		stmtTimeout,
+	); err != nil {
+		return UpgradeFailedError{
+			Current:  currentVersion,
+			Required: TargetVersion,
+			Cause:    err,
+		}
+	}
+
+	return nil
+}
+
+// upgrade brings the schema of a database at the current schema version to
+// [TargetVersion], once [Apply] holds the lock and knows that the database
+// needs an upgrade. migratingTo is the schema version of the migration in
+// progress, if there is one.
+func upgrade(
+	ctx context.Context,
+	conn *sql.Conn,
+	currentVersion, migratingTo version.Version,
+	offline bool,
+	lockTimeout, stmtTimeout time.Duration,
+) error {
 	// Decide whether this call can upgrade the database only now that it
 	// holds the lock. Before then, another call may have been part-way through
 	// an upgrade that leaves this call with nothing to do.
-	if err := checkCanUpgrade(currentVersion, migratingTo, TargetVersion, offline); err != nil {
+	if err := checkCanFinishMigration(migratingTo, TargetVersion); err != nil {
 		return err
 	}
 
@@ -102,6 +135,14 @@ func Apply(
 	// can't tell whether a step builds a given index again, so it stops until a
 	// person drops or rebuilds each invalid index.
 	if err := checkIndexesAreValid(ctx, conn); err != nil {
+		return err
+	}
+
+	// This check comes last because it is the only one that costs downtime to
+	// get past: its error says to stop every instance of the application. The
+	// checks above find problems that can be fixed while the application runs,
+	// so they are reported before anyone stops it.
+	if err := checkCanUpgradeMajorVersion(currentVersion, TargetVersion, offline); err != nil {
 		return err
 	}
 
@@ -252,50 +293,6 @@ func identifySchemaVersions(
 	return version.Version{}, version.Version{}, nil
 }
 
-// checkIndexesAreValid returns an error that names each invalid index in the
-// engine's schemas, if there are any.
-func checkIndexesAreValid(ctx context.Context, conn *sql.Conn) error {
-	rows, err := conn.QueryContext(
-		ctx,
-		`SELECT format('%I.%I', n.nspname, c.relname)
-		FROM pg_index i
-		JOIN pg_class c ON c.oid = i.indexrelid
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE NOT i.indisvalid
-		AND n.nspname = ANY($1)
-		ORDER BY 1`,
-		schemaNames(),
-	)
-	if err != nil {
-		return fmt.Errorf("unable to look for invalid indexes: %w", err)
-	}
-	defer rows.Close()
-
-	var names []string
-
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("unable to look for invalid indexes: %w", err)
-		}
-
-		names = append(names, name)
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("unable to look for invalid indexes: %w", err)
-	}
-
-	if len(names) == 0 {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"database schema migration requires human intervention: invalid indexes need to be dropped or rebuilt manually (%s)",
-		strings.Join(names, ", "),
-	)
-}
-
 // executeFile executes the SQL in the given file of [current.FS].
 func executeFile(ctx context.Context, tx xsql.Executor, path string) error {
 	ddl, err := current.FS.ReadFile(path)
@@ -347,34 +344,4 @@ func schemaNames() []string {
 	}
 
 	return names
-}
-
-// runkitVersion returns the version of the runkit module that is compiled into
-// the program, or "unknown version" if the build doesn't record it, such as in
-// runkit's own tests.
-func runkitVersion() string {
-	const unknown = "unknown version"
-
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return unknown
-	}
-
-	modules := append([]*debug.Module{&info.Main}, info.Deps...)
-
-	for _, m := range modules {
-		if m.Path != "github.com/dogmatiq/runkit" {
-			continue
-		}
-
-		if m.Replace != nil {
-			m = m.Replace
-		}
-
-		if m.Version != "" && m.Version != "(devel)" {
-			return m.Version
-		}
-	}
-
-	return unknown
 }

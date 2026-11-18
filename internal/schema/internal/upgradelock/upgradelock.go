@@ -1,6 +1,6 @@
-// Package migrationlock provides the advisory lock that only one call that
-// changes the engine's schema holds at a time.
-package migrationlock
+// Package upgradelock provides the advisory lock that only one call that
+// upgrades the engine's schema holds at a time.
+package upgradelock
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func Acquire(
 			// The lock might have been taken even though the call failed, such
 			// as when the context is canceled.
 			xsql.Discard(conn)
-			return nil, fmt.Errorf("unable to lock the database for migration: %w", err)
+			return nil, fmt.Errorf("unable to lock the database for an upgrade: %w", err)
 		}
 
 		if locked {
@@ -61,7 +61,7 @@ func Acquire(
 
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("unable to lock the database for migration: %w", ctx.Err())
+			return nil, fmt.Errorf("unable to lock the database for an upgrade: %w", ctx.Err())
 		case <-time.After(pollInterval):
 		}
 	}
