@@ -9,8 +9,9 @@ review of the migration machinery followed them. Its report is
 and every finding in it has a decision, made in the commits listed under the
 second task. The automatic schema migration flowchart and `Run` applying the
 schema landed together in e30c230. Collapsing the engine's schemas into one
-landed in d338872. Flattening `current/` is done and awaits review; the
-next task after it is the maintainer document.
+landed in d338872. Flattening `current/` landed in 2104575. The maintainer
+document is written and awaits review; the next task after it is the operational
+documentation in the README.
 
 ## Context
 
@@ -184,20 +185,20 @@ All approved in review. Checked against Dogma's glossary: none of "migration",
   of the application and apply the upgrade offline, so that a wrong guess about
   a step's cost becomes a clear human step and not an outage.
 - **Allowed in a migration that raises only the minor or patch number**, because
-  the cost doesn't grow with the data and the lock is brief: create a schema,
-  table, function or trigger; add a column with no default or a constant
-  default; create an index on a table that the same migration creates, with a
-  plain `CREATE INDEX`; replace a function so that older engines still work;
-  create an index on an existing table with `CREATE INDEX CONCURRENTLY` in a
-  `stmt` step, and in no other way; add a constraint as `NOT VALID` in a `tx`
-  step and validate it with `VALIDATE CONSTRAINT` in a `stmt` step. Anything
-  else raises the major number, including dropping or renaming, changing a
-  column's type, adding a constraint that scans the table, a plain index on an
-  existing table, and moving or backfilling rows. A `stmt` step must hold an
-  operation that doesn't block reads or writes: the two above, or a `DO` block
-  that commits in batches. Nothing checks this, so review is the only check, and
-  the maintainer document states it. There is no list of tables that count as
-  small.
+  each either takes a brief lock at a cost that doesn't grow with the data, or
+  doesn't block reads or writes: create a schema, table, function or trigger;
+  add a column with no default or a constant default; create an index on a table
+  that the same migration creates, with a plain `CREATE INDEX`; replace a
+  function so that older engines still work; create an index on an existing
+  table with `CREATE INDEX CONCURRENTLY` in a `stmt` step, and in no other way;
+  add a constraint as `NOT VALID` in a `tx` step and validate it with
+  `VALIDATE CONSTRAINT` in a `stmt` step. Anything else raises the major number,
+  including dropping or renaming, changing a column's type, adding a constraint
+  that scans the table, a plain index on an existing table, and moving or
+  backfilling rows. The maintainer document replaces this list with one
+  flowchart for each kind of object, which ends in major, minor, patch or "not
+  covered", and is the reference from now on. Nothing checks this, so review is the only check, and the maintainer document
+  states it. There is no list of tables that count as small.
 - **Entry points.** The migrate routine takes one flag, `Offline`, which says
   whether engines are known to be stopped. It allows the major number to rise
   and removes the timeouts. The public API has no option.
@@ -445,7 +446,7 @@ done.
     v0.3.0 the old schemas are gone.
   - The upgrade test already compares the migrated database with a new one, so
     it covers the result.
-- [x] **Flatten `current/` into one file per component.** PR or commit: —
+- [x] **Flatten `current/` into one file per component.** PR or commit: 2104575
   - Why: each subdirectory of `current/` matched one of the old schemas. Now
     that everything is in `runkit`, the subdirectories only group files, but
     they make the README explain two levels of ordering and why the files
@@ -458,7 +459,7 @@ done.
     file in `current/` are updated to the new names.
   - It's a separate commit from the collapse, so that the collapse's diff of the
     SQL shows its renames instead of whole files moving.
-- [ ] **Maintainer document (closes #96).** PR or commit: —
+- [x] **Maintainer document (closes #96).** PR or commit: —
   - `docs/maintainers/schema.md`: the schema version and its meaning, the
     wording, the v0.1.0 floor, the deploy-impact rule and the list of operations
     allowed in a migration that raises only the minor or patch number, how to
@@ -483,6 +484,13 @@ done.
     versus cluster compatibility, the consequence of raising the major number
     after 1.0, and the Dialer versioning guide's rule that anything needing
     human intervention is a major version.
+  - Review reshaped the document: it holds only instructions, with no
+    background that the README or the startup flowchart covers. The schema
+    version comes from one flowchart of common changes, with "Decide in review"
+    for anything else. Schema changes are banned in a release of a runkit
+    version that isn't the latest with its major schema version, which replaces
+    the hotfix rules. Cluster compatibility and the post-1.0 splitting guidance
+    were removed.
 - [ ] **Operational documentation in the README.** PR or commit: —
   - A "The database schema" section for the people who deploy and run an
     application, written from what the code does, after "Running an
@@ -526,6 +534,24 @@ done.
 - [ ] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream.sql`, and test it in the upgrade test.
+- [ ] **Upgrade test needs no change when a schema version is released.** PR or
+  commit: —
+  - Why: today, releasing a new schema version means adding the runkit version
+    to `releasedVersions` by hand. The first time that happens, after v0.3.0,
+    `createSchemaOf` and `testMigrateFrom` also break, because both assume the
+    layout and tables of runkit v0.2.0 and earlier.
+  - Add the schema version line to the released changelog sections: v0.1.0
+    `Schema version: v1.0.0 (new)`, v0.1.1 and v0.1.2 `v1.0.0 (existing)`, and
+    v0.2.0 `v1.1.0 (new)`. The user allowed this edit of released sections.
+  - The upgrade test takes its runkit versions from the changelog sections
+    marked `(new)`, so `releasedVersions` goes away.
+  - `createSchemaOf` creates a schema from a runkit version of v0.3.0 or later
+    by applying that version's bootstrap and current schema and recording its
+    schema version.
+  - The data checks in `testMigrateFrom` run only for the runkit versions whose
+    tables they insert into, v0.2.0 and earlier.
+  - Remove the guide's instruction about `releasedVersions` and
+    `createSchemaOf`.
 
 Before tagging v0.3.0, review the `[Unreleased]` section of `CHANGELOG.md` with
 the user, which they deferred until then. Known fixes: the entry "The database

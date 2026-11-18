@@ -100,6 +100,12 @@ next attempt carries on from the step where it stopped.
 
 ### Major schema upgrades
 
+<!--
+Don't remove or rename this section. The changelog section of every runkit
+version with a major schema upgrade links to it, and so do the release notes on
+GitHub, which are copied from the changelog.
+-->
+
 A major schema upgrade brings the schema to a new major version, which stops
 older engines from using it. The release notes of a runkit version that needs a
 major schema upgrade say so at the top.
