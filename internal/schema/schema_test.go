@@ -648,29 +648,91 @@ func TestEnqueueCommand_usesQueuedAt(t *testing.T) {
 	)
 }
 
-// releasedVersions are the runkit versions that TestMigrate_fromReleased
-// upgrades a database from. They are the versions whose schema differs, so
-// v0.1.0 and v0.1.1 are omitted because they have the schema of v0.1.2.
-var releasedVersions = []string{"v0.1.2", "v0.2.0"}
-
 // TestMigrate_fromReleased verifies that migrating a database created by each
-// of the releasedVersions keeps its data, and produces the same schema as a new
-// database.
+// runkit version that introduced a schema version produces the same schema as a
+// new database, and keeps the data that the migrations move.
 func TestMigrate_fromReleased(t *testing.T) {
 	t.Parallel()
 
-	for _, version := range releasedVersions {
-		t.Run(version, func(t *testing.T) {
+	for _, r := range readChangelogReleases(t) {
+		// A runkit version that isn't new has the schema version of an earlier
+		// one, and so has the same schema.
+		if !r.IsNew {
+			continue
+		}
+
+		t.Run(r.RunkitVersion, func(t *testing.T) {
 			t.Parallel()
-			testMigrateFrom(t, version)
+			testMigrateFrom(t, r.RunkitVersion)
 		})
 	}
 }
 
-// testMigrateFrom is the test of TestMigrate_fromReleased for one version.
-func testMigrateFrom(t *testing.T, version string) {
+// testMigrateFrom is the test of TestMigrate_fromReleased for one runkit
+// version.
+func testMigrateFrom(t *testing.T, runkitVersion string) {
 	db := xtesting.NewDatabaseWithoutSchema(t)
-	createSchemaOf(t, db, version)
+	createSchemaOf(t, db, runkitVersion)
+
+	// The rows that the test inserts, and the checks of what the migration
+	// does with them, are for the migration to schema version v2.0.0. They use
+	// tables that only a runkit version with a lower schema version has.
+	beforeV2_0_0 := schemaVersionOf(t, runkitVersion).Compare(mustParseVersion(t, "v2.0.0")) < 0
+
+	if beforeV2_0_0 {
+		insertRowsBeforeV2_0_0(t, db)
+	}
+
+	for range 2 {
+		if err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout); err != nil {
+			t.Fatal(err)
+		}
+
+		if beforeV2_0_0 {
+			xtesting.ExpectQueryResult(
+				t,
+				"every pending message is in the queue once",
+				4,
+				db,
+				`SELECT COUNT(*)
+				FROM runkit.queued_messages`,
+			)
+		}
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the database is at the current schema version",
+		true,
+		db,
+		`SELECT version = $1
+			AND migrating_to IS NULL
+			AND migration_steps_completed IS NULL
+		FROM runkit.schema_version`,
+		schema.TargetVersion,
+	)
+
+	if beforeV2_0_0 {
+		expectRowsMigratedToV2_0_0(t, db)
+	}
+
+	got := dumpSchemaObjects(t, db)
+	want := dumpSchemaObjects(t, xtesting.NewDatabaseAsOwner(t))
+
+	for _, object := range difference(want, got) {
+		t.Errorf("the migrated database is missing:\n%s", object)
+	}
+
+	for _, object := range difference(got, want) {
+		t.Errorf("the migrated database has more than a new database:\n%s", object)
+	}
+}
+
+// insertRowsBeforeV2_0_0 inserts rows into the tables of a database at a schema
+// version below v2.0.0, for [expectRowsMigratedToV2_0_0] to find after the
+// migration to v2.0.0.
+func insertRowsBeforeV2_0_0(t testing.TB, db *sql.DB) {
+	t.Helper()
 
 	if _, err := db.ExecContext(
 		t.Context(),
@@ -758,33 +820,12 @@ func testMigrateFrom(t *testing.T, version string) {
 	); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	for range 2 {
-		if err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout); err != nil {
-			t.Fatal(err)
-		}
-
-		xtesting.ExpectQueryResult(
-			t,
-			"every pending message is in the queue once",
-			4,
-			db,
-			`SELECT COUNT(*)
-			FROM runkit.queued_messages`,
-		)
-	}
-
-	xtesting.ExpectQueryResult(
-		t,
-		"the database is at the current schema version",
-		true,
-		db,
-		`SELECT version = $1
-			AND migrating_to IS NULL
-			AND migration_steps_completed IS NULL
-		FROM runkit.schema_version`,
-		schema.TargetVersion,
-	)
+// expectRowsMigratedToV2_0_0 checks that the migration to schema version v2.0.0
+// moved the rows that [insertRowsBeforeV2_0_0] inserted.
+func expectRowsMigratedToV2_0_0(t testing.TB, db *sql.DB) {
+	t.Helper()
 
 	xtesting.ExpectQueryResult(
 		t,
@@ -903,17 +944,6 @@ func testMigrateFrom(t *testing.T, version string) {
 		FROM information_schema.schemata
 		WHERE schema_name = 'commandqueue'`,
 	)
-
-	got := dumpSchemaObjects(t, db)
-	want := dumpSchemaObjects(t, xtesting.NewDatabaseAsOwner(t))
-
-	for _, object := range difference(want, got) {
-		t.Errorf("the migrated database is missing:\n%s", object)
-	}
-
-	for _, object := range difference(got, want) {
-		t.Errorf("the migrated database has more than a new database:\n%s", object)
-	}
 }
 
 // TestMigrate_toV2_0_0_waitsForEngineWrites verifies that the migration to
@@ -1147,20 +1177,21 @@ func waitUntil(t testing.TB, done func() bool) {
 	}
 }
 
-// createSchemaOf creates the schema of the given runkit version in the given
-// database by applying the DDL of that runkit version, in the way that it did.
+// createSchemaOf creates the schema of the given released runkit version in the
+// given database, in the way that it created the schema of a new database.
 //
-// It fails the test if it can't fetch that runkit version.
-func createSchemaOf(t testing.TB, db *sql.DB, version string) {
+// It fails the test if it can't fetch that runkit version, or if the changelog
+// doesn't state its schema version.
+func createSchemaOf(t testing.TB, db *sql.DB, runkitVersion string) {
 	t.Helper()
 
 	out, err := exec.CommandContext(
 		t.Context(),
 		"go", "mod", "download", "-json",
-		"github.com/dogmatiq/runkit@"+version,
+		"github.com/dogmatiq/runkit@"+runkitVersion,
 	).Output()
 	if err != nil {
-		t.Fatalf("unable to fetch runkit %s: %s", version, err)
+		t.Fatalf("unable to fetch runkit %s: %s", runkitVersion, err)
 	}
 
 	var module struct {
@@ -1171,13 +1202,34 @@ func createSchemaOf(t testing.TB, db *sql.DB, version string) {
 		t.Fatal(err)
 	}
 
-	ddlFS := os.DirFS(module.Dir)
+	files := os.DirFS(module.Dir)
 
-	if err := xsql.Transact(
-		t.Context(),
+	// Runkit v0.2.0 and earlier keep their SQL in "internal/schema/ddl". Later
+	// runkit versions keep the SQL for the table of the schema version in
+	// "internal/schema/internal/bootstrap", and the current schema in
+	// "internal/schema/internal/current". A runkit version with another layout
+	// fails here, and this function needs to learn it.
+	var created error
+
+	if _, err := fs.Stat(files, "internal/schema/ddl"); err == nil {
+		created = createSchemaFromDDL(t.Context(), db, files)
+	} else {
+		created = createSchemaFromCurrent(t.Context(), db, files, schemaVersionOf(t, runkitVersion))
+	}
+
+	if created != nil {
+		t.Fatalf("unable to create the schema of runkit %s: %s", runkitVersion, created)
+	}
+}
+
+// createSchemaFromDDL creates the schema in the way of runkit v0.2.0 and
+// earlier, which apply every file in "internal/schema/ddl" in one transaction.
+func createSchemaFromDDL(ctx context.Context, db *sql.DB, files fs.FS) error {
+	return xsql.Transact(
+		ctx,
 		db,
 		func(ctx context.Context, tx *sql.Tx) error {
-			// Released runkit versions lock the schema before applying the DDL.
+			// These runkit versions lock the schema before applying the DDL.
 			if _, err := tx.ExecContext(
 				ctx,
 				`LOCK TABLE pg_catalog.pg_namespace IN SHARE ROW EXCLUSIVE MODE`,
@@ -1186,26 +1238,73 @@ func createSchemaOf(t testing.TB, db *sql.DB, version string) {
 			}
 
 			return fs.WalkDir(
-				ddlFS,
+				files,
 				"internal/schema/ddl",
 				func(path string, d fs.DirEntry, err error) error {
 					if err != nil || d.IsDir() {
 						return err
 					}
 
-					ddl, err := fs.ReadFile(ddlFS, path)
-					if err != nil {
-						return err
-					}
-
-					_, err = tx.ExecContext(ctx, string(ddl))
-					return err
+					return execFile(ctx, tx, files, path)
 				},
 			)
 		},
-	); err != nil {
-		t.Fatalf("unable to create the schema of runkit %s: %s", version, err)
+	)
+}
+
+// createSchemaFromCurrent creates the schema in the way of runkit v0.3.0 and
+// later on a new database. It applies the SQL that creates the table of the
+// schema version, then the current schema, then records the given schema
+// version.
+func createSchemaFromCurrent(
+	ctx context.Context,
+	db *sql.DB,
+	files fs.FS,
+	schemaVersion version.Version,
+) error {
+	current, err := fs.Glob(files, "internal/schema/internal/current/*.sql")
+	if err != nil {
+		return err
 	}
+
+	paths := append(
+		[]string{"internal/schema/internal/bootstrap/bootstrap.sql"},
+		current...,
+	)
+
+	return xsql.Transact(
+		ctx,
+		db,
+		func(ctx context.Context, tx *sql.Tx) error {
+			for _, path := range paths {
+				if err := execFile(ctx, tx, files, path); err != nil {
+					return err
+				}
+			}
+
+			_, err := tx.ExecContext(
+				ctx,
+				`INSERT INTO runkit.schema_version (version)
+				VALUES ($1)`,
+				schemaVersion,
+			)
+			return err
+		},
+	)
+}
+
+// execFile executes the SQL in the given file.
+func execFile(ctx context.Context, tx *sql.Tx, files fs.FS, path string) error {
+	ddl, err := fs.ReadFile(files, path)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, string(ddl)); err != nil {
+		return fmt.Errorf("unable to execute %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // dumpObjectHeader matches the comment that pg_dump writes above each schema

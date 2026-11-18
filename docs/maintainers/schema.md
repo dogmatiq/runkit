@@ -167,10 +167,6 @@ one instead.
 - If the upgrade takes longer the more data the database holds, say so in the
   change's entry, and say what it does. For example, "the upgrade builds a new
   index over every event".
-- After you release a runkit version with a new schema version, add it to
-  `releasedVersions`, in [`internal/schema/schema_test.go`]. Before you add a
-  runkit version later than v0.2.0, change `createSchemaOf`, which reads the SQL
-  from `internal/schema/ddl`.
 
 If the release raises the major number, also:
 
@@ -195,7 +191,6 @@ If the release raises the major number, also:
 [`engine.go`]: ../../engine.go
 [`internal/schema/internal/current`]: ../../internal/schema/internal/current/
 [`internal/schema/internal/migrations`]: ../../internal/schema/internal/migrations/
-[`internal/schema/schema_test.go`]: ../../internal/schema/schema_test.go
 [`internal/schema/version.go`]: ../../internal/schema/version.go
 [automatic schema migration flowchart]: ../automatic-schema-migration.md
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs

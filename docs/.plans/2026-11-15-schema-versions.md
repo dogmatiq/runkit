@@ -11,9 +11,9 @@ second task. The automatic schema migration flowchart and `Run` applying the
 schema landed together in e30c230. Collapsing the engine's schemas into one
 landed in d338872. Flattening `current/` landed in 2104575. The maintainer
 document landed in 987d485. The operational documentation in the README landed
-in ee34a67. Dropping `failures` and `resume_at` (#127) is done and awaits
-review; the next task after it is making the upgrade test need no change when a
-schema version is released.
+in ee34a67. Dropping `failures` and `resume_at` (#127) landed in a23978b. Making
+the upgrade test need no change when a schema version is released is done and
+awaits review. After it, the changelog review before tagging v0.3.0 remains.
 
 ## Context
 
@@ -542,7 +542,7 @@ done.
     on its tables, and `EXECUTE` on its functions. `xtesting.NewDatabase` now
     connects as a role with exactly those grants, so the whole test suite checks
     the list; tests that change the schema use `xtesting.NewDatabaseAsOwner`.
-- [x] **Drop `failures` and `resume_at` (#127).** PR or commit: — Drop both
+- [x] **Drop `failures` and `resume_at` (#127).** PR or commit: a23978b Drop both
   columns in the migration to schema version v2.0.0, stop declaring them in
   `current/00-eventstream.sql`, and test it in the upgrade test.
   - Review also moved the checkpoint changes out of the queue-merging step into
@@ -553,7 +553,7 @@ done.
     `process_instances`. The definition moved from
     `current/00-eventstream.sql` to `current/20-process.sql`, and the move step
     renames the table and its five constraints.
-- [ ] **Upgrade test needs no change when a schema version is released.** PR or
+- [x] **Upgrade test needs no change when a schema version is released.** PR or
   commit: —
   - Why: today, releasing a new schema version means adding the runkit version
     to `releasedVersions` by hand. The first time that happens, after v0.3.0,
@@ -582,12 +582,6 @@ changelog, because readers may arrive from GitHub's release page.
 Later, not part of these tasks: a test that runs the previous runkit version's
 engine against an upgraded database. I'd draft an issue and show it before
 filing.
-
-Also later, once runkit v0.3.0 is released: make the upgrade test start from
-every released runkit version, found with `go list -m -versions`, with each
-one's schema version read from the changelog line of its release. A schema
-author then needs no setup, and a failing test lists what their migration lacks.
-Until then the test starts from v0.1.2 and v0.2.0, the two released schemas.
 
 Prose in the README, the maintainer document and any doc comment follows the
 writing-prose skill. Doc comments state the contract only; the reasons live in

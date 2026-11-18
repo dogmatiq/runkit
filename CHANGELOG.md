@@ -144,6 +144,8 @@ events.
 
 ## [0.2.0] - 2026-11-06
 
+Schema version: v1.1.0 (new)
+
 This release introduces clustering. Several engines could already run against
 the same database, but they competed with each other for work. They now
 coordinate as the nodes of a cluster, which runs a single application, and work
@@ -229,15 +231,21 @@ connection per cluster.
 
 ## [0.1.2] - 2026-07-04
 
+Schema version: v1.0.0 (existing)
+
 ### Added
 
 - Added `CreateSchema()` and `DropSchema()`
 
 ## [0.1.1] - 2026-07-04
 
+Schema version: v1.0.0 (existing)
+
 - Rename root package to `runkit`.
 
 ## [0.1.0] - 2026-07-04
+
+Schema version: v1.0.0 (new)
 
 - Initial release
 
