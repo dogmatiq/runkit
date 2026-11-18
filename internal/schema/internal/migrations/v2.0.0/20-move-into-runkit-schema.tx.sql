@@ -83,15 +83,32 @@ ALTER TABLE process.process_instances SET SCHEMA runkit;
 ALTER TABLE projection.projection_handlers SET SCHEMA runkit;
 
 --------------------------------------------------------------------------------
--- Drop the old schemas. They're dropped without CASCADE, so if one still holds
--- anything, such as a table of the application's, the migration fails instead
--- of dropping it.
+-- Drop each old schema that is now empty.
+--
+-- The application may keep its own objects in a schema with one of these
+-- names. For example, projectionkit keeps its checkpoints in the "projection"
+-- schema. Such a schema belongs to the application, so it's left as it is.
+--
+-- Each schema is dropped without CASCADE, so PostgreSQL refuses to drop one
+-- that still holds anything, and the exception handler moves on to the next.
 --------------------------------------------------------------------------------
-DROP SCHEMA
-    application,
-    eventstream,
-    commandqueue,
-    aggregate,
-    integration,
-    process,
-    projection;
+DO $$
+DECLARE
+    old_schema text;
+BEGIN
+    FOREACH old_schema IN ARRAY ARRAY[
+        'application',
+        'eventstream',
+        'commandqueue',
+        'aggregate',
+        'integration',
+        'process',
+        'projection'
+    ] LOOP
+        BEGIN
+            EXECUTE format('DROP SCHEMA %I', old_schema);
+        EXCEPTION WHEN dependent_objects_still_exist THEN
+            NULL;
+        END;
+    END LOOP;
+END $$;

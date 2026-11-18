@@ -1129,6 +1129,40 @@ func TestMigrate_toV2_0_0_waitsForEngineDeliveries(t *testing.T) {
 	)
 }
 
+// TestMigrate_toV2_0_0_keepsApplicationSchemas verifies that the migration to
+// schema version v2.0.0 keeps an old schema that holds the application's own
+// tables. For example, projectionkit keeps its checkpoints in the "projection"
+// schema.
+func TestMigrate_toV2_0_0_keepsApplicationSchemas(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabaseWithoutSchema(t)
+	createSchemaOf(t, db, "v0.2.0")
+
+	if _, err := db.ExecContext(
+		t.Context(),
+		`CREATE TABLE projection.checkpoint (
+			id text PRIMARY KEY
+		)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout); err != nil {
+		t.Fatal(err)
+	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the schema holds only the application's table",
+		"checkpoint",
+		db,
+		`SELECT string_agg(table_name, ', ')
+		FROM information_schema.tables
+		WHERE table_schema = 'projection'`,
+	)
+}
+
 // waitForLockWaiters waits until at least n of the given database's
 // connections are waiting for a lock.
 func waitForLockWaiters(t testing.TB, db *sql.DB, n int) {
