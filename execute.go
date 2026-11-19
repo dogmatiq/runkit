@@ -189,7 +189,7 @@ func waitForEvents(
 			correlationID,
 			eventTypes,
 			eventObservers,
-			nextOffsets,
+			&nextOffsets,
 		)
 		if satisfied || err != nil {
 			return err
@@ -204,7 +204,8 @@ func waitForEvents(
 }
 
 // pollForEvents observes any events that have occurred since the last observed
-// offset on each stream, and feeds them to the observer functions.
+// offset on each stream, and feeds them to the observer functions. It records
+// the offset that follows each event it observes in nextOffsets.
 //
 // It returns true if any of the observer functions is satisfied.
 func pollForEvents(
@@ -213,7 +214,7 @@ func pollForEvents(
 	correlationID *uuidpb.UUID,
 	eventTypes uuidcollection.Set,
 	observers []dogma.EventObserver[dogma.Event],
-	nextOffsets uuidcollection.Map[uint64],
+	nextOffsets *uuidcollection.Map[uint64],
 ) (satisfied bool, err error) {
 	var (
 		streamIDs []string

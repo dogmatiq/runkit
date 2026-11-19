@@ -118,6 +118,9 @@ and logs failures.
   after handling a deadline. The commands were queued on every attempt, even
   though nothing else was saved. They're now queued only if the rest of the
   process's changes are saved too.
+- An event observer passed to `Engine.ExecuteCommand()` received the same
+  events again on every poll, and never received events beyond the first 100.
+  Now it receives each event once.
 
 ## [0.2.0] - 2026-11-06
 
