@@ -8,26 +8,23 @@ import (
 	"uuid"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary
 // representation as used in the database.
 //
 // A [uuid.UUID] value can only be marshaled. A *[uuid.UUID] can be marshaled
-// and unmarshaled. A NULL is unmarshaled as the zero [uuid.UUID], and the zero
-// [uuid.UUID] is marshaled as NULL.
-func UUID[T *uuidpb.UUID | uuid.UUID | *uuid.UUID](id T) ScannerValuer {
+// and unmarshaled. A NULL is unmarshaled as the nil UUID, and the nil UUID is
+// marshaled as NULL.
+func UUID[T uuid.UUID | *uuid.UUID](id T) ScannerValuer {
 	switch id := any(id).(type) {
-	case *uuidpb.UUID:
-		return protoUUID(id)
 	case uuid.UUID:
 		return scannerValuerFuncs{
 			func(any) error {
 				return fmt.Errorf("cannot scan into a %T value", id)
 			},
 			func() (driver.Value, error) {
-				return stdUUIDValue(id)
+				return uuidValue(id)
 			},
 		}
 	default:
@@ -54,14 +51,14 @@ func UUID[T *uuidpb.UUID | uuid.UUID | *uuid.UUID](id T) ScannerValuer {
 					return nil, nil
 				}
 
-				return stdUUIDValue(*ptr)
+				return uuidValue(*ptr)
 			},
 		}
 	}
 }
 
-// stdUUIDValue returns the database value of the given UUID.
-func stdUUIDValue(id uuid.UUID) (driver.Value, error) {
+// uuidValue returns the database value of the given UUID.
+func uuidValue(id uuid.UUID) (driver.Value, error) {
 	if id == uuid.Nil() {
 		return nil, nil
 	}
@@ -69,50 +66,16 @@ func stdUUIDValue(id uuid.UUID) (driver.Value, error) {
 	return id.String(), nil
 }
 
-// protoUUID returns a value that marshals and unmarshals a *[uuidpb.UUID].
-func protoUUID(id *uuidpb.UUID) ScannerValuer {
-	return scannerValuerFuncs{
-		func(v any) error {
-			if id == nil {
-				return fmt.Errorf("cannot scan into nil UUID pointer")
-			}
-
-			switch v := v.(type) {
-			case nil:
-				id.Reset()
-				return nil
-			case string:
-				return id.UnmarshalText([]byte(v))
-			default:
-				return fmt.Errorf("cannot scan %T into %T", v, id)
-			}
-		},
-		func() (driver.Value, error) {
-			if id == nil {
-				return nil, nil
-			}
-
-			data, err := id.MarshalText()
-			return string(data), err
-		},
-	}
-}
-
 // UUIDSeq collects UUIDs from an iterator into a []string containing the text
 // representation of each UUID, suitable for use with PostgreSQL's ANY($n)
 // operator.
-func UUIDSeq[T *uuidpb.UUID | uuid.UUID](seq iter.Seq[T]) any {
+func UUIDSeq(seq iter.Seq[uuid.UUID]) any {
 	// Use a non-nil empty slice so that pgx encodes it as an empty PostgreSQL
 	// array ('{}') rather than NULL.
 	values := []string{}
 
 	for id := range seq {
-		switch id := any(id).(type) {
-		case *uuidpb.UUID:
-			values = append(values, id.AsString())
-		case uuid.UUID:
-			values = append(values, id.String())
-		}
+		values = append(values, id.String())
 	}
 
 	return values

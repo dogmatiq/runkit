@@ -131,7 +131,7 @@ func TestEventStream_eventsAreNotRecordedWhenHandlerReturnsAnError(t *testing.T)
 			xtesting.WaitForCommandToBePostponed(
 				t,
 				db,
-				commandEnvelope.GetBody().GetMessageId(),
+				commandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 
 			xtesting.ExpectEventCount(t, db, 0)

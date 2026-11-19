@@ -65,13 +65,13 @@ func TestCommandQueue_unhandledCommandsRemainInQueue(t *testing.T) {
 			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				db,
-				handledCommandEnvelope.GetBody().GetMessageId(),
+				handledCommandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 
 			xtesting.ExpectCommandIDToBeQueued(
 				t,
 				db,
-				ignoredCommandEnvelope.GetBody().GetMessageId(),
+				ignoredCommandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 		},
 		dogma.ViaAggregate(
@@ -119,13 +119,13 @@ func TestCommandQueue_invalidCommandsArePostponed(t *testing.T) {
 			xtesting.WaitForCommandToBeRemovedFromQueue(
 				t,
 				db,
-				validCommandEnvelope.GetBody().GetMessageId(),
+				validCommandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 
 			xtesting.WaitForCommandToBePostponed(
 				t,
 				db,
-				invalidCommandEnvelope.GetBody().GetMessageId(),
+				invalidCommandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 		},
 		dogma.ViaAggregate(
@@ -189,7 +189,7 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 			xtesting.WaitForCommandToBePostponed(
 				t,
 				db,
-				commandEnvelope.GetBody().GetMessageId(),
+				commandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 		},
 		dogma.ViaAggregate(
@@ -229,7 +229,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 				xtesting.WaitForCommandToBePostponed(
 					t,
 					db,
-					commandEnvelope.GetBody().GetMessageId(),
+					commandEnvelope.GetBody().GetMessageId().AsStd(),
 				)
 			},
 			dogma.ViaAggregate(
@@ -258,7 +258,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 				xtesting.WaitForCommandToBePostponed(
 					t,
 					db,
-					commandEnvelope.GetBody().GetMessageId(),
+					commandEnvelope.GetBody().GetMessageId().AsStd(),
 				)
 			},
 			dogma.ViaAggregate(
@@ -309,7 +309,7 @@ func TestCommandQueue_applicationCodePanicsCauseCommandToBePostponed(t *testing.
 				xtesting.WaitForCommandToBePostponed(
 					t,
 					db,
-					commandEnvelope.GetBody().GetMessageId(),
+					commandEnvelope.GetBody().GetMessageId().AsStd(),
 				)
 			},
 			dogma.ViaAggregate(
@@ -364,7 +364,7 @@ func TestCommandQueue_postponedCommandsAreNotHandled(t *testing.T) {
 			xtesting.ExpectCommandToBeUnattempted(
 				t,
 				db,
-				postponedEnvelope.GetBody().GetMessageId(),
+				postponedEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 		},
 		dogma.ViaAggregate(

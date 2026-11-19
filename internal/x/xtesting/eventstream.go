@@ -92,9 +92,9 @@ func PopulateEventStreams(
 					ARRAY[ROW($3, $4, $5)::runkit.event]
 				)`,
 				xsql.UUID(streamID),
-				xsql.UUID(env.GetHeader().GetCorrelationId()),
-				xsql.UUID(env.GetBody().GetMessageId()),
-				xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
+				xsql.UUID(env.GetHeader().GetCorrelationId().AsStd()),
+				xsql.UUID(env.GetBody().GetMessageId().AsStd()),
+				xsql.UUID(env.GetBody().GetMessage().GetTypeId().AsStd()),
 				xsql.Envelope(env),
 			); err != nil {
 				t.Fatal(err)
@@ -152,9 +152,9 @@ func AppendToEventStream(
 				ARRAY[ROW($3, $4, $5)::runkit.event]
 			)`,
 			xsql.UUID(streamID),
-			xsql.UUID(env.GetHeader().GetCorrelationId()),
-			xsql.UUID(env.GetBody().GetMessageId()),
-			xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(env.GetHeader().GetCorrelationId().AsStd()),
+			xsql.UUID(env.GetBody().GetMessageId().AsStd()),
+			xsql.UUID(env.GetBody().GetMessage().GetTypeId().AsStd()),
 			xsql.Envelope(env),
 		)
 

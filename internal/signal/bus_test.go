@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -261,7 +261,7 @@ func waitForBus(t testing.TB, bus *Bus) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	topic := "probe." + uuidpb.Generate().AsString()
+	topic := "probe." + uuid.New().String()
 	probes, stop := bus.Watch(ctx, topic, 1)
 	defer stop()
 

@@ -16,7 +16,6 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
@@ -93,7 +92,7 @@ type Engine struct {
 	db *sql.DB
 
 	// nodeID is the unique identifier for this engine instance.
-	nodeID *uuidpb.UUID
+	nodeID uuid.UUID
 
 	// compactInterval is the minimum time between successful projection
 	// compactions.
@@ -229,7 +228,7 @@ func New(
 	e := &Engine{
 		app:             app,
 		db:              db,
-		nodeID:          uuidpb.Generate(),
+		nodeID:          uuid.New(),
 		compactInterval: DefaultProjectionCompactInterval(),
 		compactTimeout:  DefaultProjectionCompactTimeout(),
 		handleTimeout:   DefaultHandleTimeout(),
@@ -329,7 +328,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.commandTypes = executableCommandTypes(e.appConfig)
 
 	e.queueRouter = &messagequeue.Router{
-		NodeID:          e.nodeID.AsStd(),
+		NodeID:          e.nodeID,
 		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
 	}
 
@@ -342,7 +341,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.node = &cluster.Node{
 		DB:                  e.db,
 		Signals:             e.signals,
-		ID:                  e.nodeID.AsStd(),
+		ID:                  e.nodeID,
 		HeartbeatInterval:   heartbeatInterval,
 		HeartbeatTimeout:    heartbeatTimeout,
 		EngineFailurePolicy: e.engineFailurePolicy,

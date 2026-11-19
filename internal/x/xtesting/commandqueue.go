@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
@@ -40,7 +41,7 @@ func WaitForEmptyCommandQueue(
 func ExpectCommandIDToBeQueued(
 	t testing.TB,
 	q xsql.Querier,
-	messageID *uuidpb.UUID,
+	messageID uuid.UUID,
 ) {
 	t.Helper()
 
@@ -106,7 +107,7 @@ func ExpectCommandToBeQueued(
 func ExpectCommandToBeUnattempted(
 	t testing.TB,
 	q xsql.Querier,
-	messageID *uuidpb.UUID,
+	messageID uuid.UUID,
 ) {
 	t.Helper()
 
@@ -129,7 +130,7 @@ func ExpectCommandToBeUnattempted(
 func WaitForCommandToBeRemovedFromQueue(
 	t testing.TB,
 	q xsql.Querier,
-	messageID *uuidpb.UUID,
+	messageID uuid.UUID,
 ) {
 	t.Helper()
 
@@ -150,7 +151,7 @@ func WaitForCommandToBeRemovedFromQueue(
 func WaitForCommandToBePostponed(
 	t testing.TB,
 	q xsql.Querier,
-	messageID *uuidpb.UUID,
+	messageID uuid.UUID,
 ) {
 	t.Helper()
 
@@ -190,9 +191,9 @@ func EnqueuePostponedCommand(
 			scheduled_for,
 			next_attempt_at
 		) VALUES ($1, $2, $3, $4, $5, $6)`,
-		xsql.UUID(env.GetBody().GetMessageId()),
-		xsql.UUID(env.GetBody().GetMessage().GetTypeId()),
-		xsql.UUID(uuidpb.Generate()),
+		xsql.UUID(env.GetBody().GetMessageId().AsStd()),
+		xsql.UUID(env.GetBody().GetMessage().GetTypeId().AsStd()),
+		xsql.UUID(uuid.New()),
 		xsql.Envelope(env),
 		now,
 		now.Add(24*time.Hour),

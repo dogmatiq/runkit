@@ -1109,7 +1109,7 @@ func TestConsumer(t *testing.T) {
 				scheduled_for,
 				next_attempt_at
 			) VALUES ($1, $2, $3, $4, $5, $5)`,
-			xsql.UUID(env.GetBody().GetMessageId()),
+			xsql.UUID(env.GetBody().GetMessageId().AsStd()),
 			xsql.UUID(typeID),
 			xsql.UUID(n.ID),
 			xsql.Envelope(env),
