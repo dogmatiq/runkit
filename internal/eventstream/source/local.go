@@ -9,14 +9,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -59,7 +60,7 @@ type Local struct {
 	// call to [Local.Watch] that begins now begins the stream at that offset.
 	// A stream keeps its entry while its delivery is retried after a failure,
 	// so that delivery can resume there.
-	offsets uuidcollection.Map[uint64]
+	offsets map[uuid.UUID]uint64
 
 	// watchers is the set of calls to [Local.Watch] that are receiving
 	// segments.
@@ -88,7 +89,7 @@ func (s *Local) Run(ctx context.Context) error {
 	}
 
 	group, ctx := supervisor.WithContext(ctx)
-	known := uuidcollection.NewSet()
+	known := &uuidset.Set{}
 
 	// Discovery is retried on its own, so that a failure to discover new
 	// streams does not stop following those already known.
@@ -101,7 +102,7 @@ func (s *Local) Run(ctx context.Context) error {
 			return s.discover(
 				ctx,
 				known,
-				func(streamID *uuidpb.UUID) {
+				func(streamID uuid.UUID) {
 					group.Go(
 						"deliver event stream",
 						s.EngineFailurePolicy,
@@ -134,7 +135,7 @@ func (s *Local) Run(ctx context.Context) error {
 // is served by [Local.Run].
 func (s *Local) Watch(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	fn func(Segment) error,
 ) error {
 	panicIfEmpty(types)
@@ -177,8 +178,8 @@ func (s *Local) String() string {
 // Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Local) Read(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) error {
@@ -219,8 +220,8 @@ func (s *Local) Read(
 // created, until ctx is canceled.
 func (s *Local) discover(
 	ctx context.Context,
-	known *uuidcollection.Set,
-	fn func(streamID *uuidpb.UUID),
+	known *uuidset.Set,
+	fn func(streamID uuid.UUID),
 ) error {
 	var created cosyne.Signal
 
@@ -233,7 +234,7 @@ func (s *Local) discover(
 			return err
 		}
 
-		for streamID := range streamIDs.Diff(known).All() {
+		for streamID := range streamIDs.Diff(known.R()).All() {
 			s.EngineLogger.DebugContext(
 				ctx,
 				"event stream discovered",
@@ -251,7 +252,7 @@ func (s *Local) discover(
 }
 
 // loadStreamIDs returns the IDs of all event streams.
-func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) {
+func (s *Local) loadStreamIDs(ctx context.Context) (*uuidset.Set, error) {
 	rows, err := s.DB.QueryContext(
 		ctx,
 		`SELECT id
@@ -262,13 +263,13 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidcollection.Set, error) 
 	}
 	defer rows.Close()
 
-	streamIDs := uuidcollection.NewSet()
+	streamIDs := &uuidset.Set{}
 
 	for rows.Next() {
-		streamID := &uuidpb.UUID{}
+		var streamID uuid.UUID
 
 		if err := rows.Scan(
-			xsql.UUID(streamID),
+			xsql.UUID(&streamID),
 		); err != nil {
 			return nil, fmt.Errorf("unable to scan event stream: %w", err)
 		}
@@ -302,7 +303,7 @@ func (s *Local) register() (*watcher, []Segment) {
 
 	var openings []Segment
 
-	for streamID, offset := range s.offsets.All() {
+	for streamID, offset := range s.offsets {
 		openings = append(
 			openings,
 			Segment{
@@ -333,7 +334,11 @@ func (s *Local) deliver(seg Segment) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	s.offsets.Set(seg.StreamID, seg.End)
+	if s.offsets == nil {
+		s.offsets = map[uuid.UUID]uint64{}
+	}
+
+	s.offsets[seg.StreamID] = seg.End
 
 	for w := range s.watchers {
 		select {
@@ -353,11 +358,11 @@ func (s *Local) deliver(seg Segment) {
 // It also removes the stream from s.offsets, so that a watcher that registers
 // before the stream's delivery begins again isn't given an opening segment at
 // the old offset.
-func (s *Local) discontinue(streamID *uuidpb.UUID) {
+func (s *Local) discontinue(streamID uuid.UUID) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	s.offsets.Delete(streamID)
+	delete(s.offsets, streamID)
 
 	err := fmt.Errorf("unable to deliver event stream %s contiguously: %w", streamID, ErrNotContiguous)
 
@@ -382,7 +387,7 @@ func (s *Local) remove(w *watcher, err error) {
 //
 // When it is called again after it was unable to continue, delivery resumes
 // where it stopped, if it can; see [Local.openStream].
-func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
+func (s *Local) watchStream(ctx context.Context, streamID uuid.UUID) error {
 	err := s.deliverStream(ctx, streamID)
 
 	if ctx.Err() != nil {
@@ -395,7 +400,7 @@ func (s *Local) watchStream(ctx context.Context, streamID *uuidpb.UUID) error {
 // deliverStream delivers the segments of a stream to every watcher as events
 // are appended to it, beginning at the offset that [Local.openStream] returns,
 // until ctx is canceled or it is unable to continue.
-func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error {
+func (s *Local) deliverStream(ctx context.Context, streamID uuid.UUID) error {
 	query := s.buildSegmentQuery(streamID, nil)
 
 	var (
@@ -407,7 +412,7 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 
 	detach := s.Node.AttachSignal(
 		ctx,
-		"events_appended."+streamID.AsString(),
+		"events_appended."+streamID.String(),
 		&appended,
 	)
 	defer detach()
@@ -456,14 +461,14 @@ func (s *Local) deliverStream(ctx context.Context, streamID *uuidpb.UUID) error 
 // When delivery begins at the end of the stream, it first delivers the
 // stream's opening segment, which is empty, so that every watcher learns that
 // the stream exists and where its delivery begins.
-func (s *Local) openStream(ctx context.Context, streamID *uuidpb.UUID) (uint64, error) {
+func (s *Local) openStream(ctx context.Context, streamID uuid.UUID) (uint64, error) {
 	end, err := s.loadWatchOffset(ctx, streamID)
 	if err != nil {
 		return 0, err
 	}
 
 	s.m.Lock()
-	offset, ok := s.offsets.Get(streamID)
+	offset, ok := s.offsets[streamID]
 	s.m.Unlock()
 
 	if ok {
@@ -489,7 +494,7 @@ func (s *Local) openStream(ctx context.Context, streamID *uuidpb.UUID) (uint64, 
 // which is the end of the stream.
 func (s *Local) loadWatchOffset(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 ) (uint64, error) {
 	row := s.DB.QueryRowContext(
 		ctx,
@@ -524,15 +529,15 @@ func (s *Local) loadWatchOffset(
 // specific message types. Only the offset is a parameter, as it changes
 // between reads.
 func (s *Local) buildSegmentQuery(
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 ) string {
 	var filter string
 
 	if types != nil {
 		var typeIDs []string
 		for id := range types.All() {
-			typeIDs = append(typeIDs, id.AsString())
+			typeIDs = append(typeIDs, id.String())
 		}
 
 		// The IDs are sorted so that the same types always produce the same
@@ -571,8 +576,8 @@ func (s *Local) buildSegmentQuery(
 			)
 		) AS results
 		ORDER BY position, stream_offset`,
-		streamID.AsString(),
-		streamID.AsString(),
+		streamID,
+		streamID,
 		filter,
 		s.SegmentSize,
 	)
@@ -590,7 +595,7 @@ func (s *Local) buildSegmentQuery(
 func (s *Local) loadSegment(
 	ctx context.Context,
 	query string,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	begin uint64,
 ) (Segment, bool, error) {
 	rows, err := s.DB.QueryContext(ctx, query, begin)
@@ -649,7 +654,7 @@ func (s *Local) loadSegment(
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(offset).
 				Build(),
 		)
@@ -673,7 +678,7 @@ func (s *Local) loadSegment(
 
 // filterSegment returns seg with only the events of the given types. A nil set
 // of types means every type.
-func filterSegment(seg Segment, types *uuidcollection.Set) Segment {
+func filterSegment(seg Segment, types *uuidset.SetR) Segment {
 	if types == nil {
 		return seg
 	}
@@ -681,7 +686,7 @@ func filterSegment(seg Segment, types *uuidcollection.Set) Segment {
 	var envelopes []*envelopepb.Envelope
 
 	for _, env := range seg.Envelopes {
-		if types.Has(env.GetBody().GetMessage().GetTypeId()) {
+		if types.Has(env.GetBody().GetMessage().GetTypeId().AsStd()) {
 			envelopes = append(envelopes, env)
 		}
 	}

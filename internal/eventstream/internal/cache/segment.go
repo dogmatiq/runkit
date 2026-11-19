@@ -3,8 +3,8 @@ package cache
 import (
 	"sort"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 // Segment is the segment of the stream that a [Cache] holds, as an immutable
@@ -46,7 +46,7 @@ const (
 // only if the checkpoint is [Within] it.
 func (s Segment) Read(
 	cp uint64,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 ) ([]*envelopepb.Envelope, Relation) {
 	switch {
 	case cp < s.Begin:
@@ -65,7 +65,7 @@ func (s Segment) Read(
 	var envelopes []*envelopepb.Envelope
 
 	for _, env := range s.events[first:] {
-		if types.Has(env.GetBody().GetMessage().GetTypeId()) {
+		if types.Has(env.GetBody().GetMessage().GetTypeId().AsStd()) {
 			envelopes = append(envelopes, env)
 		}
 	}

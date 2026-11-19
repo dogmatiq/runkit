@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
@@ -48,7 +48,7 @@ type Consumer struct {
 
 	// stopStreamConsumer holds a function for each stream being consumed.
 	// Calling it cancels consumption and waits for it to stop.
-	stopStreamConsumer uuidcollection.Map[func()]
+	stopStreamConsumer map[uuid.UUID]func()
 
 	// group runs the stream consumers. A fatal error in any one cancels
 	// consumption of every stream.
@@ -61,20 +61,21 @@ type Consumer struct {
 // It must be called at most once.
 func (c *Consumer) Run(ctx context.Context) error {
 	c.group, ctx = errgroup.WithContext(ctx)
+	c.stopStreamConsumer = map[uuid.UUID]func(){}
 
 	for {
 		liveNodes, liveNodesChanged := c.Node.LiveNodes().Load()
 		availableStreamIDs, availableStreamIDsChanged := c.EventStreams.StreamIDs().Load()
 
-		streamIDs := uuidcollection.NewSet()
+		streamIDs := &uuidset.Set{}
 		for streamID := range availableStreamIDs.All() {
 			key := c.Sink.RendezvousKey(streamID)
-			if c.Node.OwnsWorkload(key.AsStd(), liveNodes) {
+			if c.Node.OwnsWorkload(key, liveNodes) {
 				streamIDs.Add(streamID)
 			}
 		}
 
-		c.consumeStreams(ctx, streamIDs)
+		c.consumeStreams(ctx, streamIDs.R())
 
 		select {
 		case <-ctx.Done():
@@ -93,23 +94,23 @@ func (c *Consumer) Run(ctx context.Context) error {
 // doesn't have one, and stops every other stream consumer.
 func (c *Consumer) consumeStreams(
 	ctx context.Context,
-	streamIDs *uuidcollection.Set,
+	streamIDs *uuidset.SetR,
 ) {
 	// Stopping a stream consumer waits for it to return, so a stream is never
 	// consumed twice at once on this node.
 	var stopping sync.WaitGroup
 
-	for streamID, stop := range c.stopStreamConsumer.All() {
+	for streamID, stop := range c.stopStreamConsumer {
 		if !streamIDs.Has(streamID) {
 			stopping.Go(stop)
-			c.stopStreamConsumer.Delete(streamID)
+			delete(c.stopStreamConsumer, streamID)
 		}
 	}
 
 	stopping.Wait()
 
 	for streamID := range streamIDs.All() {
-		if !c.stopStreamConsumer.Has(streamID) {
+		if _, ok := c.stopStreamConsumer[streamID]; !ok {
 			c.startStreamConsumer(ctx, streamID)
 		}
 	}
@@ -119,7 +120,7 @@ func (c *Consumer) consumeStreams(
 // ID, which runs until ctx is canceled, it fails fatally, or it is stopped.
 func (c *Consumer) startStreamConsumer(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 ) {
 	engineLogger := c.EngineLogger.With(
 		xslog.UUID("stream_id", streamID),
@@ -206,10 +207,10 @@ func (c *Consumer) startStreamConsumer(
 		return err
 	})
 
-	c.stopStreamConsumer.Set(streamID, func() {
+	c.stopStreamConsumer[streamID] = func() {
 		cancel()
 		stopped.Wait()
-	})
+	}
 }
 
 // consume dispatches the events of the stream with the given ID to the sink,
@@ -220,7 +221,7 @@ func (c *Consumer) startStreamConsumer(
 // segment, it tells sinkFailures that the work succeeded.
 func (c *Consumer) consume(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	sinkFailures *failure.Tracker,
 ) error {
 	cp, err := c.Sink.CheckpointOffset(ctx, streamID)
@@ -265,7 +266,7 @@ func (c *Consumer) consume(
 
 // awaitStream blocks until the catalog has the stream with the given ID, or
 // ctx is canceled.
-func (c *Consumer) awaitStream(ctx context.Context, streamID *uuidpb.UUID) error {
+func (c *Consumer) awaitStream(ctx context.Context, streamID uuid.UUID) error {
 	for {
 		streamIDs, changed := c.EventStreams.StreamIDs().Load()
 		if streamIDs.Has(streamID) {

@@ -1,8 +1,9 @@
 package source
 
 import (
+	"uuid"
+
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 )
 
 // Segment is a contiguous piece of one event stream, the half-open range
@@ -10,7 +11,7 @@ import (
 // types.
 type Segment struct {
 	// StreamID is the ID of the event stream that this is a segment of.
-	StreamID *uuidpb.UUID
+	StreamID uuid.UUID
 
 	// Begin and End bound the segment, [Begin, End).
 	Begin, End uint64

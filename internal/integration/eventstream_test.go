@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -23,13 +23,13 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 			xtesting.ExecuteCommandAndWait(t, cluster, db, stubs.CommandA1)
 
 			// Find the stream that was used for these events.
-			streamID := &uuidpb.UUID{}
+			var streamID uuid.UUID
 			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT id
 				FROM runkit.event_streams`,
 			)
-			if err := row.Scan(xsql.UUID(streamID)); err != nil {
+			if err := row.Scan(xsql.UUID(&streamID)); err != nil {
 				t.Fatalf("unable to find event stream: %v", err)
 			}
 

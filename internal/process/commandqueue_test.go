@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -22,7 +22,7 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					func(_ uuid.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1, // one stream with one event
@@ -73,7 +73,7 @@ func TestCommandQueue_handlersCanExecuteCommands(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					func(_ uuid.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1, // one stream with one event

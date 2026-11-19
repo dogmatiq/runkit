@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -37,7 +38,7 @@ type EventSink struct {
 	ConcurrencyPreference dogma.ConcurrencyPreference
 
 	// InboundEventTypeIDs is the set of IDs of the event types routed to the handler.
-	InboundEventTypeIDs *uuidcollection.Set
+	InboundEventTypeIDs *uuidset.Set
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// event.
@@ -64,14 +65,14 @@ type EventSink struct {
 // consumption attempt.
 func (s *EventSink) CheckpointOffset(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 ) (uint64, error) {
 	cp, err := xerrors.RecoverT(
 		func() (uint64, error) {
 			ctx, cancel := context.WithTimeout(ctx, s.RouteTimeout)
 			defer cancel()
 
-			return s.Handler.CheckpointOffset(ctx, streamID.AsStd())
+			return s.Handler.CheckpointOffset(ctx, streamID)
 		},
 	)
 	if err != nil {
@@ -126,7 +127,7 @@ func (s *EventSink) ConsumeSegment(
 // handling events from the stream.
 func (s *EventSink) dispatch(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	offset, cp uint64,
 	env *envelopepb.Envelope,
 ) (uint64, error) {
@@ -151,7 +152,7 @@ func (s *EventSink) dispatch(
 		ctx,
 		&eventScope{
 			messageID:        env.GetBody().GetMessageId().AsStd(),
-			streamID:         streamID.AsStd(),
+			streamID:         streamID,
 			offset:           offset,
 			recordedAt:       env.GetBody().GetCreatedAt().AsTime(),
 			checkpointOffset: cp,
@@ -209,18 +210,19 @@ func (s *EventSink) handleEvent(
 
 // RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
+func (s *EventSink) RendezvousKey(streamID uuid.UUID) uuid.UUID {
 	if s.ConcurrencyPreference == dogma.MinimizeConcurrency {
-		return s.Identity.GetKey()
+		return s.Identity.GetKey().AsStd()
 	}
 
 	// If the handler does not prefer to minimize concurrency, derive a unique
 	// rendezvous key from both the handler identity and the stream ID such that
 	// both handlers and streams are distributed evenly across nodes.
-	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
+	key := uuidpb.Derive(s.Identity.GetKey(), streamID.String())
+	return key.AsStd()
 }
 
 // EventTypeIDs returns the event types routed to the projection.
-func (s *EventSink) EventTypeIDs() *uuidcollection.Set {
-	return s.InboundEventTypeIDs
+func (s *EventSink) EventTypeIDs() *uuidset.SetR {
+	return s.InboundEventTypeIDs.R()
 }

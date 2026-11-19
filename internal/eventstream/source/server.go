@@ -6,9 +6,10 @@ import (
 	"iter"
 	"sync"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -86,7 +87,7 @@ func (s *Server) ReadEvents(
 
 	err = s.EventStreams.Read(
 		res.Context(),
-		req.GetEventStreamId(),
+		req.GetEventStreamId().AsStd(),
 		types,
 		req.GetBeginOffset(),
 		func(seg Segment) error {
@@ -107,7 +108,7 @@ func (s *Server) ReadEvents(
 
 // requestedTypes returns the set of message types that the given filter
 // matches, or nil, meaning every type.
-func requestedTypes(filter *messaginggrpc.MessageFilter) (*uuidcollection.Set, error) {
+func requestedTypes(filter *messaginggrpc.MessageFilter) (*uuidset.SetR, error) {
 	if err := filter.Validate(); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid message filter: %s", err)
 	}
@@ -116,7 +117,13 @@ func requestedTypes(filter *messaginggrpc.MessageFilter) (*uuidcollection.Set, e
 		return nil, nil
 	}
 
-	return uuidcollection.NewSet(filter.GetSpecific().GetIds()...), nil
+	types := &uuidset.Set{}
+
+	for _, id := range filter.GetSpecific().GetIds() {
+		types.Add(id.AsStd())
+	}
+
+	return types.R(), nil
 }
 
 // splitAndSendSegment sends a segment to a client, split into several
@@ -147,7 +154,7 @@ func splitSegment(
 ) iter.Seq[*messaginggrpc.EventStreamSegment] {
 	return func(yield func(*messaginggrpc.EventStreamSegment) bool) {
 		part := messaginggrpc.NewEventStreamSegmentBuilder().
-			WithEventStreamId(seg.StreamID).
+			WithEventStreamId(uuidpb.FromStd(seg.StreamID)).
 			WithBeginOffset(seg.Begin).
 			Build()
 
@@ -168,7 +175,7 @@ func splitSegment(
 				}
 
 				part = messaginggrpc.NewEventStreamSegmentBuilder().
-					WithEventStreamId(seg.StreamID).
+					WithEventStreamId(uuidpb.FromStd(seg.StreamID)).
 					WithBeginOffset(part.GetEndOffset()).
 					Build()
 				multi = nil

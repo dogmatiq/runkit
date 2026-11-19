@@ -6,11 +6,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -29,7 +29,7 @@ func TestConcurrency_handlerIsInvokedConcurrentlyWithMaximizeConcurrencyPreferen
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, 1, // 2 streams, 1 event each
@@ -84,7 +84,7 @@ func TestConcurrency_handlerIsNotInvokedConcurrentlyWithMinimizeConcurrencyPrefe
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount/2, eventCount/2, // 2 streams

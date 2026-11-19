@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -32,7 +32,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
 					}
@@ -111,7 +111,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
 					}

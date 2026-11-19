@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -27,7 +27,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1
 					}
@@ -110,7 +110,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one TypeA event
@@ -119,7 +119,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventB1
 				},
 				1, // one stream with one TypeB event
@@ -198,7 +198,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one historical event
@@ -245,8 +245,8 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 	var (
 		db          = xtesting.NewDatabase(t)
 		checkpoints checkpointStore
-		mixed       *uuidpb.UUID
-		onlyB       *uuidpb.UUID
+		mixed       uuid.UUID
+		onlyB       uuid.UUID
 		handledA    cosyne.Latch
 	)
 
@@ -261,7 +261,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 			mixed = xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1
 					}
@@ -276,7 +276,7 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 			onlyB = xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventB2
 				},
 				1,
@@ -345,12 +345,12 @@ func TestEventRouting_newRoutesCauseDeliveryOfHistoricalEventsAfterTheCheckpoint
 
 							switch e.Content {
 							case "B1":
-								if s.StreamID() != mixed.AsStd() || s.Offset() != 1 {
+								if s.StreamID() != mixed || s.Offset() != 1 {
 									t.Errorf("unexpected position of B1: stream %s, offset %d", s.StreamID(), s.Offset())
 								}
 								handledB1.Set()
 							case "B2":
-								if s.StreamID() != onlyB.AsStd() || s.Offset() != 0 {
+								if s.StreamID() != onlyB || s.Offset() != 0 {
 									t.Errorf("unexpected position of B2: stream %s, offset %d", s.StreamID(), s.Offset())
 								}
 								handledB2.Set()

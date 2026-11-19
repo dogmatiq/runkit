@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -26,7 +26,7 @@ func TestDeadlineRouting_deadlinesAreRoutedBackToTheirSourceInstance(t *testing.
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one event
@@ -89,7 +89,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredUntilTheirScheduledTime(t *test
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1,
@@ -150,7 +150,7 @@ func TestDeadlineRouting_deadlinesAreNotDeliveredToEndedInstances(t *testing.T) 
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1 // creates instance, schedules deadline
@@ -226,7 +226,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					func(_ uuid.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
@@ -284,7 +284,7 @@ func TestDeadlineRouting_deadlinesScheduledInTheSameScopeAsEndAreNotDelivered(t 
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+					func(_ uuid.UUID, offset uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
@@ -364,7 +364,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1,

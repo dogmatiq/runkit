@@ -3,9 +3,9 @@ package source
 import (
 	"context"
 	"fmt"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 // Source is where an event stream's events come from: this application's
@@ -36,7 +36,7 @@ type Source interface {
 	// longer deliver a stream contiguously.
 	Watch(
 		ctx context.Context,
-		types *uuidcollection.Set,
+		types *uuidset.SetR,
 		fn func(Segment) error,
 	) error
 
@@ -54,8 +54,8 @@ type Source interface {
 	// not have, and fn's error, unchanged, if fn returns one.
 	Read(
 		ctx context.Context,
-		streamID *uuidpb.UUID,
-		types *uuidcollection.Set,
+		streamID uuid.UUID,
+		types *uuidset.SetR,
 		begin uint64,
 		fn func(Segment) error,
 	) error
@@ -63,7 +63,7 @@ type Source interface {
 
 // panicIfEmpty panics if types is an empty set. A nil set means every type, but
 // an empty set would match none, so asking for one is a mistake.
-func panicIfEmpty(types *uuidcollection.Set) {
+func panicIfEmpty(types *uuidset.SetR) {
 	if types != nil && types.IsEmpty() {
 		panic("event types must not be empty")
 	}

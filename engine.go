@@ -420,7 +420,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	// Watch local streams if any enabled projection or process consumes events.
 	if !eventTypeIDs.IsEmpty() {
 		e.group.Go(func() error {
-			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs)
+			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs.R())
 		})
 	}
 
@@ -428,7 +428,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		connector := &remoteengine.Connector{
 			EventStreams:        e.eventStreams,
 			Discover:            d,
-			EventTypeIDs:        eventTypeIDs,
+			EventTypeIDs:        eventTypeIDs.R(),
 			EngineFailurePolicy: e.engineFailurePolicy,
 			EngineLogger:        e.engineLogger,
 		}

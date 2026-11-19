@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 // Memory is a [Source] that holds its streams in memory.
@@ -18,7 +18,7 @@ type Memory struct {
 	SegmentSize int
 
 	m       sync.Mutex
-	streams uuidcollection.Map[*memoryStream]
+	streams map[uuid.UUID]*memoryStream
 	changed cosyne.Observable[struct{}]
 }
 
@@ -37,12 +37,17 @@ func (s *Memory) Append(seg Segment) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	ms, ok := s.streams.Get(seg.StreamID)
+	ms, ok := s.streams[seg.StreamID]
 	if !ok {
 		ms = &memoryStream{
 			End: seg.Begin,
 		}
-		s.streams.Set(seg.StreamID, ms)
+
+		if s.streams == nil {
+			s.streams = map[uuid.UUID]*memoryStream{}
+		}
+
+		s.streams[seg.StreamID] = ms
 	}
 
 	if seg.Begin != ms.End {
@@ -65,15 +70,15 @@ func (s *Memory) Append(seg Segment) {
 // Watch is called.
 func (s *Memory) Watch(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	fn func(Segment) error,
 ) error {
 	panicIfEmpty(types)
 
-	var delivered uuidcollection.Map[uint64]
+	delivered := map[uuid.UUID]uint64{}
 
 	for {
-		segments, changed := s.undelivered(types, &delivered)
+		segments, changed := s.undelivered(types, delivered)
 
 		for _, seg := range segments {
 			if err := fn(seg); err != nil {
@@ -97,8 +102,8 @@ func (s *Memory) String() string {
 // Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Memory) Read(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) error {
@@ -130,8 +135,8 @@ func (s *Memory) Read(
 // is updated with the end of each segment returned. A stream that has not been
 // delivered before is delivered from its end.
 func (s *Memory) undelivered(
-	types *uuidcollection.Set,
-	delivered *uuidcollection.Map[uint64],
+	types *uuidset.SetR,
+	delivered map[uuid.UUID]uint64,
 ) ([]Segment, <-chan struct{}) {
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -140,8 +145,8 @@ func (s *Memory) undelivered(
 
 	var segments []Segment
 
-	for streamID, ms := range s.streams.All() {
-		begin, ok := delivered.Get(streamID)
+	for streamID, ms := range s.streams {
+		begin, ok := delivered[streamID]
 		if !ok {
 			begin = ms.End
 		}
@@ -151,7 +156,7 @@ func (s *Memory) undelivered(
 		}
 
 		segments = append(segments, s.segment(streamID, ms, types, begin, ms.End))
-		delivered.Set(streamID, ms.End)
+		delivered[streamID] = ms.End
 	}
 
 	return segments, changed
@@ -162,14 +167,14 @@ func (s *Memory) undelivered(
 //
 // ok is false if the offset is at the end of the stream.
 func (s *Memory) unread(
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 ) (seg Segment, ok bool, err error) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	ms, ok := s.streams.Get(streamID)
+	ms, ok := s.streams[streamID]
 	if !ok {
 		return Segment{}, false, fmt.Errorf("unable to read event stream %s: %w", streamID, ErrUnrecognizedStream)
 	}
@@ -201,9 +206,9 @@ func (s *Memory) unread(
 // segment returns the segment [begin, end) of the given stream, filtered to
 // the given types.
 func (s *Memory) segment(
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	ms *memoryStream,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	begin, end uint64,
 ) Segment {
 	seg := Segment{
@@ -219,7 +224,7 @@ func (s *Memory) segment(
 			continue
 		}
 
-		if types != nil && !types.Has(env.GetBody().GetMessage().GetTypeId()) {
+		if types != nil && !types.Has(env.GetBody().GetMessage().GetTypeId().AsStd()) {
 			continue
 		}
 

@@ -9,34 +9,35 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
 func TestCatalog(t *testing.T) {
 	var (
-		streamID = uuidpb.Generate()
-		typeA    = uuidpb.Generate()
-		typeB    = uuidpb.Generate()
-		typesA   = uuidcollection.NewSet(typeA)
+		streamID = uuid.New()
+		typeA    = uuid.New()
+		typeB    = uuid.New()
+		typesA   = uuidset.New(typeA).R()
 	)
 
 	// event returns an envelope for an event of the given type at the given
 	// offset.
-	event := func(offset uint64, typeID *uuidpb.UUID) *envelopepb.Envelope {
+	event := func(offset uint64, typeID uuid.UUID) *envelopepb.Envelope {
 		env := envelopepb.NewEnvelopeBuilder().
 			WithBody(
 				envelopepb.NewBodyBuilder().
 					WithMessage(
 						envelopepb.NewMessageBuilder().
-							WithTypeId(typeID).
+							WithTypeId(uuidpb.FromStd(typeID)).
 							Build(),
 					).
 					Build(),
@@ -46,7 +47,7 @@ func TestCatalog(t *testing.T) {
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(offset).
 				Build(),
 		)
@@ -80,7 +81,7 @@ func TestCatalog(t *testing.T) {
 		t *testing.T,
 		c *Catalog,
 		src source.Source,
-		types *uuidcollection.Set,
+		types *uuidset.SetR,
 	) func() {
 		t.Helper()
 
@@ -113,7 +114,7 @@ func TestCatalog(t *testing.T) {
 	consume := func(
 		t *testing.T,
 		c *Catalog,
-		types *uuidcollection.Set,
+		types *uuidset.SetR,
 		begin uint64,
 	) (<-chan Segment, func(), func() error) {
 		t.Helper()
@@ -1460,7 +1461,7 @@ func TestCatalog(t *testing.T) {
 			c.Consume(
 				t.Context(),
 				streamID,
-				uuidcollection.NewSet(typeB),
+				uuidset.New(typeB).R(),
 				0,
 				func(Segment) error {
 					return nil
@@ -1487,7 +1488,7 @@ type sourceHook struct {
 
 func (s *sourceHook) Watch(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	fn func(Segment) error,
 ) error {
 	if s.WatchFunc != nil {
@@ -1499,8 +1500,8 @@ func (s *sourceHook) Watch(
 
 func (s *sourceHook) Read(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) error {
@@ -1517,11 +1518,11 @@ func (s *sourceHook) Read(
 func expectCatalogToHave(
 	t testing.TB,
 	c *Catalog,
-	want ...*uuidpb.UUID,
+	want ...uuid.UUID,
 ) {
 	t.Helper()
 
-	expected := uuidcollection.NewSet(want...)
+	expected := uuidset.New(want...).R()
 
 	xtesting.WaitForObservable(
 		t,

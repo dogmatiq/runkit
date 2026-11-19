@@ -6,30 +6,31 @@ import (
 	"slices"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 func TestMemory(t *testing.T) {
 	var (
-		streamA = uuidpb.Generate()
-		streamB = uuidpb.Generate()
-		typeA   = uuidpb.Generate()
-		typeB   = uuidpb.Generate()
+		streamA = uuid.New()
+		streamB = uuid.New()
+		typeA   = uuid.New()
+		typeB   = uuid.New()
 	)
 
 	// event returns an envelope for an event of the given type at the given
 	// offset of the given stream.
-	event := func(streamID *uuidpb.UUID, offset uint64, typeID *uuidpb.UUID) *envelopepb.Envelope {
+	event := func(streamID uuid.UUID, offset uint64, typeID uuid.UUID) *envelopepb.Envelope {
 		env := envelopepb.NewEnvelopeBuilder().
 			WithBody(
 				envelopepb.NewBodyBuilder().
 					WithMessage(
 						envelopepb.NewMessageBuilder().
-							WithTypeId(typeID).
+							WithTypeId(uuidpb.FromStd(typeID)).
 							Build(),
 					).
 					Build(),
@@ -39,7 +40,7 @@ func TestMemory(t *testing.T) {
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(offset).
 				Build(),
 		)
@@ -66,13 +67,13 @@ func TestMemory(t *testing.T) {
 	expectSegment := func(
 		t *testing.T,
 		seg Segment,
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 		begin, end uint64,
 		want ...uint64,
 	) {
 		t.Helper()
 
-		if !seg.StreamID.Equal(streamID) {
+		if seg.StreamID != streamID {
 			t.Fatalf("unexpected stream: got %s, want %s", seg.StreamID, streamID)
 		}
 
@@ -89,8 +90,8 @@ func TestMemory(t *testing.T) {
 	read := func(
 		t *testing.T,
 		src *Memory,
-		streamID *uuidpb.UUID,
-		types *uuidcollection.Set,
+		streamID uuid.UUID,
+		types *uuidset.SetR,
 		begin uint64,
 	) []Segment {
 		t.Helper()
@@ -128,7 +129,7 @@ func TestMemory(t *testing.T) {
 				},
 			})
 
-			segments := read(t, src, streamA, uuidcollection.NewSet(typeA), 1)
+			segments := read(t, src, streamA, uuidset.New(typeA).R(), 1)
 
 			if len(segments) != 1 {
 				t.Fatalf("unexpected number of segments: got %d, want 1", len(segments))
@@ -248,7 +249,7 @@ func TestMemory(t *testing.T) {
 			src.Read(
 				ctx,
 				streamA,
-				uuidcollection.NewSet(),
+				uuidset.New().R(),
 				0,
 				func(Segment) error {
 					return nil
@@ -260,7 +261,7 @@ func TestMemory(t *testing.T) {
 	t.Run("Watch", func(t *testing.T) {
 		// watch runs src.Watch on another goroutine, delivering each segment
 		// to the returned channel.
-		watch := func(t *testing.T, src *Memory, types *uuidcollection.Set) <-chan Segment {
+		watch := func(t *testing.T, src *Memory, types *uuidset.SetR) <-chan Segment {
 			t.Helper()
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -352,7 +353,7 @@ func TestMemory(t *testing.T) {
 				End:      3,
 			})
 
-			segments := watch(t, src, uuidcollection.NewSet(typeA))
+			segments := watch(t, src, uuidset.New(typeA).R())
 
 			expectSegment(t, expect(t, segments), streamA, 3, 3)
 
@@ -411,7 +412,7 @@ func TestMemory(t *testing.T) {
 
 			src.Watch(
 				ctx,
-				uuidcollection.NewSet(),
+				uuidset.New().R(),
 				func(Segment) error {
 					return nil
 				},

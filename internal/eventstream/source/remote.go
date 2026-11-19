@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -34,7 +34,7 @@ type Remote struct {
 	//
 	// It's assigned when the remote engine is added, so it identifies that
 	// addition rather than the remote engine itself.
-	ID *uuidpb.UUID
+	ID uuid.UUID
 
 	// Description is the description of the remote engine given by the code
 	// that discovered it, or empty if there is none.
@@ -49,7 +49,7 @@ type Remote struct {
 // failure.
 func (s *Remote) Watch(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	fn func(Segment) error,
 ) error {
 	panicIfEmpty(types)
@@ -67,7 +67,7 @@ func (s *Remote) Watch(
 		return watchError(ctx, err)
 	}
 
-	var ends uuidcollection.Map[uint64]
+	ends := map[uuid.UUID]uint64{}
 
 	for {
 		res, err := segments.Recv()
@@ -80,7 +80,7 @@ func (s *Remote) Watch(
 			return err
 		}
 
-		if end, ok := ends.Get(seg.StreamID); ok && seg.Begin != end {
+		if end, ok := ends[seg.StreamID]; ok && seg.Begin != end {
 			return invalidSegment(
 				res,
 				"it does not begin at offset %d, where the previous segment ended",
@@ -92,15 +92,15 @@ func (s *Remote) Watch(
 			return err
 		}
 
-		ends.Set(seg.StreamID, seg.End)
+		ends[seg.StreamID] = seg.End
 	}
 }
 
 // Read delivers events from a stream to fn, beginning at the given offset.
 func (s *Remote) Read(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) error {
@@ -112,7 +112,7 @@ func (s *Remote) Read(
 	segments, err := s.Client.ReadEvents(
 		ctx,
 		messaginggrpc.NewReadEventsRequestBuilder().
-			WithEventStreamId(streamID).
+			WithEventStreamId(uuidpb.FromStd(streamID)).
 			WithBeginOffset(begin).
 			WithFilter(messageFilter(types)).
 			Build(),
@@ -137,7 +137,7 @@ func (s *Remote) Read(
 			return err
 		}
 
-		if !seg.StreamID.Equal(streamID) {
+		if seg.StreamID != streamID {
 			return invalidSegment(
 				res,
 				"it is not a segment of event stream %s, which was requested",
@@ -200,17 +200,22 @@ func watchError(ctx context.Context, err error) error {
 
 // messageFilter returns the filter that matches events of the given types, or
 // of every type if types is nil.
-func messageFilter(types *uuidcollection.Set) *messaginggrpc.MessageFilter {
+func messageFilter(types *uuidset.SetR) *messaginggrpc.MessageFilter {
 	if types == nil {
 		return messaginggrpc.NewMessageFilterBuilder().
 			WithAll(&emptypb.Empty{}).
 			Build()
 	}
 
+	ids := make([]*uuidpb.UUID, 0, types.Len())
+	for id := range types.All() {
+		ids = append(ids, uuidpb.FromStd(id))
+	}
+
 	return messaginggrpc.NewMessageFilterBuilder().
 		WithSpecific(
 			messaginggrpc.NewMessageFilter_MessageTypesBuilder().
-				WithIds(slices.Collect(types.All())).
+				WithIds(ids).
 				Build(),
 		).
 		Build()
@@ -218,7 +223,7 @@ func messageFilter(types *uuidcollection.Set) *messaginggrpc.MessageFilter {
 
 // readError returns the error that [Remote.Read] returns when its call to the
 // remote engine fails with the given error.
-func readError(ctx context.Context, streamID *uuidpb.UUID, err error) error {
+func readError(ctx context.Context, streamID uuid.UUID, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -239,16 +244,16 @@ func readError(ctx context.Context, streamID *uuidpb.UUID, err error) error {
 // other than those given. A nil set of types means events of every type.
 func parseSegment(
 	res *messaginggrpc.EventStreamSegment,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 ) (Segment, error) {
-	seg := Segment{
-		StreamID: res.GetEventStreamId(),
-		Begin:    res.GetBeginOffset(),
-		End:      res.GetEndOffset(),
+	if err := res.GetEventStreamId().Validate(); err != nil {
+		return Segment{}, invalidSegment(res, "invalid event stream ID: %w", err)
 	}
 
-	if err := seg.StreamID.Validate(); err != nil {
-		return Segment{}, invalidSegment(res, "invalid event stream ID: %w", err)
+	seg := Segment{
+		StreamID: res.GetEventStreamId().AsStd(),
+		Begin:    res.GetBeginOffset(),
+		End:      res.GetEndOffset(),
 	}
 
 	if seg.End < seg.Begin {
@@ -275,7 +280,7 @@ func parseSegment(
 				return Segment{}, invalidSegment(res, "event %s has no event stream position", id)
 			}
 
-			if !pos.GetStreamId().Equal(seg.StreamID) {
+			if pos.GetStreamId().AsStd() != seg.StreamID {
 				return Segment{}, invalidSegment(res, "event %s is from event stream %s", id, pos.GetStreamId())
 			}
 
@@ -288,7 +293,7 @@ func parseSegment(
 				return Segment{}, invalidSegment(res, "event %s is at offset %d, which does not follow the previous event's offset, %d", id, offset, next-1)
 			}
 
-			if typeID := env.GetBody().GetMessage().GetTypeId(); types != nil && !types.Has(typeID) {
+			if typeID := env.GetBody().GetMessage().GetTypeId().AsStd(); types != nil && !types.Has(typeID) {
 				return Segment{}, invalidSegment(res, "event %s is of type %s, which was not requested", id, typeID)
 			}
 

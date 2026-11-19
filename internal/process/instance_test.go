@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
@@ -31,7 +32,7 @@ func TestInstance_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1
@@ -98,7 +99,7 @@ func TestInstance_stateIsPersisted(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1
@@ -176,7 +177,7 @@ func TestInstance_instancesAreIsolated(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return &stubs.EventStub[stubs.TypeA]{Content: "A"} // handled by instance A
@@ -278,7 +279,7 @@ func TestInstance_writesAreSerialized(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				counts...,
@@ -295,7 +296,7 @@ func TestInstance_writesAreSerialized(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventX1
 				},
 				1,
@@ -811,7 +812,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 					xtesting.PopulateEventStreams(
 						t,
 						db,
-						func(*uuidpb.UUID, uint64) dogma.Event {
+						func(uuid.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
 						1,
@@ -841,7 +842,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(*uuidpb.UUID, uint64) dogma.Event {
+					func(uuid.UUID, uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
@@ -883,7 +884,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(*uuidpb.UUID, uint64) dogma.Event {
+					func(uuid.UUID, uint64) dogma.Event {
 						return stubs.EventB1
 					},
 					1,

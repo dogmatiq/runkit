@@ -32,7 +32,7 @@ func TestEventSink_filteredEventsAdvanceCheckpoint(t *testing.T) {
 	t.Parallel()
 
 	s := newEventSink(t, xtesting.NewDatabase(t))
-	streamID := uuidpb.Generate()
+	streamID := uuid.New()
 	cp, err := s.CheckpointOffset(t.Context(), streamID)
 	if err != nil || cp != 0 {
 		t.Fatalf("unexpected initial checkpoint: %d, %v", cp, err)

@@ -33,12 +33,14 @@ func TestEventSink_rendezvousKey(t *testing.T) {
 			}
 
 			for range 2 {
-				streamID := uuidpb.Generate()
-				want := uuidpb.MustParse(handlerKey)
+				streamID := uuid.New()
+				want := uuid.MustParse(handlerKey)
 				if preference == dogma.MaximizeConcurrency {
-					want = uuidpb.Derive(want, streamID.AsString())
+					namespace := uuidpb.FromStd(want)
+					key := uuidpb.Derive(namespace, streamID.String())
+					want = key.AsStd()
 				}
-				if got := sink.RendezvousKey(streamID); !got.Equal(want) {
+				if got := sink.RendezvousKey(streamID); got != want {
 					t.Fatalf("unexpected rendezvous key: got %s, want %s", got, want)
 				}
 			}
@@ -61,7 +63,7 @@ func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 		EngineLogger: spruce.NewTestLogger(t),
 		AppLogger:    spruce.NewTestLogger(t),
 	}
-	streamID := uuidpb.Generate()
+	streamID := uuid.New()
 	cp, err := sink.CheckpointOffset(t.Context(), streamID)
 	if err != nil {
 		t.Fatal(err)

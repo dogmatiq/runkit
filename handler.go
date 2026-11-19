@@ -147,7 +147,7 @@ func newLoggerForHandler(
 func (e *Engine) addQueueSink(handlerConfig config.Handler, sink messagequeue.Sink) {
 	for _, kind := range []message.Kind{message.CommandKind, message.DeadlineKind} {
 		for typeID := range inboundMessageTypeIDsForHandler(handlerConfig, kind).All() {
-			e.queueSinks[typeID.AsStd()] = sink
+			e.queueSinks[typeID] = sink
 		}
 	}
 }

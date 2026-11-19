@@ -2,9 +2,9 @@ package eventstream
 
 import (
 	"context"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 // Sink is the destination to which a [Consumer] dispatches segments of event
@@ -22,12 +22,13 @@ type Sink interface {
 	//
 	// It must return the same key for a given stream on every node. If it
 	// returns the same key for two streams, the same node consumes both.
-	RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID
+	RendezvousKey(streamID uuid.UUID) uuid.UUID
 
 	// EventTypeIDs returns the IDs of the event types that the sink consumes.
-	// The set must not be empty or modified after it is returned. Every type
-	// must be one that [Catalog.Watch] was given for the stream's source.
-	EventTypeIDs() *uuidcollection.Set
+	// The set must not be empty, and must not change after it is returned.
+	// Every type must be one that [Catalog.Watch] was given for the stream's
+	// source.
+	EventTypeIDs() *uuidset.SetR
 
 	// CheckpointOffset returns the offset from which consumption of the stream
 	// with the given ID resumes. It returns zero for a stream that has not
@@ -37,7 +38,7 @@ type Sink interface {
 	// including attempts after a failure.
 	CheckpointOffset(
 		ctx context.Context,
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 	) (uint64, error)
 
 	// ConsumeSegment handles the events in the given segment and returns the new

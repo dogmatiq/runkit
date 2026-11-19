@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"sync/atomic"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -28,7 +28,7 @@ func TestEventRouting_eventsFromTheSameStreamAreRoutedToTheCorrectHandler(t *tes
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1
 					}
@@ -127,7 +127,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one TypeA event
@@ -136,7 +136,7 @@ func TestEventRouting_eventsFromDifferentStreamsAreRoutedToTheCorrectHandler(t *
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventB1
 				},
 				1, // one stream with one TypeB event
@@ -229,7 +229,7 @@ func TestEventRouting_eventsAreRoutedToTheCorrectInstance(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one TypeA event
@@ -291,7 +291,7 @@ func TestEventRouting_eventsAreSkippedWhenNotRoutedToAnInstance(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1 // TypeA not routed to an instance
 					}
@@ -364,7 +364,7 @@ func TestEventRouting_eventsAreNotRoutedToEndedInstances(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1 // creates and ends the instance
@@ -434,7 +434,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 	const handlerKey = "aab7927f-5d67-439c-8649-3b5bc4fdb57c"
 
 	var (
-		streamID   *uuidpb.UUID
+		streamID   uuid.UUID
 		done       cosyne.Latch
 		historical cosyne.Latch
 	)
@@ -446,7 +446,7 @@ func TestEventRouting_newHandlersSeeHistoricalEvents(t *testing.T) {
 			streamID = xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				1, // one stream with one event
@@ -506,7 +506,7 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 	const handlerKey = "4727c77a-8c9c-42bc-856e-2cf14a7df161"
 
 	db := xtesting.NewDatabase(t)
-	var streamID *uuidpb.UUID
+	var streamID uuid.UUID
 
 	// Run "version 1" of the handler with only a TypeA route. It consumes from
 	// the relevant streams and establishes its checkpoint offsets.
@@ -519,7 +519,7 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 			tracked := xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					if offset == 0 {
 						return stubs.EventA1
 					}
@@ -539,7 +539,7 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 				WHERE handler_key = $1
 				AND stream_id = $2`,
 				handlerKey,
-				tracked[0].AsString(),
+				tracked[0].String(),
 			)
 		},
 		dogma.ViaProcess(
@@ -572,7 +572,7 @@ func TestEventRouting_newRoutesResumeFromExistingCheckpoints(t *testing.T) {
 	// A stream discovered only after the first deployment has no checkpoint.
 	streamID = xtesting.PopulateEventStreams(
 		t, db,
-		func(*uuidpb.UUID, uint64) dogma.Event { return stubs.EventB1 },
+		func(uuid.UUID, uint64) dogma.Event { return stubs.EventB1 },
 		1,
 	)[0]
 

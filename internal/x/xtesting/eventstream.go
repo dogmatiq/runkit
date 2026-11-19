@@ -3,6 +3,7 @@ package xtesting
 import (
 	"reflect"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
@@ -18,7 +19,7 @@ import (
 func CreateEventStream(
 	t testing.TB,
 	x xsql.Executor,
-) *uuidpb.UUID {
+) uuid.UUID {
 	t.Helper()
 
 	streamIDs := CreateEventStreams(t, x, 1)
@@ -30,13 +31,13 @@ func CreateEventStreams(
 	t testing.TB,
 	x xsql.Executor,
 	count int,
-) []*uuidpb.UUID {
+) []uuid.UUID {
 	t.Helper()
 
-	streamIDs := make([]*uuidpb.UUID, count)
+	streamIDs := make([]uuid.UUID, count)
 
 	for i := range count {
-		streamIDs[i] = uuidpb.Generate()
+		streamIDs[i] = uuid.New()
 
 		if _, err := x.ExecContext(
 			t.Context(),
@@ -62,9 +63,9 @@ func CreateEventStreams(
 func PopulateEventStreams(
 	t testing.TB,
 	x xsql.Executor,
-	fn func(streamID *uuidpb.UUID, offset uint64) dogma.Event,
+	fn func(streamID uuid.UUID, offset uint64) dogma.Event,
 	counts ...uint64,
-) []*uuidpb.UUID {
+) []uuid.UUID {
 	t.Helper()
 
 	streamIDs := CreateEventStreams(t, x, len(counts))
@@ -115,7 +116,7 @@ func AppendToNewEventStream(
 	t testing.TB,
 	x xsql.Executor,
 	events ...dogma.Event,
-) (*uuidpb.UUID, []*envelopepb.Envelope) {
+) (uuid.UUID, []*envelopepb.Envelope) {
 	t.Helper()
 
 	streamID := CreateEventStream(t, x)
@@ -130,7 +131,7 @@ func AppendToNewEventStream(
 func AppendToEventStream(
 	t testing.TB,
 	x xsql.Executor,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	events ...dogma.Event,
 ) []*envelopepb.Envelope {
 	t.Helper()
@@ -165,7 +166,7 @@ func AppendToEventStream(
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(nextOffset-1).
 				Build(),
 		)
@@ -198,7 +199,7 @@ func ExpectEventCount(
 func ExpectContiguousEvents(
 	t testing.TB,
 	q xsql.Querier,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	offset uint64,
 	want ...dogma.Event,
 ) {
