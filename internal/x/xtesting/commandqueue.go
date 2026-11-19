@@ -30,7 +30,7 @@ func WaitForEmptyCommandQueue(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE handler_key IS NULL`,
 	)
 }
@@ -50,7 +50,7 @@ func ExpectCommandIDToBeQueued(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -69,7 +69,7 @@ func ExpectCommandToBeQueued(
 		t.Context(),
 		`SELECT
 			c.envelope
-		FROM messagequeue.messages AS c
+		FROM runkit.queued_messages AS c
 		WHERE c.handler_key IS NULL`,
 	)
 	if err != nil {
@@ -116,7 +116,7 @@ func ExpectCommandToBeUnattempted(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = $1
 		AND failures = 0`,
 		xsql.UUID(messageID),
@@ -139,7 +139,7 @@ func WaitForCommandToBeRemovedFromQueue(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = $1`,
 		xsql.UUID(messageID),
 	)
@@ -160,7 +160,7 @@ func WaitForCommandToBePostponed(
 		1,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = $1
 		AND next_attempt_at > scheduled_for`,
 		xsql.UUID(messageID),
@@ -182,7 +182,7 @@ func EnqueuePostponedCommand(
 
 	if _, err := x.ExecContext(
 		t.Context(),
-		`INSERT INTO messagequeue.messages (
+		`INSERT INTO runkit.queued_messages (
 			message_id,
 			message_type_id,
 			queue_id,

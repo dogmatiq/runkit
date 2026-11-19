@@ -26,8 +26,10 @@ import (
 	"github.com/dogmatiq/runkit/internal/grpcserver"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
+	"github.com/dogmatiq/runkit/internal/schema"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
+	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -37,6 +39,14 @@ const (
 	// applicationBindTimeout is the maximum time given to bind the database to
 	// the application when the engine starts.
 	applicationBindTimeout = 15 * time.Second
+
+	// schemaLockTimeout is the longest that a step of a schema migration waits
+	// for a lock while engines may be running.
+	schemaLockTimeout = 5 * time.Second
+
+	// schemaStatementTimeout is the longest that a statement of a schema
+	// migration's transaction runs while engines may be running.
+	schemaStatementTimeout = 30 * time.Second
 
 	// heartbeatInterval is the time between the heartbeats that each engine
 	// sends to the others in the cluster.
@@ -244,8 +254,15 @@ func New(
 	return e
 }
 
-// Run starts the engine and blocks until ctx is canceled or the engine is
-// unable to continue.
+// Run runs the engine until ctx is canceled or the engine is unable to
+// continue.
+//
+// It first applies the engine's database schema, as [ApplySchemaOnline] does,
+// then starts the engine.
+//
+// If applying the schema fails, and the engine can't run on the schema as it
+// is, Run returns the error. If the engine can run on it, Run logs the failure
+// and starts the engine anyway.
 //
 // It must be called at most once.
 func (e *Engine) Run(ctx context.Context) error {
@@ -283,6 +300,10 @@ func (e *Engine) Run(ctx context.Context) error {
 		xslog.Identity("application", e.appConfig.Identity()),
 		slog.String("layer", "application"),
 	)
+
+	if err := e.applySchema(ctx); err != nil {
+		return err
+	}
 
 	bindCtx, cancelBind := context.WithTimeout(ctx, applicationBindTimeout)
 	defer cancelBind()
@@ -481,6 +502,66 @@ func (e *Engine) Run(ctx context.Context) error {
 	)
 
 	return err
+}
+
+// applySchema creates or upgrades the engine's database schema, as
+// [ApplySchemaOnline] does, before the engine starts.
+//
+// If the upgrade fails, but the engine can run on the existing schema,
+// applySchema logs the failure and returns nil. Otherwise, it tries again, with
+// a backoff, after an upgrade step that times out waiting for a lock, because
+// another engine's transaction is probably holding it.
+func (e *Engine) applySchema(ctx context.Context) error {
+	var streak failure.Streak
+
+	for {
+		err := schema.Apply(
+			ctx,
+			e.db,
+			false,
+			schemaLockTimeout,
+			schemaStatementTimeout,
+		)
+		if err == nil {
+			streak.End(ctx, "apply the database schema", e.engineLogger)
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return err
+		}
+
+		if failed, ok := errors.AsType[schema.UpgradeFailedError](err); ok {
+			if failed.Required.CanRunOn(failed.Current) {
+				e.engineLogger.ErrorContext(
+					ctx,
+					"unable to upgrade the database schema, running on its current schema version instead",
+					slog.String("schema_version", failed.Current.String()),
+					slog.String("required_schema_version", failed.Required.String()),
+					xslog.Error(err),
+				)
+				return nil
+			}
+		}
+
+		if !xsql.IsLockNotAvailableError(ctx, err) {
+			return err
+		}
+
+		nextAttemptAt := streak.Extend(
+			ctx,
+			"apply the database schema",
+			e.engineFailurePolicy,
+			e.engineLogger,
+			err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Until(nextAttemptAt)):
+		}
+	}
 }
 
 // Ready returns a channel that is closed when the engine is ready to accept

@@ -37,7 +37,7 @@ func (c *Consumer) attemptDelivery(
 	queues *uuidcollection.Set,
 	messageID *uuidpb.UUID,
 ) (bool, error) {
-	tx, err := c.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, xsql.TxOptions)
 	if err != nil {
 		return false, fmt.Errorf("unable to begin transaction: %w", err)
 	}
@@ -161,7 +161,7 @@ func (c *Consumer) claimMessage(
 			failures,
 			first_failed_at,
 			failure_logged_as_error
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE message_id = $1
 			AND queue_id = ANY($2::uuid[])
 			AND message_type_id = ANY($3::uuid[])
@@ -234,7 +234,7 @@ func (c *Consumer) deliverMessage(
 	// removes the instance's deadlines.
 	if _, err := tx.ExecContext(
 		ctx,
-		`DELETE FROM messagequeue.messages
+		`DELETE FROM runkit.queued_messages
 		WHERE message_id = $1`,
 		xsql.UUID(d.MessageID),
 	); err != nil {
@@ -296,14 +296,14 @@ func (c *Consumer) postponeAfterFailure(
 	err := xsql.ExecOne(
 		ctx,
 		c.DB,
-		`UPDATE messagequeue.messages SET
+		`UPDATE runkit.queued_messages SET
 			failures = $3,
 			first_failed_at = $4,
 			failure_logged_as_error = $5,
 			next_attempt_at = $6
 		WHERE message_id = (
 			SELECT message_id
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1
 				AND failures = $2
 			FOR UPDATE SKIP LOCKED
@@ -359,11 +359,11 @@ func (c *Consumer) postponeAfterContention(
 	err := xsql.ExecOne(
 		ctx,
 		c.DB,
-		`UPDATE messagequeue.messages SET
+		`UPDATE runkit.queued_messages SET
 			next_attempt_at = $3
 		WHERE message_id = (
 			SELECT message_id
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1
 				AND failures = $2
 			FOR UPDATE SKIP LOCKED

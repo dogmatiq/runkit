@@ -18,7 +18,7 @@ import (
 )
 
 // instance is the engine's model of an aggregate instance, as stored in the
-// aggregate.instances table.
+// runkit.aggregate_instances table.
 //
 // Its root is the application's model of the instance.
 type instance struct {
@@ -66,7 +66,7 @@ func (i *instance) RecordEvents(
 		snapshotArg,
 	)
 
-	query.WriteString(`SELECT aggregate.complete_with_events($1, $2, $3, $4, $5, ARRAY[`)
+	query.WriteString(`SELECT runkit.save_aggregate_instance($1, $2, $3, $4, $5, ARRAY[`)
 
 	first := true
 	for eventEnvelope := range eventEnvelopes.All() {
@@ -79,7 +79,7 @@ func (i *instance) RecordEvents(
 		n := len(args)
 		fmt.Fprintf(
 			&query,
-			"ROW($%d, $%d, $%d)::eventstream.event",
+			"ROW($%d, $%d, $%d)::runkit.event",
 			n+1, n+2, n+3,
 		)
 
@@ -104,7 +104,10 @@ func (i *instance) RecordEvents(
 func (i *instance) DeleteIfNoEvents(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(
 		ctx,
-		`SELECT aggregate.complete_without_events($1, $2)`,
+		`DELETE FROM runkit.aggregate_instances
+		WHERE handler_key = $1
+		AND instance_id = $2
+		AND stream_id IS NULL`,
 		xsql.UUID(i.HandlerKey),
 		i.ID,
 	); err != nil {
@@ -131,7 +134,7 @@ func (i *instance) ApplyHistoricalEvents(
 		`SELECT
 			e.message_id,
 			e.envelope
-		FROM eventstream.events AS e
+		FROM runkit.events AS e
 		WHERE e.stream_id = $1
 			AND e.stream_offset >= $2
 			AND e.aggregate_handler_key = $3

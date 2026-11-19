@@ -29,9 +29,9 @@ func TestConsumer(t *testing.T) {
 
 	// setup returns a database, a running node on it, and a function that
 	// returns another node on it, which isn't running.
-	setup := func(t *testing.T) (*sql.DB, *cluster.Node, func() *cluster.Node) {
-		db := xtesting.NewDatabase(t)
-
+	// setupWithDB starts a signal bus and a node that use db, and returns db,
+	// the node, and a function that creates further nodes.
+	setupWithDB := func(t *testing.T, db *sql.DB) (*sql.DB, *cluster.Node, func() *cluster.Node) {
 		signals := &signal.Bus{
 			DB:                  db,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -55,6 +55,12 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, n.Run)
 
 		return db, n, newNode
+	}
+
+	// setup is like setupWithDB, with a new database that has the engine's
+	// schema applied.
+	setup := func(t *testing.T) (*sql.DB, *cluster.Node, func() *cluster.Node) {
+		return setupWithDB(t, xtesting.NewDatabase(t))
 	}
 
 	// waitForLiveNodes waits until each of the given nodes is in the set of
@@ -145,7 +151,7 @@ func TestConsumer(t *testing.T) {
 
 		if _, err := db.ExecContext(
 			t.Context(),
-			`INSERT INTO messagequeue.messages (
+			`INSERT INTO runkit.queued_messages (
 				message_id,
 				message_type_id,
 				queue_id,
@@ -210,7 +216,7 @@ func TestConsumer(t *testing.T) {
 		if _, err := tx.ExecContext(
 			t.Context(),
 			`SELECT 1
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1
 			FOR UPDATE`,
 			xsql.UUID(messageID),
@@ -241,7 +247,7 @@ func TestConsumer(t *testing.T) {
 			1,
 			db,
 			`SELECT COUNT(*)
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1
 			AND `+cond,
 			append([]any{xsql.UUID(messageID)}, args...)...,
@@ -259,7 +265,7 @@ func TestConsumer(t *testing.T) {
 			0,
 			db,
 			`SELECT COUNT(*)
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1`,
 			xsql.UUID(messageID),
 		)
@@ -390,7 +396,7 @@ func TestConsumer(t *testing.T) {
 					return xsql.ExecOne(
 						ctx,
 						tx,
-						`DELETE FROM messagequeue.messages
+						`DELETE FROM runkit.queued_messages
 						WHERE message_id = $1`,
 						xsql.UUID(d.MessageID),
 					)
@@ -502,7 +508,7 @@ func TestConsumer(t *testing.T) {
 		exec(
 			t,
 			db,
-			`UPDATE messagequeue.messages
+			`UPDATE runkit.queued_messages
 			SET queue_id = $2
 			WHERE message_id = $1`,
 			xsql.UUID(moved),
@@ -549,7 +555,7 @@ func TestConsumer(t *testing.T) {
 		exec(
 			t,
 			db,
-			`DELETE FROM messagequeue.messages
+			`DELETE FROM runkit.queued_messages
 			WHERE message_id = $1`,
 			xsql.UUID(removed),
 		)
@@ -707,7 +713,7 @@ func TestConsumer(t *testing.T) {
 		exec(
 			t,
 			db,
-			`UPDATE messagequeue.messages SET
+			`UPDATE runkit.queued_messages SET
 				failures = $2,
 				first_failed_at = $3,
 				failure_logged_as_error = $4
@@ -849,7 +855,7 @@ func TestConsumer(t *testing.T) {
 		if err := db.QueryRowContext(
 			t.Context(),
 			`SELECT next_attempt_at
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1`,
 			xsql.UUID(messageID),
 		).Scan(&nextAttemptAt); err != nil {
@@ -976,7 +982,7 @@ func TestConsumer(t *testing.T) {
 
 				if _, err := tx.ExecContext(
 					ctx,
-					`UPDATE messagequeue.messages
+					`UPDATE runkit.queued_messages
 					SET failures = 99,
 						first_failed_at = clock_timestamp()
 					WHERE message_id = $1`,
@@ -1081,11 +1087,12 @@ func TestConsumer(t *testing.T) {
 	t.Run("it keeps running when it can't find the next messages", func(t *testing.T) {
 		t.Parallel()
 
-		db, n, _ := setup(t)
+		// The test renames a table, which only the schema's owner can do.
+		db, n, _ := setupWithDB(t, xtesting.NewDatabaseAsOwner(t))
 		h, attempted := record()
 		run(t, db, n, 10, h)
 
-		exec(t, db, `ALTER TABLE messagequeue.messages RENAME TO unavailable`)
+		exec(t, db, `ALTER TABLE runkit.queued_messages RENAME TO unavailable`)
 
 		// Renaming the table keeps its triggers, so adding a message wakes the
 		// consumer, and it can't find the next messages.
@@ -1093,7 +1100,7 @@ func TestConsumer(t *testing.T) {
 		exec(
 			t,
 			db,
-			`INSERT INTO messagequeue.unavailable (
+			`INSERT INTO runkit.unavailable (
 				message_id,
 				message_type_id,
 				queue_id,
@@ -1108,7 +1115,7 @@ func TestConsumer(t *testing.T) {
 			time.Now(),
 		)
 
-		exec(t, db, `ALTER TABLE messagequeue.unavailable RENAME TO messages`)
+		exec(t, db, `ALTER TABLE runkit.unavailable RENAME TO queued_messages`)
 
 		expectAttempt(t, attempted, env.GetBody().GetMessageId())
 	})
@@ -1129,7 +1136,7 @@ func TestConsumer(t *testing.T) {
 				func(ctx context.Context, tx *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
 					if _, err := tx.ExecContext(
 						ctx,
-						`UPDATE messagequeue.messages
+						`UPDATE runkit.queued_messages
 						SET failures = 99,
 							first_failed_at = clock_timestamp()
 						WHERE message_id = $1`,
@@ -1159,7 +1166,7 @@ func TestConsumer(t *testing.T) {
 			1,
 			db,
 			`SELECT COUNT(*)
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE message_id = $1
 			AND failures = 0`,
 			xsql.UUID(messageID),

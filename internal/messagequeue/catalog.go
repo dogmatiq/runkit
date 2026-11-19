@@ -63,7 +63,7 @@ func (c *Catalog) Run(ctx context.Context) error {
 func (c *Catalog) run(ctx context.Context) error {
 	var changed cosyne.Signal
 
-	detach := c.Node.AttachSignal(ctx, "messagequeue", &changed)
+	detach := c.Node.AttachSignal(ctx, "messages_enqueued", &changed)
 	defer detach()
 
 	for {
@@ -84,7 +84,7 @@ func (c *Catalog) run(ctx context.Context) error {
 
 // load returns the IDs of the queues that have messages.
 func (c *Catalog) load(ctx context.Context) (*uuidcollection.Set, error) {
-	// The query reads one entry of the messages_by_queue index for each
+	// The query reads one entry of the queued_messages_by_queue index for each
 	// queue, so its cost depends on the number of queues, not the number of
 	// messages. PostgreSQL can't skip from one distinct value to the next in
 	// an index by itself (a "loose index scan"), so the query does the
@@ -97,14 +97,14 @@ func (c *Catalog) load(ctx context.Context) (*uuidcollection.Set, error) {
 		`WITH RECURSIVE queues AS (
 			(
 				SELECT queue_id
-				FROM messagequeue.messages
+				FROM runkit.queued_messages
 				ORDER BY queue_id
 				LIMIT 1
 			)
 			UNION ALL
 			SELECT (
 				SELECT m.queue_id
-				FROM messagequeue.messages AS m
+				FROM runkit.queued_messages AS m
 				WHERE m.queue_id > q.queue_id
 				ORDER BY m.queue_id
 				LIMIT 1

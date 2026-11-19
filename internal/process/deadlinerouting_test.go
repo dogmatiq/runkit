@@ -418,7 +418,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 	// for delivery (this is just to speed up the test).
 	if _, err := db.ExecContext(
 		t.Context(),
-		`UPDATE messagequeue.messages SET
+		`UPDATE runkit.queued_messages SET
 			next_attempt_at = next_attempt_at - INTERVAL '1 second'
 		WHERE handler_key IS NOT NULL`,
 	); err != nil {
@@ -444,7 +444,7 @@ func TestDeadlineRouting_deadlinesForRemovedRoutesAreNotDelivered(t *testing.T) 
 				1,
 				db,
 				`SELECT COUNT(*)
-				FROM messagequeue.messages
+				FROM runkit.queued_messages
 				WHERE handler_key IS NOT NULL`,
 			)
 		},

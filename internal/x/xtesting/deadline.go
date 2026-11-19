@@ -20,7 +20,7 @@ func WaitForNoPendingDeadlines(
 		0,
 		q,
 		`SELECT COUNT(*)
-		FROM messagequeue.messages
+		FROM runkit.queued_messages
 		WHERE handler_key IS NOT NULL`,
 	)
 }

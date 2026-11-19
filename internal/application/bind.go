@@ -26,7 +26,7 @@ func Bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 	// values, so that RETURNING yields the identity the database is bound to.
 	if err := db.QueryRowContext(
 		ctx,
-		`INSERT INTO application.identity AS i (
+		`INSERT INTO runkit.identity AS i (
 			key,
 			name
 		) VALUES (

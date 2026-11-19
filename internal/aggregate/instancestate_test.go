@@ -274,7 +274,7 @@ func TestInstanceState_snapshotIsTakenAfterEveryCommand(t *testing.T) {
 			xtesting.ExecOne(
 				t,
 				db,
-				`DELETE FROM eventstream.events`,
+				`DELETE FROM runkit.events`,
 			)
 
 			// Execute another command that asserts the state was loaded

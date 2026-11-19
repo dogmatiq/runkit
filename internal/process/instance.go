@@ -16,7 +16,7 @@ import (
 )
 
 // instance is the engine's model of a process instance, as stored in the
-// process.instances table.
+// runkit.process_instances table.
 //
 // Its root is the application's model of the instance.
 type instance struct {
@@ -60,7 +60,7 @@ func (i *instance) BindToDeadlineQueue(
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE process.instances SET
+		`UPDATE runkit.process_instances SET
 			deadline_queue_id = $1
 		WHERE handler_key = $2
 		AND instance_id = $3`,
@@ -99,7 +99,7 @@ func (i *instance) Save(
 		if err := xsql.ExecOne(
 			ctx,
 			tx,
-			`UPDATE process.instances SET
+			`UPDATE runkit.process_instances SET
 				state = $1
 			WHERE handler_key = $2
 			AND instance_id = $3`,
@@ -145,7 +145,7 @@ func (i *instance) end(ctx context.Context, tx *sql.Tx) error {
 	if err := xsql.ExecOne(
 		ctx,
 		tx,
-		`UPDATE process.instances SET
+		`UPDATE runkit.process_instances SET
 			ended = true,
 			state = NULL
 		WHERE handler_key = $1
@@ -163,10 +163,10 @@ func (i *instance) end(ctx context.Context, tx *sql.Tx) error {
 	// deadline.
 	if _, err := tx.ExecContext(
 		ctx,
-		`DELETE FROM messagequeue.messages
+		`DELETE FROM runkit.queued_messages
 		WHERE message_id IN (
 			SELECT message_id
-			FROM messagequeue.messages
+			FROM runkit.queued_messages
 			WHERE handler_key = $1
 			AND instance_id = $2
 			FOR UPDATE SKIP LOCKED
@@ -202,7 +202,7 @@ func (i *instance) addDeadlinesToQueue(
 
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO messagequeue.messages (
+			`INSERT INTO runkit.queued_messages (
 				message_id,
 				message_type_id,
 				queue_id,
@@ -249,7 +249,7 @@ func lockInstance(
 	// serialized access even for brand-new instances.
 	row := tx.QueryRowContext(
 		ctx,
-		`INSERT INTO process.instances (
+		`INSERT INTO runkit.process_instances (
 			handler_key,
 			instance_id
 		)
@@ -329,7 +329,7 @@ func tryLockInstance(
 		`WITH exists AS (
 			SELECT EXISTS (
 				SELECT 1
-				FROM process.instances
+				FROM runkit.process_instances
 				WHERE handler_key = $1
 				AND instance_id = $2
 			) AS exists
@@ -338,7 +338,7 @@ func tryLockInstance(
 				ended,
 				state,
 				deadline_queue_id
-			FROM process.instances
+			FROM runkit.process_instances
 			WHERE handler_key = $1
 			AND instance_id = $2
 			FOR UPDATE SKIP LOCKED

@@ -125,7 +125,7 @@ func TestEventSink_failureRollsBack(t *testing.T) {
 				0,
 				db,
 				`SELECT COUNT(*)
-				FROM process.instances`,
+				FROM runkit.process_instances`,
 			)
 			xtesting.ExpectQueryResult(
 				t,
@@ -133,7 +133,7 @@ func TestEventSink_failureRollsBack(t *testing.T) {
 				0,
 				db,
 				`SELECT COUNT(*)
-				FROM eventstream.handler_checkpoints`,
+				FROM runkit.process_handler_checkpoints`,
 			)
 
 			handler.HandleEventFunc = nil
@@ -226,7 +226,7 @@ func TestEventSink_routingRejectionsAdvancePastTrailingEvents(t *testing.T) {
 		0,
 		db,
 		`SELECT COUNT(*)
-		FROM process.instances`,
+		FROM runkit.process_instances`,
 	)
 }
 
@@ -237,7 +237,7 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 
 	var fail atomic.Bool
 	db := xtesting.NewDatabaseWithFailingQueries(t, func(query string, _ []any) bool {
-		return fail.Load() && strings.Contains(query, "UPDATE eventstream.handler_checkpoints")
+		return fail.Load() && strings.Contains(query, "UPDATE runkit.process_handler_checkpoints")
 	})
 	s := newEventSink(t, db)
 	s.OutboundMessageTypes = map[reflect.Type]struct{}{
@@ -265,10 +265,10 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 	}
 
 	for _, table := range []string{
-		"process.instances",
-		"eventstream.handler_checkpoints",
-		"messagequeue.messages WHERE handler_key IS NULL",
-		"messagequeue.messages WHERE handler_key IS NOT NULL",
+		"runkit.process_instances",
+		"runkit.process_handler_checkpoints",
+		"runkit.queued_messages WHERE handler_key IS NULL",
+		"runkit.queued_messages WHERE handler_key IS NOT NULL",
 	} {
 		xtesting.ExpectQueryResult(
 			t,
@@ -286,10 +286,10 @@ func TestEventSink_checkpointFailureRollsBackEffects(t *testing.T) {
 		t.Fatalf("unexpected retry result: %d, %t, %v", next, ok, err)
 	}
 	for _, table := range []string{
-		"process.instances",
-		"eventstream.handler_checkpoints",
-		"messagequeue.messages WHERE handler_key IS NULL",
-		"messagequeue.messages WHERE handler_key IS NOT NULL",
+		"runkit.process_instances",
+		"runkit.process_handler_checkpoints",
+		"runkit.queued_messages WHERE handler_key IS NULL",
+		"runkit.queued_messages WHERE handler_key IS NOT NULL",
 	} {
 		xtesting.ExpectQueryResult(
 			t,

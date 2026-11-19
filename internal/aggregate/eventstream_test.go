@@ -39,7 +39,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 				1,
 				db,
 				`SELECT COUNT(DISTINCT stream_id)
-				FROM eventstream.events
+				FROM runkit.events
 				WHERE aggregate_instance_id = $1`,
 				stubs.CommandA1.Content,
 			)
@@ -52,7 +52,7 @@ func TestEventStream_instanceBoundToStream(t *testing.T) {
 				1,
 				db,
 				`SELECT COUNT(DISTINCT stream_id)
-				FROM eventstream.events
+				FROM runkit.events
 				WHERE aggregate_instance_id = $1`,
 				stubs.CommandA2.Content,
 			)
@@ -109,7 +109,7 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT stream_id
-				FROM aggregate.instances`,
+				FROM runkit.aggregate_instances`,
 			)
 			if err := row.Scan(xsql.UUID(streamID)); err != nil {
 				t.Fatalf("unable to find event stream: %v", err)

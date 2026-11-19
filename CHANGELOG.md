@@ -7,124 +7,116 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 <!-- references -->
 
-[0.3.0 migration guide]: https://github.com/dogmatiq/runkit/blob/main/docs/MIGRATING-v0.3.0.md
 [bc]: https://github.com/dogmatiq/.github/blob/main/VERSIONING.md#changelogs
+[dogma's process handler documentation]: https://pkg.go.dev/github.com/dogmatiq/dogma#ProcessMessageHandler
 [dogmatiq/protobuf]: https://github.com/dogmatiq/protobuf
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
+[major schema upgrades]: https://github.com/dogmatiq/runkit/blob/main/README.md#major-schema-upgrades
 [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-This release extends remote event consumption to process handlers, and changes
-how engines deliver commands and deadlines, and how they retry and log failures.
+Schema version: v2.0.0 (new)
+
+Process handlers can now consume events from remote applications. This release
+also changes how the engine delivers commands and deadlines, and how it retries
+and logs failures.
 
 > [!IMPORTANT]
-> Upgrading from 0.2.0 or earlier requires downtime. Back up the database, then
-> stop every engine that uses it before calling `CreateSchema()`.
->
-> See the [0.3.0 migration guide].
+> This release makes breaking changes to the engine's database schema, so
+> upgrading from an earlier runkit version needs downtime. Follow the steps in
+> [major schema upgrades].
 
 > [!WARNING]
-> Adding a new process handler to an application can now trigger commands and
-> deadlines from historical events. Adding a route to an existing handler does
-> not guarantee that historical events will be delivered or skipped. Make the
-> intended business behavior explicit in the application's routing and handling
-> logic.
-
-When a new process handler is added to an application, it now consumes events
-from the beginning of each stream, including events recorded before the handler
-was added. Previously, it started at the stream's current end. Process handlers
-in already-deployed applications resume from the checkpoints stored in their
-application's database; upgrading does not rewind those checkpoints.
-
-For an event route added to an existing handler, delivery depends on the
-checkpoint for the stream containing each event. Events before that checkpoint
-are skipped; events at or after it can be delivered. A stream without a
-checkpoint starts at the beginning. A new route may therefore receive some,
-all, or none of its historical events, depending on which streams contain them
-and how far the handler has progressed through each stream.
-
-Implement business requirements about acting on historical events explicitly,
-for example by using event data and process state to decide whether a command
-or deadline is still appropriate. Do not rely on checkpoint positions or route
-changes to establish a business cutoff or guarantee delivery of historical
-events.
+> Earlier versions silently ignored process handler routes for events from
+> remote applications. Once you upgrade, those routes take effect, and the
+> handlers receive every matching event, old and new. Before you upgrade, check
+> that they can safely act on old events.
 
 ### Added
 
 - Added the ability for process handlers to consume events from remote
   applications.
-- Added `FailurePolicy`, which describes how the engine responds to repeated
-  internal failures and errors produced by application handlers. The engine uses
-  several policies, which can be configured using new engine options:
+- Added `ApplySchemaOffline()`, which applies the schema changes that can't be
+  made while engines are running.
+- Added schema versioning. The schema now has its own version number, separate
+  from runkit's, and the release notes of each runkit version start with the
+  schema version that it needs.
+- Added automatic schema migration. `Engine.Run()` now creates or upgrades the
+  schema when the engine starts, but only makes the changes that are safe while
+  other engines are running.
+- Added `FailurePolicy`, which controls how long the engine waits before
+  retrying failed work, and when repeated failures are logged as an ERROR. The
+  policy for each kind of work defaults to `DefaultFailurePolicy()`, and these
+  options change it:
   - `WithEngineFailurePolicy()`
   - `WithMessageQueueDeliveryFailurePolicy()`
   - `WithEventStreamDispatchFailurePolicy()`
   - `WithProjectionCompactionFailurePolicy()`
-  - All policies default to `DefaultFailurePolicy()`
-- Added engine options for configuring various timeouts:
-  - `WithHandleTimeout()`, which defaults to `DefaultHandleTimeout()`
-  - `WithRouteTimeout()`, which defaults to `DefaultRouteTimeout()`
-  - `WithProjectionCompactTimeout()`, which defaults to `DefaultProjectionCompactTimeout()`
-- Added engine options for configuring the engine's concurrency behavior:
-  - `WithMessageQueueConcurrency()`, which defaults to `DefaultMessageQueueConcurrency()`
-  - `WithMessageQueueContentionDelay()`, which defaults to `DefaultMessageQueueContentionDelay()`
+- Added `WithProjectionCompactTimeout()`, which sets how long each attempt to
+  compact a projection may take. It defaults to 10 minutes, as before.
+- Added `WithMessageQueueContentionDelay()`, which sets how long the engine
+  waits before retrying a command or deadline that can't be delivered until
+  another delivery finishes, such as a second command for the same aggregate
+  instance.
 
 ### Changed
 
-- **[BC]** Process handlers added to an application now consume historical
-  events, instead of only new events.
-- **[BC]** The database schema has changed. Call `CreateSchema()` to migrate the
-  database before running this version.
+- **[BC]** Changed the database schema. Engines from earlier runkit versions
+  can't use the new schema. The upgrade copies every command and deadline that's
+  waiting to be delivered, so the more there are, the longer it takes.
+- **[BC]** Renamed `CreateSchema()` to `ApplySchemaOnline()`. It now upgrades
+  an existing schema too. You only need to call it if the engine's database
+  role isn't allowed to change the schema.
+- **[BC]** Added timeouts to the engine's calls to application handlers. A call
+  that times out counts as a failure, and is retried later. Handling a message
+  times out after one minute, and calls to `RouteEventToInstance()` and
+  `CheckpointOffset()` time out after 10 seconds. Use `WithHandleTimeout()` and
+  `WithRouteTimeout()` to change these limits.
 - **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
   function.
-- Changed how commands and deadlines are delivered:
-  - By default, each engine now delivers at most 10 × `GOMAXPROCS` of them at
-    once across all handlers. That limit used to apply to each handler, so it's
-    now lower for an engine with more than one aggregate, integration or
-    process handler. Use `WithMessageQueueConcurrency()` to raise it.
-  - An integration handler that prefers `MinimizeConcurrency` may briefly
-    handle two commands at once while engines join or leave a cluster.
-- Changed how the engine retries and logs failures. An ordinary failure now
-  waits at most 15 seconds before a retry, instead of five minutes, and a streak
-  of consecutive failures logs one ERROR record, instead of one for every
-  failure. Failures that retrying can't fix, such as a panic in application
-  code, still wait up to five minutes. Use a custom `FailurePolicy` to change
-  these limits.
-- `Engine.Run()` now configures the database pool with unlimited connections and
-  an idle timeout, which closes each connection that has been idle for one
-  minute, so `WithMessageQueueConcurrency()` naturally determines how many
-  connections are kept open for deliveries.
-- Imposed a deadline on calls from the engine to these application message
-  handler methods:
-  - `ProcessMessageHandler.HandleEvent()`
-  - `ProcessMessageHandler.HandleDeadline()`
-  - `ProcessMessageHandler.RouteEventToInstance()`
-  - `IntegrationMessageHandler.HandleCommand()`
-  - `ProjectionMessageHandler.HandleEvent()`
-  - `ProjectionMessageHandler.CheckpointOffset()`
-- Added a `layer` attribute to every log record, with the value `application`
-  or `engine`, and added the application's identity. Removed the `component`
-  attribute.
 - **[BC]** Changed the add function passed to a `RemoteEngineDiscoverer` to
-  take a description of the remote engine before its connection. The
-  description identifies the remote engine in log records.
-  `StaticRemoteEngines()` describes each remote engine by its connection's
-  target.
+  take a description of the remote engine as its first argument. The engine
+  uses the description to identify the remote engine in its logs.
+  `StaticRemoteEngines()` uses each connection's target as its description.
+- Moved the engine's tables, functions and triggers from several PostgreSQL
+  schemas into a single schema. `DropSchema()` now drops only that schema.
+- Changed the limit on how many commands and deadlines an engine delivers at
+  once. It used to apply to each handler separately, and now applies to all of
+  them together, so an engine with more than one aggregate, integration or
+  process handler may deliver fewer at once. The limit defaults to
+  10 × `GOMAXPROCS`. Use `WithMessageQueueConcurrency()` to raise it.
+- Changed `Engine.Run()` to configure the database's connection pool, replacing
+  the application's settings for open and idle connections. It removes the
+  limit on open connections, so `WithMessageQueueConcurrency()` decides how many
+  the engine uses for deliveries.
+- Changed how the engine retries and logs failures. When a retry might succeed,
+  the engine now waits at most 15 seconds between attempts, down from five
+  minutes. When it can't, such as after a panic in application code, it still
+  waits up to five minutes. When the same work keeps failing, the engine now
+  logs at most one of the failures as an ERROR and the rest as DEBUG, instead of
+  logging every one as an ERROR. Use a custom `FailurePolicy` to change this.
+- Changed what the engine logs. Every log record now has a `layer` attribute,
+  set to `application` or `engine`, and includes the application's identity.
+  The `component` attribute has been removed. Anything a handler logs through
+  its scope's `Log()` method is now only written if handling succeeds.
 
 ### Fixed
 
-- Ending a process instance while one of its deadlines is being delivered no
-  longer causes an error.
-- Application log records from handling a command or deadline are written only
-  after the handling commits.
-- If a process root's `MarshalBinary()` method failed after handling a
-  deadline, the commands that the process executed were queued without its
-  other effects, and duplicated on each retry. Now they're queued only if the
-  other effects are saved too.
+- Fixed new process handlers missing the events recorded before they were
+  deployed. They now handle the full history, as
+  [Dogma's process handler documentation] requires.
+- Fixed an error when a process instance ended while one of its deadlines was
+  being delivered.
+- Fixed duplicate commands when a process root's `MarshalBinary()` method failed
+  after handling a deadline. The commands were queued on every attempt, even
+  though nothing else was saved. They're now queued only if the rest of the
+  process's changes are saved too.
 
 ## [0.2.0] - 2026-11-06
+
+Schema version: v1.1.0 (new)
 
 This release introduces clustering. Several engines could already run against
 the same database, but they competed with each other for work. They now
@@ -211,15 +203,21 @@ connection per cluster.
 
 ## [0.1.2] - 2026-07-04
 
+Schema version: v1.0.0 (existing)
+
 ### Added
 
 - Added `CreateSchema()` and `DropSchema()`
 
 ## [0.1.1] - 2026-07-04
 
+Schema version: v1.0.0 (existing)
+
 - Rename root package to `runkit`.
 
 ## [0.1.0] - 2026-07-04
+
+Schema version: v1.0.0 (new)
 
 - Initial release
 

@@ -428,7 +428,7 @@ func TestLocal(t *testing.T) {
 
 				if _, err := tx.ExecContext(
 					t.Context(),
-					`UPDATE eventstream.events
+					`UPDATE runkit.events
 					SET envelope = '\xff'
 					WHERE stream_id = $1`,
 					streamID.AsString(),
@@ -532,7 +532,7 @@ func TestLocal(t *testing.T) {
 			db := xtesting.NewDatabaseWithFailingQueries(
 				t,
 				func(query string, _ []any) bool {
-					return strings.Join(strings.Fields(query), " ") == "SELECT next_offset FROM eventstream.streams WHERE id = $1" &&
+					return strings.Join(strings.Fields(query), " ") == "SELECT next_offset FROM runkit.event_streams WHERE id = $1" &&
 						remaining.Add(-1) >= 0
 				},
 			)
@@ -717,7 +717,7 @@ func TestLocal(t *testing.T) {
 						return false
 					}
 
-					if strings.Join(strings.Fields(query), " ") != "SELECT id FROM eventstream.streams" {
+					if strings.Join(strings.Fields(query), " ") != "SELECT id FROM runkit.event_streams" {
 						return false
 					}
 
@@ -1126,7 +1126,7 @@ func TestLocal(t *testing.T) {
 				t.Context(),
 				`SELECT COUNT(*)
 				FROM pg_prepared_statements
-				WHERE statement LIKE '%FROM eventstream.events%'
+				WHERE statement LIKE '%FROM runkit.events%'
 					AND statement NOT LIKE '%pg_prepared_statements%'`,
 			).Scan(&n); err != nil {
 				t.Fatal(err)

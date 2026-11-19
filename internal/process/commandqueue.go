@@ -32,7 +32,7 @@ func addCommandsToQueues(
 
 		if _, err := tx.ExecContext(
 			ctx,
-			`SELECT messagequeue.add_command($1, $2, $3, $4, $5, $6)`,
+			`SELECT runkit.enqueue_command($1, $2, $3, $4, $5, $6)`,
 			xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
 			xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
 			xsql.UUID(queueID),

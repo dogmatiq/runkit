@@ -163,7 +163,7 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 			xtesting.ExecOne(
 				t,
 				db,
-				`UPDATE eventstream.events SET
+				`UPDATE runkit.events SET
 					envelope = '\x00'::bytea
 				WHERE aggregate_handler_key = $1
 				AND aggregate_instance_id = '<instance>'`,
@@ -175,7 +175,7 @@ func TestCommandQueue_invalidHistoricalEventCausesCommandToBePostponed(t *testin
 			xtesting.ExecOne(
 				t,
 				db,
-				`UPDATE aggregate.instances SET
+				`UPDATE runkit.aggregate_instances SET
 					snapshot = NULL,
 					snapshot_offset = NULL
 				WHERE handler_key = $1

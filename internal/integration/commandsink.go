@@ -155,7 +155,7 @@ func (s *CommandSink) appendEvents(
 		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
 	)
 
-	query.WriteString(`SELECT eventstream.append_any($1, NULL, NULL, ARRAY[`)
+	query.WriteString(`SELECT runkit.append_events_to_any_stream($1, NULL, NULL, ARRAY[`)
 
 	first := true
 	for eventEnvelope := range eventEnvelopes.All() {
@@ -168,7 +168,7 @@ func (s *CommandSink) appendEvents(
 		n := len(args)
 		fmt.Fprintf(
 			&query,
-			"ROW($%d, $%d, $%d)::eventstream.event",
+			"ROW($%d, $%d, $%d)::runkit.event",
 			n+1, n+2, n+3,
 		)
 
