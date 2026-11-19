@@ -195,7 +195,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 // c.messageAdded, and detaches the signal of every other queue.
 func (c *Consumer) attachQueueSignals(
 	ctx context.Context,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 ) {
 	for queueID, detach := range c.detachQueueSignal {
 		if !queues.Has(queueID) {
@@ -233,7 +233,7 @@ func (c *Consumer) attachQueueSignals(
 // at its concurrency limit, or when there are no messages that are due.
 func (c *Consumer) startAttempts(
 	ctx context.Context,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 ) (nextAttemptDue <-chan time.Time, backlogIsEmpty bool) {
 	// An attempt ended with an error, so the consumer doesn't start any
 	// attempts until its backoff ends.

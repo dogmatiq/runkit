@@ -34,7 +34,7 @@ const deliveryDescription = "deliver message"
 // message's lock, [xsql.IsLockNotAvailableError] returns true for that error.
 func (c *Consumer) attemptDelivery(
 	ctx context.Context,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 	messageID uuid.UUID,
 ) (bool, error) {
 	tx, err := c.DB.BeginTx(ctx, xsql.TxOptions)
@@ -143,7 +143,7 @@ func (c *Consumer) attemptDelivery(
 func (c *Consumer) claimMessage(
 	ctx context.Context,
 	tx *sql.Tx,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 	messageID uuid.UUID,
 ) (Delivery, []byte, bool, error) {
 	// The time compared with next_attempt_at comes from Go's clock, not the

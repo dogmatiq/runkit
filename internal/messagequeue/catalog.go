@@ -32,14 +32,14 @@ type Catalog struct {
 	EngineLogger *slog.Logger
 
 	// queueIDs is the set of IDs of the queues that have messages.
-	queueIDs cosyne.Observable[uuidset.SetR]
+	queueIDs cosyne.Observable[*uuidset.SetR]
 }
 
 // QueueIDs returns an observable set containing the ID of each queue that has
 // messages.
 //
 // The set is empty until it is first read from the database.
-func (c *Catalog) QueueIDs() cosyne.ObservableR[uuidset.SetR] {
+func (c *Catalog) QueueIDs() cosyne.ObservableR[*uuidset.SetR] {
 	return &c.queueIDs
 }
 

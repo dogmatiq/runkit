@@ -61,7 +61,7 @@ type Node struct {
 	EngineLogger *slog.Logger
 
 	// liveNodes is the set of IDs of the nodes that this node sees as live.
-	liveNodes cosyne.Observable[uuidset.SetR]
+	liveNodes cosyne.Observable[*uuidset.SetR]
 
 	// signalAttachmentsM guards signalAttachments.
 	signalAttachmentsM sync.Mutex
@@ -92,13 +92,13 @@ type Node struct {
 //
 // The set is empty until the first heartbeat arrives, and once this node has
 // stopped.
-func (n *Node) LiveNodes() cosyne.ObservableR[uuidset.SetR] {
+func (n *Node) LiveNodes() cosyne.ObservableR[*uuidset.SetR] {
 	return &n.liveNodes
 }
 
 // OwnsWorkload returns true if, among the given live nodes, this node owns the
 // workload with the given key.
-func (n *Node) OwnsWorkload(key uuid.UUID, liveNodes uuidset.SetR) bool {
+func (n *Node) OwnsWorkload(key uuid.UUID, liveNodes *uuidset.SetR) bool {
 	return ownsWorkload(n.ID, key, liveNodes)
 }
 
@@ -121,7 +121,7 @@ func (n *Node) Run(ctx context.Context) error {
 	}
 
 	// After this node has stopped, it doesn't own any workloads.
-	defer n.liveNodes.Store(uuidset.SetR{})
+	defer n.liveNodes.Store(nil)
 
 	g, ctx := errgroup.WithContext(ctx)
 

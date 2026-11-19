@@ -84,7 +84,7 @@ func TestCatalog(t *testing.T) {
 			t,
 			"queue IDs",
 			catalog.QueueIDs(),
-			func(got uuidset.SetR) bool {
+			func(got *uuidset.SetR) bool {
 				return got.IsEqual(uuidset.New(want...).R())
 			},
 		)

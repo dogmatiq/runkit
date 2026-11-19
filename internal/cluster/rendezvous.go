@@ -21,7 +21,7 @@ import (
 // live nodes. It returns false if there are no live nodes.
 //
 // [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
-func FindWorkloadOwner(key uuid.UUID, liveNodes uuidset.SetR) (uuid.UUID, bool) {
+func FindWorkloadOwner(key uuid.UUID, liveNodes *uuidset.SetR) (uuid.UUID, bool) {
 	if liveNodes.Has(key) {
 		return key, true
 	}
@@ -47,7 +47,7 @@ func FindWorkloadOwner(key uuid.UUID, liveNodes uuidset.SetR) (uuid.UUID, bool) 
 func ownsWorkload(
 	nodeID uuid.UUID,
 	key uuid.UUID,
-	liveNodes uuidset.SetR,
+	liveNodes *uuidset.SetR,
 ) bool {
 	// A node that isn't live doesn't own any workloads.
 	if !liveNodes.Has(nodeID) {

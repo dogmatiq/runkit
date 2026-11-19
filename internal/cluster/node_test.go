@@ -390,7 +390,7 @@ func expectPeers(
 		t,
 		fmt.Sprintf("the node to have peers %s", expected),
 		n.LiveNodes(),
-		func(liveNodes uuidset.SetR) bool {
+		func(liveNodes *uuidset.SetR) bool {
 			peers := uuidset.New()
 
 			for id := range liveNodes.All() {
@@ -416,7 +416,7 @@ func expectNodeOwnsWorkload(
 		t,
 		fmt.Sprintf("the node's ownership of the workload with key %s to be %t", key, want),
 		n.LiveNodes(),
-		func(liveNodes uuidset.SetR) bool {
+		func(liveNodes *uuidset.SetR) bool {
 			return n.OwnsWorkload(key, liveNodes) == want
 		},
 	)

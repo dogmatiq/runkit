@@ -45,8 +45,8 @@ func (s *Set) Delete(id uuid.UUID) {
 
 // R returns a read-only view of the set. Reads through the view see members
 // that are added to or deleted from the set after the view is made.
-func (s *Set) R() SetR {
-	return SetR{set: s}
+func (s *Set) R() *SetR {
+	return &SetR{set: s}
 }
 
 // Has reports whether the set contains id.
@@ -89,7 +89,7 @@ func (s *Set) All() iter.Seq[uuid.UUID] {
 }
 
 // IsEqual reports whether the set has the same members as x.
-func (s *Set) IsEqual(x SetR) bool {
+func (s *Set) IsEqual(x *SetR) bool {
 	if s.Len() != x.Len() {
 		return false
 	}
@@ -105,7 +105,7 @@ func (s *Set) IsEqual(x SetR) bool {
 
 // Diff returns a new set. It contains the members of the set that are missing
 // from x.
-func (s *Set) Diff(x SetR) *Set {
+func (s *Set) Diff(x *SetR) *Set {
 	diff := &Set{}
 
 	for id := range s.All() {
@@ -153,50 +153,59 @@ func (s *Set) String() string {
 
 // SetR is a read-only view of a [Set].
 //
-// The zero value is a view of an empty set. Reads through the view see members
+// A nil *SetR is a view of an empty set. Reads through the view see members
 // that are added to or deleted from the viewed set after the view is made.
 type SetR struct {
 	set *Set
 }
 
 // Has reports whether the set contains id.
-func (s SetR) Has(id uuid.UUID) bool {
-	return s.set.Has(id)
+func (s *SetR) Has(id uuid.UUID) bool {
+	return s.viewed().Has(id)
 }
 
 // Len returns the number of members in the set.
-func (s SetR) Len() int {
-	return s.set.Len()
+func (s *SetR) Len() int {
+	return s.viewed().Len()
 }
 
 // IsEmpty reports whether the set has no members.
-func (s SetR) IsEmpty() bool {
-	return s.set.IsEmpty()
+func (s *SetR) IsEmpty() bool {
+	return s.viewed().IsEmpty()
 }
 
 // All returns an iterator over the members of the set, in no particular order.
-func (s SetR) All() iter.Seq[uuid.UUID] {
-	return s.set.All()
+func (s *SetR) All() iter.Seq[uuid.UUID] {
+	return s.viewed().All()
 }
 
 // IsEqual reports whether the set has the same members as x.
-func (s SetR) IsEqual(x SetR) bool {
-	return s.set.IsEqual(x)
+func (s *SetR) IsEqual(x *SetR) bool {
+	return s.viewed().IsEqual(x)
 }
 
 // Diff returns a new set. It contains the members of the set that are missing
 // from x.
-func (s SetR) Diff(x SetR) *Set {
-	return s.set.Diff(x)
+func (s *SetR) Diff(x *SetR) *Set {
+	return s.viewed().Diff(x)
 }
 
 // Clone returns a new set with the same members as the set.
-func (s SetR) Clone() *Set {
-	return s.set.Clone()
+func (s *SetR) Clone() *Set {
+	return s.viewed().Clone()
 }
 
 // String returns the members of the set in braces, in ascending order,
 // separated by commas. For example, "{<id1>, <id2>}".
-func (s SetR) String() string {
-	return s.set.String()
+func (s *SetR) String() string {
+	return s.viewed().String()
+}
+
+// viewed returns the set that the view shows, or nil if the view is nil.
+func (s *SetR) viewed() *Set {
+	if s == nil {
+		return nil
+	}
+
+	return s.set
 }

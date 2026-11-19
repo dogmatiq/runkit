@@ -72,7 +72,7 @@ func TestConsumer(t *testing.T) {
 			t,
 			"live nodes",
 			n.LiveNodes(),
-			func(liveNodes uuidset.SetR) bool {
+			func(liveNodes *uuidset.SetR) bool {
 				for _, x := range nodes {
 					if !liveNodes.Has(x.ID) {
 						return false

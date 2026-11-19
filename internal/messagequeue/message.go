@@ -35,7 +35,7 @@ func (m message) IsDue() bool {
 // is canceled. It returns nil if ctx is canceled.
 func (c *Consumer) findNextMessages(
 	ctx context.Context,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 	headroom int,
 ) []message {
 	for {
@@ -66,7 +66,7 @@ func (c *Consumer) findNextMessages(
 // findNextMessagesOnce is [Consumer.findNextMessages] without the retries.
 func (c *Consumer) findNextMessagesOnce(
 	ctx context.Context,
-	queues uuidset.SetR,
+	queues *uuidset.SetR,
 	headroom int,
 ) ([]message, error) {
 	// Without any queues or message types, there are no next messages, so the

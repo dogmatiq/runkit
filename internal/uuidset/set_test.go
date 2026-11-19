@@ -243,8 +243,8 @@ func TestNilSet(t *testing.T) {
 }
 
 func TestSetR(t *testing.T) {
-	t.Run("when it's the zero value", func(t *testing.T) {
-		var s SetR
+	t.Run("when it's nil", func(t *testing.T) {
+		var s *SetR
 
 		t.Run("it reads as an empty set", func(t *testing.T) {
 			expectEmpty(t, s)
