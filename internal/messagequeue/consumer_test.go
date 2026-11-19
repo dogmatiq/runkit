@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -17,6 +18,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/failure"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -43,7 +45,7 @@ func TestConsumer(t *testing.T) {
 			return &cluster.Node{
 				DB:                  db,
 				Signals:             signals,
-				ID:                  uuidpb.Generate(),
+				ID:                  uuid.New(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    1 * time.Second,
 				EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -72,7 +74,7 @@ func TestConsumer(t *testing.T) {
 			t,
 			"live nodes",
 			n.LiveNodes(),
-			func(liveNodes *uuidcollection.Set) bool {
+			func(liveNodes uuidset.SetR) bool {
 				for _, x := range nodes {
 					if !liveNodes.Has(x.ID) {
 						return false
@@ -142,7 +144,7 @@ func TestConsumer(t *testing.T) {
 		t *testing.T,
 		db *sql.DB,
 		messageID *uuidpb.UUID,
-		queueID *uuidpb.UUID,
+		queueID uuid.UUID,
 		typeID *uuidpb.UUID,
 		envelope []byte,
 		nextAttemptAt time.Time,
@@ -174,7 +176,7 @@ func TestConsumer(t *testing.T) {
 	addMessage := func(
 		t *testing.T,
 		db *sql.DB,
-		queueID *uuidpb.UUID,
+		queueID uuid.UUID,
 		typeID *uuidpb.UUID,
 		nextAttemptAt time.Time,
 	) *uuidpb.UUID {

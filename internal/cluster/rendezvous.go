@@ -1,8 +1,9 @@
 package cluster
 
 import (
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"uuid"
+
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/zeebo/xxh3"
 )
 
@@ -20,7 +21,7 @@ import (
 // live nodes. It returns false if there are no live nodes.
 //
 // [rendezvous hashing]: https://en.wikipedia.org/wiki/Rendezvous_hashing
-func FindWorkloadOwner(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb.UUID, bool) {
+func FindWorkloadOwner(key uuid.UUID, liveNodes uuidset.SetR) (uuid.UUID, bool) {
 	if liveNodes.Has(key) {
 		return key, true
 	}
@@ -35,7 +36,7 @@ func FindWorkloadOwner(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb
 		}
 	}
 
-	return owner.ID, owner.ID != nil
+	return owner.ID, owner.ID != uuid.Nil()
 }
 
 // ownsWorkload returns true if, among the given live nodes, the node with the
@@ -44,9 +45,9 @@ func FindWorkloadOwner(key *uuidpb.UUID, liveNodes *uuidcollection.Set) (*uuidpb
 // It gives the same answer as comparing the result of [FindWorkloadOwner] with
 // the node's ID, but stops as soon as another node outranks it.
 func ownsWorkload(
-	nodeID *uuidpb.UUID,
-	key *uuidpb.UUID,
-	liveNodes *uuidcollection.Set,
+	nodeID uuid.UUID,
+	key uuid.UUID,
+	liveNodes uuidset.SetR,
 ) bool {
 	// A node that isn't live doesn't own any workloads.
 	if !liveNodes.Has(nodeID) {
@@ -54,7 +55,7 @@ func ownsWorkload(
 	}
 
 	// A live node always owns the workload whose key is its own ID.
-	if key.Equal(nodeID) {
+	if key == nodeID {
 		return true
 	}
 
@@ -67,7 +68,7 @@ func ownsWorkload(
 	self := scoreNode(key, nodeID)
 
 	for peerID := range liveNodes.All() {
-		if peerID.Equal(nodeID) {
+		if peerID == nodeID {
 			continue
 		}
 
@@ -84,7 +85,7 @@ func ownsWorkload(
 // scoredNode is a live node and its score for one rendezvous key.
 type scoredNode struct {
 	// ID is the node's ID.
-	ID *uuidpb.UUID
+	ID uuid.UUID
 
 	// Score is the node's score for the rendezvous key.
 	Score uint64
@@ -92,10 +93,10 @@ type scoredNode struct {
 
 // scoreNode returns the node with the given ID, scored for the given
 // rendezvous key.
-func scoreNode(key, nodeID *uuidpb.UUID) scoredNode {
+func scoreNode(key, nodeID uuid.UUID) scoredNode {
 	var buf [32]byte
-	uuidpb.CopyBytes(key, buf[:16])
-	uuidpb.CopyBytes(nodeID, buf[16:])
+	copy(buf[:16], key[:])
+	copy(buf[16:], nodeID[:])
 
 	return scoredNode{
 		ID:    nodeID,
@@ -109,7 +110,7 @@ func scoreNode(key, nodeID *uuidpb.UUID) scoredNode {
 // Ties go to the lower ID, so the result doesn't depend on the order in which
 // the nodes are scored.
 func (n scoredNode) Outranks(other scoredNode) bool {
-	if other.ID == nil {
+	if other.ID == uuid.Nil() {
 		return true
 	}
 
@@ -117,5 +118,5 @@ func (n scoredNode) Outranks(other scoredNode) bool {
 		return n.Score > other.Score
 	}
 
-	return n.ID.Less(other.ID)
+	return n.ID.Compare(other.ID) < 0
 }

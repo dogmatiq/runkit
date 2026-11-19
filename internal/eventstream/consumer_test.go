@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
@@ -42,7 +43,7 @@ func TestConsumer(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  signals.DB,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -477,7 +478,7 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 	node := &cluster.Node{
 		DB:                  signals.DB,
 		Signals:             signals,
-		ID:                  uuidpb.Generate(),
+		ID:                  uuid.New(),
 		HeartbeatInterval:   20 * time.Millisecond,
 		HeartbeatTimeout:    100 * time.Millisecond,
 		EngineFailurePolicy: xtesting.FailurePolicy(),

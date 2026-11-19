@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -52,7 +52,7 @@ func TestNode(t *testing.T) {
 		return &Node{
 			DB:                  signals.DB,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   interval,
 			HeartbeatTimeout:    timeout,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -72,7 +72,7 @@ func TestNode(t *testing.T) {
 		// The first signals carry no node ID, as they are delivered when
 		// watching begins and when the bus starts; after that, every signal
 		// is a heartbeat from this node.
-		want := n.ID.AsString()
+		want := n.ID.String()
 
 		for i := 0; i < 3; {
 			select {
@@ -133,10 +133,10 @@ func TestNode(t *testing.T) {
 		n := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, n.Run)
 
-		want := n.ID.AsString()
+		want := n.ID.String()
 		xtesting.ExpectToReceiveN(t, "first heartbeat", heartbeats, want)
 
-		joining := uuidpb.Generate().AsString()
+		joining := uuid.New().String()
 		if err := signals.Send(t.Context(), "heartbeat."+joining); err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +225,7 @@ func TestNode(t *testing.T) {
 		}
 
 		for _, n := range nodes {
-			var want []*uuidpb.UUID
+			var want []uuid.UUID
 			for _, peer := range nodes {
 				if peer != n {
 					want = append(want, peer.ID)
@@ -236,7 +236,7 @@ func TestNode(t *testing.T) {
 		}
 
 		for range 20 {
-			expectExactlyOneOwner(t, uuidpb.Generate(), nodes)
+			expectExactlyOneOwner(t, uuid.New(), nodes)
 		}
 	})
 
@@ -284,7 +284,7 @@ func TestNode(t *testing.T) {
 		expectEachOther(t, nodes)
 
 		for _, n := range nodes {
-			if got := expectSameWorkloadOwner(t, n.ID, nodes); !got.Equal(n.ID) {
+			if got := expectSameWorkloadOwner(t, n.ID, nodes); got != n.ID {
 				t.Fatalf("unexpected owner of the workload with key %s: got %s", n.ID, got)
 			}
 		}
@@ -309,7 +309,7 @@ func TestNode(t *testing.T) {
 		stop()
 		expectEachOther(t, nodes)
 
-		if got := expectSameWorkloadOwner(t, stopped.ID, nodes); got.Equal(stopped.ID) {
+		if got := expectSameWorkloadOwner(t, stopped.ID, nodes); got == stopped.ID {
 			t.Fatal("stopped node owns the workload whose key is its own ID")
 		}
 	})
@@ -330,7 +330,7 @@ func TestNode(t *testing.T) {
 		expectEachOther(t, nodes)
 
 		for range 20 {
-			expectSameWorkloadOwner(t, uuidpb.Generate(), nodes)
+			expectSameWorkloadOwner(t, uuid.New(), nodes)
 		}
 	})
 
@@ -340,7 +340,7 @@ func TestNode(t *testing.T) {
 		n := newNode(t, signals, interval, timeout)
 		stop := start(t, n)
 
-		key := uuidpb.Generate()
+		key := uuid.New()
 		expectNodeOwnsWorkload(t, n, key, true)
 
 		stop()
@@ -367,7 +367,7 @@ func TestNode(t *testing.T) {
 
 		// Wait for the existing node to hear its own heartbeat, at which point
 		// it owns every workload, being the only live node.
-		expectNodeOwnsWorkload(t, existing, uuidpb.Generate(), true)
+		expectNodeOwnsWorkload(t, existing, uuid.New(), true)
 
 		joining := newNode(t, signals, time.Hour, 2*time.Hour)
 		xtesting.GoE(t, joining.Run)
@@ -380,26 +380,26 @@ func TestNode(t *testing.T) {
 func expectPeers(
 	t testing.TB,
 	n *Node,
-	want ...*uuidpb.UUID,
+	want ...uuid.UUID,
 ) {
 	t.Helper()
 
-	expected := uuidcollection.NewSet(want...)
+	expected := uuidset.New(want...)
 
 	xtesting.WaitForObservable(
 		t,
 		fmt.Sprintf("the node to have peers %s", expected),
 		n.LiveNodes(),
-		func(liveNodes *uuidcollection.Set) bool {
-			peers := uuidcollection.NewSet()
+		func(liveNodes uuidset.SetR) bool {
+			peers := uuidset.New()
 
 			for id := range liveNodes.All() {
-				if !id.Equal(n.ID) {
+				if id != n.ID {
 					peers.Add(id)
 				}
 			}
 
-			return peers.IsEqual(expected)
+			return peers.IsEqual(expected.R())
 		},
 	)
 }
@@ -407,7 +407,7 @@ func expectPeers(
 func expectNodeOwnsWorkload(
 	t testing.TB,
 	n *Node,
-	key *uuidpb.UUID,
+	key uuid.UUID,
 	want bool,
 ) {
 	t.Helper()
@@ -416,7 +416,7 @@ func expectNodeOwnsWorkload(
 		t,
 		fmt.Sprintf("the node's ownership of the workload with key %s to be %t", key, want),
 		n.LiveNodes(),
-		func(liveNodes *uuidcollection.Set) bool {
+		func(liveNodes uuidset.SetR) bool {
 			return n.OwnsWorkload(key, liveNodes) == want
 		},
 	)
@@ -424,7 +424,7 @@ func expectNodeOwnsWorkload(
 
 func expectExactlyOneOwner(
 	t testing.TB,
-	key *uuidpb.UUID,
+	key uuid.UUID,
 	nodes []*Node,
 ) {
 	t.Helper()
@@ -440,7 +440,7 @@ func expectExactlyOneOwner(
 
 // workloadOwners returns the nodes that own the workload with the given key,
 // according to their own memberships.
-func workloadOwners(key *uuidpb.UUID, nodes []*Node) []*Node {
+func workloadOwners(key uuid.UUID, nodes []*Node) []*Node {
 	var owners []*Node
 
 	for _, n := range nodes {
@@ -460,13 +460,13 @@ func keyFor(
 	t testing.TB,
 	owner *Node,
 	others ...*Node,
-) *uuidpb.UUID {
+) uuid.UUID {
 	t.Helper()
 
 	nodes := append([]*Node{owner}, others...)
 
 	for _, n := range nodes {
-		var peers []*uuidpb.UUID
+		var peers []uuid.UUID
 		for _, p := range nodes {
 			if p != n {
 				peers = append(peers, p.ID)
@@ -477,7 +477,7 @@ func keyFor(
 	}
 
 	for {
-		key := uuidpb.Generate()
+		key := uuid.New()
 
 		if got := workloadOwners(key, nodes); len(got) == 1 && got[0] == owner {
 			return key
@@ -491,7 +491,7 @@ func expectEachOther(t testing.TB, nodes []*Node) {
 	t.Helper()
 
 	for _, n := range nodes {
-		var peers []*uuidpb.UUID
+		var peers []uuid.UUID
 		for _, p := range nodes {
 			if p != n {
 				peers = append(peers, p.ID)
@@ -507,18 +507,18 @@ func expectEachOther(t testing.TB, nodes []*Node) {
 // reports that it owns the workload. It returns the owner's ID.
 func expectSameWorkloadOwner(
 	t testing.TB,
-	key *uuidpb.UUID,
+	key uuid.UUID,
 	nodes []*Node,
-) *uuidpb.UUID {
+) uuid.UUID {
 	t.Helper()
 
-	var owner *uuidpb.UUID
+	var owner uuid.UUID
 
 	xtesting.WaitFor(
 		t,
 		fmt.Sprintf("every node to agree on the owner of the workload with key %s", key),
 		func() bool {
-			owner = nil
+			owner = uuid.Nil()
 
 			for _, n := range nodes {
 				liveNodes, _ := n.LiveNodes().Load()
@@ -528,13 +528,15 @@ func expectSameWorkloadOwner(
 					return false
 				}
 
-				if owner == nil {
+				if owner == uuid.Nil() {
 					owner = got
-				} else if !got.Equal(owner) {
+				} else if got != owner {
 					return false
 				}
 
-				if n.OwnsWorkload(key, liveNodes) != n.ID.Equal(got) {
+				isOwner := n.ID == got
+
+				if n.OwnsWorkload(key, liveNodes) != isOwner {
 					return false
 				}
 			}

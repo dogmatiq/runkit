@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/uuidcollection"
@@ -42,7 +43,7 @@ func TestLocal(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  db,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),

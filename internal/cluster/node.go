@@ -6,15 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
 )
@@ -41,7 +42,7 @@ type Node struct {
 	Signals *signal.Bus
 
 	// ID is the ID of this node, which must be unique within the cluster.
-	ID *uuidpb.UUID
+	ID uuid.UUID
 
 	// HeartbeatInterval is the time between the heartbeats that this node
 	// sends.
@@ -61,7 +62,7 @@ type Node struct {
 	EngineLogger *slog.Logger
 
 	// liveNodes is the set of IDs of the nodes that this node sees as live.
-	liveNodes cosyne.Observable[*uuidcollection.Set]
+	liveNodes cosyne.Observable[uuidset.SetR]
 
 	// signalAttachmentsM guards signalAttachments.
 	signalAttachmentsM sync.Mutex
@@ -71,8 +72,9 @@ type Node struct {
 	signalAttachments map[string]map[*signalAttachment]struct{}
 
 	// heartbeats maps the ID of each live node to the time its most recent
-	// heartbeat was received.
-	heartbeats uuidcollection.Map[time.Time]
+	// heartbeat was received. It is set when the node starts exchanging
+	// heartbeats.
+	heartbeats map[uuid.UUID]time.Time
 
 	// lastSendErr explains why the most recent attempt to send this node's
 	// heartbeat failed, or is nil if it was sent.
@@ -90,20 +92,20 @@ type Node struct {
 // its own heartbeats arrive.
 //
 // The set is empty until the first heartbeat arrives, and once this node has
-// stopped. It must not be modified.
-func (n *Node) LiveNodes() cosyne.ObservableR[*uuidcollection.Set] {
+// stopped.
+func (n *Node) LiveNodes() cosyne.ObservableR[uuidset.SetR] {
 	return &n.liveNodes
 }
 
 // OwnsWorkload returns true if, among the given live nodes, this node owns the
 // workload with the given key.
-func (n *Node) OwnsWorkload(key *uuidpb.UUID, liveNodes *uuidcollection.Set) bool {
+func (n *Node) OwnsWorkload(key uuid.UUID, liveNodes uuidset.SetR) bool {
 	return ownsWorkload(n.ID, key, liveNodes)
 }
 
 // isSelf returns true if the given ID is this node's ID.
-func (n *Node) isSelf(id *uuidpb.UUID) bool {
-	return id.Equal(n.ID)
+func (n *Node) isSelf(id uuid.UUID) bool {
+	return id == n.ID
 }
 
 // Run listens for signals, sends and receives heartbeats, and publishes the set
@@ -120,7 +122,7 @@ func (n *Node) Run(ctx context.Context) error {
 	}
 
 	// After this node has stopped, it doesn't own any workloads.
-	defer n.liveNodes.Store(nil)
+	defer n.liveNodes.Store(uuidset.SetR{})
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -149,6 +151,8 @@ func (n *Node) Run(ctx context.Context) error {
 // heartbeats, and publishes the set of live nodes as it changes, until ctx is
 // canceled.
 func (n *Node) exchangeHeartbeats(ctx context.Context) error {
+	n.heartbeats = map[uuid.UUID]time.Time{}
+
 	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
 	defer stop()
 
@@ -247,7 +251,7 @@ func (n *Node) drainHeartbeats(ctx context.Context, heartbeats <-chan string) (c
 // A heartbeat that can not be sent is retried on the next tick, so that once
 // the database recovers this node is silent for no longer than one interval.
 func (n *Node) sendHeartbeat(ctx context.Context) {
-	topic := heartbeatTopic + "." + n.ID.AsString()
+	topic := heartbeatTopic + "." + n.ID.String()
 
 	err := n.Signals.Send(ctx, topic)
 	if err == nil {
@@ -274,7 +278,7 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 // changed is true if the node was not already live. peerJoined is true if, in
 // addition, it is a node other than this one.
 func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoined bool) {
-	nodeID, err := uuidpb.Parse(id)
+	nodeID, err := uuid.Parse(id)
 	if err != nil {
 		n.EngineLogger.WarnContext(
 			ctx,
@@ -286,8 +290,8 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoi
 	}
 
 	now := time.Now()
-	exists := n.heartbeats.Has(nodeID)
-	n.heartbeats.Set(nodeID, now)
+	_, exists := n.heartbeats[nodeID]
+	n.heartbeats[nodeID] = now
 
 	if !n.isSelf(nodeID) {
 		if exists {
@@ -331,12 +335,12 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoi
 func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 	now := time.Now()
 
-	for nodeID, lastBeatAt := range n.heartbeats.All() {
+	for nodeID, lastBeatAt := range n.heartbeats {
 		if now.Sub(lastBeatAt) <= n.HeartbeatTimeout {
 			continue
 		}
 
-		n.heartbeats.Delete(nodeID)
+		delete(n.heartbeats, nodeID)
 		changed = true
 
 		if n.isSelf(nodeID) {
@@ -366,11 +370,11 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 
 // publishLiveNodes publishes the set of live nodes after it has changed.
 func (n *Node) publishLiveNodes() {
-	liveNodes := uuidcollection.NewSet()
+	liveNodes := &uuidset.Set{}
 
-	for nodeID := range n.heartbeats.Keys() {
+	for nodeID := range maps.Keys(n.heartbeats) {
 		liveNodes.Add(nodeID)
 	}
 
-	n.liveNodes.Store(liveNodes)
+	n.liveNodes.Store(liveNodes.R())
 }

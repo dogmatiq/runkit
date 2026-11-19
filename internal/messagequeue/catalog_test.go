@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -30,7 +31,7 @@ func TestCatalog(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  db,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),

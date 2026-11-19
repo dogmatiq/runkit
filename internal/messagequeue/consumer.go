@@ -151,7 +151,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		queues := uuidcollection.NewSet()
 		for queueID := range availableQueues.All() {
-			if c.Node.OwnsWorkload(queueID, liveNodes) {
+			if c.Node.OwnsWorkload(queueID.AsStd(), liveNodes) {
 				queues.Add(queueID)
 			}
 		}

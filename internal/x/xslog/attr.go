@@ -3,6 +3,7 @@ package xslog
 import (
 	"errors"
 	"log/slog"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
@@ -14,8 +15,13 @@ import (
 )
 
 // UUID returns an [slog.Attr] for a UUID value.
-func UUID(k string, v *uuidpb.UUID) slog.Attr {
-	return slog.String(k, v.AsString())
+func UUID[T *uuidpb.UUID | uuid.UUID](k string, v T) slog.Attr {
+	switch v := any(v).(type) {
+	case *uuidpb.UUID:
+		return slog.String(k, v.AsString())
+	default:
+		return slog.String(k, v.(uuid.UUID).String())
+	}
 }
 
 // Identity returns an [slog.Attr] for an application or handler identity.

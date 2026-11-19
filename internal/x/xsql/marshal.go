@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"iter"
+	"uuid"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -12,7 +13,64 @@ import (
 
 // UUID returns a value that marshals and unmarshals a UUID to/from its binary
 // representation as used in the database.
-func UUID(id *uuidpb.UUID) ScannerValuer {
+//
+// A [uuid.UUID] value can only be marshaled. A *[uuid.UUID] can be marshaled
+// and unmarshaled. A NULL is unmarshaled as the zero [uuid.UUID], and the zero
+// [uuid.UUID] is marshaled as NULL.
+func UUID[T *uuidpb.UUID | uuid.UUID | *uuid.UUID](id T) ScannerValuer {
+	switch id := any(id).(type) {
+	case *uuidpb.UUID:
+		return protoUUID(id)
+	case uuid.UUID:
+		return scannerValuerFuncs{
+			func(any) error {
+				return fmt.Errorf("cannot scan into a %T value", id)
+			},
+			func() (driver.Value, error) {
+				return stdUUIDValue(id)
+			},
+		}
+	default:
+		ptr := id.(*uuid.UUID)
+
+		return scannerValuerFuncs{
+			func(v any) error {
+				if ptr == nil {
+					return fmt.Errorf("cannot scan into nil UUID pointer")
+				}
+
+				switch v := v.(type) {
+				case nil:
+					*ptr = uuid.Nil()
+					return nil
+				case string:
+					return ptr.UnmarshalText([]byte(v))
+				default:
+					return fmt.Errorf("cannot scan %T into %T", v, ptr)
+				}
+			},
+			func() (driver.Value, error) {
+				if ptr == nil {
+					return nil, nil
+				}
+
+				return stdUUIDValue(*ptr)
+			},
+		}
+	}
+}
+
+// stdUUIDValue returns the database value of the given UUID.
+func stdUUIDValue(id uuid.UUID) (driver.Value, error) {
+	if id == uuid.Nil() {
+		return nil, nil
+	}
+
+	return id.String(), nil
+}
+
+// protoUUID returns a value that marshals and unmarshals a *[uuidpb.UUID].
+func protoUUID(id *uuidpb.UUID) ScannerValuer {
 	return scannerValuerFuncs{
 		func(v any) error {
 			if id == nil {
@@ -38,16 +96,6 @@ func UUID(id *uuidpb.UUID) ScannerValuer {
 			return string(data), err
 		},
 	}
-}
-
-// UUIDs returns a []string containing the text representation of each UUID,
-// suitable for use with PostgreSQL's ANY($n) operator.
-func UUIDs(ids ...*uuidpb.UUID) any {
-	values := make([]string, len(ids))
-	for idx, id := range ids {
-		values[idx] = id.AsString()
-	}
-	return values
 }
 
 // UUIDSeq collects UUIDs from an iterator into a []string containing the text

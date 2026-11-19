@@ -69,7 +69,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		streamIDs := uuidcollection.NewSet()
 		for streamID := range availableStreamIDs.All() {
 			key := c.Sink.RendezvousKey(streamID)
-			if c.Node.OwnsWorkload(key, liveNodes) {
+			if c.Node.OwnsWorkload(key.AsStd(), liveNodes) {
 				streamIDs.Add(streamID)
 			}
 		}
