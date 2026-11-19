@@ -3,11 +3,11 @@ package messagequeue_test
 import (
 	"database/sql"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
@@ -16,13 +16,13 @@ import (
 )
 
 func TestRouter(t *testing.T) {
-	aggregateKey := uuidpb.Generate()
-	integrationKey := uuidpb.Generate()
+	aggregateKey := uuid.New()
+	integrationKey := uuid.New()
 
 	// commandTypeID returns the ID of the given command's type.
-	commandTypeID := func(c dogma.Command) *uuidpb.UUID {
+	commandTypeID := func(c dogma.Command) uuid.UUID {
 		mt, _ := dogma.RegisteredMessageTypeOf(c)
-		return uuidpb.FromStd(mt.ID())
+		return mt.ID()
 	}
 
 	// setup returns a router for a node with three handlers:
@@ -36,36 +36,25 @@ func TestRouter(t *testing.T) {
 	setup := func(t *testing.T, route func(dogma.Command) string) (*sql.DB, *Router) {
 		db := xtesting.NewDatabase(t)
 
-		handlers := &uuidcollection.Map[CommandHandler]{}
-
-		handlers.Set(
-			commandTypeID(stubs.CommandA1),
-			CommandHandler{
+		handlers := map[uuid.UUID]CommandHandler{
+			commandTypeID(stubs.CommandA1): {
 				Key: aggregateKey,
 				Aggregate: &stubs.AggregateMessageHandlerStub[dogma.AggregateRoot]{
 					RouteCommandToInstanceFunc: route,
 				},
 			},
-		)
-
-		handlers.Set(
-			commandTypeID(stubs.CommandB1),
-			CommandHandler{
+			commandTypeID(stubs.CommandB1): {
 				Key:                   integrationKey,
 				ConcurrencyPreference: dogma.MinimizeConcurrency,
 			},
-		)
-
-		handlers.Set(
-			commandTypeID(stubs.CommandC1),
-			CommandHandler{
-				Key:                   uuidpb.Generate(),
+			commandTypeID(stubs.CommandC1): {
+				Key:                   uuid.New(),
 				ConcurrencyPreference: dogma.MaximizeConcurrency,
 			},
-		)
+		}
 
 		router := &Router{
-			NodeID:          uuidpb.Generate(),
+			NodeID:          uuid.New(),
 			CommandHandlers: handlers,
 		}
 
@@ -78,21 +67,19 @@ func TestRouter(t *testing.T) {
 	insertInstance := func(
 		t *testing.T,
 		db *sql.DB,
-		handlerKey *uuidpb.UUID,
+		handlerKey uuid.UUID,
 		instanceID string,
 		bound bool,
-	) *uuidpb.UUID {
+	) uuid.UUID {
 		t.Helper()
 
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		if bound {
-			streamID = &uuidpb.UUID{}
-
 			if err := db.QueryRowContext(
 				t.Context(),
 				`SELECT runkit.acquire_event_stream()`,
-			).Scan(xsql.UUID(streamID)); err != nil {
+			).Scan(xsql.UUID(&streamID)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -132,7 +119,7 @@ func TestRouter(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !got.Equal(streamID) {
+			if got != streamID {
 				t.Fatalf("unexpected queue ID: got %s, want %s", got, streamID)
 			}
 		})
@@ -147,7 +134,7 @@ func TestRouter(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !got.Equal(integrationKey) {
+			if got != integrationKey {
 				t.Fatalf("unexpected queue ID: got %s, want %s", got, integrationKey)
 			}
 		})
@@ -173,7 +160,7 @@ func TestRouter(t *testing.T) {
 			{
 				Name:    "it returns the node ID when only another aggregate has an instance with the target ID",
 				Route:   routeToInstance,
-				Setup:   func(t *testing.T, db *sql.DB) { insertInstance(t, db, uuidpb.Generate(), "<instance>", true) },
+				Setup:   func(t *testing.T, db *sql.DB) { insertInstance(t, db, uuid.New(), "<instance>", true) },
 				Command: stubs.CommandA1,
 			},
 			{
@@ -214,7 +201,7 @@ func TestRouter(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if !got.Equal(router.NodeID) {
+				if got != router.NodeID {
 					t.Fatalf("unexpected queue ID: got %s, want %s", got, router.NodeID)
 				}
 			})
@@ -227,12 +214,12 @@ func TestRouter(t *testing.T) {
 
 			db, router := setup(t, routeToInstance)
 
-			got, err := router.RouteDeadlinesToQueue(t.Context(), db, uuidpb.Generate(), "<instance>")
+			got, err := router.RouteDeadlinesToQueue(t.Context(), db, uuid.New(), "<instance>")
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if !got.Equal(router.NodeID) {
+			if got != router.NodeID {
 				t.Fatalf("unexpected queue ID: got %s, want %s", got, router.NodeID)
 			}
 		})

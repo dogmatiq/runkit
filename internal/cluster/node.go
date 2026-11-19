@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"sync"
 	"time"
 	"uuid"
@@ -372,7 +371,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 func (n *Node) publishLiveNodes() {
 	liveNodes := &uuidset.Set{}
 
-	for nodeID := range maps.Keys(n.heartbeats) {
+	for nodeID := range n.heartbeats {
 		liveNodes.Add(nodeID)
 	}
 

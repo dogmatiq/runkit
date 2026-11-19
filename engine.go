@@ -9,13 +9,13 @@ import (
 	"net"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -185,7 +185,7 @@ type Engine struct {
 
 	// queueSinks maps the ID of each command and deadline type to the sink for
 	// messages of that type.
-	queueSinks uuidcollection.Map[messagequeue.Sink]
+	queueSinks map[uuid.UUID]messagequeue.Sink
 
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
@@ -245,6 +245,8 @@ func New(
 
 		engineLogger: slog.Default(),
 		appLogger:    slog.Default(),
+
+		queueSinks: map[uuid.UUID]messagequeue.Sink{},
 	}
 
 	for _, option := range options {
@@ -327,7 +329,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.commandTypes = executableCommandTypes(e.appConfig)
 
 	e.queueRouter = &messagequeue.Router{
-		NodeID:          e.nodeID,
+		NodeID:          e.nodeID.AsStd(),
 		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
 	}
 

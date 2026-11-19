@@ -11,7 +11,6 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -34,8 +33,8 @@ func TestDeadlineSink(t *testing.T) {
 		sink := &DeadlineSink{
 			Packer: packer,
 			QueueRouter: &messagequeue.Router{
-				NodeID:          uuidpb.Generate(),
-				CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
+				NodeID:          uuid.New(),
+				CommandHandlers: map[uuid.UUID]messagequeue.CommandHandler{},
 			},
 			Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
 				NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },

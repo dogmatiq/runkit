@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"uuid"
 
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/failure"
 )
 
@@ -70,13 +70,13 @@ type Sink interface {
 // that the consumer claims the message for an attempt.
 type Delivery struct {
 	// MessageID is the ID of the message being delivered.
-	MessageID *uuidpb.UUID
+	MessageID uuid.UUID
 
 	// MessageTypeID is the ID of the message's type.
-	MessageTypeID *uuidpb.UUID
+	MessageTypeID uuid.UUID
 
 	// QueueID is the ID of the message's queue.
-	QueueID *uuidpb.UUID
+	QueueID uuid.UUID
 
 	// Streak is the delivery's failure streak, as it was when the consumer
 	// claimed the message.

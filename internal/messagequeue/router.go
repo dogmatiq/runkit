@@ -5,12 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -21,18 +20,18 @@ import (
 // time, and later messages for a process instance follow its stored queue.
 type Router struct {
 	// NodeID is the ID of the local node.
-	NodeID *uuidpb.UUID
+	NodeID uuid.UUID
 
 	// CommandHandlers maps the ID of each command type to the handler for
 	// commands of that type.
-	CommandHandlers *uuidcollection.Map[CommandHandler]
+	CommandHandlers map[uuid.UUID]CommandHandler
 }
 
 // CommandHandler is the handler for a particular command type, with the values
 // that [Router.RouteCommandToQueue] reads from its configuration.
 type CommandHandler struct {
 	// Key is the handler's identity key.
-	Key *uuidpb.UUID
+	Key uuid.UUID
 
 	// Aggregate is the application's aggregate message handler, or nil if an
 	// integration handles the command type.
@@ -67,8 +66,8 @@ func (r *Router) RouteCommandToQueue(
 	ctx context.Context,
 	q xsql.Querier,
 	env *envelopepb.Envelope,
-) (*uuidpb.UUID, error) {
-	handler, ok := r.CommandHandlers.Get(env.GetBody().GetMessage().GetTypeId())
+) (uuid.UUID, error) {
+	handler, ok := r.CommandHandlers[env.GetBody().GetMessage().GetTypeId().AsStd()]
 
 	// No handler is known for the command's type.
 	if !ok {
@@ -118,18 +117,18 @@ func (r *Router) RouteCommandToQueue(
 		instanceID,
 	)
 
-	streamID := &uuidpb.UUID{}
+	var streamID uuid.UUID
 
-	if err := row.Scan(xsql.UUID(streamID)); err != nil {
+	if err := row.Scan(xsql.UUID(&streamID)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return r.NodeID, nil
 		}
 
-		return nil, fmt.Errorf("unable to load aggregate instance's event stream: %w", err)
+		return uuid.Nil(), fmt.Errorf("unable to load aggregate instance's event stream: %w", err)
 	}
 
 	// A NULL stream_id scans as the nil UUID, whose bits are all zero.
-	if streamID.Equal(nil) {
+	if streamID == uuid.Nil() {
 		return r.NodeID, nil
 	}
 
@@ -146,8 +145,8 @@ func (r *Router) RouteCommandToQueue(
 func (r *Router) RouteDeadlinesToQueue(
 	ctx context.Context,
 	q xsql.Querier,
-	handlerKey *uuidpb.UUID,
+	handlerKey uuid.UUID,
 	instanceID string,
-) (*uuidpb.UUID, error) {
+) (uuid.UUID, error) {
 	return r.NodeID, nil
 }

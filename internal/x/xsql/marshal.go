@@ -101,12 +101,18 @@ func protoUUID(id *uuidpb.UUID) ScannerValuer {
 // UUIDSeq collects UUIDs from an iterator into a []string containing the text
 // representation of each UUID, suitable for use with PostgreSQL's ANY($n)
 // operator.
-func UUIDSeq(seq iter.Seq[*uuidpb.UUID]) any {
+func UUIDSeq[T *uuidpb.UUID | uuid.UUID](seq iter.Seq[T]) any {
 	// Use a non-nil empty slice so that pgx encodes it as an empty PostgreSQL
 	// array ('{}') rather than NULL.
 	values := []string{}
+
 	for id := range seq {
-		values = append(values, id.AsString())
+		switch id := any(id).(type) {
+		case *uuidpb.UUID:
+			values = append(values, id.AsString())
+		case uuid.UUID:
+			values = append(values, id.String())
+		}
 	}
 
 	return values

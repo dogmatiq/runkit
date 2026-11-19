@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"log/slog"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -33,7 +33,7 @@ type Consumer struct {
 	// type.
 	//
 	// The consumer ignores queued messages of any other type.
-	Sinks uuidcollection.Map[Sink]
+	Sinks map[uuid.UUID]Sink
 
 	// ConcurrencyLimit is the maximum number of messages that the consumer attempts
 	// at once.
@@ -77,14 +77,14 @@ type Consumer struct {
 
 	// attemptsInProgress holds the ID of the message for each attempt in
 	// progress.
-	attemptsInProgress uuidcollection.Set
+	attemptsInProgress uuidset.Set
 
 	// contendedMessages maps the ID of each contended message to the time at
 	// which the consumer may attempt it again.
 	//
 	// A message is deemed "contended" if another transaction holds its lock,
 	// so the consumer can't claim it for an attempt.
-	contendedMessages uuidcollection.Map[time.Time]
+	contendedMessages map[uuid.UUID]time.Time
 
 	// backoffUntil is the end of the consumer's backoff.
 	//
@@ -97,10 +97,10 @@ type Consumer struct {
 	// detachQueueSignal holds a function for each queue being consumed.
 	//
 	// Calling it detaches the queue's signal from messageAdded.
-	detachQueueSignal uuidcollection.Map[func()]
+	detachQueueSignal map[uuid.UUID]func()
 
 	// messageTypeIDs is the set of IDs of the message types in Sinks.
-	messageTypeIDs *uuidcollection.Set
+	messageTypeIDs *uuidset.Set
 
 	// failures keeps the streak of the consumer's own failures, such as losing
 	// its database connection.
@@ -125,10 +125,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 		panic("contention delay must be positive")
 	}
 
-	c.messageTypeIDs = uuidcollection.NewSet()
-	for typeID := range c.Sinks.Keys() {
+	c.messageTypeIDs = &uuidset.Set{}
+	for typeID := range c.Sinks {
 		c.messageTypeIDs.Add(typeID)
 	}
+
+	c.contendedMessages = map[uuid.UUID]time.Time{}
+	c.detachQueueSignal = map[uuid.UUID]func(){}
 
 	c.failures = &failure.Tracker{
 		Description:  "consume queue",
@@ -149,12 +152,14 @@ func (c *Consumer) Run(ctx context.Context) error {
 		liveNodes, liveNodesChanged := c.Node.LiveNodes().Load()
 		availableQueues, availableQueuesChanged := c.Queues.QueueIDs().Load()
 
-		queues := uuidcollection.NewSet()
+		ownedQueues := &uuidset.Set{}
 		for queueID := range availableQueues.All() {
-			if c.Node.OwnsWorkload(queueID.AsStd(), liveNodes) {
-				queues.Add(queueID)
+			if c.Node.OwnsWorkload(queueID, liveNodes) {
+				ownedQueues.Add(queueID)
 			}
 		}
+
+		queues := ownedQueues.R()
 
 		c.attachQueueSignals(ctx, queues)
 
@@ -190,20 +195,20 @@ func (c *Consumer) Run(ctx context.Context) error {
 // c.messageAdded, and detaches the signal of every other queue.
 func (c *Consumer) attachQueueSignals(
 	ctx context.Context,
-	queues *uuidcollection.Set,
+	queues uuidset.SetR,
 ) {
-	for queueID, detach := range c.detachQueueSignal.All() {
+	for queueID, detach := range c.detachQueueSignal {
 		if !queues.Has(queueID) {
 			detach()
-			c.detachQueueSignal.Delete(queueID)
+			delete(c.detachQueueSignal, queueID)
 		}
 	}
 
 	for queueID := range queues.All() {
-		if !c.detachQueueSignal.Has(queueID) {
-			signal := "messages_enqueued." + queueID.AsString()
+		if _, attached := c.detachQueueSignal[queueID]; !attached {
+			signal := "messages_enqueued." + queueID.String()
 			detach := c.Node.AttachSignal(ctx, signal, &c.messageAdded)
-			c.detachQueueSignal.Set(queueID, detach)
+			c.detachQueueSignal[queueID] = detach
 		}
 	}
 }
@@ -228,7 +233,7 @@ func (c *Consumer) attachQueueSignals(
 // at its concurrency limit, or when there are no messages that are due.
 func (c *Consumer) startAttempts(
 	ctx context.Context,
-	queues *uuidcollection.Set,
+	queues uuidset.SetR,
 ) (nextAttemptDue <-chan time.Time, backlogIsEmpty bool) {
 	// An attempt ended with an error, so the consumer doesn't start any
 	// attempts until its backoff ends.
@@ -248,9 +253,9 @@ func (c *Consumer) startAttempts(
 	// attempt, or zero if there's no such time.
 	var next time.Time
 
-	for messageID, retryAt := range c.contendedMessages.All() {
+	for messageID, retryAt := range c.contendedMessages {
 		if !time.Now().Before(retryAt) {
-			c.contendedMessages.Delete(messageID)
+			delete(c.contendedMessages, messageID)
 		} else if next.IsZero() || retryAt.Before(next) {
 			next = retryAt
 		}
@@ -309,7 +314,7 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 		// straight away, without the message counting toward the concurrency
 		// limit.
 		retryAt := time.Now().Add(c.ContentionDelay)
-		c.contendedMessages.Set(a.MessageID, retryAt)
+		c.contendedMessages[a.MessageID] = retryAt
 	case a.Err != nil:
 		c.backoffUntil = c.failures.WorkFailed(ctx, a.Err)
 	default:
@@ -323,7 +328,7 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 // it has been made.
 type deliveryAttempt struct {
 	// MessageID is the ID of the message to deliver.
-	MessageID *uuidpb.UUID
+	MessageID uuid.UUID
 
 	// Completed is true if the attempt completed the delivery.
 	Completed bool

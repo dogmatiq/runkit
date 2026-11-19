@@ -4,6 +4,7 @@ package uuidset
 
 import (
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 	"uuid"
@@ -118,8 +119,11 @@ func (s *Set) Diff(x SetR) *Set {
 
 // Clone returns a new set with the same members as the set.
 func (s *Set) Clone() *Set {
-	members := slices.Collect(s.All())
-	return New(members...)
+	if s == nil {
+		return &Set{}
+	}
+
+	return &Set{members: maps.Clone(s.members)}
 }
 
 // String returns the members of the set in braces, in ascending order,

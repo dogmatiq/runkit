@@ -2,6 +2,7 @@ package runkit
 
 import (
 	"reflect"
+	"uuid"
 
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
@@ -33,8 +34,8 @@ func executableCommandTypes(appConfig *config.Application) map[reflect.Type]stru
 // commandHandlersForQueueRouter returns the handler of each command type,
 // keyed by the type's ID, for [messagequeue.Router] to choose the queue for
 // each command.
-func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollection.Map[messagequeue.CommandHandler] {
-	handlers := &uuidcollection.Map[messagequeue.CommandHandler]{}
+func commandHandlersForQueueRouter(appConfig *config.Application) map[uuid.UUID]messagequeue.CommandHandler {
+	handlers := map[uuid.UUID]messagequeue.CommandHandler{}
 
 	for _, handlerConfig := range appConfig.Handlers() {
 		var handler messagequeue.CommandHandler
@@ -42,12 +43,12 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 		switch handlerConfig := handlerConfig.(type) {
 		case *config.Aggregate:
 			handler = messagequeue.CommandHandler{
-				Key:       handlerConfig.Identity().GetKey(),
+				Key:       handlerConfig.Identity().GetKey().AsStd(),
 				Aggregate: handlerConfig.Interface(),
 			}
 		case *config.Integration:
 			handler = messagequeue.CommandHandler{
-				Key:                   handlerConfig.Identity().GetKey(),
+				Key:                   handlerConfig.Identity().GetKey().AsStd(),
 				ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
 			}
 		default:
@@ -57,7 +58,7 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 		commandTypeIDs := inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind)
 
 		for commandTypeID := range commandTypeIDs.All() {
-			handlers.Set(commandTypeID, handler)
+			handlers[commandTypeID.AsStd()] = handler
 		}
 	}
 

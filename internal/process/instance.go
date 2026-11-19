@@ -52,7 +52,9 @@ func (i *instance) BindToDeadlineQueue(
 		return nil
 	}
 
-	queueID, err := router.RouteDeadlinesToQueue(ctx, tx, i.HandlerKey, i.ID)
+	handlerKey := i.HandlerKey.AsStd()
+
+	queueID, err := router.RouteDeadlinesToQueue(ctx, tx, handlerKey, i.ID)
 	if err != nil {
 		return err
 	}
@@ -71,7 +73,7 @@ func (i *instance) BindToDeadlineQueue(
 		return fmt.Errorf("unable to bind process instance to deadline queue: %w", err)
 	}
 
-	i.DeadlineQueueID = queueID
+	i.DeadlineQueueID = uuidpb.FromStd(queueID)
 
 	return nil
 }

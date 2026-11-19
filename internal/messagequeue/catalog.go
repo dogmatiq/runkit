@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
@@ -32,15 +32,14 @@ type Catalog struct {
 	EngineLogger *slog.Logger
 
 	// queueIDs is the set of IDs of the queues that have messages.
-	queueIDs cosyne.Observable[*uuidcollection.Set]
+	queueIDs cosyne.Observable[uuidset.SetR]
 }
 
 // QueueIDs returns an observable set containing the ID of each queue that has
 // messages.
 //
-// The set is empty until it is first read from the database. It must not be
-// modified.
-func (c *Catalog) QueueIDs() cosyne.ObservableR[*uuidcollection.Set] {
+// The set is empty until it is first read from the database.
+func (c *Catalog) QueueIDs() cosyne.ObservableR[uuidset.SetR] {
 	return &c.queueIDs
 }
 
@@ -73,7 +72,7 @@ func (c *Catalog) run(ctx context.Context) error {
 		}
 
 		if current, _ := c.queueIDs.Load(); !queueIDs.IsEqual(current) {
-			c.queueIDs.Store(queueIDs)
+			c.queueIDs.Store(queueIDs.R())
 		}
 
 		if err := changed.WaitContext(ctx); err != nil {
@@ -83,7 +82,7 @@ func (c *Catalog) run(ctx context.Context) error {
 }
 
 // load returns the IDs of the queues that have messages.
-func (c *Catalog) load(ctx context.Context) (*uuidcollection.Set, error) {
+func (c *Catalog) load(ctx context.Context) (*uuidset.Set, error) {
 	// The query reads one entry of the queued_messages_by_queue index for each
 	// queue, so its cost depends on the number of queues, not the number of
 	// messages. PostgreSQL can't skip from one distinct value to the next in
@@ -121,13 +120,13 @@ func (c *Catalog) load(ctx context.Context) (*uuidcollection.Set, error) {
 	}
 	defer rows.Close()
 
-	queueIDs := uuidcollection.NewSet()
+	queueIDs := &uuidset.Set{}
 
 	for rows.Next() {
-		queueID := &uuidpb.UUID{}
+		var queueID uuid.UUID
 
 		if err := rows.Scan(
-			xsql.UUID(queueID),
+			xsql.UUID(&queueID),
 		); err != nil {
 			return nil, fmt.Errorf("unable to scan queue: %w", err)
 		}
