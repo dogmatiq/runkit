@@ -3,12 +3,8 @@ package schema_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -17,11 +13,9 @@ import (
 	"time"
 
 	"github.com/dogmatiq/runkit/internal/schema"
+	"github.com/dogmatiq/runkit/internal/schema/internal/schematest"
 	"github.com/dogmatiq/runkit/internal/schema/internal/version"
-	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
-	"github.com/jackc/pgerrcode"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -155,77 +149,130 @@ func TestApply_reappliesCurrent(t *testing.T) {
 	)
 }
 
-// TestApply_doesNotDeadlockWithEventAppend verifies that an upgrade and a
-// transaction that appends events to a new event stream both finish when they
-// run at the same time.
+// TestApply_doesNotDeadlockWithEngineTransactions verifies that an upgrade and a
+// transaction of a running engine both finish when they run at the same time.
 //
-// The transaction locks the "event_streams" table, then the "events" table,
-// and the upgrade locks both tables too. The test starts the upgrade after the
-// transaction takes its first lock, and before it takes its second.
+// Each case is a transaction that locks some tables, then others, as the engine
+// does when it appends events and when it delivers a message. The test starts
+// the upgrade between the two groups of locks. The upgrade must lock the tables
+// in the same order as the transaction. Otherwise, each of them can wait for a
+// lock that the other holds, and PostgreSQL ends one of them with a deadlock
+// error.
 //
 // The test changes [schema.TargetVersion], so it must not call t.Parallel().
 // Go runs the parallel tests only after every test that doesn't call it.
-func TestApply_doesNotDeadlockWithEventAppend(t *testing.T) {
-	db := xtesting.NewDatabaseAsOwner(t)
+func TestApply_doesNotDeadlockWithEngineTransactions(t *testing.T) {
+	cases := []struct {
+		Name string
 
-	target := schema.TargetVersion
-	t.Cleanup(func() { schema.TargetVersion = target })
+		// First is the statement that takes the transaction's first locks.
+		First string
 
-	schema.TargetVersion = version.Version{
-		target.Major(),
-		target.Minor(),
-		target.Patch() + 1,
+		// Second is the statement that takes the transaction's other locks. It
+		// runs after the upgrade is waiting for a lock.
+		Second string
+	}{
+		{
+			Name: "an event append",
+
+			// Creating the event stream locks the "event_streams" table.
+			First: `INSERT INTO runkit.event_streams (id)
+				VALUES ('3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01')`,
+
+			// Appending the event locks the "events" table.
+			Second: `SELECT runkit.append_events_to_specific_stream(
+				'3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01',
+				'5b0d9a52-1f5e-4c0b-8a43-0e6f3d2c9a02',
+				NULL,
+				NULL,
+				ARRAY[
+					ROW(
+						'a4e1c7d3-9b2f-4e68-b0c5-7f1d8e3a6b03',
+						'd2f7b8a1-4c3e-4d59-a6e0-9c8b7a5f4e04',
+						'\x01'
+					)::runkit.event
+				]
+			)`,
+		},
+		{
+			Name: "a delivery",
+
+			// Adding a message to a queue locks the "queued_messages" table.
+			First: `INSERT INTO runkit.queued_messages (
+					message_id,
+					message_type_id,
+					queue_id,
+					envelope,
+					scheduled_for,
+					next_attempt_at
+				) VALUES (
+					'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
+					'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
+					'9e8d7c6b-5a49-4382-b1a0-0f9e8d7c6b02',
+					'\x01',
+					now(),
+					now()
+				)`,
+
+			// Recording an event locks the "event_streams" and "events" tables.
+			Second: `SELECT runkit.append_events_to_any_stream(
+				'5b0d9a52-1f5e-4c0b-8a43-0e6f3d2c9a02',
+				NULL,
+				NULL,
+				ARRAY[
+					ROW(
+						'a4e1c7d3-9b2f-4e68-b0c5-7f1d8e3a6b03',
+						'd2f7b8a1-4c3e-4d59-a6e0-9c8b7a5f4e04',
+						'\x01'
+					)::runkit.event
+				]
+			)`,
+		},
 	}
 
-	appender, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer appender.Rollback()
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			db := xtesting.NewDatabaseAsOwner(t)
 
-	// Creating the event stream locks the "event_streams" table.
-	if _, err := appender.ExecContext(
-		t.Context(),
-		`INSERT INTO runkit.event_streams (id)
-		VALUES ('3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01')`,
-	); err != nil {
-		t.Fatal(err)
-	}
+			target := schema.TargetVersion
+			t.Cleanup(func() { schema.TargetVersion = target })
 
-	upgraded := make(chan error, 1)
-	go func() {
-		upgraded <- schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout)
-	}()
+			schema.TargetVersion = version.Version{
+				target.Major(),
+				target.Minor(),
+				target.Patch() + 1,
+			}
 
-	// The upgrade now waits for the lock on "event_streams".
-	waitForLockWaiters(t, db, 1)
+			tx, err := db.BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
 
-	// Appending the event locks the "events" table.
-	if _, err := appender.ExecContext(
-		t.Context(),
-		`SELECT runkit.append_events_to_specific_stream(
-			'3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01',
-			'5b0d9a52-1f5e-4c0b-8a43-0e6f3d2c9a02',
-			NULL,
-			NULL,
-			ARRAY[
-				ROW(
-					'a4e1c7d3-9b2f-4e68-b0c5-7f1d8e3a6b03',
-					'd2f7b8a1-4c3e-4d59-a6e0-9c8b7a5f4e04',
-					'\x01'
-				)::runkit.event
-			]
-		)`,
-	); err != nil {
-		t.Fatalf("unable to append an event during an upgrade: %v", err)
-	}
+			if _, err := tx.ExecContext(t.Context(), c.First); err != nil {
+				t.Fatal(err)
+			}
 
-	if err := appender.Commit(); err != nil {
-		t.Fatal(err)
-	}
+			upgraded := make(chan error, 1)
+			go func() {
+				upgraded <- schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout)
+			}()
 
-	if err := <-upgraded; err != nil {
-		t.Fatalf("unable to upgrade during an append: %v", err)
+			// The upgrade is now waiting for a lock that the transaction holds.
+			xtesting.WaitForLockWaiters(t, db, 1)
+
+			if _, err := tx.ExecContext(t.Context(), c.Second); err != nil {
+				t.Fatalf("unable to run the transaction during an upgrade: %v", err)
+			}
+
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := <-upgraded; err != nil {
+				t.Fatalf("unable to upgrade during the transaction: %v", err)
+			}
+		})
 	}
 }
 
@@ -627,7 +674,7 @@ func TestApply_doesNotWaitForOtherCallWhenSatisfied(t *testing.T) {
 		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
 	}()
 
-	waitForLockWaiters(t, db, 1)
+	xtesting.WaitForLockWaiters(t, db, 1)
 
 	// Record the target schema version. A database has this version recorded
 	// while a newer runkit version migrates it to a later one.
@@ -1020,271 +1067,6 @@ func expectRowsMigratedToV2_0_0(t testing.TB, db *sql.DB) {
 	)
 }
 
-// TestMigrate_toV2_0_0_waitsForEngineWrites verifies that the migration to
-// schema version v2.0.0 doesn't lose a command that an engine built for the
-// earlier schema adds while the migration runs.
-func TestMigrate_toV2_0_0_waitsForEngineWrites(t *testing.T) {
-	t.Parallel()
-
-	db := xtesting.NewDatabaseWithoutSchema(t)
-	createSchemaOf(t, db, "v0.2.0")
-
-	// Hold a lock on a table that the migration locks, so that the migration
-	// waits.
-	blocker, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer blocker.Rollback()
-
-	if _, err := blocker.ExecContext(
-		t.Context(),
-		`SELECT COUNT(*) FROM commandqueue.idempotency_keys`,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated := make(chan error, 1)
-	go func() {
-		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
-	}()
-
-	waitForLockWaiters(t, db, 1)
-
-	inserted := make(chan error, 1)
-	go func() {
-		_, err := db.ExecContext(
-			t.Context(),
-			`INSERT INTO commandqueue.commands (
-				message_id,
-				message_type_id,
-				envelope,
-				failures,
-				enqueued_at,
-				deliver_at
-			) VALUES (
-				'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
-				'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
-				'\x01',
-				0,
-				'2100-01-01T00:00:00Z',
-				'2100-01-01T00:00:00Z'
-			)`,
-		)
-		inserted <- err
-	}()
-
-	// Wait until the engine's insert has either finished or is waiting for a
-	// lock that the migration holds.
-	var (
-		insertErr      error
-		insertFinished bool
-	)
-	waitUntil(t, func() bool {
-		select {
-		case insertErr = <-inserted:
-			insertFinished = true
-			return true
-		default:
-			return countLockWaiters(t, db) >= 2
-		}
-	})
-
-	if err := blocker.Rollback(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := <-migrated; err != nil {
-		t.Fatal(err)
-	}
-
-	if !insertFinished {
-		insertErr = <-inserted
-	}
-
-	if insertErr != nil {
-		// The engine's write failed because the migration dropped the table,
-		// so the engine's caller knows that the command wasn't accepted. Any
-		// other error means that the insert never reached the table.
-		pgErr, ok := errors.AsType[*pgconn.PgError](insertErr)
-		if !ok || pgErr.Code != pgerrcode.UndefinedTable {
-			t.Fatalf("unexpected error from the engine's insert: %v", insertErr)
-		}
-
-		xtesting.ExpectQueryResult(
-			t,
-			"the command that the engine failed to add isn't in the queue",
-			0,
-			db,
-			`SELECT COUNT(*)
-			FROM runkit.queued_messages`,
-		)
-
-		return
-	}
-
-	xtesting.ExpectQueryResult(
-		t,
-		"the command that the engine added is in the queue",
-		1,
-		db,
-		`SELECT COUNT(*)
-		FROM runkit.queued_messages`,
-	)
-}
-
-// TestMigrate_toV2_0_0_waitsForEngineDeliveries verifies that the migration to
-// schema version v2.0.0 doesn't copy a command that an engine built for the
-// earlier schema delivers while the migration runs.
-func TestMigrate_toV2_0_0_waitsForEngineDeliveries(t *testing.T) {
-	t.Parallel()
-
-	db := xtesting.NewDatabaseWithoutSchema(t)
-	createSchemaOf(t, db, "v0.2.0")
-
-	if _, err := db.ExecContext(
-		t.Context(),
-		`INSERT INTO commandqueue.commands (
-			message_id,
-			message_type_id,
-			envelope,
-			failures,
-			enqueued_at,
-			deliver_at
-		) VALUES (
-			'0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01',
-			'7c1b1c2d-3e4f-4a5b-8c6d-9e0f1a2b3c01',
-			'\x01',
-			0,
-			'2100-01-01T00:00:00Z',
-			'2100-01-01T00:00:00Z'
-		)`,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	// The engine deletes the command when it has delivered it, in a
-	// transaction that commits while the migration runs.
-	delivery, err := db.BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer delivery.Rollback()
-
-	if _, err := delivery.ExecContext(
-		t.Context(),
-		`DELETE FROM commandqueue.commands`,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated := make(chan error, 1)
-	go func() {
-		migrated <- schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout)
-	}()
-
-	waitForLockWaiters(t, db, 1)
-
-	if err := delivery.Commit(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := <-migrated; err != nil {
-		t.Fatal(err)
-	}
-
-	xtesting.ExpectQueryResult(
-		t,
-		"the delivered command isn't in the queue",
-		0,
-		db,
-		`SELECT COUNT(*)
-		FROM runkit.queued_messages`,
-	)
-}
-
-// TestMigrate_toV2_0_0_keepsApplicationSchemas verifies that the migration to
-// schema version v2.0.0 keeps an old schema that holds the application's own
-// tables. For example, projectionkit keeps its checkpoints in the "projection"
-// schema.
-func TestMigrate_toV2_0_0_keepsApplicationSchemas(t *testing.T) {
-	t.Parallel()
-
-	db := xtesting.NewDatabaseWithoutSchema(t)
-	createSchemaOf(t, db, "v0.2.0")
-
-	if _, err := db.ExecContext(
-		t.Context(),
-		`CREATE TABLE projection.checkpoint (
-			id text PRIMARY KEY
-		)`,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := schema.Apply(t.Context(), db, true, testLockTimeout, testStatementTimeout); err != nil {
-		t.Fatal(err)
-	}
-
-	xtesting.ExpectQueryResult(
-		t,
-		"the schema holds only the application's table",
-		"checkpoint",
-		db,
-		`SELECT string_agg(table_name, ', ')
-		FROM information_schema.tables
-		WHERE table_schema = 'projection'`,
-	)
-}
-
-// waitForLockWaiters waits until at least n of the given database's
-// connections are waiting for a lock.
-func waitForLockWaiters(t testing.TB, db *sql.DB, n int) {
-	t.Helper()
-
-	waitUntil(t, func() bool {
-		return countLockWaiters(t, db) >= n
-	})
-}
-
-// countLockWaiters returns the number of the given database's connections that
-// are waiting for a lock.
-func countLockWaiters(t testing.TB, db *sql.DB) int {
-	t.Helper()
-
-	var waiting int
-	if err := db.QueryRowContext(
-		t.Context(),
-		`SELECT COUNT(*)
-		FROM pg_stat_activity
-		WHERE datname = current_database()
-		AND wait_event_type = 'Lock'`,
-	).Scan(&waiting); err != nil {
-		t.Fatal(err)
-	}
-
-	return waiting
-}
-
-// waitUntil calls done until it returns true, and fails the test if that
-// takes longer than a few seconds.
-func waitUntil(t testing.TB, done func() bool) {
-	t.Helper()
-
-	timeout := time.After(5 * time.Second)
-
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	for !done() {
-		select {
-		case <-timeout:
-			t.Fatal("timed out waiting for the database")
-		case <-ticker.C:
-		}
-	}
-}
-
 // createSchemaOf creates the schema of the given released runkit version in the
 // given database, in the way that it created the schema of a new database.
 //
@@ -1292,127 +1074,7 @@ func waitUntil(t testing.TB, done func() bool) {
 // doesn't state its schema version.
 func createSchemaOf(t testing.TB, db *sql.DB, runkitVersion string) {
 	t.Helper()
-
-	out, err := exec.CommandContext(
-		t.Context(),
-		"go", "mod", "download", "-json",
-		"github.com/dogmatiq/runkit@"+runkitVersion,
-	).Output()
-	if err != nil {
-		t.Fatalf("unable to fetch runkit %s: %s", runkitVersion, err)
-	}
-
-	var module struct {
-		Dir string
-	}
-
-	if err := json.Unmarshal(out, &module); err != nil {
-		t.Fatal(err)
-	}
-
-	files := os.DirFS(module.Dir)
-
-	// Runkit v0.2.0 and earlier keep their SQL in "internal/schema/ddl". Later
-	// runkit versions keep the SQL for the table of the schema version in
-	// "internal/schema/internal/bootstrap", and the current schema in
-	// "internal/schema/internal/current". A runkit version with another layout
-	// fails here, and this function needs to learn it.
-	var created error
-
-	if _, err := fs.Stat(files, "internal/schema/ddl"); err == nil {
-		created = createSchemaFromDDL(t.Context(), db, files)
-	} else {
-		created = createSchemaFromCurrent(t.Context(), db, files, schemaVersionOf(t, runkitVersion))
-	}
-
-	if created != nil {
-		t.Fatalf("unable to create the schema of runkit %s: %s", runkitVersion, created)
-	}
-}
-
-// createSchemaFromDDL creates the schema in the way of runkit v0.2.0 and
-// earlier, which apply every file in "internal/schema/ddl" in one transaction.
-func createSchemaFromDDL(ctx context.Context, db *sql.DB, files fs.FS) error {
-	return xsql.Transact(
-		ctx,
-		db,
-		func(ctx context.Context, tx *sql.Tx) error {
-			// These runkit versions lock the schema before applying the DDL.
-			if _, err := tx.ExecContext(
-				ctx,
-				`LOCK TABLE pg_catalog.pg_namespace IN SHARE ROW EXCLUSIVE MODE`,
-			); err != nil {
-				return err
-			}
-
-			return fs.WalkDir(
-				files,
-				"internal/schema/ddl",
-				func(path string, d fs.DirEntry, err error) error {
-					if err != nil || d.IsDir() {
-						return err
-					}
-
-					return execFile(ctx, tx, files, path)
-				},
-			)
-		},
-	)
-}
-
-// createSchemaFromCurrent creates the schema in the way of runkit v0.3.0 and
-// later on a new database. It applies the SQL that creates the table of the
-// schema version, then the current schema, then records the given schema
-// version.
-func createSchemaFromCurrent(
-	ctx context.Context,
-	db *sql.DB,
-	files fs.FS,
-	schemaVersion version.Version,
-) error {
-	current, err := fs.Glob(files, "internal/schema/internal/current/*.sql")
-	if err != nil {
-		return err
-	}
-
-	paths := append(
-		[]string{"internal/schema/internal/bootstrap/bootstrap.sql"},
-		current...,
-	)
-
-	return xsql.Transact(
-		ctx,
-		db,
-		func(ctx context.Context, tx *sql.Tx) error {
-			for _, path := range paths {
-				if err := execFile(ctx, tx, files, path); err != nil {
-					return err
-				}
-			}
-
-			_, err := tx.ExecContext(
-				ctx,
-				`INSERT INTO runkit.schema_version (version)
-				VALUES ($1)`,
-				schemaVersion,
-			)
-			return err
-		},
-	)
-}
-
-// execFile executes the SQL in the given file.
-func execFile(ctx context.Context, tx *sql.Tx, files fs.FS, path string) error {
-	ddl, err := fs.ReadFile(files, path)
-	if err != nil {
-		return err
-	}
-
-	if _, err := tx.ExecContext(ctx, string(ddl)); err != nil {
-		return fmt.Errorf("unable to execute %s: %w", path, err)
-	}
-
-	return nil
+	schematest.CreateSchemaOf(t, db, runkitVersion, schemaVersionOf(t, runkitVersion))
 }
 
 // dumpObjectHeader matches the comment that pg_dump writes above each schema

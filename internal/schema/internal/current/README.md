@@ -25,9 +25,11 @@ already exists, so the order of the statements is also the order in which the
 upgrade locks tables. Make that order match the order in which the engine's
 transactions lock the same tables. Otherwise, an upgrade and an engine can each
 hold the lock on one table and wait for the lock on the other, and PostgreSQL
-ends one of them with an error. For example, an engine that appends events locks
-the `event_streams` table, then the `events` table, so `00-eventstream.sql`
-locks `event_streams` before any statement that locks `events`.
+ends one of them with an error. To keep the order in one place, the first file,
+`00-application.sql`, locks `queued_messages`, `event_streams` and `events`, in
+the order in which the engine's transactions lock them. When a statement
+creates an index or a trigger on another table, add that table to the lock
+there, in the order that the engine locks it.
 
 <!-- references -->
 

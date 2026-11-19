@@ -496,3 +496,52 @@ func WaitForQueryResult[T comparable](
 		}
 	}
 }
+
+// WaitForLockWaiters waits until at least n of the given database's connections
+// are waiting for a lock. If this does not occur within [WaitTimeout], the test
+// fails.
+func WaitForLockWaiters(t testing.TB, db *sql.DB, n int) {
+	t.Helper()
+
+	WaitUntil(t, func() bool {
+		return CountLockWaiters(t, db) >= n
+	})
+}
+
+// CountLockWaiters returns the number of the given database's connections that
+// are waiting for a lock.
+func CountLockWaiters(t testing.TB, db *sql.DB) int {
+	t.Helper()
+
+	var waiting int
+	if err := db.QueryRowContext(
+		t.Context(),
+		`SELECT COUNT(*)
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+		AND wait_event_type = 'Lock'`,
+	).Scan(&waiting); err != nil {
+		t.Fatal(err)
+	}
+
+	return waiting
+}
+
+// WaitUntil calls done repeatedly until it returns true. If this does not occur
+// within [WaitTimeout], the test fails.
+func WaitUntil(t testing.TB, done func() bool) {
+	t.Helper()
+
+	timeout := time.After(WaitTimeout)
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for !done() {
+		select {
+		case <-timeout:
+			t.Fatal("timed out waiting for the database")
+		case <-ticker.C:
+		}
+	}
+}
