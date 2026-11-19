@@ -152,6 +152,34 @@ func TestNode(t *testing.T) {
 		xtesting.ExpectNoReceive(t, "reply to a known node", heartbeats)
 	})
 
+	t.Run("it ignores a heartbeat whose node ID is the nil UUID", func(t *testing.T) {
+		signals := setup(t)
+
+		heartbeats, stop := signals.Watch(t.Context(), "heartbeat", 10)
+		defer stop()
+
+		xtesting.ExpectToReceiveN(t, "initial signal", heartbeats, "")
+
+		// The interval is long enough that any heartbeat after the first is
+		// sent in reply to a joining node.
+		n := newNode(t, signals, time.Hour, 2*time.Hour)
+		xtesting.GoE(t, n.Run)
+
+		xtesting.ExpectToReceiveN(t, "first heartbeat", heartbeats, n.ID.String())
+
+		nilID := uuid.Nil().String()
+		if err := signals.Send(t.Context(), "heartbeat."+nilID); err != nil {
+			t.Fatal(err)
+		}
+
+		// The node replies to every node that joins, so it sends no reply only
+		// if it ignored the heartbeat.
+		xtesting.ExpectToReceiveN(t, "heartbeat", heartbeats, nilID)
+		xtesting.ExpectNoReceive(t, "reply to the nil UUID", heartbeats)
+
+		expectPeers(t, n)
+	})
+
 	t.Run("it tracks nodes as they start and stop", func(t *testing.T) {
 		signals := setup(t)
 

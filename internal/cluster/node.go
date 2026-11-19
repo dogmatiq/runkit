@@ -278,6 +278,13 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 // addition, it is a node other than this one.
 func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoined bool) {
 	nodeID, err := uuid.Parse(id)
+
+	// The nil UUID is never the ID of a node. [FindWorkloadOwner] uses it to
+	// mean that it hasn't found an owner, so it must not be a live node.
+	if err == nil && nodeID == uuid.Nil() {
+		err = errors.New("the nil UUID is not a node ID")
+	}
+
 	if err != nil {
 		n.EngineLogger.WarnContext(
 			ctx,
