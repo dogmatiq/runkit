@@ -153,7 +153,7 @@ func (s *CommandSink) appendEvents(
 
 	args = append(
 		args,
-		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
+		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId().AsStd()),
 	)
 
 	query.WriteString(`SELECT runkit.append_events_to_any_stream($1, NULL, NULL, ARRAY[`)
@@ -175,8 +175,8 @@ func (s *CommandSink) appendEvents(
 
 		args = append(
 			args,
-			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
-			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId().AsStd()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId().AsStd()),
 			xsql.Envelope(eventEnvelope),
 		)
 	}

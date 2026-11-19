@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
@@ -220,20 +220,19 @@ func (s *CommandSink) tryLockInstance(
 			COALESCE(snapshot_offset + 1, 0),
 			snapshot
 		FROM created`,
-		xsql.UUID(s.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey().AsStd()),
 		instanceID,
 	)
 
 	inst := &instance{
-		HandlerKey: s.Identity.GetKey(),
+		HandlerKey: s.Identity.GetKey().AsStd(),
 		ID:         instanceID,
-		StreamID:   &uuidpb.UUID{},
 	}
 
 	var snap snapshot
 
 	if err := row.Scan(
-		xsql.UUID(inst.StreamID),
+		xsql.UUID(&inst.StreamID),
 		&snap.NextOffset,
 		&snap.Data,
 	); err != nil {
@@ -249,11 +248,6 @@ func (s *CommandSink) tryLockInstance(
 		return nil, fmt.Errorf("unable to lock aggregate instance: %w", err)
 	}
 
-	// A NULL stream_id scans as the nil UUID, whose bits are all zero.
-	if inst.StreamID.Equal(nil) {
-		inst.StreamID = nil
-	}
-
 	root, err := s.newRoot()
 	if err != nil {
 		return nil, err
@@ -261,7 +255,7 @@ func (s *CommandSink) tryLockInstance(
 	inst.Root = root
 
 	// An instance that isn't bound to a stream has no events to apply.
-	if inst.StreamID == nil {
+	if inst.StreamID == uuid.Nil() {
 		return inst, nil
 	}
 

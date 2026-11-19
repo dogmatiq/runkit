@@ -77,7 +77,7 @@ func TestDeadlineSink(t *testing.T) {
 				instance_id,
 				ended
 			) VALUES ($1, '<instance>', $2)`,
-			sink.Identity.GetKey().AsString(),
+			sink.Identity.GetKey().AsStd().String(),
 			ended,
 		); err != nil {
 			t.Fatal(err)
@@ -147,7 +147,7 @@ func TestDeadlineSink(t *testing.T) {
 				WHERE handler_key = $1
 				AND instance_id = '<instance>'
 				FOR UPDATE`,
-				sink.Identity.GetKey().AsString(),
+				sink.Identity.GetKey().AsStd().String(),
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -217,7 +217,7 @@ func TestDeadlineSink(t *testing.T) {
 					instance_id,
 					state
 				) VALUES ($1, '<instance>', '\x00')`,
-				sink.Identity.GetKey().AsString(),
+				sink.Identity.GetKey().AsStd().String(),
 			); err != nil {
 				t.Fatal(err)
 			}

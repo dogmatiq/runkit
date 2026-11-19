@@ -68,7 +68,7 @@ func (s *DeadlineSink) Deliver(
 		tx,
 		s.Handler,
 		s.QueueRouter,
-		s.Identity.GetKey(),
+		s.Identity.GetKey().AsStd(),
 		instanceID,
 		instanceLogger,
 	)

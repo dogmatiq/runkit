@@ -92,7 +92,7 @@ func (s *EventSink) CheckpointOffset(
 		FROM runkit.process_handler_checkpoints
 		WHERE handler_key = $1
 		AND stream_id = $2`,
-		xsql.UUID(s.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey().AsStd()),
 		xsql.UUID(streamID),
 	).Scan(&cp)
 	if err == sql.ErrNoRows {
@@ -158,7 +158,7 @@ func (s *EventSink) consume(
 			ON CONFLICT (handler_key, stream_id) DO UPDATE SET
 				checkpoint_offset = runkit.process_handler_checkpoints.checkpoint_offset
 			RETURNING checkpoint_offset`,
-			xsql.UUID(s.Identity.GetKey()),
+			xsql.UUID(s.Identity.GetKey().AsStd()),
 			xsql.UUID(streamID),
 		).Scan(&actual); err != nil {
 			return err
@@ -196,7 +196,7 @@ func (s *EventSink) consume(
 				checkpoint_offset = $3
 			WHERE handler_key = $1
 			AND stream_id = $2`,
-			xsql.UUID(s.Identity.GetKey()),
+			xsql.UUID(s.Identity.GetKey().AsStd()),
 			xsql.UUID(streamID),
 			next,
 		)
@@ -224,7 +224,7 @@ func (s *EventSink) dispatch(
 	engineLogger *slog.Logger,
 	appLogger *slog.Logger,
 ) error {
-	messageID := env.GetBody().GetMessageId()
+	messageID := env.GetBody().GetMessageId().AsStd()
 
 	var event dogma.Event
 
@@ -249,7 +249,7 @@ func (s *EventSink) dispatch(
 		tx,
 		s.Handler,
 		s.QueueRouter,
-		s.Identity.GetKey(),
+		s.Identity.GetKey().AsStd(),
 		instanceID,
 	)
 	if err != nil {
@@ -273,7 +273,7 @@ func (s *EventSink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
-			messageID:            env.GetBody().GetMessageId().AsStd(),
+			messageID:            messageID,
 			instanceID:           inst.ID,
 			root:                 inst.Root,
 			outboundMessageTypes: s.OutboundMessageTypes,
