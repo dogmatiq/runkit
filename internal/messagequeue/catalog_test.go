@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -30,7 +30,7 @@ func TestCatalog(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  db,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -50,10 +50,10 @@ func TestCatalog(t *testing.T) {
 
 	// addMessage adds a message to the queue with the given ID, and returns
 	// the message's ID.
-	addMessage := func(t *testing.T, db *sql.DB, queueID *uuidpb.UUID) *uuidpb.UUID {
+	addMessage := func(t *testing.T, db *sql.DB, queueID uuid.UUID) uuid.UUID {
 		t.Helper()
 
-		messageID := uuidpb.Generate()
+		messageID := uuid.New()
 
 		if _, err := db.ExecContext(
 			t.Context(),
@@ -66,7 +66,7 @@ func TestCatalog(t *testing.T) {
 				next_attempt_at
 			) VALUES ($1, $2, $3, '\x00', $4, $4)`,
 			xsql.UUID(messageID),
-			xsql.UUID(uuidpb.Generate()),
+			xsql.UUID(uuid.New()),
 			xsql.UUID(queueID),
 			time.Now(),
 		); err != nil {
@@ -77,15 +77,15 @@ func TestCatalog(t *testing.T) {
 	}
 
 	// waitForQueueIDs waits until the catalog's queue IDs are the given IDs.
-	waitForQueueIDs := func(t *testing.T, catalog *Catalog, want ...*uuidpb.UUID) {
+	waitForQueueIDs := func(t *testing.T, catalog *Catalog, want ...uuid.UUID) {
 		t.Helper()
 
 		xtesting.WaitForObservable(
 			t,
 			"queue IDs",
 			catalog.QueueIDs(),
-			func(got *uuidcollection.Set) bool {
-				return got.IsEqual(uuidcollection.NewSet(want...))
+			func(got *uuidset.SetR) bool {
+				return got.IsEqual(uuidset.New(want...).R())
 			},
 		)
 	}
@@ -94,9 +94,9 @@ func TestCatalog(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
-		q1 := uuidpb.Generate()
-		q2 := uuidpb.Generate()
-		q3 := uuidpb.Generate()
+		q1 := uuid.New()
+		q2 := uuid.New()
+		q3 := uuid.New()
 		addMessage(t, db, q1)
 		addMessage(t, db, q2)
 		addMessage(t, db, q2)
@@ -111,13 +111,13 @@ func TestCatalog(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
-		existing := uuidpb.Generate()
+		existing := uuid.New()
 		addMessage(t, db, existing)
 
 		xtesting.GoE(t, catalog.Run)
 		waitForQueueIDs(t, catalog, existing)
 
-		q := uuidpb.Generate()
+		q := uuid.New()
 		addMessage(t, db, q)
 
 		waitForQueueIDs(t, catalog, existing, q)
@@ -127,13 +127,13 @@ func TestCatalog(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
-		from := uuidpb.Generate()
+		from := uuid.New()
 		messageID := addMessage(t, db, from)
 
 		xtesting.GoE(t, catalog.Run)
 		waitForQueueIDs(t, catalog, from)
 
-		to := uuidpb.Generate()
+		to := uuid.New()
 		if _, err := db.ExecContext(
 			t.Context(),
 			`UPDATE runkit.queued_messages
@@ -152,7 +152,7 @@ func TestCatalog(t *testing.T) {
 		t.Parallel()
 
 		db, catalog := setup(t)
-		emptied := uuidpb.Generate()
+		emptied := uuid.New()
 		messageID := addMessage(t, db, emptied)
 
 		xtesting.GoE(t, catalog.Run)
@@ -167,7 +167,7 @@ func TestCatalog(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		q := uuidpb.Generate()
+		q := uuid.New()
 		addMessage(t, db, q)
 
 		waitForQueueIDs(t, catalog, q)

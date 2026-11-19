@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -23,14 +23,15 @@ import (
 // Its root is the application's model of the instance.
 type instance struct {
 	// HandlerKey is the identity key of the instance's handler.
-	HandlerKey *uuidpb.UUID
+	HandlerKey uuid.UUID
 
 	// ID is the instance's ID.
 	ID string
 
 	// StreamID is the ID of the event stream that holds the instance's events,
-	// or nil if the instance hadn't recorded any events when it was locked.
-	StreamID *uuidpb.UUID
+	// or the nil UUID if the instance hadn't recorded any events when it was
+	// locked.
+	StreamID uuid.UUID
 
 	// Root is the instance's root.
 	Root dogma.AggregateRoot
@@ -62,7 +63,7 @@ func (i *instance) RecordEvents(
 		xsql.UUID(i.HandlerKey),
 		i.ID,
 		xsql.UUID(i.StreamID),
-		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId()),
+		xsql.UUID(eventEnvelopes.GetHeader().GetCorrelationId().AsStd()),
 		snapshotArg,
 	)
 
@@ -85,8 +86,8 @@ func (i *instance) RecordEvents(
 
 		args = append(
 			args,
-			xsql.UUID(eventEnvelope.GetBody().GetMessageId()),
-			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessageId().AsStd()),
+			xsql.UUID(eventEnvelope.GetBody().GetMessage().GetTypeId().AsStd()),
 			xsql.Envelope(eventEnvelope),
 		)
 	}
@@ -153,12 +154,12 @@ func (i *instance) ApplyHistoricalEvents(
 	// Apply the events to the root in order.
 	for rows.Next() {
 		var (
-			eventMessageID     = &uuidpb.UUID{}
+			eventMessageID     uuid.UUID
 			eventEnvelopeBytes []byte
 		)
 
 		if err := rows.Scan(
-			xsql.UUID(eventMessageID),
+			xsql.UUID(&eventMessageID),
 			&eventEnvelopeBytes,
 		); err != nil {
 			return fmt.Errorf("unable to scan event: %w", err)

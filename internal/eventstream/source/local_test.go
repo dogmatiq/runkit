@@ -9,22 +9,22 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
 func TestLocal(t *testing.T) {
-	typesE := uuidcollection.NewSet(
-		MessageTypeUUID[*EventStub[TypeE]](),
-	)
+	typesE := uuidset.New(
+		MessageTypeID[*EventStub[TypeE]](),
+	).R()
 
 	// newSource returns a local source over the given database, with the
 	// given segment and buffer sizes. It does not run the source.
@@ -42,7 +42,7 @@ func TestLocal(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  db,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -103,7 +103,7 @@ func TestLocal(t *testing.T) {
 	expectSegment := func(
 		t testing.TB,
 		segments <-chan Segment,
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 		begin, end uint64,
 	) {
 		t.Helper()
@@ -112,7 +112,7 @@ func TestLocal(t *testing.T) {
 		case <-time.After(xtesting.WaitTimeout):
 			t.Fatalf("timeout waiting for segment [%d, %d) of stream %s", begin, end, streamID)
 		case seg := <-segments:
-			if !seg.StreamID.Equal(streamID) || seg.Begin != begin || seg.End != end {
+			if seg.StreamID != streamID || seg.Begin != begin || seg.End != end {
 				t.Fatalf(
 					"unexpected segment: got [%d, %d) of stream %s, want [%d, %d) of stream %s",
 					seg.Begin,
@@ -141,7 +141,7 @@ func TestLocal(t *testing.T) {
 
 	// watch runs src.Watch on another goroutine, delivering each segment to
 	// the returned channel, and returns a function that stops it.
-	watch := func(t *testing.T, src *Local, types *uuidcollection.Set) (<-chan Segment, func()) {
+	watch := func(t *testing.T, src *Local, types *uuidset.SetR) (<-chan Segment, func()) {
 		t.Helper()
 
 		segments := make(chan Segment, 100)
@@ -168,7 +168,7 @@ func TestLocal(t *testing.T) {
 	}
 
 	// read returns the segments that src.Read delivers.
-	read := func(t *testing.T, src *Local, streamID *uuidpb.UUID, types *uuidcollection.Set, begin uint64) []Segment {
+	read := func(t *testing.T, src *Local, streamID uuid.UUID, types *uuidset.SetR, begin uint64) []Segment {
 		t.Helper()
 
 		var segments []Segment
@@ -197,7 +197,7 @@ func TestLocal(t *testing.T) {
 	expectEnvelopes := func(
 		t testing.TB,
 		segments <-chan Segment,
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 		begin, end uint64,
 		want ...*envelopepb.Envelope,
 	) {
@@ -210,7 +210,7 @@ func TestLocal(t *testing.T) {
 			case <-time.After(xtesting.WaitTimeout):
 				t.Fatalf("timeout waiting for segments: got %d of %d envelopes", len(got), len(want))
 			case seg := <-segments:
-				if !seg.StreamID.Equal(streamID) {
+				if seg.StreamID != streamID {
 					t.Fatalf("unexpected stream ID: got %s, want %s", seg.StreamID, streamID)
 				}
 
@@ -431,7 +431,7 @@ func TestLocal(t *testing.T) {
 					`UPDATE runkit.events
 					SET envelope = '\xff'
 					WHERE stream_id = $1`,
-					streamID.AsString(),
+					streamID.String(),
 				); err != nil {
 					t.Fatal(err)
 				}
@@ -563,7 +563,7 @@ func TestLocal(t *testing.T) {
 
 			src.Watch(
 				t.Context(),
-				uuidcollection.NewSet(),
+				uuidset.New().R(),
 				func(Segment) error {
 					return nil
 				},
@@ -647,8 +647,8 @@ func TestLocal(t *testing.T) {
 			// did not fit.
 			next, _ := watch(t, src, nil)
 
-			want := uuidcollection.NewSet(existing, first, second)
-			got := uuidcollection.NewSet()
+			want := uuidset.New(existing, first, second).R()
+			got := &uuidset.Set{}
 
 			for range 3 {
 				select {
@@ -759,7 +759,7 @@ func TestLocal(t *testing.T) {
 						case <-ctx.Done():
 							return ctx.Err()
 						case seg := <-segments:
-							if !seg.StreamID.Equal(streamID) {
+							if seg.StreamID != streamID {
 								continue
 							}
 
@@ -1066,8 +1066,8 @@ func TestLocal(t *testing.T) {
 
 			src.Read(
 				t.Context(),
-				uuidpb.Generate(),
-				uuidcollection.NewSet(),
+				uuid.New(),
+				uuidset.New().R(),
 				0,
 				func(Segment) error {
 					return nil
@@ -1077,7 +1077,7 @@ func TestLocal(t *testing.T) {
 
 		t.Run("it returns ErrUnrecognizedStream for a stream that does not exist", func(t *testing.T) {
 			src, _ := setup(t, 10)
-			streamID := uuidpb.Generate()
+			streamID := uuid.New()
 
 			err := src.Read(
 				t.Context(),
@@ -1109,13 +1109,13 @@ func TestLocal(t *testing.T) {
 				EngineLogger:        spruce.NewTestLogger(t),
 			}
 
-			types := uuidcollection.NewSet(
-				uuidpb.Generate(),
-				uuidpb.Generate(),
-				uuidpb.Generate(),
-				uuidpb.Generate(),
-				uuidpb.Generate(),
-			)
+			types := uuidset.New(
+				uuid.New(),
+				uuid.New(),
+				uuid.New(),
+				uuid.New(),
+				uuid.New(),
+			).R()
 
 			for range 20 {
 				read(t, src, streamID, types, 0)

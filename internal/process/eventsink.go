@@ -8,15 +8,16 @@ import (
 	"log/slog"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
@@ -48,7 +49,7 @@ type EventSink struct {
 	Identity *identitypb.Identity
 
 	// InboundEventTypeIDs is the set of IDs of the event types routed to the handler.
-	InboundEventTypeIDs *uuidcollection.Set
+	InboundEventTypeIDs *uuidset.Set
 
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// event.
@@ -68,20 +69,21 @@ type EventSink struct {
 
 // RendezvousKey returns the rendezvous key that determines which node consumes
 // the stream with the given ID.
-func (s *EventSink) RendezvousKey(streamID *uuidpb.UUID) *uuidpb.UUID {
-	return uuidpb.Derive(s.Identity.GetKey(), streamID.AsString())
+func (s *EventSink) RendezvousKey(streamID uuid.UUID) uuid.UUID {
+	key := uuidpb.Derive(s.Identity.GetKey(), streamID.String())
+	return key.AsStd()
 }
 
 // EventTypeIDs returns the event types routed to the process.
-func (s *EventSink) EventTypeIDs() *uuidcollection.Set {
-	return s.InboundEventTypeIDs
+func (s *EventSink) EventTypeIDs() *uuidset.SetR {
+	return s.InboundEventTypeIDs.R()
 }
 
 // CheckpointOffset returns the handler's checkpoint offset for the stream.
 // Streams without a checkpoint are consumed from the beginning.
 func (s *EventSink) CheckpointOffset(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 ) (uint64, error) {
 	var cp uint64
 	err := s.DB.QueryRowContext(
@@ -90,7 +92,7 @@ func (s *EventSink) CheckpointOffset(
 		FROM runkit.process_handler_checkpoints
 		WHERE handler_key = $1
 		AND stream_id = $2`,
-		xsql.UUID(s.Identity.GetKey()),
+		xsql.UUID(s.Identity.GetKey().AsStd()),
 		xsql.UUID(streamID),
 	).Scan(&cp)
 	if err == sql.ErrNoRows {
@@ -134,7 +136,7 @@ func (s *EventSink) ConsumeSegment(
 // A nil envelope advances past a range with no events routed to the handler.
 func (s *EventSink) consume(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	cp, next uint64,
 	env *envelopepb.Envelope,
 ) (uint64, bool, error) {
@@ -156,7 +158,7 @@ func (s *EventSink) consume(
 			ON CONFLICT (handler_key, stream_id) DO UPDATE SET
 				checkpoint_offset = runkit.process_handler_checkpoints.checkpoint_offset
 			RETURNING checkpoint_offset`,
-			xsql.UUID(s.Identity.GetKey()),
+			xsql.UUID(s.Identity.GetKey().AsStd()),
 			xsql.UUID(streamID),
 		).Scan(&actual); err != nil {
 			return err
@@ -194,7 +196,7 @@ func (s *EventSink) consume(
 				checkpoint_offset = $3
 			WHERE handler_key = $1
 			AND stream_id = $2`,
-			xsql.UUID(s.Identity.GetKey()),
+			xsql.UUID(s.Identity.GetKey().AsStd()),
 			xsql.UUID(streamID),
 			next,
 		)
@@ -222,7 +224,7 @@ func (s *EventSink) dispatch(
 	engineLogger *slog.Logger,
 	appLogger *slog.Logger,
 ) error {
-	messageID := env.GetBody().GetMessageId()
+	messageID := env.GetBody().GetMessageId().AsStd()
 
 	var event dogma.Event
 
@@ -247,7 +249,7 @@ func (s *EventSink) dispatch(
 		tx,
 		s.Handler,
 		s.QueueRouter,
-		s.Identity.GetKey(),
+		s.Identity.GetKey().AsStd(),
 		instanceID,
 	)
 	if err != nil {
@@ -271,6 +273,7 @@ func (s *EventSink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			messageID:            messageID,
 			instanceID:           inst.ID,
 			root:                 inst.Root,
 			outboundMessageTypes: s.OutboundMessageTypes,

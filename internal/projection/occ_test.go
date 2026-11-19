@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"sync"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -33,7 +33,7 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount,
@@ -87,7 +87,7 @@ func TestOCC_conflictWithHigherCheckpointOffsetSkipsEvents(t *testing.T) {
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					checkpointMutex.Lock()
 					defer checkpointMutex.Unlock()
 
@@ -119,7 +119,7 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount,
@@ -174,7 +174,7 @@ func TestOCC_conflictWithLowerCheckpointOffsetRedeliversEvents(t *testing.T) {
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					checkpointMutex.Lock()
 					defer checkpointMutex.Unlock()
 

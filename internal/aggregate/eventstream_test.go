@@ -3,10 +3,10 @@ package aggregate_test
 import (
 	"database/sql"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
@@ -105,13 +105,13 @@ func TestEventStream_eventsAreAppendedInOrder(t *testing.T) {
 			)
 
 			// Find the stream that the instance is bound to.
-			streamID := &uuidpb.UUID{}
+			var streamID uuid.UUID
 			row := db.QueryRowContext(
 				t.Context(),
 				`SELECT stream_id
 				FROM runkit.aggregate_instances`,
 			)
-			if err := row.Scan(xsql.UUID(streamID)); err != nil {
+			if err := row.Scan(xsql.UUID(&streamID)); err != nil {
 				t.Fatalf("unable to find event stream: %v", err)
 			}
 
@@ -176,7 +176,7 @@ func TestEventStream_eventsAreNotRecordedWhenHandlerPanics(t *testing.T) {
 			xtesting.WaitForCommandToBePostponed(
 				t,
 				db,
-				commandEnvelope.GetBody().GetMessageId(),
+				commandEnvelope.GetBody().GetMessageId().AsStd(),
 			)
 
 			xtesting.ExpectEventCount(t, db, 0)

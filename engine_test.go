@@ -194,7 +194,7 @@ func TestEngine(t *testing.T) {
 			t.Fatalf("expected a binding error, got %v", err)
 		}
 
-		if !strings.Contains(err.Error(), other.GetKey().AsString()) {
+		if !strings.Contains(err.Error(), other.GetKey().AsStd().String()) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

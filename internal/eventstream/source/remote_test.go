@@ -10,16 +10,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
@@ -31,15 +32,15 @@ import (
 
 func TestRemote(t *testing.T) {
 	var (
-		streamA = uuidpb.Generate()
-		streamB = uuidpb.Generate()
-		typeA   = uuidpb.Generate()
-		typeB   = uuidpb.Generate()
+		streamA = uuid.New()
+		streamB = uuid.New()
+		typeA   = uuid.New()
+		typeB   = uuid.New()
 	)
 
 	// event returns a well-formed envelope for an event of the given type at
 	// the given offset of the given stream.
-	event := func(streamID *uuidpb.UUID, offset uint64, typeID *uuidpb.UUID) *envelopepb.Envelope {
+	event := func(streamID uuid.UUID, offset uint64, typeID uuid.UUID) *envelopepb.Envelope {
 		id := uuidpb.Generate()
 
 		env := envelopepb.NewEnvelopeBuilder().
@@ -60,7 +61,7 @@ func TestRemote(t *testing.T) {
 					WithCreatedAt(timestamppb.Now()).
 					WithMessage(
 						envelopepb.NewMessageBuilder().
-							WithTypeId(typeID).
+							WithTypeId(uuidpb.FromStd(typeID)).
 							WithDescription("<event>").
 							Build(),
 					).
@@ -71,7 +72,7 @@ func TestRemote(t *testing.T) {
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(offset).
 				Build(),
 		)
@@ -82,7 +83,7 @@ func TestRemote(t *testing.T) {
 	// segment returns a segment of the given stream as the remote engine sends
 	// it, with each of the given events in its own multi-envelope.
 	segment := func(
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 		begin, end uint64,
 		envelopes ...*envelopepb.Envelope,
 	) *messaginggrpc.EventStreamSegment {
@@ -93,7 +94,7 @@ func TestRemote(t *testing.T) {
 		}
 
 		return messaginggrpc.NewEventStreamSegmentBuilder().
-			WithEventStreamId(streamID).
+			WithEventStreamId(uuidpb.FromStd(streamID)).
 			WithBeginOffset(begin).
 			WithEndOffset(end).
 			WithEnvelopes(multi).
@@ -119,13 +120,13 @@ func TestRemote(t *testing.T) {
 	expectSegment := func(
 		t *testing.T,
 		seg Segment,
-		streamID *uuidpb.UUID,
+		streamID uuid.UUID,
 		begin, end uint64,
 		want ...uint64,
 	) {
 		t.Helper()
 
-		if !seg.StreamID.Equal(streamID) {
+		if seg.StreamID != streamID {
 			t.Fatalf("unexpected stream: got %s, want %s", seg.StreamID, streamID)
 		}
 
@@ -188,7 +189,7 @@ func TestRemote(t *testing.T) {
 	t.Run("Watch", func(t *testing.T) {
 		// watch runs src.Watch on another goroutine until the test ends,
 		// delivering each segment to the returned channel.
-		watch := func(t *testing.T, src *Remote, types *uuidcollection.Set) <-chan Segment {
+		watch := func(t *testing.T, src *Remote, types *uuidset.SetR) <-chan Segment {
 			t.Helper()
 
 			segments := make(chan Segment)
@@ -229,7 +230,7 @@ func TestRemote(t *testing.T) {
 
 		// watchUntilError calls src.Watch and returns the segments it
 		// delivers and the error it returns.
-		watchUntilError := func(t *testing.T, src *Remote, types *uuidcollection.Set) ([]Segment, error) {
+		watchUntilError := func(t *testing.T, src *Remote, types *uuidset.SetR) ([]Segment, error) {
 			t.Helper()
 
 			var segments []Segment
@@ -262,12 +263,12 @@ func TestRemote(t *testing.T) {
 				},
 			}
 
-			want := uuidcollection.NewSet(typeA, typeB)
+			want := uuidset.New(typeA, typeB).R()
 			watch(t, src, want)
 
 			req := receive(t, "request", requests)
 
-			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(want) {
+			if got := requestedTypes(req.GetFilter()); !got.IsEqual(want) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, want)
 			}
 		})
@@ -339,7 +340,7 @@ func TestRemote(t *testing.T) {
 						return openCall(
 							ctx,
 							messaginggrpc.NewEventStreamSegmentBuilder().
-								WithEventStreamId(streamA).
+								WithEventStreamId(uuidpb.FromStd(streamA)).
 								WithBeginOffset(0).
 								WithEndOffset(3).
 								WithEnvelopes([]*envelopepb.MultiEnvelope{multi}).
@@ -581,7 +582,7 @@ func TestRemote(t *testing.T) {
 
 			src.Watch(
 				ctx,
-				uuidcollection.NewSet(),
+				uuidset.New().R(),
 				func(Segment) error {
 					return nil
 				},
@@ -595,8 +596,8 @@ func TestRemote(t *testing.T) {
 		read := func(
 			t *testing.T,
 			src *Remote,
-			streamID *uuidpb.UUID,
-			types *uuidcollection.Set,
+			streamID uuid.UUID,
+			types *uuidset.SetR,
 			begin uint64,
 		) ([]Segment, error) {
 			t.Helper()
@@ -649,13 +650,13 @@ func TestRemote(t *testing.T) {
 				},
 			}
 
-			types := uuidcollection.NewSet(typeA, typeB)
+			types := uuidset.New(typeA, typeB).R()
 
 			if _, err := read(t, src, streamA, types, 3); err != nil {
 				t.Fatal(err)
 			}
 
-			if got := req.GetEventStreamId(); !got.Equal(streamA) {
+			if got := req.GetEventStreamId().AsStd(); got != streamA {
 				t.Fatalf("unexpected stream: got %s, want %s", got, streamA)
 			}
 
@@ -663,7 +664,7 @@ func TestRemote(t *testing.T) {
 				t.Fatalf("unexpected begin offset: got %d, want 3", got)
 			}
 
-			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(types) {
+			if got := requestedTypes(req.GetFilter()); !got.IsEqual(types) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, types)
 			}
 		})
@@ -876,12 +877,12 @@ func TestRemote(t *testing.T) {
 				{
 					"the stream ID is invalid",
 					func() (*messaginggrpc.EventStreamSegment, string) {
-						invalid := &uuidpb.UUID{}
+						invalid := uuid.Nil()
 
 						return segment(invalid, 0, 1), fmt.Sprintf(
 							"invalid segment [0, 1) of event stream %s: invalid event stream ID: %s",
 							invalid,
-							invalid.Validate(),
+							uuidpb.FromStd(invalid).Validate(),
 						)
 					},
 				},
@@ -1024,7 +1025,7 @@ func TestRemote(t *testing.T) {
 					seg, want := c.Setup()
 					src := reading(seg)
 
-					segments, err := read(t, src, streamA, uuidcollection.NewSet(typeA), seg.GetBeginOffset())
+					segments, err := read(t, src, streamA, uuidset.New(typeA).R(), seg.GetBeginOffset())
 
 					expectInvalidSegment(t, err, want)
 
@@ -1050,7 +1051,7 @@ func TestRemote(t *testing.T) {
 			src.Read(
 				ctx,
 				streamA,
-				uuidcollection.NewSet(),
+				uuidset.New().R(),
 				0,
 				func(Segment) error {
 					return nil
@@ -1060,7 +1061,7 @@ func TestRemote(t *testing.T) {
 	})
 
 	t.Run("it delivers the events missed between watches to a catalog's consumers", func(t *testing.T) {
-		types := uuidcollection.NewSet(typeA)
+		types := uuidset.New(typeA).R()
 		calls := make(chan *callStub, 2)
 		reads := make(chan uint64, 1)
 
@@ -1151,12 +1152,12 @@ func TestRemote(t *testing.T) {
 	})
 
 	t.Run("with a running engine", func(t *testing.T) {
-		typesA := uuidcollection.NewSet(
-			stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
-		)
+		typesA := uuidset.New(
+			stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]](),
+		).R()
 
 		// eventA returns an event of type A whose content is its offset.
-		eventA := func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+		eventA := func(_ uuid.UUID, offset uint64) dogma.Event {
 			return &stubs.EventStub[stubs.TypeA]{
 				Content: stubs.TypeA(fmt.Sprint(offset)),
 			}
@@ -1207,7 +1208,7 @@ func TestRemote(t *testing.T) {
 		consume := func(
 			t testing.TB,
 			catalog *eventstream.Catalog,
-			streamID *uuidpb.UUID,
+			streamID uuid.UUID,
 			begin uint64,
 		) <-chan uint64 {
 			t.Helper()
@@ -1236,7 +1237,7 @@ func TestRemote(t *testing.T) {
 		}
 
 		t.Run("it delivers the engine's streams to a catalog", func(t *testing.T) {
-			var existing []*uuidpb.UUID
+			var existing []uuid.UUID
 
 			xtesting.SetupThenRunEngines(
 				t,
@@ -1256,7 +1257,7 @@ func TestRemote(t *testing.T) {
 		})
 
 		t.Run("it reads a stream's earlier events, then watches for new ones", func(t *testing.T) {
-			var streamID *uuidpb.UUID
+			var streamID uuid.UUID
 
 			xtesting.SetupThenRunEngines(
 				t,
@@ -1379,11 +1380,11 @@ func endedCall(
 func expectCatalogToHave(
 	t testing.TB,
 	c *eventstream.Catalog,
-	want ...*uuidpb.UUID,
+	want ...uuid.UUID,
 ) {
 	t.Helper()
 
-	expected := uuidcollection.NewSet(want...)
+	expected := uuidset.New(want...).R()
 
 	xtesting.WaitForObservable(
 		t,
@@ -1391,4 +1392,15 @@ func expectCatalogToHave(
 		c.StreamIDs(),
 		expected.IsEqual,
 	)
+}
+
+// requestedTypes returns the message type IDs that the given filter lists.
+func requestedTypes(filter *messaginggrpc.MessageFilter) *uuidset.Set {
+	types := &uuidset.Set{}
+
+	for _, id := range filter.GetSpecific().GetIds() {
+		types.Add(id.AsStd())
+	}
+
+	return types
 }

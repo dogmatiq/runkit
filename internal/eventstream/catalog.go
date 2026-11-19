@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 )
@@ -37,8 +37,8 @@ type Catalog struct {
 	EngineLogger *slog.Logger
 
 	m         sync.Mutex
-	streams   uuidcollection.Map[*catalogStream]
-	streamIDs cosyne.Observable[*uuidcollection.Set]
+	streams   map[uuid.UUID]*catalogStream
+	streamIDs cosyne.Observable[*uuidset.SetR]
 }
 
 // catalogStream is an event stream known to a [Catalog].
@@ -55,9 +55,7 @@ type catalogStream struct {
 }
 
 // StreamIDs returns an observable of the IDs of the streams in the catalog.
-//
-// The sets it holds must not be modified.
-func (c *Catalog) StreamIDs() cosyne.ObservableR[*uuidcollection.Set] {
+func (c *Catalog) StreamIDs() cosyne.ObservableR[*uuidset.SetR] {
 	return &c.streamIDs
 }
 
@@ -79,8 +77,8 @@ func (c *Catalog) StreamIDs() cosyne.ObservableR[*uuidcollection.Set] {
 // was given for the stream's source.
 func (c *Catalog) Consume(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) error {
@@ -89,7 +87,7 @@ func (c *Catalog) Consume(
 	}
 
 	c.m.Lock()
-	cs, ok := c.streams.Get(streamID)
+	cs, ok := c.streams[streamID]
 	c.m.Unlock()
 
 	if !ok {
@@ -144,7 +142,7 @@ func (c *Catalog) Consume(
 func (c *Catalog) Watch(
 	ctx context.Context,
 	src source.Source,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 ) error {
 	if c.CacheSize <= 0 {
 		panic("cache size must be positive")
@@ -156,32 +154,32 @@ func (c *Catalog) Watch(
 
 	var (
 		m     sync.Mutex
-		feeds uuidcollection.Map[*feed]
+		feeds = map[uuid.UUID]*feed{}
 	)
 
 	// feedFor returns the feed of the given stream from the source, creating
 	// it from the given offset if the source has not delivered the stream
 	// before.
-	feedFor := func(streamID *uuidpb.UUID, begin uint64) *feed {
+	feedFor := func(streamID uuid.UUID, begin uint64) *feed {
 		m.Lock()
 		defer m.Unlock()
 
-		f, ok := feeds.Get(streamID)
+		f, ok := feeds[streamID]
 		if !ok {
 			f = c.add(streamID, src, types, begin)
-			feeds.Set(streamID, f)
+			feeds[streamID] = f
 		}
 
 		return f
 	}
 
 	defer func() {
-		for f := range feeds.Values() {
+		for _, f := range feeds {
 			c.remove(f)
 		}
 
 		// Reads on behalf of consumers may still be calling the source.
-		for f := range feeds.Values() {
+		for _, f := range feeds {
 			f.Wait()
 		}
 	}()
@@ -246,9 +244,9 @@ func (c *Catalog) Watch(
 // add adds a feed of the given stream from the given source, beginning at the
 // given offset, and returns it.
 func (c *Catalog) add(
-	id *uuidpb.UUID,
+	id uuid.UUID,
 	src source.Source,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	begin uint64,
 ) *feed {
 	c.m.Lock()
@@ -265,12 +263,17 @@ func (c *Catalog) add(
 		cancel:       cancel,
 	}
 
-	cs, ok := c.streams.Get(id)
+	cs, ok := c.streams[id]
 	if !ok {
 		cs = &catalogStream{
 			AvailableFeeds: map[*feed]struct{}{},
 		}
-		c.streams.Set(id, cs)
+
+		if c.streams == nil {
+			c.streams = map[uuid.UUID]*catalogStream{}
+		}
+
+		c.streams[id] = cs
 	}
 
 	cs.AvailableFeeds[f] = struct{}{}
@@ -290,7 +293,7 @@ func (c *Catalog) remove(f *feed) {
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	cs, _ := c.streams.Get(f.ID)
+	cs := c.streams[f.ID]
 
 	delete(cs.AvailableFeeds, f)
 
@@ -303,7 +306,7 @@ func (c *Catalog) remove(f *feed) {
 		cs.CurrentFeed.Store(next)
 
 		if next == nil {
-			c.streams.Delete(f.ID)
+			delete(c.streams, f.ID)
 			c.publish(f.ID, false)
 		}
 	}
@@ -317,7 +320,7 @@ func (c *Catalog) remove(f *feed) {
 // unless that leaves the set unchanged.
 //
 // It must be called with the mutex held.
-func (c *Catalog) publish(id *uuidpb.UUID, present bool) {
+func (c *Catalog) publish(id uuid.UUID, present bool) {
 	prev, _ := c.streamIDs.Load()
 
 	if prev.Has(id) == present {
@@ -326,15 +329,11 @@ func (c *Catalog) publish(id *uuidpb.UUID, present bool) {
 
 	next := prev.Clone()
 
-	if next == nil {
-		next = uuidcollection.NewSet()
-	}
-
 	if present {
 		next.Add(id)
 	} else {
 		next.Delete(id)
 	}
 
-	c.streamIDs.Store(next)
+	c.streamIDs.Store(next.R())
 }

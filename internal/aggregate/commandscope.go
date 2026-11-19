@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
@@ -14,6 +15,7 @@ import (
 
 // commandScope implements [dogma.AggregateCommandScope].
 type commandScope struct {
+	messageID            uuid.UUID
 	packer               *envelope.EffectPacker
 	outboundMessageTypes map[reflect.Type]struct{}
 	instanceID           string
@@ -36,6 +38,10 @@ func (s *commandScope) Log(format string, args ...any) {
 	)
 
 	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root))
+}
+
+func (s *commandScope) MessageID() uuid.UUID {
+	return s.messageID
 }
 
 func (s *commandScope) InstanceID() string {

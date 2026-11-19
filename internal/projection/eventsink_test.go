@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -12,6 +13,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -31,12 +33,14 @@ func TestEventSink_rendezvousKey(t *testing.T) {
 			}
 
 			for range 2 {
-				streamID := uuidpb.Generate()
-				want := uuidpb.MustParse(handlerKey)
+				streamID := uuid.New()
+				want := uuid.MustParse(handlerKey)
 				if preference == dogma.MaximizeConcurrency {
-					want = uuidpb.Derive(want, streamID.AsString())
+					namespace := uuidpb.FromStd(want)
+					key := uuidpb.Derive(namespace, streamID.String())
+					want = key.AsStd()
 				}
-				if got := sink.RendezvousKey(streamID); !got.Equal(want) {
+				if got := sink.RendezvousKey(streamID); got != want {
 					t.Fatalf("unexpected rendezvous key: got %s, want %s", got, want)
 				}
 			}
@@ -49,7 +53,7 @@ func TestEventSink_rendezvousKey(t *testing.T) {
 // offset.
 func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	handler := &ProjectionMessageHandlerStub{
-		CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+		CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 			return 4, nil
 		},
 	}
@@ -59,7 +63,7 @@ func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 		EngineLogger: spruce.NewTestLogger(t),
 		AppLogger:    spruce.NewTestLogger(t),
 	}
-	streamID := uuidpb.Generate()
+	streamID := uuid.New()
 	cp, err := sink.CheckpointOffset(t.Context(), streamID)
 	if err != nil {
 		t.Fatal(err)
@@ -75,5 +79,47 @@ func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	}
 	if !ok || next != cp {
 		t.Fatalf("got cp %d, ok %t; want %d, true", next, ok, cp)
+	}
+}
+
+// TestEventSink_handlerReceivesTheMessageID verifies that the scope passed to
+// the handler returns the ID of the delivered event's message.
+func TestEventSink_handlerReceivesTheMessageID(t *testing.T) {
+	t.Parallel()
+
+	var got uuid.UUID
+
+	sink := &EventSink{
+		Handler: &ProjectionMessageHandlerStub{
+			HandleEventFunc: func(
+				_ context.Context,
+				s dogma.ProjectionEventScope,
+				_ dogma.Event,
+			) (uint64, error) {
+				got = s.MessageID()
+				return s.Offset() + 1, nil
+			},
+		},
+		HandleTimeout: time.Minute,
+		EngineLogger:  spruce.NewTestLogger(t),
+		AppLogger:     spruce.NewTestLogger(t),
+	}
+
+	streamID, envs := xtesting.AppendToNewEventStream(
+		t,
+		xtesting.NewDatabase(t),
+		EventA1,
+	)
+
+	if _, _, err := sink.ConsumeSegment(t.Context(), 0, eventstream.Segment{
+		StreamID:  streamID,
+		End:       1,
+		Envelopes: envs,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := envs[0].GetBody().GetMessageId().AsStd(); got != want {
+		t.Fatalf("unexpected message ID: got %s, want %s", got, want)
 	}
 }

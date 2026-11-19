@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
@@ -15,10 +16,12 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
-	CommandPacker        *envelope.EffectPacker
-	DeadlinePacker       *envelope.EffectPacker
-	Mutated              bool
-	Ended                bool
+	CommandPacker  *envelope.EffectPacker
+	DeadlinePacker *envelope.EffectPacker
+	Mutated        bool
+	Ended          bool
+
+	messageID            uuid.UUID
 	instanceID           string
 	root                 dogma.ProcessRoot
 	outboundMessageTypes map[reflect.Type]struct{}
@@ -40,6 +43,10 @@ func (s *messageScope) Log(format string, args ...any) {
 	)
 
 	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root, s.Ended))
+}
+
+func (s *messageScope) MessageID() uuid.UUID {
+	return s.messageID
 }
 
 func (s *messageScope) InstanceID() string {

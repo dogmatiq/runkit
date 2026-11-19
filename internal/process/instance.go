@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
 
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -21,7 +21,7 @@ import (
 // Its root is the application's model of the instance.
 type instance struct {
 	// HandlerKey is the identity key of the instance's handler.
-	HandlerKey *uuidpb.UUID
+	HandlerKey uuid.UUID
 
 	// ID is the instance's ID.
 	ID string
@@ -31,7 +31,7 @@ type instance struct {
 
 	// DeadlineQueueID is the ID of the queue for the instance's deadlines, or
 	// the nil UUID if the instance isn't bound to a queue.
-	DeadlineQueueID *uuidpb.UUID
+	DeadlineQueueID uuid.UUID
 
 	// Root is the instance's root. It's nil if the instance had already ended
 	// when it was locked.
@@ -47,8 +47,8 @@ func (i *instance) BindToDeadlineQueue(
 	tx *sql.Tx,
 	router *messagequeue.Router,
 ) error {
-	// A NULL deadline_queue_id scans as the nil UUID, whose bits are all zero.
-	if !i.DeadlineQueueID.Equal(nil) {
+	// A NULL deadline_queue_id scans as the nil UUID.
+	if i.DeadlineQueueID != uuid.Nil() {
 		return nil
 	}
 
@@ -212,10 +212,10 @@ func (i *instance) addDeadlinesToQueue(
 				scheduled_for,
 				next_attempt_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-			xsql.UUID(deadlineEnvelope.GetBody().GetMessageId()),
-			xsql.UUID(deadlineEnvelope.GetBody().GetMessage().GetTypeId()),
+			xsql.UUID(deadlineEnvelope.GetBody().GetMessageId().AsStd()),
+			xsql.UUID(deadlineEnvelope.GetBody().GetMessage().GetTypeId().AsStd()),
 			xsql.UUID(i.DeadlineQueueID),
-			xsql.UUID(deadlineEnvelope.GetHeader().GetSource().GetHandler().GetKey()),
+			xsql.UUID(deadlineEnvelope.GetHeader().GetSource().GetHandler().GetKey().AsStd()),
 			deadlineEnvelope.GetHeader().GetSource().GetInstanceId(),
 			data,
 			deadlineEnvelope.GetBody().GetScheduledFor().AsTime(),
@@ -242,7 +242,7 @@ func lockInstance(
 	tx *sql.Tx,
 	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
 	router *messagequeue.Router,
-	handlerKey *uuidpb.UUID,
+	handlerKey uuid.UUID,
 	instanceID string,
 ) (*instance, error) {
 	// Upsert with a dummy update to acquire a row lock, guaranteeing
@@ -265,16 +265,15 @@ func lockInstance(
 	)
 
 	inst := &instance{
-		HandlerKey:      handlerKey,
-		ID:              instanceID,
-		DeadlineQueueID: &uuidpb.UUID{},
+		HandlerKey: handlerKey,
+		ID:         instanceID,
 	}
 	var state []byte
 
 	if err := row.Scan(
 		&inst.Ended,
 		&state,
-		xsql.UUID(inst.DeadlineQueueID),
+		xsql.UUID(&inst.DeadlineQueueID),
 	); err != nil {
 		return nil, fmt.Errorf("unable to lock process instance: %w", err)
 	}
@@ -310,7 +309,7 @@ func tryLockInstance(
 	tx *sql.Tx,
 	handler dogma.ProcessMessageHandler[dogma.ProcessRoot],
 	router *messagequeue.Router,
-	handlerKey *uuidpb.UUID,
+	handlerKey uuid.UUID,
 	instanceID string,
 	engineLogger *slog.Logger,
 ) (*instance, bool, error) {
@@ -357,9 +356,8 @@ func tryLockInstance(
 	)
 
 	inst := &instance{
-		HandlerKey:      handlerKey,
-		ID:              instanceID,
-		DeadlineQueueID: &uuidpb.UUID{},
+		HandlerKey: handlerKey,
+		ID:         instanceID,
 	}
 	var (
 		state          []byte
@@ -369,7 +367,7 @@ func tryLockInstance(
 	if err := row.Scan(
 		&inst.Ended,
 		&state,
-		xsql.UUID(inst.DeadlineQueueID),
+		xsql.UUID(&inst.DeadlineQueueID),
 		&exists,
 		&locked,
 	); err != nil {

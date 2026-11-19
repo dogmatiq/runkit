@@ -12,10 +12,10 @@ import (
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -215,7 +215,7 @@ func (c *Cluster) converge(t testing.TB) {
 
 	var (
 		nodes   []*cluster.Node
-		nodeIDs = uuidcollection.NewSet()
+		nodeIDs = uuidset.New()
 	)
 
 	for e, m := range c.members {

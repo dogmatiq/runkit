@@ -27,7 +27,7 @@ func TestBind(t *testing.T) {
 			`SELECT name
 			FROM runkit.identity
 			WHERE key = $1`,
-			id.GetKey().AsString(),
+			id.GetKey().AsStd().String(),
 		)
 	})
 

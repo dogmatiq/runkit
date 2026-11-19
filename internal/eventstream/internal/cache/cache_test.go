@@ -4,27 +4,28 @@ import (
 	"slices"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"pgregory.net/rapid"
 )
 
 func TestCache(t *testing.T) {
 	var (
-		streamID = uuidpb.Generate()
-		typeA    = uuidpb.Generate()
-		typeB    = uuidpb.Generate()
-		typeC    = uuidpb.Generate()
-		types    = []*uuidpb.UUID{typeA, typeB, typeC}
+		streamID = uuid.New()
+		typeA    = uuid.New()
+		typeB    = uuid.New()
+		typeC    = uuid.New()
+		types    = []uuid.UUID{typeA, typeB, typeC}
 	)
 
 	// event describes an event to append, by its offset and type.
 	type event struct {
 		Offset uint64
-		TypeID *uuidpb.UUID
+		TypeID uuid.UUID
 	}
 
 	// envelopes returns an envelope for each of the given events.
@@ -44,7 +45,7 @@ func TestCache(t *testing.T) {
 		t *testing.T,
 		c *Cache,
 		cp uint64,
-		want *uuidcollection.Set,
+		want *uuidset.SetR,
 		relation Relation,
 		end uint64,
 		offsets ...uint64,
@@ -80,16 +81,16 @@ func TestCache(t *testing.T) {
 	t.Run("it begins with an empty segment at the given offset", func(t *testing.T) {
 		c := New(10, 5)
 
-		expectRead(t, c, 4, uuidcollection.NewSet(typeA), Before, 0)
-		expectRead(t, c, 5, uuidcollection.NewSet(typeA), After, 0)
-		expectRead(t, c, 6, uuidcollection.NewSet(typeA), After, 0)
+		expectRead(t, c, 4, uuidset.New(typeA).R(), Before, 0)
+		expectRead(t, c, 5, uuidset.New(typeA).R(), After, 0)
+		expectRead(t, c, 6, uuidset.New(typeA).R(), After, 0)
 	})
 
 	t.Run("it reports where a checkpoint lies in relation to the segment at each boundary", func(t *testing.T) {
 		c := New(10, 5)
 		c.Append(5, 8, envelopes(event{5, typeA}, event{7, typeB}))
 
-		want := uuidcollection.NewSet(typeA, typeB)
+		want := uuidset.New(typeA, typeB).R()
 
 		expectRead(t, c, 4, want, Before, 0)
 		expectRead(t, c, 5, want, Within, 8, 5, 7)
@@ -103,17 +104,17 @@ func TestCache(t *testing.T) {
 		c := New(10, 0)
 		c.Append(0, 3, envelopes(event{0, typeA}, event{1, typeB}, event{2, typeA}))
 
-		expectRead(t, c, 0, uuidcollection.NewSet(typeA), Within, 3, 0, 2)
-		expectRead(t, c, 0, uuidcollection.NewSet(typeB), Within, 3, 1)
-		expectRead(t, c, 0, uuidcollection.NewSet(typeC), Within, 3)
+		expectRead(t, c, 0, uuidset.New(typeA).R(), Within, 3, 0, 2)
+		expectRead(t, c, 0, uuidset.New(typeB).R(), Within, 3, 1)
+		expectRead(t, c, 0, uuidset.New(typeC).R(), Within, 3)
 	})
 
 	t.Run("it extends the segment with an empty range", func(t *testing.T) {
 		c := New(10, 0)
 		c.Append(0, 3, nil)
 
-		expectRead(t, c, 0, uuidcollection.NewSet(typeA), Within, 3)
-		expectRead(t, c, 3, uuidcollection.NewSet(typeA), After, 0)
+		expectRead(t, c, 0, uuidset.New(typeA).R(), Within, 3)
+		expectRead(t, c, 3, uuidset.New(typeA).R(), After, 0)
 	})
 
 	t.Run("it keeps the events held when extended with an empty range", func(t *testing.T) {
@@ -121,14 +122,14 @@ func TestCache(t *testing.T) {
 		c.Append(0, 3, envelopes(event{1, typeA}))
 		c.Append(3, 6, nil)
 
-		expectRead(t, c, 0, uuidcollection.NewSet(typeA), Within, 6, 1)
+		expectRead(t, c, 0, uuidset.New(typeA).R(), Within, 6, 1)
 	})
 
 	t.Run("it evicts the oldest events when over capacity, and moves the segment past them", func(t *testing.T) {
 		c := New(2, 0)
 		c.Append(0, 10, envelopes(event{2, typeA}, event{5, typeA}, event{7, typeA}))
 
-		want := uuidcollection.NewSet(typeA)
+		want := uuidset.New(typeA).R()
 
 		// The event at offset 2 was evicted, so the cache is complete only
 		// from offset 3.
@@ -141,7 +142,7 @@ func TestCache(t *testing.T) {
 		c.Append(0, 4, envelopes(event{1, typeA}, event{3, typeA}))
 		c.Append(4, 6, envelopes(event{4, typeA}))
 
-		want := uuidcollection.NewSet(typeA)
+		want := uuidset.New(typeA).R()
 
 		expectRead(t, c, 1, want, Before, 0)
 		expectRead(t, c, 2, want, Within, 6, 3, 4)
@@ -152,7 +153,7 @@ func TestCache(t *testing.T) {
 		c.Append(0, 2, envelopes(event{1, typeA}))
 		c.Append(2, 5, envelopes(event{2, typeA}, event{4, typeA}))
 
-		want := uuidcollection.NewSet(typeA)
+		want := uuidset.New(typeA).R()
 
 		expectRead(t, c, 1, want, Before, 0)
 		expectRead(t, c, 2, want, Within, 5, 2, 4)
@@ -163,7 +164,7 @@ func TestCache(t *testing.T) {
 		c.Append(0, 2, envelopes(event{1, typeA}))
 		c.Append(2, 7, envelopes(event{2, typeA}, event{4, typeA}, event{6, typeA}))
 
-		want := uuidcollection.NewSet(typeA)
+		want := uuidset.New(typeA).R()
 
 		expectRead(t, c, 2, want, Before, 0)
 		expectRead(t, c, 3, want, Within, 7, 4, 6)
@@ -188,7 +189,7 @@ func TestCache(t *testing.T) {
 
 		c.Reset(10)
 
-		want := uuidcollection.NewSet(typeA)
+		want := uuidset.New(typeA).R()
 
 		expectRead(t, c, 1, want, Before, 0)
 		expectRead(t, c, 10, want, After, 0)
@@ -259,14 +260,14 @@ func TestCache(t *testing.T) {
 				}
 			}
 
-			want := uuidcollection.NewSet(
-				rapid.SampledFrom([][]*uuidpb.UUID{
+			want := uuidset.New(
+				rapid.SampledFrom([][]uuid.UUID{
 					{typeA},
 					{typeB},
 					{typeA, typeC},
 					types,
 				}).Draw(t, "types")...,
-			)
+			).R()
 
 			cp := uint64(rapid.IntRange(int(begin), int(end)).Draw(t, "checkpoint"))
 
@@ -311,16 +312,16 @@ func TestCache(t *testing.T) {
 // newEnvelope returns an envelope for an event of the given type at the given
 // offset, with only the fields that the cache reads.
 func newEnvelope(
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	offset uint64,
-	typeID *uuidpb.UUID,
+	typeID uuid.UUID,
 ) *envelopepb.Envelope {
 	env := envelopepb.NewEnvelopeBuilder().
 		WithBody(
 			envelopepb.NewBodyBuilder().
 				WithMessage(
 					envelopepb.NewMessageBuilder().
-						WithTypeId(typeID).
+						WithTypeId(uuidpb.FromStd(typeID)).
 						Build(),
 				).
 				Build(),
@@ -330,7 +331,7 @@ func newEnvelope(
 	envelopepb.SetExtension(
 		env.GetBody(),
 		envelopepb.NewEventStreamPositionBuilder().
-			WithStreamId(streamID).
+			WithStreamId(uuidpb.FromStd(streamID)).
 			WithOffset(offset).
 			Build(),
 	)

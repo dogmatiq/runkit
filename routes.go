@@ -2,12 +2,12 @@ package runkit
 
 import (
 	"reflect"
+	"uuid"
 
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/messagequeue"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 )
 
 // executableCommandTypes returns the set of command types that the engine
@@ -34,8 +34,8 @@ func executableCommandTypes(appConfig *config.Application) map[reflect.Type]stru
 // commandHandlersForQueueRouter returns the handler of each command type,
 // keyed by the type's ID, for [messagequeue.Router] to choose the queue for
 // each command.
-func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollection.Map[messagequeue.CommandHandler] {
-	handlers := &uuidcollection.Map[messagequeue.CommandHandler]{}
+func commandHandlersForQueueRouter(appConfig *config.Application) map[uuid.UUID]messagequeue.CommandHandler {
+	handlers := map[uuid.UUID]messagequeue.CommandHandler{}
 
 	for _, handlerConfig := range appConfig.Handlers() {
 		var handler messagequeue.CommandHandler
@@ -43,12 +43,12 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 		switch handlerConfig := handlerConfig.(type) {
 		case *config.Aggregate:
 			handler = messagequeue.CommandHandler{
-				Key:       handlerConfig.Identity().GetKey(),
+				Key:       handlerConfig.Identity().GetKey().AsStd(),
 				Aggregate: handlerConfig.Interface(),
 			}
 		case *config.Integration:
 			handler = messagequeue.CommandHandler{
-				Key:                   handlerConfig.Identity().GetKey(),
+				Key:                   handlerConfig.Identity().GetKey().AsStd(),
 				ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
 			}
 		default:
@@ -58,7 +58,7 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 		commandTypeIDs := inboundMessageTypeIDsForHandler(handlerConfig, message.CommandKind)
 
 		for commandTypeID := range commandTypeIDs.All() {
-			handlers.Set(commandTypeID, handler)
+			handlers[commandTypeID] = handler
 		}
 	}
 
@@ -67,8 +67,8 @@ func commandHandlersForQueueRouter(appConfig *config.Application) *uuidcollectio
 
 // consumedEventTypeIDs returns the message type IDs of every event type that
 // is routed to a non-disabled handler within the given application.
-func consumedEventTypeIDs(appConfig *config.Application) *uuidcollection.Set {
-	messageTypeIDs := uuidcollection.NewSet()
+func consumedEventTypeIDs(appConfig *config.Application) *uuidset.Set {
+	messageTypeIDs := &uuidset.Set{}
 
 	for _, handlerConfig := range appConfig.Handlers() {
 		if handlerConfig.IsDisabled() {
@@ -90,17 +90,17 @@ func consumedEventTypeIDs(appConfig *config.Application) *uuidcollection.Set {
 func inboundMessageTypeIDsForHandler(
 	handlerConfig config.Handler,
 	messageKind message.Kind,
-) *uuidcollection.Set {
+) *uuidset.Set {
 	inboundRoutes := handlerConfig.
 		RouteSet().
 		Filter(config.FilterByMessageKind(messageKind)).
 		Filter(config.FilterByMessageDirection(config.InboundDirection)).
 		Routes()
 
-	messageTypeIDs := &uuidcollection.Set{}
+	messageTypeIDs := &uuidset.Set{}
 
 	for route := range inboundRoutes {
-		messageTypeID := uuidpb.MustParse(route.MessageTypeID.Get())
+		messageTypeID := route.MessageTypeID.Get().AsStd()
 		messageTypeIDs.Add(messageTypeID)
 	}
 

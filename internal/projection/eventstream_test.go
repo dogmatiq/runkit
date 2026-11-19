@@ -8,11 +8,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -33,7 +33,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
 					}
@@ -84,7 +84,7 @@ func TestEventStream_eventsAreDeliveredInOrder(t *testing.T) {
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					handlerMutex.Lock()
 					defer handlerMutex.Unlock()
 
@@ -118,7 +118,7 @@ func TestEventStream_eventsAreRedeliveredInOrderWhenHandlerReturnsAnError(t *tes
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return &stubs.EventStub[stubs.TypeA]{
 						Content: stubs.TypeA(fmt.Sprintf("event-%d", offset)),
 					}
@@ -199,7 +199,7 @@ func TestEventStream_checkpointOffsetIsUnchangedBySkippedEvents(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1
@@ -292,7 +292,7 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				eventCount,
@@ -331,7 +331,7 @@ func TestEventStream_consumptionResumesFromTheHandlersCheckpointOffset(t *testin
 
 					return checkpointOffset, nil
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					m.Lock()
 					defer m.Unlock()
 
@@ -355,7 +355,7 @@ func TestEventStream_consumptionIsRetriedWhenDecodingAnEventPanics(t *testing.T)
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return &stubs.EventStub[panicsWhenDecoded]{}
 				},
 				1,
@@ -379,7 +379,7 @@ func TestEventStream_consumptionIsRetriedWhenDecodingAnEventPanics(t *testing.T)
 						dogma.HandlesEvent[*stubs.EventStub[panicsWhenDecoded]](),
 					)
 				},
-				CheckpointOffsetFunc: func(context.Context, string) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					attempts.Add(1)
 					return 0, nil
 				},

@@ -101,6 +101,11 @@ and logs failures.
   set to `application` or `engine`, and includes the application's identity.
   The `component` attribute has been removed. Anything a handler logs through
   its scope's `Log()` method is now only written if handling succeeds.
+- **[BC]** Updated to Dogma v0.26.0. A projection handler now gets its stream
+  ID, and the stream ID passed to its `CheckpointOffset()`, as a `uuid.UUID`.
+  The scope of every handler has a `MessageID()` method, which returns the ID
+  of the message that the handler is handling. It's the same each time the
+  engine delivers that message.
 
 ### Fixed
 
@@ -113,6 +118,9 @@ and logs failures.
   after handling a deadline. The commands were queued on every attempt, even
   though nothing else was saved. They're now queued only if the rest of the
   process's changes are saved too.
+- An event observer passed to `Engine.ExecuteCommand()` received the same
+  events again on every poll, and never received events beyond the first 100.
+  Now it receives each event once.
 
 ## [0.2.0] - 2026-11-06
 

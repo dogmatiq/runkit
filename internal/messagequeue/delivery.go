@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -34,8 +34,8 @@ const deliveryDescription = "deliver message"
 // message's lock, [xsql.IsLockNotAvailableError] returns true for that error.
 func (c *Consumer) attemptDelivery(
 	ctx context.Context,
-	queues *uuidcollection.Set,
-	messageID *uuidpb.UUID,
+	queues *uuidset.SetR,
+	messageID uuid.UUID,
 ) (bool, error) {
 	tx, err := c.DB.BeginTx(ctx, xsql.TxOptions)
 	if err != nil {
@@ -56,7 +56,7 @@ func (c *Consumer) attemptDelivery(
 
 	// [Consumer.claimMessage] claims only messages of the types in c.Sinks, so
 	// there's always a sink for the message's type.
-	sink, _ := c.Sinks.Get(d.MessageTypeID)
+	sink := c.Sinks[d.MessageTypeID]
 
 	engineLogger := c.EngineLogger.With(
 		slog.Group(
@@ -143,8 +143,8 @@ func (c *Consumer) attemptDelivery(
 func (c *Consumer) claimMessage(
 	ctx context.Context,
 	tx *sql.Tx,
-	queues *uuidcollection.Set,
-	messageID *uuidpb.UUID,
+	queues *uuidset.SetR,
+	messageID uuid.UUID,
 ) (Delivery, []byte, bool, error) {
 	// The time compared with next_attempt_at comes from Go's clock, not the
 	// database's, because [dogma.ProcessDeadlineScope.Now] reads Go's clock
@@ -173,21 +173,16 @@ func (c *Consumer) claimMessage(
 		time.Now(),
 	)
 
-	d := Delivery{
-		MessageID:     &uuidpb.UUID{},
-		MessageTypeID: &uuidpb.UUID{},
-		QueueID:       &uuidpb.UUID{},
-	}
-
 	var (
+		d             Delivery
 		envelopeData  []byte
 		firstFailedAt sql.NullTime
 	)
 
 	if err := row.Scan(
-		xsql.UUID(d.MessageID),
-		xsql.UUID(d.MessageTypeID),
-		xsql.UUID(d.QueueID),
+		xsql.UUID(&d.MessageID),
+		xsql.UUID(&d.MessageTypeID),
+		xsql.UUID(&d.QueueID),
 		&envelopeData,
 		&d.Streak.Failures,
 		&firstFailedAt,

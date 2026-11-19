@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"uuid"
 
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -18,7 +19,7 @@ import (
 // database is bound to an application with a different key.
 func Bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 	var (
-		key  uuidpb.UUID
+		key  uuid.UUID
 		name string
 	)
 
@@ -39,7 +40,7 @@ func Bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 			ELSE i.name
 		END
 		RETURNING key, name`,
-		xsql.UUID(id.GetKey()),
+		xsql.UUID(id.GetKey().AsStd()),
 		id.GetName(),
 	).Scan(
 		xsql.UUID(&key),
@@ -48,12 +49,12 @@ func Bind(ctx context.Context, db *sql.DB, id *identitypb.Identity) error {
 		return err
 	}
 
-	if key.Equal(id.GetKey()) {
+	if key == id.GetKey().AsStd() {
 		return nil
 	}
 
 	return fmt.Errorf(
 		"it is already bound to application %s",
-		identitypb.New(name, &key),
+		identitypb.New(name, uuidpb.FromStd(key)),
 	)
 }

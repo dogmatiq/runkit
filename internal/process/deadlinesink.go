@@ -68,7 +68,7 @@ func (s *DeadlineSink) Deliver(
 		tx,
 		s.Handler,
 		s.QueueRouter,
-		s.Identity.GetKey(),
+		s.Identity.GetKey().AsStd(),
 		instanceID,
 		instanceLogger,
 	)
@@ -117,6 +117,7 @@ func (s *DeadlineSink) Deliver(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			messageID:            env.GetBody().GetMessageId().AsStd(),
 			instanceID:           inst.ID,
 			root:                 inst.Root,
 			outboundMessageTypes: s.OutboundMessageTypes,

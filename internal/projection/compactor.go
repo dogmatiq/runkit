@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/protobuf/identitypb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -82,7 +82,7 @@ func (c *Compactor) run(ctx context.Context) error {
 		)
 		VALUES ($1)
 		ON CONFLICT (handler_key) DO NOTHING`,
-		xsql.UUID(c.Identity.GetKey()),
+		xsql.UUID(c.Identity.GetKey().AsStd()),
 	); err != nil {
 		return fmt.Errorf("unable to insert handler: %w", err)
 	}
@@ -112,11 +112,11 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 				WHERE handler_key = $1
 				AND clock_timestamp() - last_compacted_at >= $2
 				FOR UPDATE SKIP LOCKED`,
-				xsql.UUID(c.Identity.GetKey()),
+				xsql.UUID(c.Identity.GetKey().AsStd()),
 				c.Interval,
 			)
 
-			var handlerKey uuidpb.UUID
+			var handlerKey uuid.UUID
 			if err := row.Scan(xsql.UUID(&handlerKey)); err != nil {
 				if err == sql.ErrNoRows {
 					return nil
@@ -148,7 +148,7 @@ func (c *Compactor) tryCompact(ctx context.Context) error {
 				`UPDATE runkit.projection_handlers
 				SET last_compacted_at = clock_timestamp()
 				WHERE handler_key = $1`,
-				xsql.UUID(c.Identity.GetKey()),
+				xsql.UUID(c.Identity.GetKey().AsStd()),
 			); err != nil {
 				return fmt.Errorf("unable to update compaction timestamp: %w", err)
 			}

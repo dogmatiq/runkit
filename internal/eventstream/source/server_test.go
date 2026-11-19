@@ -10,12 +10,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/dogmatiq/dapper"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -78,8 +78,8 @@ func TestServer_contemporaryEvents(t *testing.T) {
 				t,
 				ctx,
 				client,
-				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
-				stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]](),
+				stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]](),
+				stubs.MessageTypeID[*stubs.EventStub[stubs.TypeC]](),
 			)
 
 			// The stream's first segment shows that the watch has begun.
@@ -114,7 +114,7 @@ func TestServer_eventsRecordedTogetherShareAHeader(t *testing.T) {
 			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandB1)
 
 			client, ctx := newConsumerClient(t, cluster)
-			segments := watch(t, ctx, client, stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]())
+			segments := watch(t, ctx, client, stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]())
 
 			// The stream's opening segment shows that the watch has begun.
 			segments.receive()
@@ -189,12 +189,12 @@ func TestServer_largeEventsRecordedTogetherAreSplit(t *testing.T) {
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
 
-			typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
+			typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 			client, ctx := newConsumerClient(t, cluster)
 
 			// The watch begins at the end of the stream, so the events already
 			// on it are read instead. The watch only identifies the stream.
-			streamID := watch(t, ctx, client, typeA).receive().GetEventStreamId()
+			streamID := watch(t, ctx, client, typeA).receive().GetEventStreamId().AsStd()
 			segments := read(t, ctx, client, streamID, 0, typeA)
 
 			for _, want := range [][]dogma.Event{
@@ -251,14 +251,14 @@ func TestServer_historicalEvents(t *testing.T) {
 				stubs.CommandC1,
 			)
 
-			typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
-			typeC := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeC]]()
+			typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
+			typeC := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeC]]()
 
 			client, ctx := newConsumerClient(t, cluster)
 
 			// The watch begins at the end of the stream, so the events already
 			// on it are read instead. The watch only identifies the stream.
-			streamID := watch(t, ctx, client, typeA, typeC).receive().GetEventStreamId()
+			streamID := watch(t, ctx, client, typeA, typeC).receive().GetEventStreamId().AsStd()
 
 			segments := read(t, ctx, client, streamID, 0, typeA, typeC)
 			segments.ExpectSegment(streamID, 0, 3, stubs.EventA1, stubs.EventC1)
@@ -269,10 +269,10 @@ func TestServer_historicalEvents(t *testing.T) {
 }
 
 func TestServer_WatchEvents(t *testing.T) {
-	typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
+	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 
 	t.Run("it begins each existing stream at its end", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -291,7 +291,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 
 	t.Run("it begins a stream with no events with an empty segment", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -309,7 +309,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers events appended after the client connects", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -331,7 +331,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers a stream that is created after the client connects", func(t *testing.T) {
-		var existing *uuidpb.UUID
+		var existing uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -357,7 +357,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 
 	t.Run("it advances past events of irrelevant types without delivering them", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -381,7 +381,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers events of every type when no types are requested", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -431,7 +431,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	t.Run("it ends the call of a client that falls behind", func(t *testing.T) {
 		const eventCount = 1000
 
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -474,15 +474,15 @@ func TestServer_WatchEvents(t *testing.T) {
 }
 
 func TestServer_ReadEvents(t *testing.T) {
-	typeA := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]]()
-	typeX := stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeX]]()
+	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
+	typeX := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeX]]()
 
 	t.Run("it returns NOT_FOUND for an unrecognized stream", func(t *testing.T) {
 		xtesting.RunEngines(
 			t,
 			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 				client, ctx := newConsumerClient(t, cluster)
-				streamID := uuidpb.Generate()
+				streamID := uuid.New()
 
 				segments := read(t, ctx, client, streamID, 0, typeA)
 
@@ -503,7 +503,7 @@ func TestServer_ReadEvents(t *testing.T) {
 				responses, err := client.ReadEvents(
 					ctx,
 					messaginggrpc.NewReadEventsRequestBuilder().
-						WithEventStreamId(uuidpb.Generate()).
+						WithEventStreamId(uuidpb.FromStd(uuid.New())).
 						Build(),
 				)
 				if err != nil {
@@ -544,13 +544,13 @@ func TestServer_ReadEvents(t *testing.T) {
 					t,
 					func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 						client, ctx := newConsumerClient(t, cluster)
-						segments := read(
+						segments := readProto(
 							t,
 							ctx,
 							client,
 							tc.StreamID,
 							0,
-							stubs.MessageTypeUUID[*stubs.EventStub[stubs.TypeA]](),
+							stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]](),
 						)
 
 						if err := segments.ExpectError(); status.Code(err) != codes.InvalidArgument {
@@ -564,7 +564,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it returns OUT_OF_RANGE when the begin offset is beyond the end of the stream", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -585,7 +585,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers events from the begin offset to the end of the stream, then closes", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -605,7 +605,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it ends the last segment at the end of the stream, past events of irrelevant types", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -625,7 +625,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers a segment with no events for a range with only events of irrelevant types", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -645,7 +645,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it delivers events of every type when no types are requested", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -665,7 +665,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it splits a segment whose events are larger than the maximum segment size", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		events := []dogma.Event{
 			largeEvent("1", 800<<10),
@@ -695,7 +695,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it sends an event that is larger than the maximum segment size on its own", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		large := largeEvent("<large>", 3<<20)
 
@@ -719,7 +719,7 @@ func TestServer_ReadEvents(t *testing.T) {
 	})
 
 	t.Run("it closes without delivering anything when beginning at the end of the stream", func(t *testing.T) {
-		var streamID *uuidpb.UUID
+		var streamID uuid.UUID
 
 		xtesting.SetupThenRunEngines(
 			t,
@@ -769,7 +769,7 @@ func watch(
 	t testing.TB,
 	ctx context.Context,
 	client messaginggrpc.EventStreamConsumerAPIClient,
-	messageTypeIDs ...*uuidpb.UUID,
+	messageTypeIDs ...uuid.UUID,
 ) *segmentReceiver {
 	t.Helper()
 
@@ -791,17 +791,22 @@ func watch(
 
 // filterOf returns a filter that matches the given message types, or every
 // type if none are given.
-func filterOf(messageTypeIDs []*uuidpb.UUID) *messaginggrpc.MessageFilter {
+func filterOf(messageTypeIDs []uuid.UUID) *messaginggrpc.MessageFilter {
 	if len(messageTypeIDs) == 0 {
 		return messaginggrpc.NewMessageFilterBuilder().
 			WithAll(&emptypb.Empty{}).
 			Build()
 	}
 
+	var ids []*uuidpb.UUID
+	for _, id := range messageTypeIDs {
+		ids = append(ids, uuidpb.FromStd(id))
+	}
+
 	return messaginggrpc.NewMessageFilterBuilder().
 		WithSpecific(
 			messaginggrpc.NewMessageFilter_MessageTypesBuilder().
-				WithIds(messageTypeIDs).
+				WithIds(ids).
 				Build(),
 		).
 		Build()
@@ -812,9 +817,26 @@ func read(
 	t testing.TB,
 	ctx context.Context,
 	client messaginggrpc.EventStreamConsumerAPIClient,
+	streamID uuid.UUID,
+	begin uint64,
+	messageTypeIDs ...uuid.UUID,
+) *segmentReceiver {
+	t.Helper()
+
+	id := uuidpb.FromStd(streamID)
+
+	return readProto(t, ctx, client, id, begin, messageTypeIDs...)
+}
+
+// readProto is like read, but takes the stream ID as it appears in the request,
+// so that a test can send an invalid one.
+func readProto(
+	t testing.TB,
+	ctx context.Context,
+	client messaginggrpc.EventStreamConsumerAPIClient,
 	streamID *uuidpb.UUID,
 	begin uint64,
-	messageTypeIDs ...*uuidpb.UUID,
+	messageTypeIDs ...uuid.UUID,
 ) *segmentReceiver {
 	t.Helper()
 
@@ -842,17 +864,17 @@ type segmentReceiver struct {
 	T         testing.TB
 	Responses grpc.ServerStreamingClient[messaginggrpc.EventStreamSegment]
 
-	ends uuidcollection.Map[uint64]
+	ends map[uuid.UUID]uint64
 }
 
 // Next receives the next segment, which must be of the given stream, and
 // returns its events.
-func (r *segmentReceiver) Next(streamID *uuidpb.UUID) []dogma.Event {
+func (r *segmentReceiver) Next(streamID uuid.UUID) []dogma.Event {
 	r.T.Helper()
 
 	seg := r.receive()
 
-	if !seg.GetEventStreamId().Equal(streamID) {
+	if seg.GetEventStreamId().AsStd() != streamID {
 		r.T.Fatalf("unexpected stream: got %s, want %s", seg.GetEventStreamId(), streamID)
 	}
 
@@ -862,7 +884,7 @@ func (r *segmentReceiver) Next(streamID *uuidpb.UUID) []dogma.Event {
 // ExpectSegment asserts that the next segment is the given range of the given
 // stream, holding exactly the given events.
 func (r *segmentReceiver) ExpectSegment(
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	begin, end uint64,
 	want ...dogma.Event,
 ) {
@@ -870,7 +892,7 @@ func (r *segmentReceiver) ExpectSegment(
 
 	seg := r.receive()
 
-	if !seg.GetEventStreamId().Equal(streamID) {
+	if seg.GetEventStreamId().AsStd() != streamID {
 		r.T.Fatalf("unexpected stream: got %s, want %s", seg.GetEventStreamId(), streamID)
 	}
 
@@ -889,7 +911,7 @@ func (r *segmentReceiver) ExpectSegment(
 
 // ExpectEmptySegmentsUntil asserts that segments of the given stream with no
 // events are received until one ends at the given offset.
-func (r *segmentReceiver) ExpectEmptySegmentsUntil(streamID *uuidpb.UUID, end uint64) {
+func (r *segmentReceiver) ExpectEmptySegmentsUntil(streamID uuid.UUID, end uint64) {
 	r.T.Helper()
 
 	for {
@@ -898,7 +920,7 @@ func (r *segmentReceiver) ExpectEmptySegmentsUntil(streamID *uuidpb.UUID, end ui
 			r.T.Fatalf("unexpected events: %s", dapper.Format(events))
 		}
 
-		got, _ := r.ends.Get(streamID)
+		got := r.ends[streamID]
 
 		if got == end {
 			return
@@ -914,7 +936,7 @@ func (r *segmentReceiver) ExpectEmptySegmentsUntil(streamID *uuidpb.UUID, end ui
 // until one ends at the given offset, and that together they hold exactly the
 // given events.
 func (r *segmentReceiver) ExpectEventsUntil(
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	end uint64,
 	want ...dogma.Event,
 ) {
@@ -925,7 +947,7 @@ func (r *segmentReceiver) ExpectEventsUntil(
 	for {
 		got = append(got, r.Next(streamID)...)
 
-		reached, _ := r.ends.Get(streamID)
+		reached := r.ends[streamID]
 
 		if reached == end {
 			break
@@ -972,9 +994,9 @@ func (r *segmentReceiver) receive() *messaginggrpc.EventStreamSegment {
 		r.T.Fatal(err)
 	}
 
-	streamID := seg.GetEventStreamId()
+	streamID := seg.GetEventStreamId().AsStd()
 
-	if end, ok := r.ends.Get(streamID); ok && seg.GetBeginOffset() != end {
+	if end, ok := r.ends[streamID]; ok && seg.GetBeginOffset() != end {
 		r.T.Fatalf(
 			"segment of stream %s is not contiguous: it begins at offset %d, but the previous segment ended at offset %d",
 			streamID,
@@ -992,7 +1014,11 @@ func (r *segmentReceiver) receive() *messaginggrpc.EventStreamSegment {
 		)
 	}
 
-	r.ends.Set(streamID, seg.GetEndOffset())
+	if r.ends == nil {
+		r.ends = map[uuid.UUID]uint64{}
+	}
+
+	r.ends[streamID] = seg.GetEndOffset()
 
 	return seg
 }

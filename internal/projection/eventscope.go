@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"uuid"
 )
 
 // eventScope implements [dogma.ProjectionEventScope].
 type eventScope struct {
-	streamID                 string
+	messageID                uuid.UUID
+	streamID                 uuid.UUID
 	offset, checkpointOffset uint64
 	recordedAt               time.Time
 	engineLogger             *slog.Logger
@@ -30,7 +32,11 @@ func (s *eventScope) Log(format string, args ...any) {
 	s.appLogger.Info(text)
 }
 
-func (s *eventScope) StreamID() string {
+func (s *eventScope) MessageID() uuid.UUID {
+	return s.messageID
+}
+
+func (s *eventScope) StreamID() uuid.UUID {
 	return s.streamID
 }
 

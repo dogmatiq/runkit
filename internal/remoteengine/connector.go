@@ -5,15 +5,15 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"google.golang.org/grpc"
 )
@@ -36,9 +36,9 @@ type Connector struct {
 	// EventTypeIDs is the set of event types to deliver from each remote
 	// engine.
 	//
-	// If it is empty, remote engines are not watched at all, as watching for
-	// an empty set of types would deliver events of every type.
-	EventTypeIDs *uuidcollection.Set
+	// If it is empty, remote engines are not watched at all, because a source
+	// can't watch an empty set of types.
+	EventTypeIDs *uuidset.SetR
 
 	// EngineFailurePolicy is how the engine responds to failures to discover remote engines.
 	EngineFailurePolicy failure.Policy
@@ -85,7 +85,7 @@ func (c *Connector) discover(ctx context.Context) error {
 		// engine that's removed and added again gets a new ID.
 		src := &source.Remote{
 			Client:      messaginggrpc.NewEventStreamConsumerAPIClient(conn),
-			ID:          uuidpb.Generate(),
+			ID:          uuid.New(),
 			Description: description,
 		}
 

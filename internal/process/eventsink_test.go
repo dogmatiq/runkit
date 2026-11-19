@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
@@ -32,7 +32,7 @@ func TestEventSink_filteredEventsAdvanceCheckpoint(t *testing.T) {
 	t.Parallel()
 
 	s := newEventSink(t, xtesting.NewDatabase(t))
-	streamID := uuidpb.Generate()
+	streamID := uuid.New()
 	cp, err := s.CheckpointOffset(t.Context(), streamID)
 	if err != nil || cp != 0 {
 		t.Fatalf("unexpected initial checkpoint: %d, %v", cp, err)
@@ -89,6 +89,39 @@ func TestEventSink_overlappingConsumers(t *testing.T) {
 
 	if calls != 1 {
 		t.Fatalf("unexpected number of handler calls: got %d, want 1", calls)
+	}
+}
+
+// TestEventSink_handlerReceivesTheMessageID verifies that the scope passed to
+// the handler returns the ID of the delivered event's message.
+func TestEventSink_handlerReceivesTheMessageID(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	sink := newEventSink(t, db)
+	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+
+	var got uuid.UUID
+	sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleEventFunc = func(
+		_ context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessEventScope[dogma.ProcessRoot],
+		_ dogma.Event,
+	) error {
+		got = s.MessageID()
+		return nil
+	}
+
+	if _, _, err := sink.ConsumeSegment(t.Context(), 0, eventstream.Segment{
+		StreamID:  streamID,
+		End:       1,
+		Envelopes: envs,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := envs[0].GetBody().GetMessageId().AsStd(); got != want {
+		t.Fatalf("unexpected message ID: got %s, want %s", got, want)
 	}
 }
 
@@ -178,8 +211,8 @@ func newEventSink(t testing.TB, db *sql.DB) *EventSink {
 			Application: identitypb.New("<app>", uuidpb.Generate()),
 		},
 		QueueRouter: &messagequeue.Router{
-			NodeID:          uuidpb.Generate(),
-			CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
+			NodeID:          uuid.New(),
+			CommandHandlers: map[uuid.UUID]messagequeue.CommandHandler{},
 		},
 		Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
 			NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },

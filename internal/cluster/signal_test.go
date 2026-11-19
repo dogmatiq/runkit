@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -30,7 +30,7 @@ func TestNode_AttachSignal(t *testing.T) {
 			return &Node{
 				DB:                  db,
 				Signals:             signals,
-				ID:                  uuidpb.Generate(),
+				ID:                  uuid.New(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    100 * time.Millisecond,
 				EngineFailurePolicy: xtesting.FailurePolicy(),

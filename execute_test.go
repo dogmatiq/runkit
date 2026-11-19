@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -161,6 +162,101 @@ func TestExecuteCommand_eventObserverSeesEventsWithDirectCausation(t *testing.T)
 					_ dogma.Command,
 				) error {
 					s.RecordEvent(&stubs.EventStub[stubs.TypeA]{Content: "event"})
+					return nil
+				},
+			},
+		),
+	)
+}
+
+// TestExecuteCommand_eachEventObserverSeesEachEventOnce verifies that each
+// event observer sees each event exactly once, even when there are more events
+// than one poll of the database returns.
+func TestExecuteCommand_eachEventObserverSeesEachEventOnce(t *testing.T) {
+	const eventCount = 250
+
+	// observe records that an observer saw the event with the given content. It
+	// returns an error if the observer saw that event before.
+	observe := func(seen map[string]bool, content string) error {
+		if seen[content] {
+			return fmt.Errorf("observer saw event %q more than once", content)
+		}
+
+		seen[content] = true
+
+		return nil
+	}
+
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			var (
+				seenA = map[string]bool{}
+				seenB = map[string]bool{}
+			)
+
+			// The handler records every event of type A before any event of
+			// type B, so the observer of type A sees all of its events before
+			// the observer of type B is satisfied.
+			if err := cluster.ExecuteCommand(
+				t.Context(),
+				stubs.CommandA1,
+				dogma.WithEventObserver(
+					func(
+						_ context.Context,
+						e *stubs.EventStub[stubs.TypeA],
+					) (bool, error) {
+						return false, observe(seenA, string(e.Content))
+					},
+				),
+				dogma.WithEventObserver(
+					func(
+						_ context.Context,
+						e *stubs.EventStub[stubs.TypeB],
+					) (bool, error) {
+						err := observe(seenB, string(e.Content))
+						return len(seenB) == eventCount, err
+					},
+				),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(seenA) != eventCount {
+				t.Fatalf("observer of type A saw %d of %d events", len(seenA), eventCount)
+			}
+		},
+		dogma.ViaIntegration(
+			&stubs.IntegrationMessageHandlerStub{
+				ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+					c.Identity("<handler>", "5c0e2f7a-8d1b-4b6e-9f3a-2e7c4d9b1a60")
+					c.Routes(
+						dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+						dogma.RecordsEvent[*stubs.EventStub[stubs.TypeB]](),
+					)
+				},
+				HandleCommandFunc: func(
+					_ context.Context,
+					s dogma.IntegrationCommandScope,
+					_ dogma.Command,
+				) error {
+					for i := range eventCount {
+						s.RecordEvent(
+							&stubs.EventStub[stubs.TypeA]{
+								Content: stubs.TypeA(fmt.Sprint(i)),
+							},
+						)
+					}
+
+					for i := range eventCount {
+						s.RecordEvent(
+							&stubs.EventStub[stubs.TypeB]{
+								Content: stubs.TypeB(fmt.Sprint(i)),
+							},
+						)
+					}
+
 					return nil
 				},
 			},

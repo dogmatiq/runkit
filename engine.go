@@ -9,14 +9,13 @@ import (
 	"net"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/contexthook"
@@ -93,7 +92,7 @@ type Engine struct {
 	db *sql.DB
 
 	// nodeID is the unique identifier for this engine instance.
-	nodeID *uuidpb.UUID
+	nodeID uuid.UUID
 
 	// compactInterval is the minimum time between successful projection
 	// compactions.
@@ -185,7 +184,7 @@ type Engine struct {
 
 	// queueSinks maps the ID of each command and deadline type to the sink for
 	// messages of that type.
-	queueSinks uuidcollection.Map[messagequeue.Sink]
+	queueSinks map[uuid.UUID]messagequeue.Sink
 
 	// eventStreams is the catalog from which event streams are consumed.
 	eventStreams *eventstream.Catalog
@@ -229,7 +228,7 @@ func New(
 	e := &Engine{
 		app:             app,
 		db:              db,
-		nodeID:          uuidpb.Generate(),
+		nodeID:          uuid.New(),
 		compactInterval: DefaultProjectionCompactInterval(),
 		compactTimeout:  DefaultProjectionCompactTimeout(),
 		handleTimeout:   DefaultHandleTimeout(),
@@ -245,6 +244,8 @@ func New(
 
 		engineLogger: slog.Default(),
 		appLogger:    slog.Default(),
+
+		queueSinks: map[uuid.UUID]messagequeue.Sink{},
 	}
 
 	for _, option := range options {
@@ -418,7 +419,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	// Watch local streams if any enabled projection or process consumes events.
 	if !eventTypeIDs.IsEmpty() {
 		e.group.Go(func() error {
-			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs)
+			return e.eventStreams.Watch(ctx, localEventStreams, eventTypeIDs.R())
 		})
 	}
 
@@ -426,7 +427,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		connector := &remoteengine.Connector{
 			EventStreams:        e.eventStreams,
 			Discover:            d,
-			EventTypeIDs:        eventTypeIDs,
+			EventTypeIDs:        eventTypeIDs.R(),
 			EngineFailurePolicy: e.engineFailurePolicy,
 			EngineLogger:        e.engineLogger,
 		}

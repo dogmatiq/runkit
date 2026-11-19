@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/schema"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/jackc/pgx/v5"
@@ -181,7 +181,7 @@ func asEngineRole(
 ) *pgx.ConnConfig {
 	t.Helper()
 
-	name := "engine-" + uuidpb.Generate().AsString()
+	name := "engine-" + uuid.New().String()
 	role := pgx.Identifier{name}.Sanitize()
 
 	if _, err := owner.ExecContext(
@@ -293,7 +293,7 @@ func replaceDatabaseNameInDSN(
 func createTestDatabase(t testing.TB, dsn string) (dbName string) {
 	t.Helper()
 
-	dbName = "dogma-" + uuidpb.Generate().AsString()
+	dbName = "dogma-" + uuid.New().String()
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

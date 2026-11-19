@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -31,7 +31,7 @@ func TestInstance_stateIsNotPersistedIfMutateIsNotUsed(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1
@@ -98,7 +98,7 @@ func TestInstance_stateIsPersisted(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return stubs.EventA1
@@ -176,7 +176,7 @@ func TestInstance_instancesAreIsolated(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					switch offset {
 					case 0:
 						return &stubs.EventStub[stubs.TypeA]{Content: "A"} // handled by instance A
@@ -278,7 +278,7 @@ func TestInstance_writesAreSerialized(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(_ *uuidpb.UUID, offset uint64) dogma.Event {
+				func(_ uuid.UUID, offset uint64) dogma.Event {
 					return stubs.EventA1
 				},
 				counts...,
@@ -295,7 +295,7 @@ func TestInstance_writesAreSerialized(t *testing.T) {
 			xtesting.PopulateEventStreams(
 				t,
 				db,
-				func(*uuidpb.UUID, uint64) dogma.Event {
+				func(uuid.UUID, uint64) dogma.Event {
 					return stubs.EventX1
 				},
 				1,
@@ -411,14 +411,9 @@ func TestInstance_deadlineQueue(t *testing.T) {
 	}
 
 	// insertInstance inserts the instance before the engine starts, bound to
-	// the queue with the given ID, or unbound if it is nil.
-	insertInstance := func(t *testing.T, db *sql.DB, deadlineQueueID *uuidpb.UUID) {
+	// the queue with the given ID, or unbound if it is the nil UUID.
+	insertInstance := func(t *testing.T, db *sql.DB, deadlineQueueID uuid.UUID) {
 		t.Helper()
-
-		var queueID any
-		if deadlineQueueID != nil {
-			queueID = deadlineQueueID.AsString()
-		}
 
 		if _, err := db.ExecContext(
 			t.Context(),
@@ -428,7 +423,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 				deadline_queue_id
 			) VALUES ($1, '<instance>', $2)`,
 			handlerKey,
-			queueID,
+			xsql.UUID(deadlineQueueID),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -456,7 +451,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 
 	t.Run("it binds an existing instance when it next handles an event", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
-		insertInstance(t, db, nil)
+		insertInstance(t, db, uuid.Nil())
 
 		xtesting.RunEnginesWithDB(
 			t,
@@ -503,7 +498,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 
 	t.Run("it keeps a binding that was changed by hand", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
-		queueID := uuidpb.Generate()
+		queueID := uuid.New()
 		insertInstance(t, db, queueID)
 
 		xtesting.RunEnginesWithDB(
@@ -520,7 +515,7 @@ func TestInstance_deadlineQueue(t *testing.T) {
 					`SELECT COUNT(*)
 					FROM runkit.queued_messages
 					WHERE queue_id = $1`,
-					queueID.AsString(),
+					queueID.String(),
 				)
 			},
 			handler(),
@@ -586,7 +581,7 @@ func TestInstance_end(t *testing.T) {
 			WHERE handler_key = $1
 			AND instance_id = '<instance>'
 			FOR UPDATE`,
-			xsql.UUID(sink.Identity.GetKey()),
+			xsql.UUID(sink.Identity.GetKey().AsStd()),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -617,7 +612,7 @@ func TestInstance_end(t *testing.T) {
 			FROM runkit.process_instances
 			WHERE handler_key = $1
 			AND instance_id = '<instance>'`,
-			xsql.UUID(sink.Identity.GetKey()),
+			xsql.UUID(sink.Identity.GetKey().AsStd()),
 		).Scan(&ended); err != nil {
 			t.Fatal(err)
 		}
@@ -634,9 +629,9 @@ func TestInstance_end(t *testing.T) {
 func TestInstance_marshalingFailure(t *testing.T) {
 	const handlerKey = "5d3a8f4c-1e2b-4c7d-9a6e-0f8b2c4d6e1a"
 
-	commandTypeID := stubs.MessageTypeUUID[*stubs.CommandStub[stubs.TypeX]]()
-	originalDeadlineTypeID := stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeA]]()
-	successorDeadlineTypeID := stubs.MessageTypeUUID[*stubs.DeadlineStub[stubs.TypeB]]()
+	commandTypeID := stubs.MessageTypeID[*stubs.CommandStub[stubs.TypeX]]()
+	originalDeadlineTypeID := stubs.MessageTypeID[*stubs.DeadlineStub[stubs.TypeA]]()
+	successorDeadlineTypeID := stubs.MessageTypeID[*stubs.DeadlineStub[stubs.TypeB]]()
 
 	const (
 		marshalSucceeds = iota
@@ -728,7 +723,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 	}
 
 	// expectQueued checks the number of queued messages of the given type.
-	expectQueued := func(t testing.TB, db *sql.DB, description string, typeID *uuidpb.UUID, want int) {
+	expectQueued := func(t testing.TB, db *sql.DB, description string, typeID uuid.UUID, want int) {
 		t.Helper()
 
 		xtesting.ExpectQueryResult(
@@ -811,7 +806,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 					xtesting.PopulateEventStreams(
 						t,
 						db,
-						func(*uuidpb.UUID, uint64) dogma.Event {
+						func(uuid.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
 						1,
@@ -841,7 +836,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(*uuidpb.UUID, uint64) dogma.Event {
+					func(uuid.UUID, uint64) dogma.Event {
 						return stubs.EventA1
 					},
 					1,
@@ -883,7 +878,7 @@ func TestInstance_marshalingFailure(t *testing.T) {
 				xtesting.PopulateEventStreams(
 					t,
 					db,
-					func(*uuidpb.UUID, uint64) dogma.Event {
+					func(uuid.UUID, uint64) dogma.Event {
 						return stubs.EventB1
 					},
 					1,

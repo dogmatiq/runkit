@@ -3,25 +3,25 @@ package xslog
 import (
 	"errors"
 	"log/slog"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
 // UUID returns an [slog.Attr] for a UUID value.
-func UUID(k string, v *uuidpb.UUID) slog.Attr {
-	return slog.String(k, v.AsString())
+func UUID(k string, v uuid.UUID) slog.Attr {
+	return slog.String(k, v.String())
 }
 
 // Identity returns an [slog.Attr] for an application or handler identity.
 func Identity(k string, v *identitypb.Identity, extra ...slog.Attr) slog.Attr {
 	attrs := []any{
-		UUID("key", v.GetKey()),
+		UUID("key", v.GetKey().AsStd()),
 		slog.String("name", v.GetName()),
 	}
 
@@ -48,11 +48,11 @@ func Envelope(k string, v *envelopepb.Envelope, extra ...slog.Attr) slog.Attr {
 
 	attrs = append(
 		attrs,
-		UUID("message_id", v.GetBody().GetMessageId()),
-		UUID("causation_id", v.GetHeader().GetCausationId()),
-		UUID("correlation_id", v.GetHeader().GetCorrelationId()),
+		UUID("message_id", v.GetBody().GetMessageId().AsStd()),
+		UUID("causation_id", v.GetHeader().GetCausationId().AsStd()),
+		UUID("correlation_id", v.GetHeader().GetCorrelationId().AsStd()),
 		slog.String("description", v.GetBody().GetMessage().GetDescription()),
-		messageType(v.GetBody().GetMessage().GetTypeId()),
+		messageType(v.GetBody().GetMessage().GetTypeId().AsStd()),
 	)
 
 	for _, a := range extra {
@@ -62,12 +62,12 @@ func Envelope(k string, v *envelopepb.Envelope, extra ...slog.Attr) slog.Attr {
 	return slog.Group(k, attrs...)
 }
 
-func messageType(v *uuidpb.UUID) slog.Attr {
+func messageType(v uuid.UUID) slog.Attr {
 	attrs := []any{
 		UUID("id", v),
 	}
 
-	if t, ok := dogma.RegisteredMessageTypeByID(v.AsString()); ok {
+	if t, ok := dogma.RegisteredMessageTypeByID(v); ok {
 		attrs = append(
 			attrs,
 			slog.String("name", t.GoType().Elem().Name()),

@@ -7,11 +7,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -19,6 +19,7 @@ import (
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -42,7 +43,7 @@ func TestConsumer(t *testing.T) {
 		node := &cluster.Node{
 			DB:                  signals.DB,
 			Signals:             signals,
-			ID:                  uuidpb.Generate(),
+			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
 			EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -63,7 +64,7 @@ func TestConsumer(t *testing.T) {
 		)
 
 		sink := &sinkStub{
-			CheckpointOffsetFunc: func(context.Context, *uuidpb.UUID) (uint64, error) {
+			CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 				m.Lock()
 				defer m.Unlock()
 
@@ -88,8 +89,8 @@ func TestConsumer(t *testing.T) {
 		}
 
 		mt, _ := dogma.RegisteredMessageTypeOf(EventA1)
-		sink.EventTypeIDsFunc = func() *uuidcollection.Set {
-			return uuidcollection.NewSet(uuidpb.MustParse(mt.ID()))
+		sink.EventTypeIDsFunc = func() *uuidset.SetR {
+			return uuidset.New(mt.ID()).R()
 		}
 		consumer := &Consumer{
 			Node:                  node,
@@ -127,7 +128,7 @@ func TestConsumer(t *testing.T) {
 		src := &source.Memory{}
 		watch(t, catalog, src)
 
-		src.Append(newSegment(t, uuidpb.Generate(), 0, EventA1))
+		src.Append(newSegment(t, uuid.New(), 0, EventA1))
 
 		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 	})
@@ -138,7 +139,7 @@ func TestConsumer(t *testing.T) {
 		src := &source.Memory{}
 		watch(t, catalog, src)
 
-		streamID := uuidpb.Generate()
+		streamID := uuid.New()
 		src.Append(newSegment(t, streamID, 0, EventA1))
 		expectStreamIDs(t, catalog, streamID)
 
@@ -157,7 +158,7 @@ func TestConsumer(t *testing.T) {
 		src := &source.Memory{}
 		stop := watch(t, catalog, src)
 
-		streamID := uuidpb.Generate()
+		streamID := uuid.New()
 		src.Append(newSegment(t, streamID, 0, EventA1))
 		xtesting.ExpectToReceiveN(t, "handled event", handled, 0)
 
@@ -180,7 +181,7 @@ func TestConsumer(t *testing.T) {
 			Source: &source.Memory{},
 		}
 
-		streamID := uuidpb.Generate()
+		streamID := uuid.New()
 		seg := newSegment(t, streamID, 0, EventA1)
 		first.Append(seg)
 		second.Source.Append(seg)
@@ -216,7 +217,7 @@ func (s *deliveringSource) String() string {
 
 func (s *deliveringSource) Watch(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	fn func(source.Segment) error,
 ) error {
 	return s.Source.Watch(
@@ -236,8 +237,8 @@ func (s *deliveringSource) Watch(
 
 func (s *deliveringSource) Read(
 	ctx context.Context,
-	streamID *uuidpb.UUID,
-	types *uuidcollection.Set,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(source.Segment) error,
 ) error {
@@ -248,7 +249,7 @@ func (s *deliveringSource) Read(
 // at the given offset.
 func newSegment(
 	t *testing.T,
-	streamID *uuidpb.UUID,
+	streamID uuid.UUID,
 	begin uint64,
 	events ...dogma.Event,
 ) source.Segment {
@@ -277,7 +278,7 @@ func newSegment(
 					WithCreatedAt(timestamppb.Now()).
 					WithMessage(
 						envelopepb.NewMessageBuilder().
-							WithTypeId(uuidpb.MustParse(mt.ID())).
+							WithTypeId(uuidpb.FromStd(mt.ID())).
 							WithDescription(event.MessageDescription()).
 							WithData(data).
 							Build(),
@@ -289,7 +290,7 @@ func newSegment(
 		envelopepb.SetExtension(
 			env.GetBody(),
 			envelopepb.NewEventStreamPositionBuilder().
-				WithStreamId(streamID).
+				WithStreamId(uuidpb.FromStd(streamID)).
 				WithOffset(begin+uint64(i)).
 				Build(),
 		)
@@ -304,11 +305,11 @@ func newSegment(
 func expectStreamIDs(
 	t *testing.T,
 	catalog *Catalog,
-	want ...*uuidpb.UUID,
+	want ...uuid.UUID,
 ) {
 	t.Helper()
 
-	expected := uuidcollection.NewSet(want...)
+	expected := uuidset.New(want...).R()
 
 	xtesting.WaitForObservable(
 		t,
@@ -355,7 +356,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 				EngineLogger:        logger,
 			}
 			src := &source.Memory{}
-			id := uuidpb.Generate()
+			id := uuid.New()
 			src.Append(Segment{
 				StreamID: id,
 				Begin:    0,
@@ -392,7 +393,7 @@ func TestConsumer_partialSuccessReloadsDurableCheckpoint(t *testing.T) {
 			)
 			done := make(chan struct{})
 			sink := &sinkStub{
-				CheckpointOffsetFunc: func(context.Context, *uuidpb.UUID) (uint64, error) {
+				CheckpointOffsetFunc: func(context.Context, uuid.UUID) (uint64, error) {
 					mu.Lock()
 					defer mu.Unlock()
 
@@ -477,7 +478,7 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 	node := &cluster.Node{
 		DB:                  signals.DB,
 		Signals:             signals,
-		ID:                  uuidpb.Generate(),
+		ID:                  uuid.New(),
 		HeartbeatInterval:   20 * time.Millisecond,
 		HeartbeatTimeout:    100 * time.Millisecond,
 		EngineFailurePolicy: xtesting.FailurePolicy(),

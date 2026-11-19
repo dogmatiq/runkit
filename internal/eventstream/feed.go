@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream/internal/cache"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 )
 
@@ -26,14 +26,14 @@ import (
 // the [Catalog] has a feed from each.
 type feed struct {
 	// ID is the ID of the event stream.
-	ID *uuidpb.UUID
+	ID uuid.UUID
 
 	// Source is the source that the feed comes from.
 	Source source.Source
 
 	// EventTypeIDs is the set of IDs of the event types that the feed carries,
 	// or nil if it carries every type.
-	EventTypeIDs *uuidcollection.Set
+	EventTypeIDs *uuidset.SetR
 
 	// cache holds the stream's most recent events.
 	cache *cache.Cache
@@ -123,7 +123,7 @@ func (f *feed) Wait() {
 // end of the source's stream.
 func (f *feed) consume(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	begin uint64,
 	fn func(Segment) error,
 ) (uint64, error) {
@@ -209,7 +209,7 @@ func (f *feed) consume(
 // It returns the offset at which delivery stopped.
 func (f *feed) read(
 	ctx context.Context,
-	types *uuidcollection.Set,
+	types *uuidset.SetR,
 	cp uint64,
 	fn func(Segment) error,
 ) (uint64, error) {

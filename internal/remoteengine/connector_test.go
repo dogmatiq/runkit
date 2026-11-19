@@ -8,27 +8,28 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/remoteengine"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 	"google.golang.org/grpc"
 )
 
 func TestConnector(t *testing.T) {
-	typeA := uuidpb.Generate()
-	typesA := uuidcollection.NewSet(typeA)
+	typeA := uuid.New()
+	typesA := uuidset.New(typeA).R()
 
 	// setup returns a connector that adds the event streams of the remote
 	// engines it discovers to the returned catalog, watching them for events
 	// of the given types.
 	setup := func(
 		t *testing.T,
-		types *uuidcollection.Set,
+		types *uuidset.SetR,
 		discover func(context.Context, func(string, grpc.ClientConnInterface) func()) error,
 	) (*Connector, *eventstream.Catalog) {
 		catalog := &eventstream.Catalog{
@@ -129,8 +130,8 @@ func TestConnector(t *testing.T) {
 	})
 
 	t.Run("it adds the event streams of each remote engine to the catalog", func(t *testing.T) {
-		engineA := &consumerAPIStub{StreamID: uuidpb.Generate()}
-		engineB := &consumerAPIStub{StreamID: uuidpb.Generate()}
+		engineA := &consumerAPIStub{StreamID: uuid.New()}
+		engineB := &consumerAPIStub{StreamID: uuid.New()}
 
 		connA := serve(t, engineA)
 		connB := serve(t, engineB)
@@ -156,7 +157,7 @@ func TestConnector(t *testing.T) {
 
 	t.Run("it watches each remote engine for the given event types", func(t *testing.T) {
 		engine := &consumerAPIStub{
-			StreamID: uuidpb.Generate(),
+			StreamID: uuid.New(),
 			Requests: make(chan *messaginggrpc.WatchEventsRequest, 10),
 		}
 
@@ -181,7 +182,12 @@ func TestConnector(t *testing.T) {
 		case <-time.After(xtesting.WaitTimeout):
 			t.Fatal("timeout waiting for the remote engine to be watched")
 		case req := <-engine.Requests:
-			if got := uuidcollection.NewSet(req.GetFilter().GetSpecific().GetIds()...); !got.IsEqual(typesA) {
+			got := &uuidset.Set{}
+			for _, id := range req.GetFilter().GetSpecific().GetIds() {
+				got.Add(id.AsStd())
+			}
+
+			if !got.IsEqual(typesA) {
 				t.Fatalf("unexpected message types: got %s, want %s", got, typesA)
 			}
 		}
@@ -189,7 +195,7 @@ func TestConnector(t *testing.T) {
 
 	t.Run("it does not watch remote engines if there are no event types", func(t *testing.T) {
 		engine := &consumerAPIStub{
-			StreamID: uuidpb.Generate(),
+			StreamID: uuid.New(),
 			Requests: make(chan *messaginggrpc.WatchEventsRequest, 10),
 		}
 
@@ -198,7 +204,7 @@ func TestConnector(t *testing.T) {
 
 		connector, _ := setup(
 			t,
-			uuidcollection.NewSet(),
+			uuidset.New().R(),
 			func(
 				ctx context.Context,
 				add func(string, grpc.ClientConnInterface) func(),
@@ -218,8 +224,8 @@ func TestConnector(t *testing.T) {
 	})
 
 	t.Run("it removes a remote engine's event streams from the catalog when the remote engine is removed", func(t *testing.T) {
-		engineA := &consumerAPIStub{StreamID: uuidpb.Generate()}
-		engineB := &consumerAPIStub{StreamID: uuidpb.Generate()}
+		engineA := &consumerAPIStub{StreamID: uuid.New()}
+		engineB := &consumerAPIStub{StreamID: uuid.New()}
 
 		connA := serve(t, engineA)
 		connB := serve(t, engineB)
@@ -251,7 +257,7 @@ func TestConnector(t *testing.T) {
 	})
 
 	t.Run("it removes every remote engine's event streams from the catalog when the discoverer returns", func(t *testing.T) {
-		engine := &consumerAPIStub{StreamID: uuidpb.Generate()}
+		engine := &consumerAPIStub{StreamID: uuid.New()}
 		conn := serve(t, engine)
 
 		var calls atomic.Int32
@@ -291,7 +297,7 @@ type consumerAPIStub struct {
 	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
 
 	// StreamID is the ID of the event stream that the remote engine offers.
-	StreamID *uuidpb.UUID
+	StreamID uuid.UUID
 
 	// Requests, if non-nil, receives each WatchEvents request.
 	Requests chan *messaginggrpc.WatchEventsRequest
@@ -307,7 +313,7 @@ func (s *consumerAPIStub) WatchEvents(
 
 	if err := res.Send(
 		messaginggrpc.NewEventStreamSegmentBuilder().
-			WithEventStreamId(s.StreamID).
+			WithEventStreamId(uuidpb.FromStd(s.StreamID)).
 			Build(),
 	); err != nil {
 		return err
@@ -340,11 +346,11 @@ func serve(t *testing.T, api messaginggrpc.EventStreamConsumerAPIServer) *grpc.C
 func expectCatalogToHave(
 	t testing.TB,
 	c *eventstream.Catalog,
-	want ...*uuidpb.UUID,
+	want ...uuid.UUID,
 ) {
 	t.Helper()
 
-	expected := uuidcollection.NewSet(want...)
+	expected := uuidset.New(want...).R()
 
 	xtesting.WaitForObservable(
 		t,

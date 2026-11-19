@@ -6,11 +6,11 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -33,8 +33,8 @@ func TestDeadlineSink(t *testing.T) {
 		sink := &DeadlineSink{
 			Packer: packer,
 			QueueRouter: &messagequeue.Router{
-				NodeID:          uuidpb.Generate(),
-				CommandHandlers: &uuidcollection.Map[messagequeue.CommandHandler]{},
+				NodeID:          uuid.New(),
+				CommandHandlers: map[uuid.UUID]messagequeue.CommandHandler{},
 			},
 			Handler: &stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]{
 				NewFunc: func() dogma.ProcessRoot { return &stubs.ProcessRootStub{} },
@@ -77,7 +77,7 @@ func TestDeadlineSink(t *testing.T) {
 				instance_id,
 				ended
 			) VALUES ($1, '<instance>', $2)`,
-			sink.Identity.GetKey().AsString(),
+			sink.Identity.GetKey().AsStd().String(),
 			ended,
 		); err != nil {
 			t.Fatal(err)
@@ -147,7 +147,7 @@ func TestDeadlineSink(t *testing.T) {
 				WHERE handler_key = $1
 				AND instance_id = '<instance>'
 				FOR UPDATE`,
-				sink.Identity.GetKey().AsString(),
+				sink.Identity.GetKey().AsStd().String(),
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -217,7 +217,7 @@ func TestDeadlineSink(t *testing.T) {
 					instance_id,
 					state
 				) VALUES ($1, '<instance>', '\x00')`,
-				sink.Identity.GetKey().AsString(),
+				sink.Identity.GetKey().AsStd().String(),
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -253,6 +253,35 @@ func TestDeadlineSink(t *testing.T) {
 			}
 
 			expectDeterministic(t, deliver(t, db, sink, env))
+		})
+	})
+
+	t.Run("when the handler handles a deadline", func(t *testing.T) {
+		t.Run("it passes the ID of the delivered message to the handler", func(t *testing.T) {
+			t.Parallel()
+
+			db := xtesting.NewDatabase(t)
+			sink, env := setup(t)
+			insertInstance(t, db, sink, false)
+
+			var got uuid.UUID
+			sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleDeadlineFunc = func(
+				_ context.Context,
+				_ dogma.ProcessRoot,
+				s dogma.ProcessDeadlineScope[dogma.ProcessRoot],
+				_ dogma.Deadline,
+			) error {
+				got = s.MessageID()
+				return nil
+			}
+
+			if err := deliver(t, db, sink, env); err != nil {
+				t.Fatal(err)
+			}
+
+			if want := env.GetBody().GetMessageId().AsStd(); got != want {
+				t.Fatalf("unexpected message ID: got %s, want %s", got, want)
+			}
 		})
 	})
 }

@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -90,7 +90,7 @@ func TestCompaction_handlerContinuesAfterCompactionFailure(t *testing.T) {
 					xtesting.PopulateEventStreams(
 						t,
 						db,
-						func(*uuidpb.UUID, uint64) dogma.Event {
+						func(uuid.UUID, uint64) dogma.Event {
 							return stubs.EventA1
 						},
 						eventCount,

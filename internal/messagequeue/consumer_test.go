@@ -8,15 +8,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/signal"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -24,7 +24,7 @@ import (
 )
 
 func TestConsumer(t *testing.T) {
-	typeID := stubs.MessageTypeUUID[*stubs.CommandStub[stubs.TypeA]]()
+	typeID := stubs.MessageTypeID[*stubs.CommandStub[stubs.TypeA]]()
 	contentionDelay := 100 * time.Millisecond
 
 	// setup returns a database, a running node on it, and a function that
@@ -43,7 +43,7 @@ func TestConsumer(t *testing.T) {
 			return &cluster.Node{
 				DB:                  db,
 				Signals:             signals,
-				ID:                  uuidpb.Generate(),
+				ID:                  uuid.New(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    1 * time.Second,
 				EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -72,7 +72,7 @@ func TestConsumer(t *testing.T) {
 			t,
 			"live nodes",
 			n.LiveNodes(),
-			func(liveNodes *uuidcollection.Set) bool {
+			func(liveNodes *uuidset.SetR) bool {
 				for _, x := range nodes {
 					if !liveNodes.Has(x.ID) {
 						return false
@@ -105,8 +105,9 @@ func TestConsumer(t *testing.T) {
 		}
 		xtesting.GoE(t, queues.Run)
 
-		var sinks uuidcollection.Map[Sink]
-		sinks.Set(typeID, s)
+		sinks := map[uuid.UUID]Sink{
+			typeID: s,
+		}
 
 		consumer := &Consumer{
 			DB:                    db,
@@ -141,9 +142,9 @@ func TestConsumer(t *testing.T) {
 	insertMessage := func(
 		t *testing.T,
 		db *sql.DB,
-		messageID *uuidpb.UUID,
-		queueID *uuidpb.UUID,
-		typeID *uuidpb.UUID,
+		messageID uuid.UUID,
+		queueID uuid.UUID,
+		typeID uuid.UUID,
 		envelope []byte,
 		nextAttemptAt time.Time,
 	) {
@@ -174,14 +175,14 @@ func TestConsumer(t *testing.T) {
 	addMessage := func(
 		t *testing.T,
 		db *sql.DB,
-		queueID *uuidpb.UUID,
-		typeID *uuidpb.UUID,
+		queueID uuid.UUID,
+		typeID uuid.UUID,
 		nextAttemptAt time.Time,
-	) *uuidpb.UUID {
+	) uuid.UUID {
 		t.Helper()
 
 		env := xtesting.PackCommand(t, stubs.CommandA1)
-		messageID := env.GetBody().GetMessageId()
+		messageID := env.GetBody().GetMessageId().AsStd()
 
 		data, err := env.MarshalBinary()
 		if err != nil {
@@ -204,7 +205,7 @@ func TestConsumer(t *testing.T) {
 
 	// lockMessage locks the message with the given ID in a transaction, and
 	// returns a function that rolls the transaction back.
-	lockMessage := func(t *testing.T, db *sql.DB, messageID *uuidpb.UUID) func() {
+	lockMessage := func(t *testing.T, db *sql.DB, messageID uuid.UUID) func() {
 		t.Helper()
 
 		tx, err := db.BeginTx(t.Context(), nil)
@@ -235,7 +236,7 @@ func TestConsumer(t *testing.T) {
 		t *testing.T,
 		db *sql.DB,
 		description string,
-		messageID *uuidpb.UUID,
+		messageID uuid.UUID,
 		cond string,
 		args ...any,
 	) {
@@ -256,7 +257,7 @@ func TestConsumer(t *testing.T) {
 
 	// expectRemoved fails the test unless the message with the given ID is
 	// removed from its queue.
-	expectRemoved := func(t *testing.T, db *sql.DB, messageID *uuidpb.UUID) {
+	expectRemoved := func(t *testing.T, db *sql.DB, messageID uuid.UUID) {
 		t.Helper()
 
 		xtesting.WaitForQueryResult(
@@ -273,8 +274,8 @@ func TestConsumer(t *testing.T) {
 
 	// record returns a sink that sends the ID of each message to the
 	// returned channel, then delivers it.
-	record := func() (Sink, <-chan *uuidpb.UUID) {
-		attempted := make(chan *uuidpb.UUID, 100)
+	record := func() (Sink, <-chan uuid.UUID) {
+		attempted := make(chan uuid.UUID, 100)
 
 		return sinkFunc(
 			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
@@ -290,8 +291,8 @@ func TestConsumer(t *testing.T) {
 
 	// block returns a sink that sends the ID of each message to the
 	// returned channel, then delivers it once the returned function is called.
-	block := func() (Sink, <-chan *uuidpb.UUID, func()) {
-		attempted := make(chan *uuidpb.UUID, 100)
+	block := func() (Sink, <-chan uuid.UUID, func()) {
+		attempted := make(chan uuid.UUID, 100)
 		release := make(chan struct{})
 
 		h := sinkFunc(
@@ -312,12 +313,12 @@ func TestConsumer(t *testing.T) {
 
 	// expectAttempt fails the test unless the next message attempted is the
 	// message with the given ID.
-	expectAttempt := func(t *testing.T, attempted <-chan *uuidpb.UUID, want *uuidpb.UUID) {
+	expectAttempt := func(t *testing.T, attempted <-chan uuid.UUID, want uuid.UUID) {
 		t.Helper()
 
 		select {
 		case got := <-attempted:
-			if !got.Equal(want) {
+			if got != want {
 				t.Fatalf("unexpected message attempted: got %s, want %s", got, want)
 			}
 		case <-time.After(xtesting.WaitTimeout):
@@ -327,10 +328,10 @@ func TestConsumer(t *testing.T) {
 
 	// expectAttempts fails the test unless the next messages attempted are the
 	// messages with the given IDs, in any order.
-	expectAttempts := func(t *testing.T, attempted <-chan *uuidpb.UUID, want ...*uuidpb.UUID) {
+	expectAttempts := func(t *testing.T, attempted <-chan uuid.UUID, want ...uuid.UUID) {
 		t.Helper()
 
-		remaining := uuidcollection.NewSet(want...)
+		remaining := uuidset.New(want...)
 
 		for !remaining.IsEmpty() {
 			select {
@@ -346,7 +347,7 @@ func TestConsumer(t *testing.T) {
 	}
 
 	// expectNoAttempt fails the test if a message is attempted soon.
-	expectNoAttempt := func(t *testing.T, attempted <-chan *uuidpb.UUID) {
+	expectNoAttempt := func(t *testing.T, attempted <-chan uuid.UUID) {
 		t.Helper()
 
 		select {
@@ -436,7 +437,7 @@ func TestConsumer(t *testing.T) {
 		h, attempted := record()
 
 		now := time.Now()
-		addMessage(t, db, n.ID, uuidpb.Generate(), now.Add(-1*time.Second))
+		addMessage(t, db, n.ID, uuid.New(), now.Add(-1*time.Second))
 		sentinel := addMessage(t, db, n.ID, typeID, now)
 		run(t, db, n, 10, h)
 
@@ -624,7 +625,7 @@ func TestConsumer(t *testing.T) {
 
 		now := time.Now()
 
-		var earlier, later []*uuidpb.UUID
+		var earlier, later []uuid.UUID
 		for i := range 3 {
 			at := now.Add(time.Duration(i-6) * time.Second)
 			earlier = append(earlier, addMessage(t, db, n.ID, typeID, at))
@@ -703,7 +704,7 @@ func TestConsumer(t *testing.T) {
 	setStreak := func(
 		t *testing.T,
 		db *sql.DB,
-		messageID *uuidpb.UUID,
+		messageID uuid.UUID,
 		failures int,
 		firstFailedAt time.Time,
 		errorLogged bool,
@@ -833,7 +834,7 @@ func TestConsumer(t *testing.T) {
 	expectNextAttemptWithin := func(
 		t *testing.T,
 		db *sql.DB,
-		messageID *uuidpb.UUID,
+		messageID uuid.UUID,
 		failures int,
 		before time.Time,
 		minDelay, maxDelay time.Duration,
@@ -1045,7 +1046,7 @@ func TestConsumer(t *testing.T) {
 		db, n, _ := setup(t)
 		h, attempted := record()
 
-		messageID := uuidpb.Generate()
+		messageID := uuid.New()
 		insertMessage(t, db, messageID, n.ID, typeID, []byte{0}, time.Now())
 		run(t, db, n, 10, h)
 
@@ -1108,7 +1109,7 @@ func TestConsumer(t *testing.T) {
 				scheduled_for,
 				next_attempt_at
 			) VALUES ($1, $2, $3, $4, $5, $5)`,
-			xsql.UUID(env.GetBody().GetMessageId()),
+			xsql.UUID(env.GetBody().GetMessageId().AsStd()),
 			xsql.UUID(typeID),
 			xsql.UUID(n.ID),
 			xsql.Envelope(env),
@@ -1117,7 +1118,9 @@ func TestConsumer(t *testing.T) {
 
 		exec(t, db, `ALTER TABLE runkit.unavailable RENAME TO queued_messages`)
 
-		expectAttempt(t, attempted, env.GetBody().GetMessageId())
+		messageID := env.GetBody().GetMessageId().AsStd()
+
+		expectAttempt(t, attempted, messageID)
 	})
 
 	t.Run("it rolls back attempts in flight when it stops", func(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 )
 
@@ -90,7 +90,7 @@ func populateStreams(
 	db *sql.DB,
 	streamCount int,
 	eventCount uint64,
-) []*uuidpb.UUID {
+) []uuid.UUID {
 	t.Helper()
 
 	counts := make([]uint64, streamCount)
@@ -101,7 +101,7 @@ func populateStreams(
 	return xtesting.PopulateEventStreams(
 		t,
 		db,
-		func(*uuidpb.UUID, uint64) dogma.Event {
+		func(uuid.UUID, uint64) dogma.Event {
 			return stubs.EventA1
 		},
 		counts...,
@@ -112,7 +112,7 @@ func populateStreams(
 func appendToEachStream(
 	t testing.TB,
 	db *sql.DB,
-	streamIDs []*uuidpb.UUID,
+	streamIDs []uuid.UUID,
 	eventCount int,
 ) {
 	t.Helper()

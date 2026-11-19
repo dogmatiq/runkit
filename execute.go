@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"reflect"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/enginekit/uuidcollection"
 	"github.com/dogmatiq/protobuf/envelopepb"
-	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/contexthook"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xmessage"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -66,7 +66,7 @@ func (e *Engine) ExecuteCommand(
 	}
 
 	var (
-		messageID *uuidpb.UUID
+		messageID uuid.UUID
 		enqueued  bool
 	)
 
@@ -85,16 +85,15 @@ func (e *Engine) ExecuteCommand(
 					actual_message_id,
 					enqueued
 				FROM runkit.enqueue_command($1, $2, $3, $4, $5, $6)`,
-				xsql.UUID(commandEnvelope.GetBody().GetMessageId()),
-				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId()),
+				xsql.UUID(commandEnvelope.GetBody().GetMessageId().AsStd()),
+				xsql.UUID(commandEnvelope.GetBody().GetMessage().GetTypeId().AsStd()),
 				xsql.UUID(queueID),
 				xsql.Envelope(commandEnvelope),
 				commandEnvelope.GetBody().GetIdempotencyKey(),
 				time.Now(),
 			)
 
-			messageID = &uuidpb.UUID{}
-			if err := row.Scan(xsql.UUID(messageID), &enqueued); err != nil {
+			if err := row.Scan(xsql.UUID(&messageID), &enqueued); err != nil {
 				return fmt.Errorf("unable to add command to queue: %w", err)
 			}
 
@@ -127,7 +126,7 @@ func (e *Engine) ExecuteCommand(
 		ctx,
 		e.db,
 		messageID,
-		eventTypes,
+		eventTypes.R(),
 		eventObservers,
 	); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -146,9 +145,11 @@ func (e *Engine) resolveExecuteCommandOptions(
 	options []dogma.ExecuteCommandOption,
 ) (
 	packOptions []envelope.PackCommandOption,
-	eventTypes uuidcollection.Set,
+	eventTypes *uuidset.Set,
 	eventObservers []dogma.EventObserver[dogma.Event],
 ) {
+	eventTypes = &uuidset.Set{}
+
 	for _, opt := range options {
 		switch opt := opt.(type) {
 		case dogma.IdempotencyKeyOption:
@@ -156,9 +157,7 @@ func (e *Engine) resolveExecuteCommandOptions(
 
 		case dogma.EventObserverOption:
 			eventObservers = append(eventObservers, opt.Observer())
-			eventTypes.Add(
-				uuidpb.MustParse(opt.EventType().ID()),
-			)
+			eventTypes.Add(opt.EventType().ID())
 
 		default:
 			panic(fmt.Sprintf("unsupported execute command option type: %T", opt))
@@ -176,11 +175,11 @@ func (e *Engine) resolveExecuteCommandOptions(
 func waitForEvents(
 	ctx context.Context,
 	q xsql.Querier,
-	correlationID *uuidpb.UUID,
-	eventTypes uuidcollection.Set,
+	correlationID uuid.UUID,
+	eventTypes *uuidset.SetR,
 	eventObservers []dogma.EventObserver[dogma.Event],
 ) error {
-	var nextOffsets uuidcollection.Map[uint64]
+	nextOffsets := map[uuid.UUID]uint64{}
 
 	for {
 		satisfied, err := pollForEvents(
@@ -204,24 +203,25 @@ func waitForEvents(
 }
 
 // pollForEvents observes any events that have occurred since the last observed
-// offset on each stream, and feeds them to the observer functions.
+// offset on each stream, and feeds them to the observer functions. It records
+// the offset that follows each event it observes in nextOffsets.
 //
 // It returns true if any of the observer functions is satisfied.
 func pollForEvents(
 	ctx context.Context,
 	q xsql.Querier,
-	correlationID *uuidpb.UUID,
-	eventTypes uuidcollection.Set,
+	correlationID uuid.UUID,
+	eventTypes *uuidset.SetR,
 	observers []dogma.EventObserver[dogma.Event],
-	nextOffsets uuidcollection.Map[uint64],
+	nextOffsets map[uuid.UUID]uint64,
 ) (satisfied bool, err error) {
 	var (
 		streamIDs []string
 		offsets   []uint64
 	)
 
-	for streamID, offset := range nextOffsets.All() {
-		streamIDs = append(streamIDs, streamID.AsString())
+	for streamID, offset := range nextOffsets {
+		streamIDs = append(streamIDs, streamID.String())
 		offsets = append(offsets, offset)
 	}
 
@@ -261,13 +261,13 @@ func pollForEvents(
 
 	for rows.Next() {
 		var (
-			streamID      = &uuidpb.UUID{}
+			streamID      uuid.UUID
 			offset        uint64
 			eventEnvelope = &envelopepb.Envelope{}
 		)
 
 		if err := rows.Scan(
-			xsql.UUID(streamID),
+			xsql.UUID(&streamID),
 			&offset,
 			xsql.Envelope(eventEnvelope),
 		); err != nil {
@@ -288,7 +288,7 @@ func pollForEvents(
 			}
 		}
 
-		nextOffsets.Set(streamID, offset+1)
+		nextOffsets[streamID] = offset + 1
 	}
 
 	if err := rows.Err(); err != nil {

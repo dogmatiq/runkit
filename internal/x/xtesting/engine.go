@@ -152,7 +152,7 @@ func ExecuteCommandAndWait(
 	WaitForCommandToBeRemovedFromQueue(
 		t,
 		db,
-		commandEnvelope.GetBody().GetMessageId(),
+		commandEnvelope.GetBody().GetMessageId().AsStd(),
 	)
 
 	return commandEnvelope

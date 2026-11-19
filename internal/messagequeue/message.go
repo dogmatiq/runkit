@@ -3,17 +3,18 @@ package messagequeue
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
+	"uuid"
 
-	"github.com/dogmatiq/enginekit/uuidcollection"
-	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
 
 // message is a message in one of the queues, without its envelope.
 type message struct {
 	// ID is the message's ID.
-	ID *uuidpb.UUID
+	ID uuid.UUID
 
 	// NextAttemptAt is the earliest time that the message may be attempted.
 	NextAttemptAt time.Time
@@ -34,7 +35,7 @@ func (m message) IsDue() bool {
 // is canceled. It returns nil if ctx is canceled.
 func (c *Consumer) findNextMessages(
 	ctx context.Context,
-	queues *uuidcollection.Set,
+	queues *uuidset.SetR,
 	headroom int,
 ) []message {
 	for {
@@ -65,7 +66,7 @@ func (c *Consumer) findNextMessages(
 // findNextMessagesOnce is [Consumer.findNextMessages] without the retries.
 func (c *Consumer) findNextMessagesOnce(
 	ctx context.Context,
-	queues *uuidcollection.Set,
+	queues *uuidset.SetR,
 	headroom int,
 ) ([]message, error) {
 	// Without any queues or message types, there are no next messages, so the
@@ -94,7 +95,7 @@ func (c *Consumer) findNextMessagesOnce(
 		xsql.UUIDSeq(queues.All()),
 		xsql.UUIDSeq(c.messageTypeIDs.All()),
 		xsql.UUIDSeq(c.attemptsInProgress.All()),
-		xsql.UUIDSeq(c.contendedMessages.Keys()),
+		xsql.UUIDSeq(maps.Keys(c.contendedMessages)),
 		headroom,
 	)
 	if err != nil {
@@ -105,12 +106,10 @@ func (c *Consumer) findNextMessagesOnce(
 	var messages []message
 
 	for rows.Next() {
-		m := message{
-			ID: &uuidpb.UUID{},
-		}
+		var m message
 
 		if err := rows.Scan(
-			xsql.UUID(m.ID),
+			xsql.UUID(&m.ID),
 			&m.NextAttemptAt,
 		); err != nil {
 			return nil, fmt.Errorf("unable to scan the next message: %w", err)
