@@ -155,6 +155,80 @@ func TestApply_reappliesCurrent(t *testing.T) {
 	)
 }
 
+// TestApply_doesNotDeadlockWithEventAppend verifies that an upgrade and a
+// transaction that appends events to a new event stream both finish when they
+// run at the same time.
+//
+// The transaction locks the "event_streams" table, then the "events" table,
+// and the upgrade locks both tables too. The test starts the upgrade after the
+// transaction takes its first lock, and before it takes its second.
+//
+// The test changes [schema.TargetVersion], so it must not call t.Parallel().
+// Go runs the parallel tests only after every test that doesn't call it.
+func TestApply_doesNotDeadlockWithEventAppend(t *testing.T) {
+	db := xtesting.NewDatabaseAsOwner(t)
+
+	target := schema.TargetVersion
+	t.Cleanup(func() { schema.TargetVersion = target })
+
+	schema.TargetVersion = version.Version{
+		target.Major(),
+		target.Minor(),
+		target.Patch() + 1,
+	}
+
+	appender, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appender.Rollback()
+
+	// Creating the event stream locks the "event_streams" table.
+	if _, err := appender.ExecContext(
+		t.Context(),
+		`INSERT INTO runkit.event_streams (id)
+		VALUES ('3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded := make(chan error, 1)
+	go func() {
+		upgraded <- schema.Apply(t.Context(), db, false, testLockTimeout, testStatementTimeout)
+	}()
+
+	// The upgrade now waits for the lock on "event_streams".
+	waitForLockWaiters(t, db, 1)
+
+	// Appending the event locks the "events" table.
+	if _, err := appender.ExecContext(
+		t.Context(),
+		`SELECT runkit.append_events_to_specific_stream(
+			'3c8f6f0e-6a0b-4f43-9c53-6d2a6c1b7e01',
+			'5b0d9a52-1f5e-4c0b-8a43-0e6f3d2c9a02',
+			NULL,
+			NULL,
+			ARRAY[
+				ROW(
+					'a4e1c7d3-9b2f-4e68-b0c5-7f1d8e3a6b03',
+					'd2f7b8a1-4c3e-4d59-a6e0-9c8b7a5f4e04',
+					'\x01'
+				)::runkit.event
+			]
+		)`,
+	); err != nil {
+		t.Fatalf("unable to append an event during an upgrade: %v", err)
+	}
+
+	if err := appender.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-upgraded; err != nil {
+		t.Fatalf("unable to upgrade during an append: %v", err)
+	}
+}
+
 // TestApply_newerCompatibleDatabase verifies that a database whose schema
 // version is above the current one, with the same major number, is left alone.
 func TestApply_newerCompatibleDatabase(t *testing.T) {

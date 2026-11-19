@@ -397,7 +397,7 @@ func TestRunner(t *testing.T) {
 			db := xtesting.NewDatabaseAsOwner(t)
 
 			err := newRunner(t, db, false, slow).Run(t.Context())
-			if _, ok := errors.AsType[StepTimeoutError](err); !ok {
+			if _, ok := errors.AsType[StepCanceledError](err); !ok {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
@@ -423,6 +423,44 @@ func TestRunner(t *testing.T) {
 
 			if err := runner.Run(t.Context()); err != nil {
 				t.Fatal(err)
+			}
+		})
+
+		t.Run("it reports a statement step that someone cancels", func(t *testing.T) {
+			db := xtesting.NewDatabaseAsOwner(t)
+
+			runner := newRunner(
+				t,
+				db,
+				false,
+				Migration{
+					Version: version.Version{1, 0, 0},
+					Steps: []Step{
+						{Name: "sleep", Kind: Statement, SQL: `SELECT pg_sleep(60)`},
+					},
+				},
+			)
+
+			done := make(chan error, 1)
+			go func() {
+				done <- runner.Run(t.Context())
+			}()
+
+			xtesting.WaitForQueryResult(
+				t,
+				"the step's statement is canceled",
+				true,
+				db,
+				`SELECT COALESCE(bool_or(pg_cancel_backend(pid)), false)
+				FROM pg_stat_activity
+				WHERE datname = current_database()
+				AND state = 'active'
+				AND query = 'SELECT pg_sleep(60)'`,
+			)
+
+			err := <-done
+			if _, ok := errors.AsType[StepCanceledError](err); !ok {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	})

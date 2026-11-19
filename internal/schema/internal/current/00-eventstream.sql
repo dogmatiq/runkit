@@ -10,6 +10,20 @@ CREATE TABLE IF NOT EXISTS runkit.event_streams (
 );
 
 --------------------------------------------------------------------------------
+-- Lock the "event_streams" table before any statement below locks the "events"
+-- table.
+--
+-- An upgrade runs this file while engines are running. An engine that appends
+-- events locks "event_streams", then "events". The statements below that create
+-- indexes and triggers lock both tables too. Locking the tables in the same
+-- order as the engine prevents a deadlock, in which the upgrade and an engine
+-- each hold the lock on one table and wait for the lock on the other.
+--
+-- SHARE ROW EXCLUSIVE is the lock mode that CREATE OR REPLACE TRIGGER takes.
+--------------------------------------------------------------------------------
+LOCK TABLE runkit.event_streams IN SHARE ROW EXCLUSIVE MODE;
+
+--------------------------------------------------------------------------------
 -- The "events" table contains all events recorded by aggregate and integration
 -- handlers.
 --------------------------------------------------------------------------------

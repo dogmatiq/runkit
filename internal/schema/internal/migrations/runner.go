@@ -89,8 +89,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			completed := stepsCompleted + i + 1
 
 			if err := r.apply(ctx, m, s, completed); err != nil {
-				if xsql.IsStatementTimeoutError(ctx, err) && !r.Offline {
-					return StepTimeoutError{
+				if xsql.IsStatementCanceledError(ctx, err) {
+					return StepCanceledError{
 						MigratingTo: m.Version,
 						StepName:    s.Name,
 						Cause:       err,

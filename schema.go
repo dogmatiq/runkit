@@ -15,8 +15,9 @@ import (
 // If the schema change needs every engine to be stopped, it returns an error
 // that says so, and changes nothing. Use [ApplySchemaOffline] in that case.
 //
-// Creating the schema needs the CREATE privilege on the database. Changing an
-// existing schema needs the role that owns its objects.
+// Creating the schema, or changing an existing one, needs the CREATE privilege
+// on the database. Changing an existing schema also needs the role that owns
+// the schema and everything in it.
 //
 // It is safe to call from several engines at once. A call that has changes to
 // make waits for the others to finish first.

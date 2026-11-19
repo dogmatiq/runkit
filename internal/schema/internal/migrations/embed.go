@@ -15,18 +15,19 @@ import (
 	"github.com/dogmatiq/runkit/internal/schema/internal/version"
 )
 
-// files holds every migration directory and its step files. The pattern leaves
-// out this package's Go files.
+// files holds every migration directory and its step files. The pattern matches
+// only the SQL files in each directory. It leaves out this package's Go files,
+// and any file that something else adds to a directory, such as the .DS_Store
+// file of macOS.
 //
-//go:embed */*
+//go:embed */*.sql
 var files embed.FS
 
 // All returns the embedded migrations, in ascending order of the schema version
 // that each produces.
 //
 // It panics if a directory's name isn't a valid schema version, or if a
-// directory holds anything other than step files that follow the rules of
-// [parseSteps].
+// directory holds a SQL file that doesn't follow the rules of [parseSteps].
 func All() []Migration {
 	entries, err := fs.ReadDir(files, ".")
 	if err != nil {

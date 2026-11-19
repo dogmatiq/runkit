@@ -373,7 +373,8 @@ func TestEngine_schema(t *testing.T) {
 			`SELECT EXISTS (
 				SELECT
 				FROM pg_stat_activity
-				WHERE wait_event_type = 'Lock'
+				WHERE datname = current_database()
+				AND wait_event_type = 'Lock'
 			)`,
 		)
 
@@ -387,7 +388,8 @@ func TestEngine_schema(t *testing.T) {
 				`SELECT EXISTS (
 					SELECT
 					FROM pg_stat_activity
-					WHERE wait_event_type = 'Lock'
+					WHERE datname = current_database()
+					AND wait_event_type = 'Lock'
 				)`,
 			).Scan(&waiting); err != nil {
 				t.Fatal(err)

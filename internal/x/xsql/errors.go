@@ -21,12 +21,16 @@ func IsLockNotAvailableError(ctx context.Context, err error) bool {
 	return ok && ctx.Err() == nil && pgErr.Code == pgerrcode.LockNotAvailable
 }
 
-// IsStatementTimeoutError returns true if err is PostgreSQL canceling a
-// statement that ran for longer than the statement timeout.
+// IsStatementCanceledError returns true if err is PostgreSQL canceling a
+// statement (SQLSTATE 57014, query_canceled).
 //
-// PostgreSQL uses the same error (SQLSTATE 57014) when the client cancels a
-// statement, so it returns false if ctx is done.
-func IsStatementTimeoutError(ctx context.Context, err error) bool {
+// PostgreSQL returns it when a statement runs for longer than the statement
+// timeout, and also when someone cancels the statement, such as with
+// pg_cancel_backend(). The error doesn't say which.
+//
+// It returns false if ctx is done, because then the client canceled the
+// statement.
+func IsStatementCanceledError(ctx context.Context, err error) bool {
 	pgErr, ok := errors.AsType[*pgconn.PgError](err)
 	return ok && ctx.Err() == nil && pgErr.Code == pgerrcode.QueryCanceled
 }
