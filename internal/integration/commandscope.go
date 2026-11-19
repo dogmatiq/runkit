@@ -37,6 +37,10 @@ func (s *commandScope) Log(format string, args ...any) {
 	s.appLogger.Info(text)
 }
 
+func (s *commandScope) MessageID() uuid.UUID {
+	return s.messageID
+}
+
 func (s *commandScope) RecordEvent(event dogma.Event) {
 	if _, ok := s.outboundMessageTypes[reflect.TypeOf(event)]; !ok {
 		panic(fmt.Sprintf("this handler is not configured to record events of type %T", event))
@@ -62,8 +66,4 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 		event.MessageDescription(),
 		xslog.Envelope("produced_message", eventEnvelope),
 	)
-}
-
-func (s *commandScope) MessageID() uuid.UUID {
-	return s.messageID
 }

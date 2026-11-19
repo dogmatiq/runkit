@@ -13,6 +13,7 @@ import (
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	. "github.com/dogmatiq/runkit/internal/projection"
+	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
 
@@ -76,5 +77,47 @@ func TestEventSink_emptySegmentDoesNotAdvanceCheckpoint(t *testing.T) {
 	}
 	if !ok || next != cp {
 		t.Fatalf("got cp %d, ok %t; want %d, true", next, ok, cp)
+	}
+}
+
+// TestEventSink_handlerReceivesTheMessageID verifies that the scope passed to
+// the handler returns the ID of the delivered event's message.
+func TestEventSink_handlerReceivesTheMessageID(t *testing.T) {
+	t.Parallel()
+
+	var got uuid.UUID
+
+	sink := &EventSink{
+		Handler: &ProjectionMessageHandlerStub{
+			HandleEventFunc: func(
+				_ context.Context,
+				s dogma.ProjectionEventScope,
+				_ dogma.Event,
+			) (uint64, error) {
+				got = s.MessageID()
+				return s.Offset() + 1, nil
+			},
+		},
+		HandleTimeout: time.Minute,
+		EngineLogger:  spruce.NewTestLogger(t),
+		AppLogger:     spruce.NewTestLogger(t),
+	}
+
+	streamID, envs := xtesting.AppendToNewEventStream(
+		t,
+		xtesting.NewDatabase(t),
+		EventA1,
+	)
+
+	if _, _, err := sink.ConsumeSegment(t.Context(), 0, eventstream.Segment{
+		StreamID:  streamID,
+		End:       1,
+		Envelopes: envs,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := envs[0].GetBody().GetMessageId().AsStd(); got != want {
+		t.Fatalf("unexpected message ID: got %s, want %s", got, want)
 	}
 }

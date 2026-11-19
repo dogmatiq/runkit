@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -39,12 +40,6 @@ func TestCommandSink(t *testing.T) {
 			}
 
 			env := xtesting.PackCommand(t, stubs.CommandA1)
-			sink.Handler.(*stubs.IntegrationMessageHandlerStub).HandleCommandFunc = func(ctx context.Context, s dogma.IntegrationCommandScope, m dogma.Command) error {
-				if got, want := s.MessageID(), env.GetBody().GetMessageId().AsStd(); got != want {
-					t.Errorf("unexpected message ID: got %s, want %s", got, want)
-				}
-				return handle(ctx, s, m)
-			}
 			logger := spruce.NewTestLogger(t)
 
 			return func() error {
@@ -135,6 +130,57 @@ func TestCommandSink(t *testing.T) {
 
 			if n := calls.Load(); n != 2 {
 				t.Fatalf("unexpected number of calls to the handler: got %d, want 2", n)
+			}
+		})
+	})
+
+	t.Run("when the handler handles a command", func(t *testing.T) {
+		t.Run("it passes the ID of the delivered message to the handler", func(t *testing.T) {
+			t.Parallel()
+
+			var got uuid.UUID
+
+			db := xtesting.NewDatabase(t)
+			sink := &CommandSink{
+				Packer: &envelope.Packer{
+					Application: identitypb.New("<app>", uuidpb.Generate()),
+				},
+				Handler: &stubs.IntegrationMessageHandlerStub{
+					HandleCommandFunc: func(
+						_ context.Context,
+						s dogma.IntegrationCommandScope,
+						_ dogma.Command,
+					) error {
+						got = s.MessageID()
+						return nil
+					},
+				},
+				Identity:      identitypb.New("<handler>", uuidpb.Generate()),
+				HandleTimeout: time.Minute,
+			}
+
+			tx, err := db.BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+
+			env := xtesting.PackCommand(t, stubs.CommandA1)
+			logger := spruce.NewTestLogger(t)
+
+			if err := sink.Deliver(
+				t.Context(),
+				tx,
+				messagequeue.Delivery{},
+				env,
+				logger,
+				logger,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if want := env.GetBody().GetMessageId().AsStd(); got != want {
+				t.Fatalf("unexpected message ID: got %s, want %s", got, want)
 			}
 		})
 	})

@@ -16,11 +16,12 @@ import (
 // messageScope implements [dogma.ProcessEventScope] and
 // [dogma.ProcessDeadlineScope].
 type messageScope struct {
+	CommandPacker  *envelope.EffectPacker
+	DeadlinePacker *envelope.EffectPacker
+	Mutated        bool
+	Ended          bool
+
 	messageID            uuid.UUID
-	CommandPacker        *envelope.EffectPacker
-	DeadlinePacker       *envelope.EffectPacker
-	Mutated              bool
-	Ended                bool
 	instanceID           string
 	root                 dogma.ProcessRoot
 	outboundMessageTypes map[reflect.Type]struct{}
@@ -42,6 +43,10 @@ func (s *messageScope) Log(format string, args ...any) {
 	)
 
 	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root, s.Ended))
+}
+
+func (s *messageScope) MessageID() uuid.UUID {
+	return s.messageID
 }
 
 func (s *messageScope) InstanceID() string {
@@ -131,8 +136,4 @@ func (s *messageScope) ScheduleDeadline(d dogma.Deadline, t time.Time) {
 		xslog.Envelope("produced_message", deadlineEnvelope),
 		instanceLogAttr(s.instanceID, s.root, s.Ended),
 	)
-}
-
-func (s *messageScope) MessageID() uuid.UUID {
-	return s.messageID
 }

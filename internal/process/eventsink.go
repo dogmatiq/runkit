@@ -261,7 +261,6 @@ func (s *EventSink) dispatch(
 
 	scope := &eventScope{
 		messageScope{
-			messageID: env.GetBody().GetMessageId().AsStd(),
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
@@ -272,6 +271,7 @@ func (s *EventSink) dispatch(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			messageID:            env.GetBody().GetMessageId().AsStd(),
 			instanceID:           inst.ID,
 			root:                 inst.Root,
 			outboundMessageTypes: s.OutboundMessageTypes,

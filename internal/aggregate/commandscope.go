@@ -40,6 +40,10 @@ func (s *commandScope) Log(format string, args ...any) {
 	s.appLogger.Info(text, instanceLogAttr(s.instanceID, s.root))
 }
 
+func (s *commandScope) MessageID() uuid.UUID {
+	return s.messageID
+}
+
 func (s *commandScope) InstanceID() string {
 	return s.instanceID
 }
@@ -73,8 +77,4 @@ func (s *commandScope) RecordEvent(event dogma.Event) {
 		xslog.Envelope("produced_message", eventEnvelope),
 		instanceLogAttr(s.instanceID, s.root),
 	)
-}
-
-func (s *commandScope) MessageID() uuid.UUID {
-	return s.messageID
 }

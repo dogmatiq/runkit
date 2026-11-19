@@ -107,7 +107,6 @@ func (s *DeadlineSink) Deliver(
 
 	scope := &deadlineScope{
 		messageScope{
-			messageID: env.GetBody().GetMessageId().AsStd(),
 			CommandPacker: s.Packer.PackEffects(
 				env,
 				s.Identity,
@@ -118,6 +117,7 @@ func (s *DeadlineSink) Deliver(
 				s.Identity,
 				envelope.WithInstanceID(inst.ID),
 			),
+			messageID:            env.GetBody().GetMessageId().AsStd(),
 			instanceID:           inst.ID,
 			root:                 inst.Root,
 			outboundMessageTypes: s.OutboundMessageTypes,

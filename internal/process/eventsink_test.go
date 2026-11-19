@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
@@ -63,14 +64,11 @@ func TestEventSink_overlappingConsumers(t *testing.T) {
 	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
 	var calls int
 	s.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleEventFunc = func(
-		_ context.Context,
-		_ dogma.ProcessRoot,
-		s dogma.ProcessEventScope[dogma.ProcessRoot],
-		_ dogma.Event,
+		context.Context,
+		dogma.ProcessRoot,
+		dogma.ProcessEventScope[dogma.ProcessRoot],
+		dogma.Event,
 	) error {
-		if got, want := s.MessageID(), envs[0].GetBody().GetMessageId().AsStd(); got != want {
-			t.Errorf("unexpected message ID: got %s, want %s", got, want)
-		}
 		calls++
 		return nil
 	}
@@ -92,6 +90,39 @@ func TestEventSink_overlappingConsumers(t *testing.T) {
 
 	if calls != 1 {
 		t.Fatalf("unexpected number of handler calls: got %d, want 1", calls)
+	}
+}
+
+// TestEventSink_handlerReceivesTheMessageID verifies that the scope passed to
+// the handler returns the ID of the delivered event's message.
+func TestEventSink_handlerReceivesTheMessageID(t *testing.T) {
+	t.Parallel()
+
+	db := xtesting.NewDatabase(t)
+	sink := newEventSink(t, db)
+	streamID, envs := xtesting.AppendToNewEventStream(t, db, stubs.EventA1)
+
+	var got uuid.UUID
+	sink.Handler.(*stubs.ProcessMessageHandlerStub[dogma.ProcessRoot]).HandleEventFunc = func(
+		_ context.Context,
+		_ dogma.ProcessRoot,
+		s dogma.ProcessEventScope[dogma.ProcessRoot],
+		_ dogma.Event,
+	) error {
+		got = s.MessageID()
+		return nil
+	}
+
+	if _, _, err := sink.ConsumeSegment(t.Context(), 0, eventstream.Segment{
+		StreamID:  streamID,
+		End:       1,
+		Envelopes: envs,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := envs[0].GetBody().GetMessageId().AsStd(); got != want {
+		t.Fatalf("unexpected message ID: got %s, want %s", got, want)
 	}
 }
 
