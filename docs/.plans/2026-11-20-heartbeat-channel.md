@@ -117,7 +117,7 @@ sends or receives the new payload yet, so behavior doesn't change. The decoding
 is tested through `Node` in the next task, not on its own, so it stays
 unexported.
 
-### [x] Send and receive heartbeats on the `heartbeat` channel
+### [x] Send and receive heartbeats on the `heartbeat` channel (48411f9)
 
 Change `internal/cluster/node.go` and `signal.go` as the settled design says:
 the second `LISTEN`, the routing, `pg_notify` with the payload and the
@@ -143,7 +143,7 @@ subtests:
 The send deadline isn't covered by a test, because the test can't make a
 connection hang; its comment says so, as `drainHeartbeats` does.
 
-### [ ] Delete `signal.Bus`
+### [x] Delete `signal.Bus`
 
 Delete `internal/signal`, which nothing imports any more.
 
