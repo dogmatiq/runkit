@@ -15,7 +15,6 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -31,17 +30,8 @@ func TestLocal(t *testing.T) {
 	newSource := func(t *testing.T, db *sql.DB, segmentSize, bufferSize int) *Local {
 		logger := spruce.NewTestLogger(t)
 
-		signals := &signal.Bus{
-			DB:                  db,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        logger,
-		}
-
-		xtesting.GoE(t, signals.Run)
-
 		node := &cluster.Node{
 			DB:                  db,
-			Signals:             signals,
 			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,

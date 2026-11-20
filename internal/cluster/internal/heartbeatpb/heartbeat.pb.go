@@ -110,9 +110,10 @@ type Heartbeat_builder struct {
 
 	// NodeId is the ID of the node that sent the heartbeat.
 	NodeId *uuidpb.UUID
-	// ExpiresAfter is how long after a node receives this heartbeat it removes
-	// the sender from its live nodes, unless it receives another heartbeat from
-	// the sender first.
+	// ExpiresAfter is how long the heartbeat keeps its sender live. A node that
+	// receives the heartbeat counts that time from the moment of receipt, and
+	// removes the sender from its live nodes if the sender sends no newer
+	// heartbeat within that time.
 	ExpiresAfter *durationpb.Duration
 }
 

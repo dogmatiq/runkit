@@ -26,7 +26,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/messagequeue"
 	"github.com/dogmatiq/runkit/internal/remoteengine"
 	"github.com/dogmatiq/runkit/internal/schema"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -169,9 +168,6 @@ type Engine struct {
 
 	// appConfig is the application configuration derived from e.app.
 	appConfig *config.Application
-
-	// signals sends and receives signals on behalf of this node.
-	signals *signal.Bus
 
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
@@ -332,15 +328,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
 	}
 
-	e.signals = &signal.Bus{
-		DB:                  e.db,
-		EngineFailurePolicy: e.engineFailurePolicy,
-		EngineLogger:        e.engineLogger,
-	}
-
 	e.node = &cluster.Node{
 		DB:                  e.db,
-		Signals:             e.signals,
 		ID:                  e.nodeID,
 		HeartbeatInterval:   heartbeatInterval,
 		HeartbeatTimeout:    heartbeatTimeout,
@@ -393,10 +382,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	e.group, ctx = errgroup.WithContext(ctx)
-
-	e.group.Go(func() error {
-		return e.signals.Run(ctx)
-	})
 
 	e.group.Go(func() error {
 		return e.node.Run(ctx)

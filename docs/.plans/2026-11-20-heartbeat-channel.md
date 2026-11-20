@@ -95,14 +95,15 @@ goroutine that also expires nodes.
   uses directly): "A heartbeat is a message by which a node tells the whole
   cluster, itself included, that it is live."
 - **ExpiresAfter** (`expires_after` on the wire, `ExpiresAfter` in Go): "How
-  long after a node receives this heartbeat it removes the sender from its live
-  nodes, unless it receives another heartbeat from the sender first." Chosen in
+  long the heartbeat keeps its sender live. A node that receives the heartbeat
+  counts that time from the moment of receipt, and removes the sender from its
+  live nodes if the sender sends no newer heartbeat within that time." Chosen in
   review, over `ValidFor` and `TTL`. It is a `google.protobuf.Duration`, so the
   name has no unit.
 
 ## Tasks
 
-### [x] The heartbeat payload and its compatibility rules
+### [x] The heartbeat payload and its compatibility rules (05abba8)
 
 Before this task, write down the rule that Go code generated from a Dogmatiq
 repository's own `.proto` files always uses Primo. It goes in a skill in
@@ -116,14 +117,16 @@ sends or receives the new payload yet, so behavior doesn't change. The decoding
 is tested through `Node` in the next task, not on its own, so it stays
 unexported.
 
-### [ ] Send and receive heartbeats on the `heartbeat` channel
+### [x] Send and receive heartbeats on the `heartbeat` channel
 
 Change `internal/cluster/node.go` and `signal.go` as the settled design says:
 the second `LISTEN`, the routing, `pg_notify` with the payload and the
 deadline, expiry from each heartbeat's `ExpiresAfter`, and the first heartbeat once
-listening. `Node.Signals` is removed, so `engine.go` stops passing the bus to
-the node, but still runs it until the next task. `Node.HeartbeatTimeout`'s doc
-says it is the `ExpiresAfter` that this node sends.
+listening. `Node.Signals` is removed, and so is every use of `signal.Bus` outside
+its own package: the engine no longer creates or runs one, and the tests in
+`internal/cluster`, `internal/messagequeue` and `internal/eventstream` no longer
+construct one. `Node.HeartbeatTimeout`'s doc says it is the `ExpiresAfter` that
+this node sends.
 
 Tests in `internal/cluster/node_test.go` inject heartbeats with `pg_notify` and
 observe them with a `LISTEN` connection of the test's own. Changed and new
@@ -142,12 +145,7 @@ connection hang; its comment says so, as `drainHeartbeats` does.
 
 ### [ ] Delete `signal.Bus`
 
-Delete `internal/signal`, the engine's `signals` field and its `Run`, and the
-bus setup in the tests that construct one:
-`internal/cluster/{node,signal}_test.go`,
-`internal/messagequeue/{consumer,catalog}_test.go`,
-`internal/eventstream/consumer_test.go` and
-`internal/eventstream/source/local_test.go`.
+Delete `internal/signal`, which nothing imports any more.
 
 ### [ ] Changelog and the issues
 

@@ -6,8 +6,8 @@ of different runkit releases keep working together.
 A heartbeat is a message by which a node tells the whole cluster, itself
 included, that it is live. Each node sends one every heartbeat interval, as a
 PostgreSQL notification on the `heartbeat` channel. A node knows which other
-nodes are live by receiving their heartbeats, and it removes a node from its live
-nodes when that node's heartbeat has expired.
+nodes are live by receiving their heartbeats, and it removes a node from its
+live nodes when that node's heartbeat has expired.
 
 ## The format
 
@@ -19,15 +19,16 @@ fewer than 8000 bytes, and a heartbeat is about 40 characters.
 A heartbeat has these fields:
 
 - `node_id` is the ID of the sender.
-- `expires_after` is how long after a node receives the heartbeat it removes the
-  sender from its live nodes, unless it receives another heartbeat from the
-  sender first. The receiver counts from when it receives the heartbeat, not
-  from the sender's clock, which may differ from its own. So nodes don't need to
-  share one heartbeat interval or timeout.
+- `expires_after` is how long the heartbeat keeps its sender live. The receiver
+  of the heartbeat counts that time from the moment of receipt, because the
+  sender's clock may differ from the receiver's. The receiver removes the sender
+  from its live nodes if the sender sends no newer heartbeat within that time.
+  So nodes don't need to share one heartbeat interval or timeout.
 
 A receiver ignores a heartbeat that isn't valid: one that isn't base64 or a
 `Heartbeat` message, has a missing, invalid or nil `node_id`, or has an
-`expires_after` that is missing, invalid or not positive. It logs the heartbeat as a WARN.
+`expires_after` that is missing, invalid or not positive. It logs the heartbeat
+as a WARN.
 
 ## Changing the format
 
@@ -45,10 +46,10 @@ upgrade ends. So a change to a heartbeat follows these rules:
 - A receiver ignores unknown fields. It decodes a heartbeat with the binary
   form of the message, which skips them. Don't decode it with `protojson`, which
   rejects them by default.
-- `node_id` and `expires_after` are all that every release needs to count a node as
-  live, so they never change. A change to what a receiver does with another
-  field, such as a node's capacity, mustn't change which nodes it counts as
-  live.
+- `node_id` and `expires_after` are all that every release needs to count a
+  node as live, so they never change. A change to what a receiver does with
+  another field, such as a node's capacity, mustn't change which nodes it counts
+  as live.
 - Keep the payload well under 8000 bytes.
 
 A change that can't follow these rules, such as sending heartbeats on a
