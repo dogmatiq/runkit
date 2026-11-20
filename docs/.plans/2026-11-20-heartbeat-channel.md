@@ -143,11 +143,11 @@ subtests:
 The send deadline isn't covered by a test, because the test can't make a
 connection hang; its comment says so, as `drainHeartbeats` does.
 
-### [x] Delete `signal.Bus`
+### [x] Delete `signal.Bus` (138fa1a)
 
 Delete `internal/signal`, which nothing imports any more.
 
-### [ ] Changelog and the issues
+### [x] Changelog and the issues (no changelog entry; follow-up #145)
 
 Add a changelog entry only if the maintaining-changelogs skill says the change
 is visible to users; the existing downtime notice already covers the upgrade.
