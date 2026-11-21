@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"reflect"
 	"time"
@@ -56,6 +57,15 @@ const (
 
 	// connectionMaxIdleTime is how long a database connection can sit idle in
 	// the pool before the pool closes it.
+	//
+	// The pool keeps every idle connection until then, so this is what shrinks
+	// the pool after a burst of work. A burst that begins within this time of
+	// the previous one reuses its connections. It is short enough that an
+	// unusually large burst doesn't keep its connections open for long.
+	//
+	// The value is a judgment. It isn't derived from the engine's options,
+	// because the bursts that open many connections come from the application's
+	// commands and events, and no option says how far apart those bursts are.
 	connectionMaxIdleTime = 1 * time.Minute
 
 	// eventStreamCacheSize is the number of recent events cached per event
@@ -202,9 +212,9 @@ type Engine struct {
 // db must use the [pgx] driver. New panics if db is nil or uses any other
 // driver.
 //
-// [Engine.Run] allows unlimited open connections and retains up to twice the
-// message queue concurrency as idle connections, with a minimum of 16. Idle
-// connections expire after one minute.
+// [Engine.Run] replaces the database's limits on open and idle connections. It
+// removes the limit on open connections, and retains idle connections so that
+// the engine reuses them, closing each one after a minute without use.
 //
 // [pgx]: https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib
 func New(
@@ -274,11 +284,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	// offline.
 	e.db.SetMaxOpenConns(0)
 
-	// Retain idle connections for delivery bursts, with headroom for the
-	// heartbeat, notifications, and event-stream work even at low delivery
-	// concurrency. The pool also shrinks when a connection has been idle for
-	// [connectionMaxIdleTime].
-	e.db.SetMaxIdleConns(max(16, 2*e.messageQueueConcurrency))
+	// There is no limit on idle connections either, so the pool keeps as many
+	// connections as the engine has used at once, instead of closing them and
+	// opening new ones for the next burst of work. How many the engine uses at
+	// once depends on values that it can't know when it starts, such as the
+	// number of event streams. The pool shrinks only when a connection has
+	// been idle for [connectionMaxIdleTime].
+	//
+	// A limit of zero or less retains no idle connections, so the largest limit
+	// stands for "no limit".
+	e.db.SetMaxIdleConns(math.MaxInt)
 	e.db.SetConnMaxIdleTime(connectionMaxIdleTime)
 
 	e.appConfig = runtimeconfig.FromApplication(e.app)
