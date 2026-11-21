@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"time"
 	"uuid"
 
@@ -15,6 +16,9 @@ import (
 type message struct {
 	// ID is the message's ID.
 	ID uuid.UUID
+
+	// QueueID is the ID of the queue that holds the message.
+	QueueID uuid.UUID
 
 	// NextAttemptAt is the earliest time that the message may be attempted.
 	NextAttemptAt time.Time
@@ -29,7 +33,8 @@ func (m message) IsDue() bool {
 //
 // They're the messages in the given queues with the earliest next attempt
 // times, other than the messages already being attempted and the messages in
-// c.contendedMessages. It returns no more than fit in the given headroom.
+// c.contendedMessages. It returns no more than fit in the given headroom, and
+// no more than one from each serial queue.
 //
 // If it can't find them, it tries again after a delay, until it succeeds or ctx
 // is canceled. It returns nil if ctx is canceled.
@@ -75,27 +80,53 @@ func (c *Consumer) findNextMessagesOnce(
 		return nil, nil
 	}
 
+	skippedMessageIDs := slices.Concat(
+		slices.Collect(maps.Keys(c.attemptsInProgress)),
+		slices.Collect(maps.Keys(c.contendedMessages)),
+	)
+
 	rows, err := c.DB.QueryContext(
 		ctx,
-		`SELECT m.message_id, m.next_attempt_at
-		FROM unnest($1::uuid[]) AS k(queue_id)
-		CROSS JOIN unnest($2::uuid[]) AS t(message_type_id)
+		`-- Search each queue, then take the messages from all of the searches in
+		-- the order in which they're due, up to the headroom.
+		SELECT
+			next.message_id,
+			queues.queue_id,
+			next.next_attempt_at
+
+		-- Start with the queues for which this node owns the workload.
+		FROM unnest($1::uuid[]) AS queues(queue_id)
+
+		-- Search each of those queues, reading its messages in the order in
+		-- which they're due.
 		CROSS JOIN LATERAL (
-			SELECT q.message_id, q.next_attempt_at
-			FROM runkit.queued_messages AS q
-			WHERE q.queue_id = k.queue_id
-				AND q.message_type_id = t.message_type_id
-				AND q.message_id <> ALL($3::uuid[])
-				AND q.message_id <> ALL($4::uuid[])
-			ORDER BY q.next_attempt_at
-			LIMIT $5
-		) AS m
-		ORDER BY m.next_attempt_at
+			SELECT
+				m.message_id,
+				m.next_attempt_at
+			FROM runkit.queued_messages AS m
+			WHERE m.queue_id = queues.queue_id
+				-- Skip messages of a type with no sink. Those messages stay
+				-- in the queue until a node that can deliver them owns the
+				-- queue's workload.
+				AND m.message_type_id = ANY($3::uuid[])
+				-- Skip the messages that are being attempted, and the messages
+				-- that were locked by another transaction.
+				AND m.message_id <> ALL($4::uuid[])
+			ORDER BY m.next_attempt_at
+			-- Take one message from a serial queue. Take up to the headroom
+			-- from a concurrent queue, because every message in the batch
+			-- might come from that queue.
+			LIMIT CASE WHEN queues.queue_id = ANY($2::uuid[]) THEN 1 ELSE $5 END
+		) AS next
+
+		-- Sort the messages from all of the searches by when they're due, and
+		-- keep the earliest, up to the headroom.
+		ORDER BY next.next_attempt_at
 		LIMIT $5`,
 		xsql.UUIDSeq(queues.All()),
+		xsql.UUIDSeq(c.SerialQueueIDs.All()),
 		xsql.UUIDSeq(c.messageTypeIDs.All()),
-		xsql.UUIDSeq(c.attemptsInProgress.All()),
-		xsql.UUIDSeq(maps.Keys(c.contendedMessages)),
+		xsql.UUIDSeq(slices.Values(skippedMessageIDs)),
 		headroom,
 	)
 	if err != nil {
@@ -110,6 +141,7 @@ func (c *Consumer) findNextMessagesOnce(
 
 		if err := rows.Scan(
 			xsql.UUID(&m.ID),
+			xsql.UUID(&m.QueueID),
 			&m.NextAttemptAt,
 		); err != nil {
 			return nil, fmt.Errorf("unable to scan the next message: %w", err)

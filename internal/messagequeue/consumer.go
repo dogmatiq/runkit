@@ -35,6 +35,13 @@ type Consumer struct {
 	// The consumer ignores queued messages of any other type.
 	Sinks map[uuid.UUID]Sink
 
+	// SerialQueueIDs is the set of IDs of the queues from which the consumer
+	// attempts one message at a time.
+	//
+	// While a message in a serial queue is being attempted, the consumer
+	// doesn't claim or postpone the queue's other messages.
+	SerialQueueIDs *uuidset.SetR
+
 	// ConcurrencyLimit is the maximum number of messages that the consumer attempts
 	// at once.
 	//
@@ -75,9 +82,9 @@ type Consumer struct {
 	// progress at once, so sending never blocks.
 	deliveryAttempted chan deliveryAttempt
 
-	// attemptsInProgress holds the ID of the message for each attempt in
-	// progress.
-	attemptsInProgress uuidset.Set
+	// attemptsInProgress maps the ID of the message for each attempt in
+	// progress to the ID of the queue that holds the message.
+	attemptsInProgress map[uuid.UUID]uuid.UUID
 
 	// contendedMessages maps the ID of each contended message to the time at
 	// which the consumer may attempt it again.
@@ -130,6 +137,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		c.messageTypeIDs.Add(typeID)
 	}
 
+	c.attemptsInProgress = map[uuid.UUID]uuid.UUID{}
 	c.contendedMessages = map[uuid.UUID]time.Time{}
 	c.detachQueueSignal = map[uuid.UUID]func(){}
 
@@ -142,7 +150,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	c.deliveryAttempted = make(chan deliveryAttempt, c.ConcurrencyLimit)
 	defer func() {
-		for !c.attemptsInProgress.IsEmpty() {
+		for len(c.attemptsInProgress) > 0 {
 			a := <-c.deliveryAttempted
 			c.recordAttempt(ctx, a)
 		}
@@ -225,9 +233,10 @@ func (c *Consumer) attachQueueSignals(
 // nil if there's no such time.
 //
 // It also reports whether the backlog is known to be empty. The backlog is the
-// set of messages in the given queues whose next attempt is due but that aren't
-// being attempted because there is insufficient concurrency headroom, as
-// limited by [Consumer.ConcurrencyLimit].
+// set of messages that are due and aren't being attempted. Only messages in the
+// given queues count. Messages are in the backlog when the consumer is at its
+// concurrency limit, or when they're in a serial queue that has an attempt in
+// progress.
 //
 // It might not start any attempts, such as when the consumer is backing off or
 // at its concurrency limit, or when there are no messages that are due.
@@ -241,7 +250,7 @@ func (c *Consumer) startAttempts(
 		return time.After(backoff), false
 	}
 
-	headroom := c.ConcurrencyLimit - c.attemptsInProgress.Len()
+	headroom := c.ConcurrencyLimit - len(c.attemptsInProgress)
 
 	// The consumer is at its concurrency limit, so it waits for an attempt to
 	// be made.
@@ -261,7 +270,8 @@ func (c *Consumer) startAttempts(
 		}
 	}
 
-	messages := c.findNextMessages(ctx, queues, headroom)
+	queuesToSearch := queues.Diff(c.busySerialQueueIDs().R())
+	messages := c.findNextMessages(ctx, queuesToSearch.R(), headroom)
 
 	// If the batch has fewer messages than the headroom, it contains every
 	// message whose next attempt is due. Otherwise, other messages may be due.
@@ -278,7 +288,7 @@ func (c *Consumer) startAttempts(
 			break
 		}
 
-		c.attemptsInProgress.Add(m.ID)
+		c.attemptsInProgress[m.ID] = m.QueueID
 
 		a := deliveryAttempt{
 			MessageID: m.ID,
@@ -288,6 +298,13 @@ func (c *Consumer) startAttempts(
 			a.Completed, a.Err = c.attemptDelivery(ctx, queues, a.MessageID)
 			c.deliveryAttempted <- a
 		}()
+	}
+
+	// After an attempt completes, [Consumer.Run] looks for more messages only
+	// if the backlog isn't empty. A serial queue's next message waits for the
+	// queue's current attempt to end, and Run must look for it then.
+	if !c.busySerialQueueIDs().IsEmpty() {
+		backlogIsEmpty = false
 	}
 
 	// There are no contended messages, and every message in the batch is being
@@ -303,7 +320,8 @@ func (c *Consumer) startAttempts(
 
 // recordAttempt records that the given attempt has been made.
 func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
-	c.attemptsInProgress.Delete(a.MessageID)
+	// Deleting the attempt also frees its queue, if it's a serial queue.
+	delete(c.attemptsInProgress, a.MessageID)
 
 	switch {
 	case ctx.Err() != nil:
@@ -320,6 +338,20 @@ func (c *Consumer) recordAttempt(ctx context.Context, a deliveryAttempt) {
 	default:
 		c.failures.WorkSucceeded(ctx)
 	}
+}
+
+// busySerialQueueIDs returns the set of IDs of the serial queues that have an
+// attempt in progress.
+func (c *Consumer) busySerialQueueIDs() *uuidset.Set {
+	queueIDs := &uuidset.Set{}
+
+	for _, queueID := range c.attemptsInProgress {
+		if c.SerialQueueIDs.Has(queueID) {
+			queueIDs.Add(queueID)
+		}
+	}
+
+	return queueIDs
 }
 
 // deliveryAttempt is an attempt to deliver a message.
