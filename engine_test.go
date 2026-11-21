@@ -26,6 +26,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestEngine_reusesIdleDatabaseConnections(t *testing.T) {
+	t.Parallel()
+	db := xtesting.NewDatabase(t)
+	xtesting.StartCluster(t, db, testApp(), 1, runkit.WithMessageQueueConcurrency(1))
+
+	closedBefore := db.Stats().MaxIdleClosed
+	for range 20 {
+		var value int
+		if err := db.QueryRowContext(t.Context(), "SELECT 1").Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if closed := db.Stats().MaxIdleClosed - closedBefore; closed != 0 {
+		t.Fatalf("pool closed %d connections that it could have reused", closed)
+	}
+}
+
 func TestEngine(t *testing.T) {
 	t.Run("it does not listen for gRPC requests by default", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
