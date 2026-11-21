@@ -100,12 +100,12 @@ func TestNode(t *testing.T) {
 		xtesting.ExpectNoReceive(t, "heartbeat", payloads)
 	})
 
-	t.Run("it removes itself from its live nodes while a send takes longer than a heartbeat interval", func(t *testing.T) {
+	t.Run("it removes itself from its live nodes while a send takes longer than the heartbeat timeout", func(t *testing.T) {
 		db := setup(t)
 
 		// The node's listening connection is one of these. The test holds the
 		// other, so each send has to wait for a connection until the node gives
-		// up on it at the end of the interval.
+		// up on it at the end of the timeout.
 		db.SetMaxOpenConns(2)
 
 		n := newNode(t, db, interval, timeout)
@@ -126,6 +126,24 @@ func TestNode(t *testing.T) {
 
 		conn.Close()
 		expectNodeOwnsWorkload(t, n, key, true)
+	})
+
+	t.Run("it sends heartbeats when opening a connection takes longer than a heartbeat interval", func(t *testing.T) {
+		// Each dial takes longer than an interval, so a send whose deadline is
+		// only one interval would cancel every dial, and no heartbeat would
+		// ever be sent.
+		db := xtesting.NewDatabaseWithSlowDials(t, 5*interval)
+
+		nodes := []*Node{
+			newNode(t, db, interval, 50*interval),
+			newNode(t, db, interval, 50*interval),
+		}
+
+		for _, n := range nodes {
+			xtesting.GoE(t, n.Run)
+		}
+
+		expectEachOther(t, nodes)
 	})
 
 	t.Run("it replies to a node that joins", func(t *testing.T) {
