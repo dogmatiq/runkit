@@ -37,8 +37,8 @@ CREATE TABLE runkit.queued_messages (
 CREATE INDEX queued_messages_by_queue
 ON runkit.queued_messages (
     queue_id,
-    message_type_id,
-    next_attempt_at
+    next_attempt_at,
+    message_type_id
 );
 
 CREATE INDEX queued_messages_by_instance

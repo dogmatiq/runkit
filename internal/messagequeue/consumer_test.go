@@ -24,6 +24,7 @@ import (
 
 func TestConsumer(t *testing.T) {
 	typeID := stubs.MessageTypeID[*stubs.CommandStub[stubs.TypeA]]()
+	otherTypeID := stubs.MessageTypeID[*stubs.CommandStub[stubs.TypeB]]()
 	contentionDelay := 100 * time.Millisecond
 
 	// setup returns a database, a running node on it, and a function that
@@ -75,14 +76,15 @@ func TestConsumer(t *testing.T) {
 		)
 	}
 
-	// runWithPolicy runs a consumer of messages of typeID on the given node,
-	// with the given concurrency limit and failure policy for deliveries, and
-	// returns a function that stops it. The consumer passes each message to the
-	// given sink.
-	runWithPolicy := func(
+	// runConsumer runs a consumer of messages of typeID and otherTypeID on the
+	// given node, with the given serial queues, concurrency limit and failure
+	// policy for deliveries, and returns a function that stops it. The consumer
+	// passes each message to the given sink.
+	runConsumer := func(
 		t *testing.T,
 		db *sql.DB,
 		n *cluster.Node,
+		serialQueueIDs *uuidset.SetR,
 		concurrency int,
 		deliveryPolicy failure.Policy,
 		s Sink,
@@ -98,7 +100,8 @@ func TestConsumer(t *testing.T) {
 		xtesting.GoE(t, queues.Run)
 
 		sinks := map[uuid.UUID]Sink{
-			typeID: s,
+			typeID:      s,
+			otherTypeID: s,
 		}
 
 		consumer := &Consumer{
@@ -106,6 +109,7 @@ func TestConsumer(t *testing.T) {
 			Node:                  n,
 			Queues:                queues,
 			Sinks:                 sinks,
+			SerialQueueIDs:        serialQueueIDs,
 			ConcurrencyLimit:      concurrency,
 			ContentionDelay:       contentionDelay,
 			EngineFailurePolicy:   xtesting.FailurePolicy(),
@@ -115,6 +119,31 @@ func TestConsumer(t *testing.T) {
 		}
 
 		return xtesting.GoE(t, consumer.Run)
+	}
+
+	// runWithPolicy is runConsumer without any serial queues.
+	runWithPolicy := func(
+		t *testing.T,
+		db *sql.DB,
+		n *cluster.Node,
+		concurrency int,
+		deliveryPolicy failure.Policy,
+		s Sink,
+	) func() {
+		return runConsumer(t, db, n, nil, concurrency, deliveryPolicy, s)
+	}
+
+	// runWithSerialQueues is runConsumer with the failure policy that the
+	// engine uses by default.
+	runWithSerialQueues := func(
+		t *testing.T,
+		db *sql.DB,
+		n *cluster.Node,
+		serialQueueIDs *uuidset.SetR,
+		concurrency int,
+		s Sink,
+	) func() {
+		return runConsumer(t, db, n, serialQueueIDs, concurrency, xtesting.FailurePolicy(), s)
 	}
 
 	// run is runWithPolicy with the failure policy that the engine uses by
@@ -301,6 +330,29 @@ func TestConsumer(t *testing.T) {
 		)
 
 		return h, attempted, func() { close(release) }
+	}
+
+	// step returns a sink that sends the ID of each message to the returned
+	// channel, then delivers it when the returned function is called. Each call
+	// to the function lets one attempt that is waiting deliver its message.
+	step := func() (Sink, <-chan uuid.UUID, func()) {
+		attempted := make(chan uuid.UUID, 100)
+		release := make(chan struct{})
+
+		h := sinkFunc(
+			func(ctx context.Context, _ *sql.Tx, d Delivery, _ *envelopepb.Envelope) error {
+				attempted <- d.MessageID
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-release:
+					return nil
+				}
+			},
+		)
+
+		return h, attempted, func() { release <- struct{}{} }
 	}
 
 	// expectAttempt fails the test unless the next message attempted is the
@@ -633,6 +685,149 @@ func TestConsumer(t *testing.T) {
 		release()
 
 		expectAttempts(t, attempted, later...)
+	})
+
+	t.Run("it makes one attempt at a time on a serial queue", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, next := step()
+		queueID := uuid.New()
+
+		now := time.Now()
+		first := addMessage(t, db, queueID, typeID, now.Add(-3*time.Second))
+		second := addMessage(t, db, queueID, typeID, now.Add(-2*time.Second))
+		third := addMessage(t, db, queueID, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 10, h)
+
+		expectAttempt(t, attempted, first)
+		expectNoAttempt(t, attempted)
+
+		next()
+		expectAttempt(t, attempted, second)
+		expectNoAttempt(t, attempted)
+
+		next()
+		expectAttempt(t, attempted, third)
+	})
+
+	t.Run("it does not postpone the other messages in a serial queue while one is attempted", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, _ := block()
+		queueID := uuid.New()
+
+		now := time.Now()
+		blocked := addMessage(t, db, queueID, typeID, now.Add(-2*time.Second))
+		waiting := addMessage(t, db, queueID, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 10, h)
+
+		expectAttempt(t, attempted, blocked)
+		expectNoAttempt(t, attempted)
+
+		expectQueued(
+			t,
+			db,
+			"the waiting message's next attempt to be unchanged",
+			waiting,
+			`next_attempt_at < $2`,
+			now,
+		)
+	})
+
+	t.Run("it attempts messages in other queues while a serial queue has a backlog", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, _ := block()
+		queueID := uuid.New()
+
+		// The serial queue's messages are all due before the others. If the
+		// consumer found more than one of them, they would fill the batch.
+		now := time.Now()
+		serial := addMessage(t, db, queueID, typeID, now.Add(-6*time.Second))
+		for i := range 4 {
+			addMessage(t, db, queueID, typeID, now.Add(time.Duration(i-5)*time.Second))
+		}
+		first := addMessage(t, db, n.ID, typeID, now.Add(-1*time.Second))
+		second := addMessage(t, db, n.ID, typeID, now)
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 3, h)
+
+		expectAttempts(t, attempted, serial, first, second)
+	})
+
+	t.Run("it attempts the messages in serial queues and other queues in the order in which they're due", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, _ := block()
+		queueID := uuid.New()
+
+		// The headroom fits two of the three messages, so the latest one isn't
+		// attempted, whichever kind of queue holds it.
+		now := time.Now()
+		first := addMessage(t, db, n.ID, typeID, now.Add(-3*time.Second))
+		second := addMessage(t, db, queueID, typeID, now.Add(-2*time.Second))
+		addMessage(t, db, n.ID, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 2, h)
+
+		expectAttempts(t, attempted, first, second)
+		expectNoAttempt(t, attempted)
+	})
+
+	t.Run("it attempts several serial queues at the same time", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, _ := block()
+		queueA := uuid.New()
+		queueB := uuid.New()
+
+		now := time.Now()
+		firstA := addMessage(t, db, queueA, typeID, now.Add(-4*time.Second))
+		addMessage(t, db, queueA, typeID, now.Add(-3*time.Second))
+		firstB := addMessage(t, db, queueB, typeID, now.Add(-2*time.Second))
+		addMessage(t, db, queueB, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueA, queueB).R(), 10, h)
+
+		expectAttempts(t, attempted, firstA, firstB)
+		expectNoAttempt(t, attempted)
+	})
+
+	t.Run("it makes one attempt at a time on a serial queue that has messages of several types", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted, next := step()
+		queueID := uuid.New()
+
+		now := time.Now()
+		first := addMessage(t, db, queueID, otherTypeID, now.Add(-2*time.Second))
+		second := addMessage(t, db, queueID, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 10, h)
+
+		expectAttempt(t, attempted, first)
+		expectNoAttempt(t, attempted)
+
+		next()
+		expectAttempt(t, attempted, second)
+	})
+
+	t.Run("it attempts the next message in a serial queue when an attempt completes, without any other signal", func(t *testing.T) {
+		t.Parallel()
+
+		db, n, _ := setup(t)
+		h, attempted := record()
+		queueID := uuid.New()
+
+		now := time.Now()
+		first := addMessage(t, db, queueID, typeID, now.Add(-2*time.Second))
+		second := addMessage(t, db, queueID, typeID, now.Add(-1*time.Second))
+		runWithSerialQueues(t, db, n, uuidset.New(queueID).R(), 10, h)
+
+		expectAttempt(t, attempted, first)
+		expectAttempt(t, attempted, second)
 	})
 
 	t.Run("it attempts other messages while one is locked", func(t *testing.T) {

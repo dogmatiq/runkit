@@ -433,6 +433,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		Node:                  e.node,
 		Queues:                e.queues,
 		Sinks:                 e.queueSinks,
+		SerialQueueIDs:        e.queueRouter.SerialQueueIDs(),
 		ConcurrencyLimit:      e.messageQueueConcurrency,
 		ContentionDelay:       e.messageQueueContentionDelay,
 		EngineFailurePolicy:   e.engineFailurePolicy,

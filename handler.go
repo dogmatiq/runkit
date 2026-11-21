@@ -38,12 +38,11 @@ func (e *Engine) runHandler(ctx context.Context, handlerConfig config.Handler) {
 		e.addQueueSink(
 			handlerConfig,
 			&integration.CommandSink{
-				Packer:                e.packer,
-				OutboundMessageTypes:  outboundMessageTypesForHandler(handlerConfig),
-				Handler:               handlerConfig.Interface(),
-				Identity:              handlerConfig.Identity(),
-				ConcurrencyPreference: handlerConfig.ConcurrencyPreference(),
-				HandleTimeout:         e.handleTimeout,
+				Packer:               e.packer,
+				OutboundMessageTypes: outboundMessageTypesForHandler(handlerConfig),
+				Handler:              handlerConfig.Interface(),
+				Identity:             handlerConfig.Identity(),
+				HandleTimeout:        e.handleTimeout,
 			},
 		)
 

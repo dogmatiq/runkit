@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dogmatiq/dogma"
@@ -35,21 +34,9 @@ type CommandSink struct {
 	Handler  dogma.IntegrationMessageHandler
 	Identity *identitypb.Identity
 
-	// ConcurrencyPreference is the handler's concurrency preference.
-	//
-	// If it's [dogma.MinimizeConcurrency], the sink makes one call at a time
-	// to the handler's HandleCommand method. While the handler is handling one
-	// command, [CommandSink.Deliver] returns [messagequeue.ErrBusy] for any
-	// other command, without calling the handler.
-	ConcurrencyPreference dogma.ConcurrencyPreference
-
 	// HandleTimeout is the maximum time the handler is given to handle each
 	// command.
 	HandleTimeout time.Duration
-
-	// handlerLock is held during each call to the handler's HandleCommand
-	// method when Concurrency is [dogma.MinimizeConcurrency].
-	handlerLock sync.Mutex
 }
 
 // Deliver delivers the command in the given envelope to the handler.
@@ -84,16 +71,7 @@ func (s *CommandSink) Deliver(
 		appLogger:            appLogger,
 	}
 
-	called, err := s.handleCommand(ctx, scope, commandForHandling)
-
-	// The handler is handling another command. Waiting for it would hold this
-	// attempt's transaction and connection open for up to the handle timeout,
-	// so the sink returns ErrBusy and the consumer postpones the delivery.
-	if !called {
-		return messagequeue.ErrBusy
-	}
-
-	if err != nil {
+	if err := s.handleCommand(ctx, scope, commandForHandling); err != nil {
 		return fmt.Errorf("unable to handle command: %w", err)
 	}
 
@@ -110,22 +88,12 @@ func (s *CommandSink) LogAttr() slog.Attr {
 }
 
 // handleCommand calls the handler's HandleCommand method.
-//
-// If Concurrency is [dogma.MinimizeConcurrency] and another call holds
-// handlerLock, it returns false without calling the handler.
 func (s *CommandSink) handleCommand(
 	ctx context.Context,
 	scope *commandScope,
 	command dogma.Command,
-) (bool, error) {
-	if s.ConcurrencyPreference == dogma.MinimizeConcurrency {
-		if !s.handlerLock.TryLock() {
-			return false, nil
-		}
-		defer s.handlerLock.Unlock()
-	}
-
-	return true, xerrors.Recover(
+) error {
+	return xerrors.Recover(
 		func() error {
 			ctx, cancel := context.WithTimeout(ctx, s.HandleTimeout)
 			defer cancel()

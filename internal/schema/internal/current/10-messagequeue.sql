@@ -38,14 +38,15 @@ CREATE TABLE IF NOT EXISTS runkit.queued_messages (
     CHECK (failures > 0 OR NOT failure_logged_as_error)
 );
 
--- Create an index for finding the next message to deliver in each queue, for
--- each message type that is routed to a handler, and for listing the queues
--- that have messages.
+-- Create an index for finding the next messages to deliver in each queue, in
+-- the order in which they're due, and for listing the queues that have
+-- messages. It includes each message's type, which lets a search skip a message
+-- whose type has no handler on the engine, without reading the table.
 CREATE INDEX IF NOT EXISTS queued_messages_by_queue
 ON runkit.queued_messages (
     queue_id,
-    message_type_id,
-    next_attempt_at
+    next_attempt_at,
+    message_type_id
 );
 
 -- Create an index for finding the deadlines of a process instance.

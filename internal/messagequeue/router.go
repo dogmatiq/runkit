@@ -10,6 +10,7 @@ import (
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/protobuf/envelopepb"
+	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 )
@@ -133,6 +134,25 @@ func (r *Router) RouteCommandToQueue(
 	}
 
 	return streamID, nil
+}
+
+// SerialQueueIDs returns the set of IDs of the queues from which the consumer
+// attempts one message at a time.
+//
+// [Router.RouteCommandToQueue] adds all of the commands for an integration that
+// prefers [dogma.MinimizeConcurrency] to one of these queues.
+func (r *Router) SerialQueueIDs() *uuidset.SetR {
+	queueIDs := &uuidset.Set{}
+
+	for _, handler := range r.CommandHandlers {
+		// RouteCommandToQueue uses the integration's identity key as the ID
+		// of its queue.
+		if handler.ConcurrencyPreference == dogma.MinimizeConcurrency {
+			queueIDs.Add(handler.Key)
+		}
+	}
+
+	return queueIDs.R()
 }
 
 // RouteDeadlinesToQueue returns the ID of the queue for the deadlines of the

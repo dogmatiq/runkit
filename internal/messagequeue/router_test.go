@@ -208,6 +208,38 @@ func TestRouter(t *testing.T) {
 		}
 	})
 
+	t.Run("SerialQueueIDs", func(t *testing.T) {
+		t.Run("it contains the queue for the commands of an integration that minimizes concurrency", func(t *testing.T) {
+			t.Parallel()
+
+			db, router := setup(t, routeToInstance)
+
+			queueID, err := router.RouteCommandToQueue(t.Context(), db, packer.PackCommand(stubs.CommandB1))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !router.SerialQueueIDs().Has(queueID) {
+				t.Fatalf("expected %s to be a serial queue", queueID)
+			}
+		})
+
+		t.Run("it does not contain the queue for the commands of an integration that maximizes concurrency", func(t *testing.T) {
+			t.Parallel()
+
+			db, router := setup(t, routeToInstance)
+
+			queueID, err := router.RouteCommandToQueue(t.Context(), db, packer.PackCommand(stubs.CommandC1))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if router.SerialQueueIDs().Has(queueID) {
+				t.Fatalf("expected %s not to be a serial queue", queueID)
+			}
+		})
+	})
+
 	t.Run("RouteDeadlinesToQueue", func(t *testing.T) {
 		t.Run("it returns the node ID", func(t *testing.T) {
 			t.Parallel()
