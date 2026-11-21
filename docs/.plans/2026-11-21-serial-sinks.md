@@ -2,9 +2,10 @@
 
 ## Where the work stands
 
-The work is on the branch `serial-queues`, which starts from `main`. The first
-task is implemented and waiting for review, and isn't committed yet. #100,
-which #112 was blocked by, is closed.
+The work is on the branch `serial-queues`, which starts from `main`. The only
+task is done and committed, and the engine-level test task was dropped. The
+branch isn't pushed, and there's no pull request yet. #100, which #112 was
+blocked by, is closed.
 
 ## Context
 
@@ -127,7 +128,7 @@ Decided in planning:
 
 ## Tasks
 
-### [x] Attempt one message at a time from a serial queue
+### [x] Attempt one message at a time from a serial queue (ac03e97)
 
 Add `Router.SerialQueueIDs`, the consumer's
 `SerialQueueIDs` field, the engine's wiring, and the consumer and query changes
