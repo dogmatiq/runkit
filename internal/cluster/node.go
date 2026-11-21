@@ -291,9 +291,6 @@ func (n *Node) notifyHeartbeat(ctx context.Context) error {
 	// The send goes through the connection pool, so it can block for as long as
 	// the network to the database lets it. A heartbeat that takes longer than an
 	// interval to send is overtaken by the next one anyway.
-	//
-	// This is not covered by tests, because a test can't make a connection
-	// hang.
 	ctx, cancel := context.WithTimeout(ctx, n.HeartbeatInterval)
 	defer cancel()
 

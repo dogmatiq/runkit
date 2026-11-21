@@ -89,6 +89,45 @@ func TestNode(t *testing.T) {
 		}
 	})
 
+	t.Run("it doesn't send a heartbeat when its ID isn't valid", func(t *testing.T) {
+		db := setup(t)
+		payloads := listenForHeartbeats(t, db)
+
+		n := newNode(t, db, interval, timeout)
+		n.ID = uuid.Nil()
+		xtesting.GoE(t, n.Run)
+
+		xtesting.ExpectNoReceive(t, "heartbeat", payloads)
+	})
+
+	t.Run("it removes itself from its live nodes while a send takes longer than a heartbeat interval", func(t *testing.T) {
+		db := setup(t)
+
+		// The node's listening connection is one of these. The test holds the
+		// other, so each send has to wait for a connection until the node gives
+		// up on it at the end of the interval.
+		db.SetMaxOpenConns(2)
+
+		n := newNode(t, db, interval, timeout)
+		xtesting.GoE(t, n.Run)
+
+		key := uuid.New()
+		expectNodeOwnsWorkload(t, n, key, true)
+
+		conn, err := db.Conn(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Without a deadline on each send, the node would wait on the first
+		// one for as long as the test holds the connection, and so would never
+		// expire its own heartbeat.
+		expectNodeOwnsWorkload(t, n, key, false)
+
+		conn.Close()
+		expectNodeOwnsWorkload(t, n, key, true)
+	})
+
 	t.Run("it replies to a node that joins", func(t *testing.T) {
 		db := setup(t)
 		payloads := listenForHeartbeats(t, db)
@@ -138,6 +177,13 @@ func TestNode(t *testing.T) {
 				encodeForTest(t, heartbeatpb.NewHeartbeatBuilder().
 					WithNodeId(uuidpb.FromStd(uuid.Nil())).
 					WithExpiresAfter(durationpb.New(time.Hour)).
+					Build()),
+			},
+			{
+				"an invalid expiry",
+				encodeForTest(t, heartbeatpb.NewHeartbeatBuilder().
+					WithNodeId(uuidpb.FromStd(nodeID)).
+					WithExpiresAfter(&durationpb.Duration{Seconds: 1, Nanos: -1}).
 					Build()),
 			},
 			{
