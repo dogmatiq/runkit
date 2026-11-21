@@ -22,6 +22,8 @@ github.com/cpuguy83/dockercfg v0.3.2 h1:DlJTyZGBDlXqUZ2Dk2Q3xHs/FtnooJJVaad2S9GK
 github.com/cpuguy83/dockercfg v0.3.2/go.mod h1:sugsbF4//dDlL/i+S+rtpIWp+5h0BHJHfjj5/jFyUJc=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
+github.com/dave/jennifer v1.7.1 h1:B4jJJDHelWcDhlRQxWeo0Npa/pYKBLrirAQoTN45txo=
+github.com/dave/jennifer v1.7.1/go.mod h1:nXbxhEmQfOZhWml3D1cDK5M1FLnMSozpbFN/m3RmGZc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
 github.com/distribution/reference v0.6.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
@@ -39,6 +41,8 @@ github.com/dogmatiq/enginekit v0.32.0 h1:Enf5riF2P++8g3ZaO3Xw8Rb7CJqi9D0pNdu7zaC
 github.com/dogmatiq/enginekit v0.32.0/go.mod h1:VpU8RGlXfjp0bVmfQcwgL1i3k28vStIiO/wRRuBE1lc=
 github.com/dogmatiq/jumble v0.1.0 h1:Cb3ExfxY+AoUP4G9/sOwoOdYX8o+kOLK8+dhXAry+QA=
 github.com/dogmatiq/jumble v0.1.0/go.mod h1:FCGV2ImXu8zvThxhd4QLstiEdu74vbIVw9bFJSBcKr4=
+github.com/dogmatiq/primo v0.4.4 h1:jM5WWBsEENz/ss3S5B3Dq5c+OkR6wYjjRQgaYofzJfs=
+github.com/dogmatiq/primo v0.4.4/go.mod h1:Bb1BMVwxC+adAs/Io6tACagI0OvTCGHKNQQ62YtrW1w=
 github.com/dogmatiq/protobuf v0.8.0 h1:DE9TMU866bSo4ITWcECQbByngXk0s696WMXcCCzfQiY=
 github.com/dogmatiq/protobuf v0.8.0/go.mod h1:96bKDt02UetlEs2RxjOPE8TQvVnk2bVRre5Q3o/cDYg=
 github.com/dogmatiq/spruce v0.2.4 h1:32HqvqvlINlvMKzQ4eWO97+MdI+1CfLfr9RmsTvDphk=

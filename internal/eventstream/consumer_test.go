@@ -18,7 +18,6 @@ import (
 	. "github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/failure"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -33,16 +32,8 @@ func TestConsumer(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
-		signals := &signal.Bus{
-			DB:                  db,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        logger,
-		}
-		xtesting.GoE(t, signals.Run)
-
 		node := &cluster.Node{
-			DB:                  signals.DB,
-			Signals:             signals,
+			DB:                  db,
 			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
@@ -469,15 +460,8 @@ func newConsumerNode(t *testing.T) *cluster.Node {
 	t.Helper()
 
 	logger := spruce.NewTestLogger(t)
-	signals := &signal.Bus{
-		DB:                  xtesting.NewDatabase(t),
-		EngineFailurePolicy: xtesting.FailurePolicy(),
-		EngineLogger:        logger,
-	}
-	xtesting.GoE(t, signals.Run)
 	node := &cluster.Node{
-		DB:                  signals.DB,
-		Signals:             signals,
+		DB:                  xtesting.NewDatabase(t),
 		ID:                  uuid.New(),
 		HeartbeatInterval:   20 * time.Millisecond,
 		HeartbeatTimeout:    100 * time.Millisecond,

@@ -15,7 +15,6 @@ import (
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/failure"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
@@ -29,20 +28,13 @@ func TestConsumer(t *testing.T) {
 
 	// setup returns a database, a running node on it, and a function that
 	// returns another node on it, which isn't running.
-	// setupWithDB starts a signal bus and a node that use db, and returns db,
-	// the node, and a function that creates further nodes.
+	// setupWithDB starts a node that uses db, and returns db, the node, and a
+	// function that creates further nodes.
 	setupWithDB := func(t *testing.T, db *sql.DB) (*sql.DB, *cluster.Node, func() *cluster.Node) {
-		signals := &signal.Bus{
-			DB:                  db,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        spruce.NewTestLogger(t),
-		}
-		xtesting.GoE(t, signals.Run)
 
 		newNode := func() *cluster.Node {
 			return &cluster.Node{
 				DB:                  db,
-				Signals:             signals,
 				ID:                  uuid.New(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    1 * time.Second,

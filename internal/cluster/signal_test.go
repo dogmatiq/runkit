@@ -9,7 +9,6 @@ import (
 
 	"github.com/dogmatiq/cosyne"
 	. "github.com/dogmatiq/runkit/internal/cluster"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
 )
@@ -19,17 +18,9 @@ func TestNode_AttachSignal(t *testing.T) {
 	setup := func(t *testing.T) (*sql.DB, func() *Node) {
 		db := xtesting.NewDatabase(t)
 
-		signals := &signal.Bus{
-			DB:                  db,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        spruce.NewTestLogger(t),
-		}
-		xtesting.GoE(t, signals.Run)
-
 		return db, func() *Node {
 			return &Node{
 				DB:                  db,
-				Signals:             signals,
 				ID:                  uuid.New(),
 				HeartbeatInterval:   20 * time.Millisecond,
 				HeartbeatTimeout:    100 * time.Millisecond,

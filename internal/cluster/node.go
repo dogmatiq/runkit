@@ -11,34 +11,28 @@ import (
 	"uuid"
 
 	"github.com/dogmatiq/cosyne"
+	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/cluster/internal/heartbeatpb"
 	"github.com/dogmatiq/runkit/internal/failure"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xslog"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-const (
-	// heartbeatTopic is the signal topic of every heartbeat. A heartbeat's
-	// subtopic is the ID of the node that sent it.
-	heartbeatTopic = "heartbeat"
-
-	// heartbeatBufferSize is the number of heartbeat signals that can be
-	// buffered before any are dropped.
-	heartbeatBufferSize = 64
-)
+// heartbeatBufferSize is the number of heartbeats that can be buffered before
+// any are dropped.
+const heartbeatBufferSize = 64
 
 // Node represents this engine's node in the cluster.
 //
 // It keeps track of which nodes are live, and delivers cluster-wide signals.
 // See [Node.LiveNodes] and [Node.AttachSignal].
 type Node struct {
-	// DB is the database whose signals the node listens for.
+	// DB is the database whose signals and heartbeats the node sends and
+	// listens for.
 	DB *sql.DB
-
-	// Signals is the bus used to send and receive heartbeat signals.
-	Signals *signal.Bus
 
 	// ID is the ID of this node, which must be unique within the cluster.
 	ID uuid.UUID
@@ -47,11 +41,15 @@ type Node struct {
 	// sends.
 	HeartbeatInterval time.Duration
 
-	// HeartbeatTimeout is the amount of time a node can go without sending a
-	// heartbeat before this node removes it from its live nodes.
+	// HeartbeatTimeout is how long each heartbeat that this node sends keeps
+	// this node live. A peer that receives the heartbeat counts that time from
+	// the moment of receipt, and removes this node from its live nodes if no
+	// newer heartbeat from this node arrives within that time.
 	//
-	// It must be longer than [Node.HeartbeatInterval]. Heartbeats can be
-	// dropped, so it should span several intervals.
+	// This node sends the timeout in each heartbeat, as its expiry.
+	//
+	// HeartbeatTimeout must be longer than [Node.HeartbeatInterval]. Heartbeats
+	// can be dropped, so the timeout should span several intervals.
 	HeartbeatTimeout time.Duration
 
 	// EngineFailurePolicy is how the engine responds to failures to listen for signals.
@@ -70,10 +68,20 @@ type Node struct {
 	// [Node.AttachSignal] made for it.
 	signalAttachments map[string]map[*signalAttachment]struct{}
 
-	// heartbeats maps the ID of each live node to the time its most recent
-	// heartbeat was received. It is set when the node starts exchanging
-	// heartbeats.
+	// heartbeats maps the ID of each live node to the time at which the most
+	// recent heartbeat from that node expires. It is set when the node starts
+	// exchanging heartbeats.
 	heartbeats map[uuid.UUID]time.Time
+
+	// heartbeatPayloads receives the payload of each notification on the
+	// heartbeat channel. [Node.listen] sends to it, and
+	// [Node.exchangeHeartbeats] receives from it. It is set when [Node.Run]
+	// starts.
+	heartbeatPayloads chan string
+
+	// listening receives a value each time [Node.listen] has started listening
+	// for both signals and heartbeats. It is set when [Node.Run] starts.
+	listening chan struct{}
 
 	// lastSendErr explains why the most recent attempt to send this node's
 	// heartbeat failed, or is nil if it was sent.
@@ -86,9 +94,8 @@ type Node struct {
 
 // LiveNodes returns an observable set containing the ID of each live node.
 //
-// A node is live while its heartbeats keep arriving within
-// [Node.HeartbeatTimeout]. That includes this node, which is live only while
-// its own heartbeats arrive.
+// A node is live until the expiry in its most recent heartbeat has passed. That
+// includes this node, which is live only while its own heartbeats arrive.
 //
 // The set is empty until the first heartbeat arrives, and once this node has
 // stopped.
@@ -123,6 +130,9 @@ func (n *Node) Run(ctx context.Context) error {
 	// After this node has stopped, it doesn't own any workloads.
 	defer n.liveNodes.Store(nil)
 
+	n.heartbeatPayloads = make(chan string, heartbeatBufferSize)
+	n.listening = make(chan struct{}, 1)
+
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(
@@ -152,35 +162,32 @@ func (n *Node) Run(ctx context.Context) error {
 func (n *Node) exchangeHeartbeats(ctx context.Context) error {
 	n.heartbeats = map[uuid.UUID]time.Time{}
 
-	heartbeats, stop := n.Signals.Watch(ctx, heartbeatTopic, heartbeatBufferSize)
-	defer stop()
-
 	ticker := time.NewTicker(n.HeartbeatInterval)
 	defer ticker.Stop()
-
-	n.sendHeartbeat(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case nodeID, ok := <-heartbeats:
-			if !ok {
-				return ctx.Err()
-			}
+		case <-n.listening:
+			// This node never receives the heartbeats that its peers sent
+			// before it started listening, so it doesn't yet know which peers
+			// are live. It sends a heartbeat now, and both this node and its
+			// peers receive it. A peer that hasn't seen this node before
+			// replies at once, and the reply tells this node that the peer is
+			// live.
+			n.sendHeartbeat(ctx)
 
-			if n.handleHeartbeat(ctx, nodeID) {
+		case payload := <-n.heartbeatPayloads:
+			if n.handleHeartbeat(ctx, payload) {
 				n.publishLiveNodes()
 			}
 
 		case <-ticker.C:
 			n.sendHeartbeat(ctx)
 
-			changed, ok := n.drainHeartbeats(ctx, heartbeats)
-			if !ok {
-				return ctx.Err()
-			}
+			changed := n.drainHeartbeats(ctx)
 
 			if n.expireNodes(ctx) {
 				changed = true
@@ -193,16 +200,20 @@ func (n *Node) exchangeHeartbeats(ctx context.Context) error {
 	}
 }
 
-// handleHeartbeat handles a signal received on the heartbeat topic. It returns
-// true if the set of live nodes changed.
-func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
-	// A signal on the heartbeat topic itself carries no node ID, and so is not
-	// a heartbeat.
-	if nodeID == "" {
+// handleHeartbeat handles the payload of a notification received on the
+// heartbeat channel. It returns true if the set of live nodes changed.
+func (n *Node) handleHeartbeat(ctx context.Context, payload string) bool {
+	h, err := decodeHeartbeat(payload)
+	if err != nil {
+		n.EngineLogger.WarnContext(
+			ctx,
+			"ignored invalid heartbeat",
+			xslog.Error(err),
+		)
 		return false
 	}
 
-	changed, peerJoined := n.recordHeartbeat(ctx, nodeID)
+	changed, peerJoined := n.recordHeartbeat(ctx, h)
 
 	// A peer that has just joined does not know about this node yet, so reply
 	// with a heartbeat straight away.
@@ -213,8 +224,8 @@ func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
 	return changed
 }
 
-// drainHeartbeats handles the heartbeats already waiting in the given channel,
-// without waiting for more.
+// drainHeartbeats handles the heartbeats already waiting to be handled, without
+// waiting for more.
 //
 // Heartbeats keep arriving while this node is held up, such as while
 // sendHeartbeat waits on a slow database, and each is recorded at the time it
@@ -225,22 +236,17 @@ func (n *Node) handleHeartbeat(ctx context.Context, nodeID string) bool {
 // next heartbeat read, which is too soon for a test to observe reliably through
 // [Node.LiveNodes].
 //
-// changed is true if the set of live nodes changed. ok is false if the channel
-// is closed.
-func (n *Node) drainHeartbeats(ctx context.Context, heartbeats <-chan string) (changed, ok bool) {
+// It returns true if the set of live nodes changed.
+func (n *Node) drainHeartbeats(ctx context.Context) (changed bool) {
 	for {
 		select {
-		case nodeID, open := <-heartbeats:
-			if !open {
-				return changed, false
-			}
-
-			if n.handleHeartbeat(ctx, nodeID) {
+		case payload := <-n.heartbeatPayloads:
+			if n.handleHeartbeat(ctx, payload) {
 				changed = true
 			}
 
 		default:
-			return changed, true
+			return changed
 		}
 	}
 }
@@ -250,9 +256,7 @@ func (n *Node) drainHeartbeats(ctx context.Context, heartbeats <-chan string) (c
 // A heartbeat that can not be sent is retried on the next tick, so that once
 // the database recovers this node is silent for no longer than one interval.
 func (n *Node) sendHeartbeat(ctx context.Context) {
-	topic := heartbeatTopic + "." + n.ID.String()
-
-	err := n.Signals.Send(ctx, topic)
+	err := n.notifyHeartbeat(ctx)
 	if err == nil {
 		n.lastSendErr = nil
 		return
@@ -272,32 +276,46 @@ func (n *Node) sendHeartbeat(ctx context.Context) {
 	}
 }
 
-// recordHeartbeat records a heartbeat from the node with the given ID.
-//
-// changed is true if the node was not already live. peerJoined is true if, in
-// addition, it is a node other than this one.
-func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoined bool) {
-	nodeID, err := uuid.Parse(id)
-
-	// The nil UUID is never the ID of a node. [FindWorkloadOwner] uses it to
-	// mean that it hasn't found an owner, so it must not be a live node.
-	if err == nil && nodeID == uuid.Nil() {
-		err = errors.New("the nil UUID is not a node ID")
-	}
-
+// notifyHeartbeat sends this node's heartbeat as a PostgreSQL notification.
+func (n *Node) notifyHeartbeat(ctx context.Context) error {
+	payload, err := encodeHeartbeat(
+		heartbeatpb.NewHeartbeatBuilder().
+			WithNodeId(uuidpb.FromStd(n.ID)).
+			WithExpiresAfter(durationpb.New(n.HeartbeatTimeout)).
+			Build(),
+	)
 	if err != nil {
-		n.EngineLogger.WarnContext(
-			ctx,
-			"ignored invalid node ID in heartbeat signal",
-			slog.String("node_id", id),
-			xslog.Error(err),
-		)
-		return false, false
+		return err
 	}
 
+	// The send goes through the connection pool, so it can block for as long as
+	// the network to the database lets it. A heartbeat that takes longer than an
+	// interval to send is overtaken by the next one anyway.
+	ctx, cancel := context.WithTimeout(ctx, n.HeartbeatInterval)
+	defer cancel()
+
+	_, err = n.DB.ExecContext(
+		ctx,
+		`SELECT pg_notify($1, $2)`,
+		heartbeatChannel,
+		payload,
+	)
+
+	return err
+}
+
+// recordHeartbeat records a valid heartbeat.
+//
+// changed is true if the sender was not already live. peerJoined is true if, in
+// addition, it is a node other than this one.
+func (n *Node) recordHeartbeat(ctx context.Context, h *heartbeatpb.Heartbeat) (changed, peerJoined bool) {
+	nodeID := h.GetNodeId().AsStd()
+
+	// The expiry is counted from now, not from the time at which the sender sent
+	// the heartbeat, because the sender's clock may differ from this node's.
 	now := time.Now()
 	_, exists := n.heartbeats[nodeID]
-	n.heartbeats[nodeID] = now
+	n.heartbeats[nodeID] = now.Add(h.GetExpiresAfter().AsDuration())
 
 	if !n.isSelf(nodeID) {
 		if exists {
@@ -336,13 +354,13 @@ func (n *Node) recordHeartbeat(ctx context.Context, id string) (changed, peerJoi
 	return true, false
 }
 
-// expireNodes removes the nodes that have not sent a heartbeat within the
-// heartbeat timeout. It returns true if any node was removed.
+// expireNodes removes the nodes whose most recent heartbeat has expired. It
+// returns true if any node was removed.
 func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 	now := time.Now()
 
-	for nodeID, lastBeatAt := range n.heartbeats {
-		if now.Sub(lastBeatAt) <= n.HeartbeatTimeout {
+	for nodeID, expiresAt := range n.heartbeats {
+		if !now.After(expiresAt) {
 			continue
 		}
 
@@ -359,7 +377,7 @@ func (n *Node) expireNodes(ctx context.Context) (changed bool) {
 				ctx,
 				"local node removed from cluster",
 				slog.Duration("heartbeat_timeout", n.HeartbeatTimeout),
-				slog.Time("last_heartbeat_at", lastBeatAt),
+				slog.Time("last_heartbeat_at", n.heardOwnHeartbeatAt),
 				xslog.Error(err),
 			)
 		} else {

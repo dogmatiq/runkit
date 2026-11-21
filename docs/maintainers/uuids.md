@@ -20,7 +20,8 @@ doesn't allocate. These are the places where IDs cross the boundary:
   application;
 - the event stream gRPC API — `ReadEventsRequest.event_stream_id`,
   `EventStreamSegment.event_stream_id`, the type IDs in `MessageFilter`, and
-  `EventStreamPosition.stream_id`.
+  `EventStreamPosition.stream_id`;
+- `Heartbeat.node_id`, the node ID in a heartbeat.
 
 A UUID that comes from a gRPC peer can be invalid, so check it with
 `Validate()` before calling `AsStd()`.

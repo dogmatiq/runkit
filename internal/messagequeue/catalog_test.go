@@ -8,7 +8,6 @@ import (
 
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/messagequeue"
-	"github.com/dogmatiq/runkit/internal/signal"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"github.com/dogmatiq/runkit/internal/x/xsql"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
@@ -20,16 +19,8 @@ func TestCatalog(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 		logger := spruce.NewTestLogger(t)
 
-		signals := &signal.Bus{
-			DB:                  db,
-			EngineFailurePolicy: xtesting.FailurePolicy(),
-			EngineLogger:        logger,
-		}
-		xtesting.GoE(t, signals.Run)
-
 		node := &cluster.Node{
 			DB:                  db,
-			Signals:             signals,
 			ID:                  uuid.New(),
 			HeartbeatInterval:   20 * time.Millisecond,
 			HeartbeatTimeout:    100 * time.Millisecond,
