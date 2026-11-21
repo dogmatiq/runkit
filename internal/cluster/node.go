@@ -254,7 +254,8 @@ func (n *Node) drainHeartbeats(ctx context.Context) (changed bool) {
 // sendHeartbeat sends this node's heartbeat.
 //
 // A heartbeat that can not be sent is retried on the next tick, so that once
-// the database recovers this node is silent for no longer than one interval.
+// the database recovers this node is silent for no longer than one interval,
+// plus the time that the failed send took.
 func (n *Node) sendHeartbeat(ctx context.Context) {
 	err := n.notifyHeartbeat(ctx)
 	if err == nil {
@@ -289,9 +290,15 @@ func (n *Node) notifyHeartbeat(ctx context.Context) error {
 	}
 
 	// The send goes through the connection pool, so it can block for as long as
-	// the network to the database lets it. A heartbeat that takes longer than an
-	// interval to send is overtaken by the next one anyway.
-	ctx, cancel := context.WithTimeout(ctx, n.HeartbeatInterval)
+	// the network to the database lets it. A heartbeat that takes longer than
+	// the timeout to send arrives after the other nodes have already removed
+	// this node, so the send gives up then.
+	//
+	// The deadline is the timeout, not the interval, because the send may have
+	// to open a connection first. Opening one can take longer than an interval,
+	// and the pool discards a connection when the deadline ends its opening, so
+	// a deadline shorter than that would stop any heartbeat from being sent.
+	ctx, cancel := context.WithTimeout(ctx, n.HeartbeatTimeout)
 	defer cancel()
 
 	_, err = n.DB.ExecContext(
