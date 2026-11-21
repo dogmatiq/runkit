@@ -412,7 +412,7 @@ func (s *Local) deliverStream(ctx context.Context, streamID uuid.UUID) error {
 
 	detach := s.Node.AttachSignal(
 		ctx,
-		"events_appended."+streamID.String(),
+		"events_appended.stream."+streamID.String(),
 		&appended,
 	)
 	defer detach()
