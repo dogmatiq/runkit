@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
 	"github.com/dogmatiq/enginekit/message"
 	"github.com/dogmatiq/protobuf/configpb"
@@ -93,7 +94,10 @@ func TestMetricsService_preamble(t *testing.T) {
 				}
 			}
 
-			want := []string{"dogma.metrics.v1alpha1.EventStreamLength"}
+			want := []string{
+				"dogma.metrics.v1alpha1.EventStreamLength",
+				"dogma.metrics.v1alpha1.AggregateInstanceEventStreamBindings",
+			}
 			if !slices.Equal(supported, want) {
 				t.Fatalf("unexpected supported metrics: got %v, want %v", supported, want)
 			}
@@ -225,6 +229,62 @@ func TestMetricsService_endsTheCallWhenMeasuringFails(t *testing.T) {
 	}
 }
 
+func TestMetricsService_aggregateInstanceEventStreamBindings(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			client, ctx := newMetricsClient(t, cluster)
+			responses := watchMetrics(t, ctx, client)
+
+			// The preamble shows that the call has begun.
+			responses.receive()
+
+			// Each command goes to the instance that its content names. A1 and A2
+			// create two instances, a second A1 uses the first again, and A3
+			// creates a third.
+			xtesting.ExecuteCommandsSequentially(
+				t,
+				cluster,
+				db,
+				stubs.CommandA1,
+				stubs.CommandA2,
+			)
+			responses.expectTotalBindings(2)
+
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
+			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA3)
+			responses.expectTotalBindings(3)
+		},
+		aggregateApp(),
+	)
+}
+
+// aggregateApp returns a handler route for an aggregate that records an event
+// for each command, in the instance that the command's content names.
+func aggregateApp() dogma.HandlerRoute {
+	return dogma.ViaAggregate(
+		&stubs.AggregateMessageHandlerStub[*stubs.AggregateRootStub]{
+			ConfigureFunc: func(c dogma.AggregateConfigurer) {
+				c.Identity("<aggregate>", "9b1d7f3e-2c4a-4e58-8a6d-0f3b5c7e9a11")
+				c.Routes(
+					dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+					dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+				)
+			},
+			RouteCommandToInstanceFunc: func(m dogma.Command) string {
+				return string(m.(*stubs.CommandStub[stubs.TypeA]).Content)
+			},
+			HandleCommandFunc: func(
+				_ *stubs.AggregateRootStub,
+				s dogma.AggregateCommandScope[*stubs.AggregateRootStub],
+				_ dogma.Command,
+			) {
+				s.RecordEvent(stubs.EventA1)
+			},
+		},
+	)
+}
+
 // expectMessageKind fails the test unless the application has the given kind
 // of message.
 func expectMessageKind(
@@ -281,7 +341,15 @@ func watchMetrics(
 		T:         t,
 		Responses: responses,
 		Lengths:   map[uuid.UUID]uint64{},
+		Bindings:  map[bindingKey]uint64{},
 	}
+}
+
+// bindingKey identifies the instances that a sample of
+// AggregateInstanceEventStreamBindings counts.
+type bindingKey struct {
+	HandlerKey uuid.UUID
+	StreamID   uuid.UUID
 }
 
 // metricsReceiver receives the responses of a call to WatchMetrics.
@@ -292,6 +360,10 @@ type metricsReceiver struct {
 	// Lengths maps each stream to the length in the last sample of it that the
 	// call received.
 	Lengths map[uuid.UUID]uint64
+
+	// Bindings maps each handler and stream to the number of instances in the
+	// last sample of them that the call received.
+	Bindings map[bindingKey]uint64
 }
 
 // receive returns the next response, and fails the test if the call ends first.
@@ -306,12 +378,72 @@ func (r *metricsReceiver) receive() *metricsgrpc.WatchMetricsResponse {
 	return res
 }
 
+// receiveSample receives the next response, which must be a sample, and records
+// its value. It returns the sample's revision.
+//
+// It fails the test if the sample's subject is not the one that its value
+// implies, or if its value is lower than that of an earlier sample of the same
+// subject.
+func (r *metricsReceiver) receiveSample() []byte {
+	r.T.Helper()
+
+	sample := r.receive().GetSample()
+	if sample == nil {
+		r.T.Fatal("expected a sample")
+	}
+
+	switch sample.GetMetricIndex() {
+	case 0:
+		length := &metricsgrpc.EventStreamLength{}
+		if err := proto.Unmarshal(sample.GetValue(), length); err != nil {
+			r.T.Fatal(err)
+		}
+
+		id := length.GetEventStreamId().AsStd()
+
+		if !bytes.Equal(sample.GetSubject(), id[:]) {
+			r.T.Fatalf("the subject %x is not the stream's ID %s", sample.GetSubject(), id)
+		}
+
+		if length.GetValue() < r.Lengths[id] {
+			r.T.Fatalf("the length of stream %s fell from %d to %d", id, r.Lengths[id], length.GetValue())
+		}
+
+		r.Lengths[id] = length.GetValue()
+
+	case 1:
+		bindings := &metricsgrpc.AggregateInstanceEventStreamBindings{}
+		if err := proto.Unmarshal(sample.GetValue(), bindings); err != nil {
+			r.T.Fatal(err)
+		}
+
+		key := bindingKey{
+			bindings.GetHandlerKey().AsStd(),
+			bindings.GetEventStreamId().AsStd(),
+		}
+
+		subject := slices.Concat(key.HandlerKey[:], key.StreamID[:])
+
+		if !bytes.Equal(sample.GetSubject(), subject) {
+			r.T.Fatalf("the subject %x is not the handler's key and the stream's ID %x", sample.GetSubject(), subject)
+		}
+
+		if bindings.GetValue() < r.Bindings[key] {
+			r.T.Fatalf("the instances bound fell from %d to %d", r.Bindings[key], bindings.GetValue())
+		}
+
+		r.Bindings[key] = bindings.GetValue()
+
+	default:
+		r.T.Fatalf("unexpected metric index: %d", sample.GetMetricIndex())
+	}
+
+	return sample.GetRevision()
+}
+
 // expectTotalLength receives samples until the lengths of all of the streams
 // that it has received add up to the given total, and returns the revision of
 // the last sample.
-//
-// It fails the test if a sample is not of an event stream's length, or reports
-// a length that is lower than an earlier one.
 func (r *metricsReceiver) expectTotalLength(total uint64) []byte {
 	r.T.Helper()
 
@@ -331,32 +463,31 @@ func (r *metricsReceiver) expectTotalLength(total uint64) []byte {
 			r.T.Fatalf("the lengths add up to %d, which is more than %d", sum, total)
 		}
 
-		sample := r.receive().GetSample()
-		if sample == nil {
-			r.T.Fatal("expected a sample")
+		revision = r.receiveSample()
+	}
+}
+
+// expectTotalBindings receives samples until the number of instances that are
+// bound to event streams equals the given total. It adds up the latest sample of
+// every handler and stream that it has received.
+func (r *metricsReceiver) expectTotalBindings(total uint64) {
+	r.T.Helper()
+
+	for {
+		var sum uint64
+		for _, instances := range r.Bindings {
+			sum += instances
 		}
 
-		if sample.GetMetricIndex() != 0 {
-			r.T.Fatalf("unexpected metric index: %d", sample.GetMetricIndex())
+		if sum == total {
+			return
 		}
 
-		length := &metricsgrpc.EventStreamLength{}
-		if err := proto.Unmarshal(sample.GetValue(), length); err != nil {
-			r.T.Fatal(err)
+		if sum > total {
+			r.T.Fatalf("the bindings add up to %d, which is more than %d", sum, total)
 		}
 
-		id := length.GetEventStreamId().AsStd()
-
-		if !bytes.Equal(sample.GetSubject(), id[:]) {
-			r.T.Fatalf("the subject %x is not the stream's ID %s", sample.GetSubject(), id)
-		}
-
-		if length.GetValue() < r.Lengths[id] {
-			r.T.Fatalf("the length of stream %s fell from %d to %d", id, r.Lengths[id], length.GetValue())
-		}
-
-		r.Lengths[id] = length.GetValue()
-		revision = sample.GetRevision()
+		r.receiveSample()
 	}
 }
 

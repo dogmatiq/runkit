@@ -3,10 +3,11 @@
 ## Where the work stands
 
 Planned, and the plan was approved in planning. The protobuf bump, the cluster ID,
-the move of the event-stream service and the schema changes for the bindings are
-done, as four commits on the branch `bump-protobuf-v0.9.0`, which was made from
-`main` at `f585398`. The service, which reports `EventStreamLength` and ends
-calls with `UNAVAILABLE` when a measurement fails, is written and awaits review. The next task is to report the aggregate instance bindings.
+the move of the event-stream service, the schema changes for the bindings and
+the service with `EventStreamLength` are done, as five commits on the branch
+`bump-protobuf-v0.9.0`, which was made from `main` at `f585398`. The aggregate
+instance bindings are written and await review. The next task is to report the
+gauges of queues and handlers.
 
 ## Context
 
@@ -295,13 +296,12 @@ Tests, against a real cluster: the preamble, the lengths and their revisions, a
 second call that begins with the latest lengths, and a new call after the last
 one ended. A test with a closed database checks the `UNAVAILABLE` ending.
 
-### [ ] Report `AggregateInstanceEventStreamBindings`
+### [x] Report `AggregateInstanceEventStreamBindings`
 
-Note from the review of the previous task: `samples()` in
-[internal/grpcserver/metrics.go](../../internal/grpcserver/metrics.go) will
-probably need to split apart as metrics are added, for example into one
-function for each group of metrics. This task is the first to add a second
-group, so it is where to decide how.
+`samples()` in
+[internal/grpcserver/metrics.go](../../internal/grpcserver/metrics.go) is split
+into one method for each metric, which it concatenates, as the review of the
+previous task expected. Each later group of metrics adds a method.
 
 `REACH_CLUSTER`. The counts come from the counter table, read on the sampler's
 interval.

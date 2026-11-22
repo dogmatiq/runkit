@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 	"uuid"
@@ -28,6 +29,10 @@ import (
 var supportedMetrics = []*metricsgrpc.SupportedMetric{
 	metricsgrpc.NewSupportedMetricBuilder().
 		WithMessageName(string(proto.MessageName(new(metricsgrpc.EventStreamLength)))).
+		WithReach(metricsgrpc.Reach_REACH_CLUSTER).
+		Build(),
+	metricsgrpc.NewSupportedMetricBuilder().
+		WithMessageName(string(proto.MessageName(new(metricsgrpc.AggregateInstanceEventStreamBindings)))).
 		WithReach(metricsgrpc.Reach_REACH_CLUSTER).
 		Build(),
 }
@@ -53,6 +58,7 @@ func init() {
 // It supports these metrics:
 //
 //   - EventStreamLength
+//   - AggregateInstanceEventStreamBindings
 type MetricsService struct {
 	metricsgrpc.UnimplementedMetricsAPIServer
 
@@ -272,9 +278,28 @@ func (s *MetricsService) measure(ctx context.Context) {
 func (s *MetricsService) samples(
 	ctx context.Context,
 ) ([]*metricsgrpc.WatchMetricsResponse_Sample, error) {
+	lengths, err := s.eventStreamLengths(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bindings, err := s.aggregateInstanceEventStreamBindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return slices.Concat(lengths, bindings), nil
+}
+
+// eventStreamLengths returns a measurement of the EventStreamLength metric.
+func (s *MetricsService) eventStreamLengths(
+	ctx context.Context,
+) ([]*metricsgrpc.WatchMetricsResponse_Sample, error) {
 	rows, err := s.DB.QueryContext(
 		ctx,
-		`SELECT id, next_offset
+		`SELECT
+			id,
+			next_offset
 		FROM runkit.event_streams`,
 	)
 	if err != nil {
@@ -304,6 +329,59 @@ func (s *MetricsService) samples(
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("unable to iterate event streams: %w", err)
+	}
+
+	return samples, nil
+}
+
+// aggregateInstanceEventStreamBindings returns a measurement of the
+// AggregateInstanceEventStreamBindings metric.
+func (s *MetricsService) aggregateInstanceEventStreamBindings(
+	ctx context.Context,
+) ([]*metricsgrpc.WatchMetricsResponse_Sample, error) {
+	rows, err := s.DB.QueryContext(
+		ctx,
+		`SELECT
+			handler_key,
+			stream_id,
+			instances
+		FROM runkit.aggregate_stream_binding_counts`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to query aggregate instance bindings: %w", err)
+	}
+	defer rows.Close()
+
+	var samples []*metricsgrpc.WatchMetricsResponse_Sample
+
+	for rows.Next() {
+		var (
+			handlerKey uuid.UUID
+			streamID   uuid.UUID
+			instances  uint64
+		)
+
+		if err := rows.Scan(
+			xsql.UUID(&handlerKey),
+			xsql.UUID(&streamID),
+			&instances,
+		); err != nil {
+			return nil, fmt.Errorf("unable to scan aggregate instance bindings: %w", err)
+		}
+
+		message := metricsgrpc.NewAggregateInstanceEventStreamBindingsBuilder().
+			WithHandlerKey(uuidpb.FromStd(handlerKey)).
+			WithEventStreamId(uuidpb.FromStd(streamID)).
+			WithValue(instances).
+			Build()
+
+		subject := slices.Concat(handlerKey[:], streamID[:])
+
+		samples = append(samples, newSample(subject, message))
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("unable to iterate aggregate instance bindings: %w", err)
 	}
 
 	return samples, nil
