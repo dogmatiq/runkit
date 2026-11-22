@@ -18,7 +18,12 @@ import (
 
 // Server provides the [messaginggrpc.EventStreamConsumerAPI] service over the
 // event streams of a [Source], so that remote engines can consume them.
+//
+// It does not yet implement the ListEventStreams and ReadEventSegment methods.
+// Clients that call them receive an UNIMPLEMENTED error.
 type Server struct {
+	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
+
 	// EventStreams is the source of the event streams that the server
 	// provides.
 	EventStreams Source
