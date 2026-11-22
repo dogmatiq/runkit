@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"reflect"
 	"time"
 	"uuid"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/dogmatiq/enginekit/envelope"
 	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
+	"github.com/dogmatiq/runkit/internal/commandexecutor"
 	"github.com/dogmatiq/runkit/internal/contexthook"
 	"github.com/dogmatiq/runkit/internal/eventstream"
 	"github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -198,9 +198,8 @@ type Engine struct {
 	// packer is used to pack messages into envelopes for persistence.
 	packer *envelope.Packer
 
-	// commandTypes is the set of command types that the engine accepts for
-	// execution.
-	commandTypes map[reflect.Type]struct{}
+	// commandExecutor executes the commands passed to [Engine.ExecuteCommand].
+	commandExecutor *commandexecutor.Executor
 
 	// group runs the engine's components. If any of them fails, the others are
 	// stopped.
@@ -337,8 +336,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		Application: e.appConfig.Identity(),
 	}
 
-	e.commandTypes = executableCommandTypes(e.appConfig)
-
 	e.queueRouter = &messagequeue.Router{
 		NodeID:          e.nodeID,
 		CommandHandlers: commandHandlersForQueueRouter(e.appConfig),
@@ -356,6 +353,17 @@ func (e *Engine) Run(ctx context.Context) error {
 	contexthook.Invoke(ctx, contexthook.Node{
 		Node: e.node,
 	})
+
+	e.commandExecutor = &commandexecutor.Executor{
+		DB:            e.db,
+		Node:          e.node,
+		EngineStopped: e.stopped.Chan(),
+		Packer:        e.packer,
+		QueueRouter:   e.queueRouter,
+		CommandTypes:  executableCommandTypes(e.appConfig),
+		EngineLogger:  e.engineLogger,
+		AppLogger:     e.appLogger,
+	}
 
 	e.queues = &messagequeue.Catalog{
 		DB:                  e.db,
@@ -593,6 +601,41 @@ func (e *Engine) ListenAddr(ctx context.Context) (net.Addr, error) {
 		return nil, err
 	}
 	return e.listenAddr, nil
+}
+
+// ExecuteCommand submits a [Command] for execution.
+//
+// It returns once the engine has taken ownership of the command. By
+// default, it doesn't wait for handling to finish.
+//
+// See [dogma.CommandExecutor] for more details.
+func (e *Engine) ExecuteCommand(
+	ctx context.Context,
+	command dogma.Command,
+	options ...dogma.ExecuteCommandOption,
+) error {
+	// A context that is already done gets its own error without any other
+	// work. Otherwise, waitUntilReady could choose the ready latch, and the
+	// call would pack, validate and try to enqueue the command before failing.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := e.waitUntilReady(ctx); err != nil {
+		return err
+	}
+
+	if err := e.commandExecutor.ExecuteCommand(ctx, command, options...); err != nil {
+		// If ctx is done, the call probably failed because ctx ended, such as
+		// by interrupting a query, so ctx's error is the reason to report.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // waitUntilReady blocks until the engine is ready or ctx is canceled.

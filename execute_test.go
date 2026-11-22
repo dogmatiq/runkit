@@ -11,7 +11,9 @@ import (
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/runkit"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
+	"github.com/dogmatiq/spruce"
 )
 
 // TestExecuteCommand_duplicateIdempotencyKeyIsIgnored verifies that executing
@@ -362,10 +364,10 @@ func TestExecuteCommand_eventObserverSeesEventsWithIndirectCausation(t *testing.
 	)
 }
 
-// TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied verifies
-// that ExecuteCommand returns ErrEventObserverNotSatisfied when no observer
-// returns true.
-func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
+// TestExecuteCommand_returnsTheDeadlineErrorWhenNoEventObserverIsSatisfied
+// verifies that ExecuteCommand returns context.DeadlineExceeded when the
+// context's deadline passes before an observer returns true.
+func TestExecuteCommand_returnsTheDeadlineErrorWhenNoEventObserverIsSatisfied(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -385,8 +387,8 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 				),
 			)
 
-			if !errors.Is(err, dogma.ErrEventObserverNotSatisfied) {
-				t.Fatalf("got %v, want ErrEventObserverNotSatisfied", err)
+			if err != context.DeadlineExceeded {
+				t.Fatalf("got %v, want %v", err, context.DeadlineExceeded)
 			}
 		},
 		dogma.ViaIntegration(
@@ -411,10 +413,10 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventObserverIsSatisfied(t *testing.
 	)
 }
 
-// TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded verifies that
-// ExecuteCommand returns ErrEventObserverNotSatisfied when the handler does not
-// record any events.
-func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
+// TestExecuteCommand_returnsTheDeadlineErrorWhenNoEventsAreRecorded verifies
+// that ExecuteCommand returns context.DeadlineExceeded when the context's
+// deadline passes and the handler has recorded no events.
+func TestExecuteCommand_returnsTheDeadlineErrorWhenNoEventsAreRecorded(t *testing.T) {
 	var expire func()
 
 	xtesting.RunEngines(
@@ -434,8 +436,8 @@ func TestExecuteCommand_returnsAnErrorWhenNoEventsAreRecorded(t *testing.T) {
 				),
 			)
 
-			if !errors.Is(err, dogma.ErrEventObserverNotSatisfied) {
-				t.Fatalf("got %v, want ErrEventObserverNotSatisfied", err)
+			if err != context.DeadlineExceeded {
+				t.Fatalf("got %v, want %v", err, context.DeadlineExceeded)
 			}
 		},
 		dogma.ViaIntegration(
@@ -529,4 +531,100 @@ func TestExecuteCommand_eventObserverIsInvokedWhenCommandIsDeduplicated(t *testi
 			},
 		),
 	)
+}
+
+// TestExecuteCommand_returnsAnErrorWhenTheEngineStopsWhileWaiting verifies
+// that ExecuteCommand stops waiting for event observers when the engine stops,
+// rather than waiting until the context's deadline.
+func TestExecuteCommand_returnsAnErrorWhenTheEngineStopsWhileWaiting(t *testing.T) {
+	var handled cosyne.Latch
+
+	app := &stubs.ApplicationStub{
+		ConfigureFunc: func(c dogma.ApplicationConfigurer) {
+			c.Identity("<app>", "a2b5f0ae-4b1a-4c6e-9d26-0c5a2e5a6b3d")
+			c.Routes(
+				dogma.ViaIntegration(
+					&stubs.IntegrationMessageHandlerStub{
+						ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+							c.Identity("<handler>", "b2e26cc1-94ed-4752-8a04-1c78e6e4d6a0")
+							c.Routes(
+								dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+								dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+							)
+						},
+						HandleCommandFunc: func(
+							context.Context,
+							dogma.IntegrationCommandScope,
+							dogma.Command,
+						) error {
+							handled.Set()
+							return nil
+						},
+					},
+				),
+			)
+		},
+	}
+
+	engine := runkit.New(
+		app,
+		xtesting.NewDatabase(t),
+		runkit.WithLogger(spruce.NewTestLogger(t)),
+	)
+
+	engineCtx, stopEngine := context.WithCancel(t.Context())
+	defer stopEngine()
+
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- engine.Run(engineCtx)
+	}()
+
+	// The deadline is later than the test waits, so the call returns
+	// context.DeadlineExceeded only if it waits for the deadline.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*xtesting.WaitTimeout)
+	defer cancel()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- engine.ExecuteCommand(
+			ctx,
+			stubs.CommandA1,
+			dogma.WithEventObserver(
+				func(context.Context, *stubs.EventStub[stubs.TypeA]) (bool, error) {
+					return false, nil
+				},
+			),
+		)
+	}()
+
+	// The handler records no events, so once the command is handled, the call
+	// waits for events that are never recorded.
+	select {
+	case <-handled.Chan():
+	case err := <-result:
+		t.Fatalf("ExecuteCommand returned before the command was handled: %v", err)
+	case <-time.After(xtesting.WaitTimeout):
+		t.Fatal("the command was not handled")
+	}
+
+	stopEngine()
+
+	if err := <-stopped; !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error from Run: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("got %v, want an error that says the engine stopped", err)
+		}
+
+	case <-time.After(xtesting.WaitTimeout):
+		t.Fatal("ExecuteCommand did not return after the engine stopped")
+	}
 }

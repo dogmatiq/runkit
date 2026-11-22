@@ -60,6 +60,13 @@ ON runkit.events (
     stream_offset
 );
 
+-- Create an index for finding the events that have a given correlation ID.
+--
+-- It is used to find the events that a command caused, for the event observers
+-- of ExecuteCommand().
+CREATE INDEX IF NOT EXISTS events_by_correlation_id
+ON runkit.events (correlation_id);
+
 --------------------------------------------------------------------------------
 -- The "event" type encapsulates event data for use with the
 -- "append_events_to_specific_stream" and "append_events_to_any_stream"
@@ -241,21 +248,27 @@ FOR EACH STATEMENT
 EXECUTE FUNCTION runkit.signal_event_stream_created();
 
 --------------------------------------------------------------------------------
--- The "signal_events_appended" trigger sends the
--- "events_appended.<stream-id>" signal when events are appended to an event
--- stream. source.Local in internal/eventstream/source waits for each stream's
--- signal to deliver its new events.
+-- The "signal_events_appended" trigger sends two signals when events are
+-- appended to an event stream:
+--
+--   - "events_appended.stream.<stream-id>", for the stream. source.Local in
+--     internal/eventstream/source waits for each stream's signal to deliver
+--     its new events.
+--   - "events_appended.correlation.<correlation-id>", for the correlation ID
+--     of each appended event. commandexecutor.Executor waits for the signal of
+--     a command's correlation ID to pass the command's new events to its event
+--     observers.
 --
 -- PostgreSQL delivers identical notifications sent within one transaction only
--- once, so a transaction that appends many events to a stream produces a single
--- signal.
+-- once, so a transaction that appends many events produces each signal once.
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION runkit.signal_events_appended()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    PERFORM pg_notify('signal', 'events_appended.' || stream_id) FROM inserted;
+    PERFORM pg_notify('signal', 'events_appended.stream.' || stream_id) FROM inserted;
+    PERFORM pg_notify('signal', 'events_appended.correlation.' || correlation_id) FROM inserted;
     RETURN NULL;
 END;
 $$;

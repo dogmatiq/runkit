@@ -142,11 +142,11 @@ $$;
 
 --------------------------------------------------------------------------------
 -- The "signal_message_enqueued" trigger sends the "messages_enqueued" signal
--- once, and the "messages_enqueued.<queue-id>" signal for the queue of each
--- message that is added. messagequeue.Catalog waits for "messages_enqueued" to
--- learn which queues have messages. messagequeue.Consumer waits for the signal
--- of each queue while its node owns the queue's workload, so messages added to
--- other queues don't wake it.
+-- once, and the "messages_enqueued.queue.<queue-id>" signal for the queue of
+-- each message that is added. messagequeue.Catalog waits for
+-- "messages_enqueued" to learn which queues have messages.
+-- messagequeue.Consumer waits for the signal of each queue while its node owns
+-- the queue's workload, so messages added to other queues don't wake it.
 --
 -- PostgreSQL delivers identical notifications sent within one transaction only
 -- once, so a transaction that adds many messages sends each signal once.
@@ -160,7 +160,7 @@ AS $$
 BEGIN
     PERFORM pg_notify('signal', signal)
     FROM (
-        SELECT 'messages_enqueued.' || queue_id AS signal FROM inserted
+        SELECT 'messages_enqueued.queue.' || queue_id AS signal FROM inserted
         UNION
         SELECT 'messages_enqueued' FROM inserted
     ) AS signals;
@@ -177,8 +177,8 @@ EXECUTE FUNCTION runkit.signal_message_enqueued();
 
 --------------------------------------------------------------------------------
 -- The "signal_message_queue_changed" trigger sends the "messages_enqueued"
--- signal once, and the "messages_enqueued.<queue-id>" signal for each message's
--- new queue.
+-- signal once, and the "messages_enqueued.queue.<queue-id>" signal for each
+-- message's new queue.
 -- An update that doesn't change a message's queue signals nothing.
 -- messagequeue.Consumer waits for these signals as it does for the signals of
 -- "signal_message_enqueued".
@@ -201,7 +201,7 @@ BEGIN
             INNER JOIN inserted AS i ON i.message_id = d.message_id
             WHERE i.queue_id != d.queue_id
         )
-        SELECT 'messages_enqueued.' || queue_id AS signal FROM moved
+        SELECT 'messages_enqueued.queue.' || queue_id AS signal FROM moved
         UNION
         SELECT 'messages_enqueued' FROM moved
     ) AS signals;

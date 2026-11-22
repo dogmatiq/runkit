@@ -80,7 +80,7 @@ func PopulateEventStreams(
 			}
 
 			event := fn(streamID, offsets[idx])
-			env := packTestEvent(t, event)
+			env := packTestEvent(t, event, nil)
 
 			if _, err := x.ExecContext(
 				t.Context(),
@@ -135,11 +135,40 @@ func AppendToEventStream(
 	events ...dogma.Event,
 ) []*envelopepb.Envelope {
 	t.Helper()
+	return appendTestEvents(t, x, streamID, nil, events)
+}
+
+// AppendCorrelatedEvents appends events that have the given correlation ID to
+// an existing event stream.
+//
+// The returned envelopes have the [envelopepb.EventStreamPosition] extension
+// set, as they would when read back from the stream.
+func AppendCorrelatedEvents(
+	t testing.TB,
+	x xsql.Executor,
+	streamID uuid.UUID,
+	correlationID uuid.UUID,
+	events ...dogma.Event,
+) []*envelopepb.Envelope {
+	t.Helper()
+	return appendTestEvents(t, x, streamID, uuidpb.FromStd(correlationID), events)
+}
+
+// appendTestEvents appends events to an existing event stream. If
+// correlationID is nil, each event is its own correlation ID.
+func appendTestEvents(
+	t testing.TB,
+	x xsql.Executor,
+	streamID uuid.UUID,
+	correlationID *uuidpb.UUID,
+	events []dogma.Event,
+) []*envelopepb.Envelope {
+	t.Helper()
 
 	var envelopes []*envelopepb.Envelope
 
 	for _, event := range events {
-		env := packTestEvent(t, event)
+		env := packTestEvent(t, event, correlationID)
 		envelopes = append(envelopes, env)
 
 		row := x.QueryRowContext(
@@ -289,7 +318,13 @@ func WaitForHandlerToConsumeAllEvents(
 	)
 }
 
-func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
+// packTestEvent packs an event into an envelope. If correlationID is nil, the
+// event is its own correlation ID.
+func packTestEvent(
+	t testing.TB,
+	event dogma.Event,
+	correlationID *uuidpb.UUID,
+) *envelopepb.Envelope {
 	t.Helper()
 
 	mt, ok := dogma.RegisteredMessageTypeOf(event)
@@ -304,11 +339,15 @@ func packTestEvent(t testing.TB, event dogma.Event) *envelopepb.Envelope {
 
 	id := uuidpb.Generate()
 
+	if correlationID == nil {
+		correlationID = id
+	}
+
 	env := envelopepb.NewEnvelopeBuilder().
 		WithHeader(
 			envelopepb.NewHeaderBuilder().
 				WithCausationId(id).
-				WithCorrelationId(id).
+				WithCorrelationId(correlationID).
 				WithSource(envelopepb.NewSourceBuilder().
 					WithApplication(identitypb.New("test", uuidpb.MustParse(appKey))).
 					Build()).
