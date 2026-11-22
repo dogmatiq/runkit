@@ -19,14 +19,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 Schema version: v2.0.0 (new)
 
-Process handlers can now consume events from remote applications. This release
-also changes how the engine delivers commands and deadlines, and how it retries
-and logs failures.
+This release gives the database schema its own version number. The engine now
+applies the schema automatically when it starts.
 
 > [!IMPORTANT]
 > This release makes breaking changes to the engine's database schema, so
 > upgrading from an earlier runkit version needs downtime. Follow the steps in
 > [major schema upgrades].
+
+This release also completes support for consuming events across applications.
+Process handlers can now consume events recorded by applications running in
+other clusters, as projections already could.
 
 > [!WARNING]
 > Earlier versions silently ignored process handler routes for events from
@@ -34,18 +37,26 @@ and logs failures.
 > handlers receive every matching event, old and new. Before you upgrade, check
 > that they can safely act on old events.
 
+The engine now puts less load on the database when it delivers commands and
+deadlines. Each engine used to poll the database for commands and deadlines to
+deliver, and every engine in a cluster competed for the same messages. The
+engines now divide the messages between them, and a database notification wakes
+the responsible engine as soon as a command or deadline is added.
+
 ### Added
 
 - Added the ability for process handlers to consume events from remote
   applications.
-- Added `ApplySchemaOffline()`, which applies the schema changes that can't be
-  made while engines are running.
-- Added schema versioning. The schema now has its own version number, separate
-  from runkit's, and the release notes of each runkit version start with the
-  schema version that it needs.
-- Added automatic schema migration. `Engine.Run()` now creates or upgrades the
-  schema when the engine starts, but only makes the changes that are safe while
-  other engines are running.
+- Added schema versioning and migration:
+  - The schema now has its own version number, separate from runkit's, and the
+    release notes of each runkit version start with the schema version that it
+    needs.
+  - `Engine.Run()` now creates or upgrades the schema when the engine starts,
+    but only makes the changes that are safe while other engines are running.
+  - `ApplySchemaOnline()` makes the same changes as `Engine.Run()`, for an
+    engine whose database role isn't allowed to change the schema.
+  - `ApplySchemaOffline()` applies the schema changes that can't be made while
+    engines are running.
 - Added `FailurePolicy`, which controls how long the engine waits before
   retrying failed work, and when repeated failures are logged as an ERROR. The
   policy for each kind of work defaults to `DefaultFailurePolicy()`, and these
@@ -63,12 +74,13 @@ and logs failures.
 
 ### Changed
 
+- **[BC]** Updated to Dogma v0.26.0.
 - **[BC]** Changed the database schema. Engines from earlier runkit versions
   can't use the new schema. The upgrade copies every command and deadline that's
-  waiting to be delivered, so the more there are, the longer it takes.
-- **[BC]** Renamed `CreateSchema()` to `ApplySchemaOnline()`. It now upgrades
-  an existing schema too. You only need to call it if the engine's database
-  role isn't allowed to change the schema.
+  waiting to be delivered, so the more there are, the longer it takes. The
+  engine's tables, functions and triggers have moved from several PostgreSQL
+  schemas into a single `runkit` schema, and `DropSchema()` now drops only that
+  schema.
 - **[BC]** Added timeouts to the engine's calls to application handlers. A call
   that times out counts as a failure, and is retried later. Handling a message
   times out after one minute, and calls to `RouteEventToInstance()` and
@@ -76,51 +88,74 @@ and logs failures.
   `WithRouteTimeout()` to change these limits.
 - **[BC]** Changed `DefaultProjectionCompactInterval` from a constant to a
   function.
-- **[BC]** Changed the add function passed to a `RemoteEngineDiscoverer` to
-  take a description of the remote engine as its first argument. The engine
-  uses the description to identify the remote engine in its logs.
+- **[BC]** Changed the `add` parameter of `RemoteEngineDiscoverer`, which is the
+  function that a discoverer calls to add a remote engine's connection. The
+  function now takes a description of the remote engine as its first argument,
+  and the engine uses the description to identify the remote engine in its logs.
   `StaticRemoteEngines()` uses each connection's target as its description.
-- Moved the engine's tables, functions and triggers from several PostgreSQL
-  schemas into a single schema. `DropSchema()` now drops only that schema.
 - Changed the limit on how many commands and deadlines an engine delivers at
   once. It used to apply to each handler separately, and now applies to all of
   them together, so an engine with more than one aggregate, integration or
-  process handler may deliver fewer at once. The limit defaults to
-  10 × `GOMAXPROCS`. Use `WithMessageQueueConcurrency()` to raise it.
-- Changed `Engine.Run()` to configure the database's connection pool, replacing
-  the application's settings for open and idle connections. It removes the
-  limit on open connections, so `WithMessageQueueConcurrency()` decides how many
-  the engine uses for deliveries.
-- Changed how the engine retries and logs failures. When a retry might succeed,
-  the engine now waits at most 15 seconds between attempts, down from five
-  minutes. When it can't, such as after a panic in application code, it still
-  waits up to five minutes. When the same work keeps failing, the engine now
-  logs at most one of the failures as an ERROR and the rest as DEBUG, instead of
-  logging every one as an ERROR. Use a custom `FailurePolicy` to change this.
-- Changed what the engine logs. Every log record now has a `layer` attribute,
-  set to `application` or `engine`, and includes the application's identity.
-  The `component` attribute has been removed. Anything a handler logs through
-  its scope's `Log()` method is now only written if handling succeeds.
-- **[BC]** Updated to Dogma v0.26.0. A projection handler now gets its stream
-  ID, and the stream ID passed to its `CheckpointOffset()`, as a `uuid.UUID`.
-  The scope of every handler has a `MessageID()` method, which returns the ID
-  of the message that the handler is handling. It's the same each time the
-  engine delivers that message.
+  process handler may deliver fewer at once. The limit defaults to 10 ×
+  `GOMAXPROCS`. Use `WithMessageQueueConcurrency()` to raise it.
+- `Engine.Run()` now configures the database's connection pool, replacing the
+  application's settings for open and idle connections. It removes the limit on
+  open connections, so the limit set by `WithMessageQueueConcurrency()` decides
+  how many connections the engine uses for deliveries.
+- Changed how the engine retries and logs failures:
+  - When a retry might succeed, the engine now waits at most 15 seconds between
+    attempts, down from five minutes.
+  - When a retry is unlikely to succeed, such as after a panic in application
+    code, the engine still waits up to five minutes.
+  - When the same work keeps failing, the engine now logs at most one of the
+    failures as an ERROR and the rest as DEBUG, instead of logging every
+    failure as an ERROR.
+  - When the work succeeds again, the engine logs an INFO record that says how
+    many attempts failed and for how long. If none of the failures was logged
+    as an ERROR, this record is DEBUG too.
+  - A custom `FailurePolicy` can change these delays and log levels.
+- Changed what the engine logs:
+  - Every log record now has a `layer` attribute, set to `application` or
+    `engine`.
+  - Every log record now includes the application's identity.
+  - The `component` attribute has been removed.
+  - The records of what a handler did while handling a message, such as each
+    message it produced and each call to its scope's `Log()` method, are now
+    written only if handling succeeds.
+
+### Removed
+
+- **[BC]** Removed `CreateSchema()`. `Engine.Run()` now creates or upgrades the
+  schema, so call `ApplySchemaOnline()` beforehand only if the engine's database
+  role isn't allowed to change the schema.
 
 ### Fixed
 
-- Fixed new process handlers missing the events recorded before they were
-  deployed. They now handle the full history, as
-  [Dogma's process handler documentation] requires.
-- Fixed an error when a process instance ended while one of its deadlines was
-  being delivered.
-- Fixed duplicate commands when a process root's `MarshalBinary()` method failed
-  after handling a deadline. The commands were queued on every attempt, even
-  though nothing else was saved. They're now queued only if the rest of the
-  process's changes are saved too.
-- An event observer passed to `Engine.ExecuteCommand()` received the same
-  events again on every poll, and never received events beyond the first 100.
-  Now it receives each event once.
+- New process handlers missed the events recorded before they were deployed.
+  They now handle the full history, as [Dogma's process handler documentation]
+  requires.
+- Ending a process instance while one of its deadlines was being delivered
+  could fail with an error. Now the instance ends, and the deadline is canceled
+  without calling the handler.
+- When a process root's `MarshalBinary()` method failed after handling a
+  deadline, the commands that the process executed were queued on every
+  attempt, even though nothing else was saved, so they were duplicated. They're
+  now queued only if the rest of the process's changes are saved too.
+- **[BC]** Event observers passed to `Engine.ExecuteCommand()` had these
+  problems:
+  - An observer received the same events again on every poll, and never
+    received events beyond the first 100. Now it receives each event once.
+  - While the call waited, the engine queried the database every
+    25 milliseconds, and each query could read every event that the engine had
+    recorded. Now the observer receives each event as soon as it's recorded,
+    and the engine queries the database again only when the command causes
+    another event.
+  - When the context's deadline passed before an observer was satisfied, the
+    call returned `dogma.ErrEventObserverNotSatisfied`, which Dogma reserves for
+    when the engine has determined that no more relevant events can occur. It
+    now returns `context.DeadlineExceeded`.
+  - If the engine stopped while the call waited, the call went on waiting. It
+    now returns an error.
 
 ## [0.2.0] - 2026-11-06
 

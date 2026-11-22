@@ -142,11 +142,11 @@ $$;
 
 --------------------------------------------------------------------------------
 -- The "signal_message_enqueued" trigger sends the "messages_enqueued" signal
--- once, and the "messages_enqueued.queue.<queue-id>" signal for the queue of each
--- message that is added. messagequeue.Catalog waits for "messages_enqueued" to
--- learn which queues have messages. messagequeue.Consumer waits for the signal
--- of each queue while its node owns the queue's workload, so messages added to
--- other queues don't wake it.
+-- once, and the "messages_enqueued.queue.<queue-id>" signal for the queue of
+-- each message that is added. messagequeue.Catalog waits for
+-- "messages_enqueued" to learn which queues have messages.
+-- messagequeue.Consumer waits for the signal of each queue while its node owns
+-- the queue's workload, so messages added to other queues don't wake it.
 --
 -- PostgreSQL delivers identical notifications sent within one transaction only
 -- once, so a transaction that adds many messages sends each signal once.
@@ -177,8 +177,8 @@ EXECUTE FUNCTION runkit.signal_message_enqueued();
 
 --------------------------------------------------------------------------------
 -- The "signal_message_queue_changed" trigger sends the "messages_enqueued"
--- signal once, and the "messages_enqueued.queue.<queue-id>" signal for each message's
--- new queue.
+-- signal once, and the "messages_enqueued.queue.<queue-id>" signal for each
+-- message's new queue.
 -- An update that doesn't change a message's queue signals nothing.
 -- messagequeue.Consumer waits for these signals as it does for the signals of
 -- "signal_message_enqueued".

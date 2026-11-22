@@ -17,37 +17,17 @@ import (
 // readLimit is the maximum number of events read per query.
 const readLimit = 100
 
-// errSatisfied stops reading events once an event observer is satisfied.
-var errSatisfied = errors.New("event observer satisfied")
+// errEngineStopped is returned when the engine stops while the executor waits
+// for events. The node no longer receives the signal that wakes the executor,
+// so waiting longer can't pass any more events to the observers.
+var errEngineStopped = errors.New("engine is not running")
 
-// observe passes each event that has the given correlation ID to the given
-// observers, first those already recorded and then each one recorded later.
+// observe passes the events that have the given correlation ID to the
+// observers, first the events already recorded and then each event recorded
+// later.
 //
-// It returns nil once an observer is satisfied, the observer's error if one
-// returns an error, and [dogma.ErrEventObserverNotSatisfied] if ctx's deadline
-// passes first.
+// It returns nil once an observer is satisfied.
 func (e *Executor) observe(
-	ctx context.Context,
-	correlationID uuid.UUID,
-	observers []dogma.EventObserverOption,
-) error {
-	err := e.observeUntilSatisfied(ctx, correlationID, observers)
-
-	if errors.Is(err, errSatisfied) {
-		return nil
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return dogma.ErrEventObserverNotSatisfied
-	}
-
-	return err
-}
-
-// observeUntilSatisfied passes events to the observers until one is
-// satisfied, in which case it returns [errSatisfied], or until it fails or ctx
-// is canceled.
-func (e *Executor) observeUntilSatisfied(
 	ctx context.Context,
 	correlationID uuid.UUID,
 	observers []dogma.EventObserverOption,
@@ -70,9 +50,26 @@ func (e *Executor) observeUntilSatisfied(
 
 	for {
 		for {
-			n, err := e.readCorrelatedEvents(ctx, correlationID, types.R(), observers, nextOffsets)
+			n, satisfied, err := e.readCorrelatedEvents(
+				ctx,
+				correlationID,
+				types.R(),
+				observers,
+				nextOffsets,
+			)
 			if err != nil {
+				// If ctx is done, the read probably failed because ctx
+				// interrupted its query. Return ctx's error instead, as
+				// [xsql.Transact] does.
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+
 				return err
+			}
+
+			if satisfied {
+				return nil
 			}
 
 			if n < readLimit {
@@ -80,23 +77,31 @@ func (e *Executor) observeUntilSatisfied(
 			}
 		}
 
-		if err := appended.WaitContext(ctx); err != nil {
-			return err
+		select {
+		case <-appended.Chan():
+		case <-e.EngineStopped:
+			return errEngineStopped
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
 
-// readCorrelatedEvents passes to the observers the events with the given
-// correlation ID and types that come after the offset in nextOffsets on each
-// stream, at most [readLimit] of them. It records the offset that follows each
-// event it passes in nextOffsets, and returns the number of events read.
+// readCorrelatedEvents reads up to [readLimit] events that have the given
+// correlation ID and types, and passes each event to the observers.
+//
+// On each stream, it reads only the events at or after the offset in
+// nextOffsets, and it updates nextOffsets as it passes each event.
+//
+// It returns the number of events it passed, and whether an observer is
+// satisfied. It stops as soon as an observer is satisfied.
 func (e *Executor) readCorrelatedEvents(
 	ctx context.Context,
 	correlationID uuid.UUID,
 	types *uuidset.SetR,
 	observers []dogma.EventObserverOption,
 	nextOffsets map[uuid.UUID]uint64,
-) (int, error) {
+) (int, bool, error) {
 	var (
 		streamIDs []string
 		offsets   []uint64
@@ -138,7 +143,7 @@ func (e *Executor) readCorrelatedEvents(
 		readLimit,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("unable to query events: %w", err)
+		return 0, false, fmt.Errorf("unable to query events: %w", err)
 	}
 	defer rows.Close()
 
@@ -156,22 +161,22 @@ func (e *Executor) readCorrelatedEvents(
 			&offset,
 			xsql.Envelope(env),
 		); err != nil {
-			return n, fmt.Errorf("unable to scan event envelope: %w", err)
+			return n, false, fmt.Errorf("unable to scan event envelope: %w", err)
 		}
 
 		event, err := envelope.Unpack[dogma.Event](env)
 		if err != nil {
-			return n, err
+			return n, false, err
 		}
 
 		for _, obs := range observers {
 			satisfied, err := obs.Observer()(ctx, event)
 			if err != nil {
-				return n, err
+				return n, false, err
 			}
 
 			if satisfied {
-				return n, errSatisfied
+				return n, true, nil
 			}
 		}
 
@@ -180,8 +185,8 @@ func (e *Executor) readCorrelatedEvents(
 	}
 
 	if err := rows.Err(); err != nil {
-		return n, fmt.Errorf("unable to iterate over event rows: %w", err)
+		return n, false, fmt.Errorf("unable to iterate over event rows: %w", err)
 	}
 
-	return n, nil
+	return n, false, nil
 }

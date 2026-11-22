@@ -355,13 +355,14 @@ func (e *Engine) Run(ctx context.Context) error {
 	})
 
 	e.commandExecutor = &commandexecutor.Executor{
-		DB:           e.db,
-		Node:         e.node,
-		Packer:       e.packer,
-		QueueRouter:  e.queueRouter,
-		CommandTypes: executableCommandTypes(e.appConfig),
-		EngineLogger: e.engineLogger,
-		AppLogger:    e.appLogger,
+		DB:            e.db,
+		Node:          e.node,
+		EngineStopped: e.stopped.Chan(),
+		Packer:        e.packer,
+		QueueRouter:   e.queueRouter,
+		CommandTypes:  executableCommandTypes(e.appConfig),
+		EngineLogger:  e.engineLogger,
+		AppLogger:     e.appLogger,
 	}
 
 	e.queues = &messagequeue.Catalog{

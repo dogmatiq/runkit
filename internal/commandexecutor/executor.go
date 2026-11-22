@@ -32,6 +32,10 @@ type Executor struct {
 	// with a given correlation ID are appended.
 	Node *cluster.Node
 
+	// EngineStopped is closed when the engine stops. Once Node stops, the
+	// executor no longer receives the signals that it waits for.
+	EngineStopped <-chan struct{}
+
 	// Packer packs each command into an envelope.
 	Packer *envelope.Packer
 
