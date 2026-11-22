@@ -35,13 +35,21 @@ BEGIN
 END $$;
 
 --------------------------------------------------------------------------------
--- The "identity" table contains the identity of the application that the
--- database is bound to.
+-- The "cluster" table describes the cluster that uses the database: the set of
+-- engine nodes that share it, which run one application.
 --
--- The "singleton" column ensures that the table contains at most one row.
+-- The "id" column is the cluster's ID, a random UUID that the first engine to
+-- use the database creates. The other columns are the identity of the cluster's
+-- application.
+--
+-- The unique index on the constant "true" gives every row the same key, so the
+-- table contains at most one row.
 --------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS runkit.identity (
-    singleton boolean PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-    key       uuid    NOT NULL,
-    name      text    NOT NULL CHECK (name != '')
+CREATE TABLE IF NOT EXISTS runkit.cluster (
+    id               uuid NOT NULL,
+    application_key  uuid NOT NULL,
+    application_name text NOT NULL CHECK (application_name != '')
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS cluster_single_row
+ON runkit.cluster ((TRUE));

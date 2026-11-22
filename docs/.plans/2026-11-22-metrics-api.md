@@ -105,10 +105,10 @@ What the code shows today:
   `application_name`; and, when RunKit supports a site, `site_key` and
   `site_name`, which are nullable and added with `ADD COLUMN IF NOT EXISTS`. A
   cluster is the set of nodes that share one database, which is one installation
-  of one application. `Bind` creates the ID on first use, and keeps refusing a
+  of one application. `cluster.Join` creates the ID on first use, and keeps refusing a
   database that is bound to a different application key. `runkit.identity`
-  exists only in the unreleased v2.0.0 schema, so renaming it needs no
-  migration. #153 uses the same ID.
+  exists only in the unreleased v2.0.0 schema, so the change goes into the
+  v2.0.0 migration and needs no new schema version. #153 uses the same ID.
 - **One measurer for each node, not for each client.** Each `WatchMetrics` call
   holds only a map of the latest sample that it sent for each metric and
   subject, and sends the differences. A sample replaces the earlier one of the
@@ -165,20 +165,42 @@ it, so those two methods answer UNIMPLEMENTED, as they would from a server
 that lacks them. Nothing a client can see has changed, so there is no
 changelog entry.
 
-### [ ] Rename the identity table to `cluster`, and describe the application
+### [x] Rename the identity table to `cluster`, and add the cluster ID
 
-Shared with #153. Rename `runkit.identity` to `runkit.cluster` and add `id`, in
-[internal/schema/internal/current/00-application.sql](../../internal/schema/internal/current/00-application.sql)
-and [internal/application/bind.go](../../internal/application/bind.go), and
-update every document that says "identity" for this table. Choose the names of
-`Bind` and its package first, because [internal/cluster](../../internal/cluster)
-already holds the node code, and show the candidates before writing code. Then
-read the cluster ID when the engine starts, and convert the application's
-configuration to `configpb.Application`.
+Shared with #153. Rename `runkit.identity` to `runkit.cluster`, with the columns
+`id`, `application_key` and `application_name`, in
+[internal/schema/internal/current/00-application.sql](../../internal/schema/internal/current/00-application.sql).
+The table has no `singleton` column. A unique index on `((TRUE))` limits it to
+one row, and `Join` conflicts on that index. Because a database at schema
+version v1.1.0 has `application.identity`, the v2.0.0 migration, which is not
+yet released, creates `runkit.cluster`, copies the row with a new random ID, and
+drops the old table.
+
+Replace `application.Bind` in
+[internal/application/bind.go](../../internal/application/bind.go) with
+`cluster.Join` in [internal/cluster](../../internal/cluster), and delete the
+then-empty `internal/application` package. `Join` returns the cluster ID: "Join
+returns the ID of the cluster that uses the database, and creates the cluster if
+the database has none. It updates the stored name of the application, and
+returns an error if the cluster runs a different application." The code that
+creates the ID generates it in Go, and the ID is a plain `uuid.UUID`, like the
+node ID. Update every document that says "identity" for this table. The engine
+reads the cluster ID when it starts.
 
 Tests, against a real database: two engines on one database report the same
-cluster ID; two databases report different IDs; binding to a different
-application key is still refused.
+cluster ID; two databases report different IDs; joining a cluster of a
+different application key is still refused.
+
+### [ ] Describe the application as `configpb.Application`
+
+Shared with #153, and needed by the preamble of the metrics service. Neither
+RunKit nor enginekit v0.32.0 converts an application's configuration to
+`configpb.Application` from dogmatiq/protobuf. The `configpb` package that
+enginekit has is an older, thinner schema, and nothing in enginekit uses it.
+Write the conversion once, covering the application's identity, version and Go
+type, its handlers with their types, message usage, concurrency preference and
+support for compaction and reset, and its message kinds. Show the names before
+writing code.
 
 ### [ ] Make the schema changes for the bindings
 

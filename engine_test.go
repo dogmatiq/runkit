@@ -17,7 +17,7 @@ import (
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit"
-	"github.com/dogmatiq/runkit/internal/application"
+	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/schema"
 	"github.com/dogmatiq/runkit/internal/x/xtesting"
 	"github.com/dogmatiq/spruce"
@@ -185,11 +185,11 @@ func TestEngine(t *testing.T) {
 		}
 	})
 
-	t.Run("it returns an error if the database is bound to a different application", func(t *testing.T) {
+	t.Run("it returns an error if the database has a cluster that runs a different application", func(t *testing.T) {
 		db := xtesting.NewDatabase(t)
 
 		other := identitypb.New("<other>", uuidpb.Generate())
-		if err := application.Bind(
+		if _, err := cluster.Join(
 			t.Context(),
 			db,
 			other,
@@ -208,7 +208,7 @@ func TestEngine(t *testing.T) {
 
 		err := engine.Run(ctx)
 		if err == nil || errors.Is(err, ctx.Err()) {
-			t.Fatalf("expected a binding error, got %v", err)
+			t.Fatalf("expected an error for a cluster that runs a different application, got %v", err)
 		}
 
 		if !strings.Contains(err.Error(), other.GetKey().AsStd().String()) {

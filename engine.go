@@ -16,7 +16,6 @@ import (
 	"github.com/dogmatiq/enginekit/config"
 	"github.com/dogmatiq/enginekit/config/runtimeconfig"
 	"github.com/dogmatiq/enginekit/envelope"
-	"github.com/dogmatiq/runkit/internal/application"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	"github.com/dogmatiq/runkit/internal/commandexecutor"
 	"github.com/dogmatiq/runkit/internal/contexthook"
@@ -35,9 +34,9 @@ import (
 )
 
 const (
-	// applicationBindTimeout is the maximum time given to bind the database to
-	// the application when the engine starts.
-	applicationBindTimeout = 15 * time.Second
+	// joinClusterTimeout is the maximum time given to join the cluster that
+	// uses the database when the engine starts.
+	joinClusterTimeout = 15 * time.Second
 
 	// schemaLockTimeout is the longest that a step of a schema migration waits
 	// for a lock while engines may be running.
@@ -179,6 +178,9 @@ type Engine struct {
 	// appConfig is the application configuration derived from e.app.
 	appConfig *config.Application
 
+	// clusterID is the ID of the cluster that this engine's node belongs to.
+	clusterID uuid.UUID
+
 	// node represents this engine's node in the cluster.
 	node *cluster.Node
 
@@ -317,19 +319,8 @@ func (e *Engine) Run(ctx context.Context) error {
 		return err
 	}
 
-	bindCtx, cancelBind := context.WithTimeout(ctx, applicationBindTimeout)
-	defer cancelBind()
-
-	if err := application.Bind(
-		bindCtx,
-		e.db,
-		e.appConfig.Identity(),
-	); err != nil {
-		return fmt.Errorf(
-			"unable to bind database to application %s: %w",
-			e.appConfig.Identity(),
-			err,
-		)
+	if err := e.joinCluster(ctx); err != nil {
+		return err
 	}
 
 	e.packer = &envelope.Packer{
@@ -513,6 +504,24 @@ func (e *Engine) Run(ctx context.Context) error {
 	)
 
 	return err
+}
+
+// joinCluster joins the cluster that uses the database, and records the
+// cluster's ID in e.clusterID.
+//
+// It returns an error if the cluster runs a different application.
+func (e *Engine) joinCluster(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, joinClusterTimeout)
+	defer cancel()
+
+	id, err := cluster.Join(ctx, e.db, e.appConfig.Identity())
+	if err != nil {
+		return fmt.Errorf("unable to join the cluster: %w", err)
+	}
+
+	e.clusterID = id
+
+	return nil
 }
 
 // applySchema creates or upgrades the engine's database schema, as

@@ -800,8 +800,12 @@ func testMigrateFrom(t *testing.T, runkitVersion string) {
 	// tables that only a runkit version with a lower schema version has.
 	beforeV2_0_0 := schemaVersionOf(t, runkitVersion).Compare(mustParseVersion(t, "v2.0.0")) < 0
 
+	// Schema version v1.1.0 is the first to have the table that records the
+	// database's application.
+	hasIdentity := schemaVersionOf(t, runkitVersion).Compare(mustParseVersion(t, "v1.1.0")) >= 0
+
 	if beforeV2_0_0 {
-		insertRowsBeforeV2_0_0(t, db)
+		insertRowsBeforeV2_0_0(t, db, hasIdentity)
 	}
 
 	for range 2 {
@@ -834,7 +838,7 @@ func testMigrateFrom(t *testing.T, runkitVersion string) {
 	)
 
 	if beforeV2_0_0 {
-		expectRowsMigratedToV2_0_0(t, db)
+		expectRowsMigratedToV2_0_0(t, db, hasIdentity)
 	}
 
 	got := dumpSchemaObjects(t, db)
@@ -851,9 +855,25 @@ func testMigrateFrom(t *testing.T, runkitVersion string) {
 
 // insertRowsBeforeV2_0_0 inserts rows into the tables of a database at a schema
 // version below v2.0.0, for [expectRowsMigratedToV2_0_0] to find after the
-// migration to v2.0.0.
-func insertRowsBeforeV2_0_0(t testing.TB, db *sql.DB) {
+// migration to v2.0.0. The database has the "identity" table only if
+// hasIdentity is true.
+func insertRowsBeforeV2_0_0(t testing.TB, db *sql.DB, hasIdentity bool) {
 	t.Helper()
+
+	if hasIdentity {
+		if _, err := db.ExecContext(
+			t.Context(),
+			`INSERT INTO application.identity (
+				key,
+				name
+			) VALUES (
+				'2b0c6f0e-5f3a-4a4f-9c1e-6a8d4d1b7e20',
+				'<app>'
+			)`,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if _, err := db.ExecContext(
 		t.Context(),
@@ -945,8 +965,38 @@ func insertRowsBeforeV2_0_0(t testing.TB, db *sql.DB) {
 
 // expectRowsMigratedToV2_0_0 checks that the migration to schema version v2.0.0
 // moved the rows that [insertRowsBeforeV2_0_0] inserted.
-func expectRowsMigratedToV2_0_0(t testing.TB, db *sql.DB) {
+func expectRowsMigratedToV2_0_0(t testing.TB, db *sql.DB, hadIdentity bool) {
 	t.Helper()
+
+	if hadIdentity {
+		xtesting.ExpectQueryResult(
+			t,
+			"the application of the existing cluster is preserved",
+			true,
+			db,
+			`SELECT application_key = '2b0c6f0e-5f3a-4a4f-9c1e-6a8d4d1b7e20'
+				AND application_name = '<app>'
+			FROM runkit.cluster`,
+		)
+
+		xtesting.ExpectQueryResult(
+			t,
+			"the existing cluster has an ID",
+			1,
+			db,
+			`SELECT COUNT(id)
+			FROM runkit.cluster`,
+		)
+	} else {
+		xtesting.ExpectQueryResult(
+			t,
+			"a database that was never bound has no cluster",
+			0,
+			db,
+			`SELECT COUNT(*)
+			FROM runkit.cluster`,
+		)
+	}
 
 	xtesting.ExpectQueryResult(
 		t,

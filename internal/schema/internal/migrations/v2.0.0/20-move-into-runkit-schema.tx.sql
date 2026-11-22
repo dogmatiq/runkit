@@ -70,10 +70,36 @@ ALTER TABLE projection.projection_handlers RENAME CONSTRAINT handlers_handler_ke
 ALTER TABLE projection.projection_handlers RENAME CONSTRAINT handlers_last_compacted_at_not_null TO projection_handlers_last_compacted_at_not_null;
 
 --------------------------------------------------------------------------------
--- Move each table into the "runkit" schema. A table moves with its rows,
+-- Replace the "identity" table with the "cluster" table, which has different
+-- columns. The table holds one row, which is copied to the new table. The row
+-- gets a new cluster ID, a random UUID, because the old table has none.
+--------------------------------------------------------------------------------
+CREATE TABLE runkit.cluster (
+    id               uuid NOT NULL,
+    application_key  uuid NOT NULL,
+    application_name text NOT NULL CHECK (application_name != '')
+);
+
+CREATE UNIQUE INDEX cluster_single_row
+ON runkit.cluster ((TRUE));
+
+INSERT INTO runkit.cluster (
+    id,
+    application_key,
+    application_name
+)
+SELECT
+    gen_random_uuid(),
+    key,
+    name
+FROM application.identity;
+
+DROP TABLE application.identity;
+
+--------------------------------------------------------------------------------
+-- Move each other table into the "runkit" schema. A table moves with its rows,
 -- indexes and constraints, and no rows are copied.
 --------------------------------------------------------------------------------
-ALTER TABLE application.identity SET SCHEMA runkit;
 ALTER TABLE eventstream.event_streams SET SCHEMA runkit;
 ALTER TABLE eventstream.events SET SCHEMA runkit;
 ALTER TABLE eventstream.process_handler_checkpoints SET SCHEMA runkit;
