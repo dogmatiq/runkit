@@ -82,10 +82,11 @@ the responsible engine as soon as a command or deadline is added.
 - **[BC]** Updated to Dogma v0.26.0.
 - **[BC]** Changed the database schema. Engines from earlier runkit versions
   can't use the new schema. The upgrade copies every command and deadline that's
-  waiting to be delivered, so the more there are, the longer it takes. The
-  engine's tables, functions and triggers have moved from several PostgreSQL
-  schemas into a single `runkit` schema, and `DropSchema()` now drops only that
-  schema.
+  waiting to be delivered, counts the aggregate instances that have recorded
+  events, and builds an index over the process instances, so the more there are
+  of each, the longer it takes. The engine's tables, functions and triggers
+  have moved from several PostgreSQL schemas into a single `runkit` schema, and
+  `DropSchema()` now drops only that schema.
 - **[BC]** Added timeouts to the engine's calls to application handlers. A call
   that times out counts as a failure, and is retried later. Handling a message
   times out after one minute, and calls to `RouteEventToInstance()` and

@@ -21,9 +21,28 @@ CREATE TABLE IF NOT EXISTS runkit.aggregate_instances (
 );
 
 --------------------------------------------------------------------------------
+-- The "aggregate_stream_binding_counts" table holds, for each aggregate handler
+-- and event stream, the number of the handler's instances that are bound to the
+-- stream.
+--
+-- It exists only to report the AggregateInstanceEventStreamBindings metric
+-- without counting the rows of "aggregate_instances". An instance is bound to
+-- a stream once, and is never unbound or deleted after that, so a count only
+-- grows.
+--------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS runkit.aggregate_stream_binding_counts (
+    handler_key uuid   NOT NULL,
+    stream_id   uuid   NOT NULL REFERENCES runkit.event_streams(id),
+    instances   bigint NOT NULL CHECK (instances > 0),
+
+    PRIMARY KEY (handler_key, stream_id)
+);
+
+--------------------------------------------------------------------------------
 -- The "save_aggregate_instance" function appends events to an event stream,
 -- optionally updates the aggregate instance snapshot, and binds a newly
--- acquired stream if needed.
+-- acquired stream if needed, counting the binding in
+-- "aggregate_stream_binding_counts".
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION runkit.save_aggregate_instance(
     handler_key     uuid,
@@ -47,6 +66,21 @@ BEGIN
             stream_id = save_aggregate_instance.stream_id
         WHERE i.handler_key = save_aggregate_instance.handler_key
         AND i.instance_id = save_aggregate_instance.instance_id;
+
+        -- Count the binding. The transaction holds the lock on the stream's
+        -- row, which it took when it acquired the stream, so no other
+        -- transaction updates this count at the same time.
+        INSERT INTO runkit.aggregate_stream_binding_counts AS c (
+            handler_key,
+            stream_id,
+            instances
+        ) VALUES (
+            save_aggregate_instance.handler_key,
+            save_aggregate_instance.stream_id,
+            1
+        )
+        ON CONFLICT ON CONSTRAINT aggregate_stream_binding_counts_pkey
+        DO UPDATE SET instances = c.instances + 1;
     END IF;
 
     -- Append events to the stream.

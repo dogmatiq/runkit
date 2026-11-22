@@ -51,5 +51,5 @@ CREATE TABLE IF NOT EXISTS runkit.cluster (
     application_name text NOT NULL CHECK (application_name != '')
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS cluster_single_row
+CREATE UNIQUE INDEX IF NOT EXISTS cluster_singleton
 ON runkit.cluster ((TRUE));

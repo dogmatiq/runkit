@@ -80,7 +80,7 @@ CREATE TABLE runkit.cluster (
     application_name text NOT NULL CHECK (application_name != '')
 );
 
-CREATE UNIQUE INDEX cluster_single_row
+CREATE UNIQUE INDEX cluster_singleton
 ON runkit.cluster ((TRUE));
 
 INSERT INTO runkit.cluster (

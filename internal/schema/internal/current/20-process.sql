@@ -39,3 +39,26 @@ CREATE TABLE IF NOT EXISTS runkit.process_instances (
     PRIMARY KEY (handler_key, instance_id),
     CHECK (NOT ended OR state IS NULL)
 );
+
+--------------------------------------------------------------------------------
+-- The "process_instances_by_deadline_queue" index covers only the instances that
+-- have not ended.
+--
+-- It exists only to report the ProcessInstanceQueueBindings metric, which
+-- counts the in-progress instances of a handler for each queue. The count
+-- reads the index alone, so its cost follows the number of in-progress
+-- instances and not the number of ended ones, which are never deleted.
+--
+-- CREATE INDEX locks its table even when the index already exists, and the
+-- engine's transactions lock "process_instances" and "queued_messages" in both
+-- orders, so locking this table could deadlock with them. The index is created
+-- only if it doesn't exist, so an upgrade that finds it takes no lock.
+--------------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF to_regclass('runkit.process_instances_by_deadline_queue') IS NULL THEN
+        CREATE INDEX process_instances_by_deadline_queue
+        ON runkit.process_instances (handler_key, deadline_queue_id)
+        WHERE NOT ended;
+    END IF;
+END $$;

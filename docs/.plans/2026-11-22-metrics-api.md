@@ -2,10 +2,10 @@
 
 ## Where the work stands
 
-Planned, and the plan was approved in planning. The protobuf bump, the cluster ID
-and the move of the event-stream service are done, as three commits on the
-branch `bump-protobuf-v0.9.0`, which was made from `main` at `f585398`. The next
-task is the schema changes for the bindings.
+Planned, and the plan was approved in planning. The protobuf bump, the cluster ID,
+the move of the event-stream service and the schema changes for the bindings are
+done, the first three as commits on the branch `bump-protobuf-v0.9.0`, which was
+made from `main` at `f585398`. The next task is to serve `WatchMetrics`.
 
 ## Context
 
@@ -60,7 +60,7 @@ What the code shows today:
   `HandlerEvents{Recorded,Handled,Pending,Failing}`; `ProcessInstancesEnded`;
   `ProjectionCompactionState` and
   `ProjectionCompactions{Completed,Failed,DeadlineExceeded,Canceled}`.
-  `ProcessInstanceQueueBindings` is in the set only if its index measures well,
+  `ProcessInstanceQueueBindings` is in the set, because its index measured well,
   as the task for the schema changes says. `ProjectionResetState` is not in the
   set, because RunKit cannot reset a projection yet, and advertising a metric
   that a node can't measure fails the whole call. #156 adds it when reset
@@ -87,8 +87,11 @@ What the code shows today:
   once for each handler, not once for each node.
 - **The bindings counter table.** A table keyed by `(handler_key, stream_id)`,
   with a count of instances, goes into the unreleased v2.0.0 schema, so it needs
-  no backfill and no handling of mixed versions. `runkit.save_aggregate_instance`
-  increments it at the one place where an instance's `stream_id` changes from
+  no handling of mixed versions. The v2.0.0 migration fills it from the
+  instances that a database at the earlier schema version already has bound.
+  The table is named `aggregate_stream_binding_counts`, and it needs no striped
+  rows, because the stream's lock already serializes its updates.
+  `runkit.save_aggregate_instance` increments it at the one place where an instance's `stream_id` changes from
   NULL to a stream. The transaction already holds the stream's lock there, so
   the increment adds no wait. An index on `aggregate_instances` would still
   count every entry of the handler on each refresh, and aggregate instances are
@@ -97,9 +100,13 @@ What the code shows today:
 - **The process bindings use a partial index** on
   `process_instances (handler_key, deadline_queue_id) WHERE NOT ended`, because
   process instances end, and a counter would need decrements and would have one
-  hot row for each handler and queue. It is added only after a measurement on
-  about a million in-progress instances. If it measures poorly, the metric stays
-  out of the set and the index is not added.
+  hot row for each handler and queue. On a scratch database with 1M in-progress
+  and 2M ended instances, the exact count took 45 ms with the index and 87 ms
+  without it, which scans the whole 658 MB table, and inserts cost about 1 µs
+  more for each row. The metric is read on a slower interval than the other
+  gauges. If 45 ms proves too slow on a real workload, the next step is
+  counters in several rows for each handler and queue, which are exact, and not
+  a sample, because a client adds the queue values to get the handler's total.
 - **The cluster ID is stored in the database.** The table `runkit.identity`
   becomes `runkit.cluster`. Its one row holds the identity of the cluster and of
   what the cluster runs: `id`, a random UUID made when the database is first
@@ -230,20 +237,30 @@ the service, and the engine constructs the service.
 Nothing a client can see changes. Done before the metrics service, so that the
 metrics service lands beside it.
 
-### [ ] Make the schema changes for the bindings
+### [x] Make the schema changes for the bindings
 
-First, measure the count of in-progress process instances with and without the
-partial index, in
-[internal/schema/internal/current/20-process.sql](../../internal/schema/internal/current/20-process.sql),
-on a scratch database with about a million in-progress instances. Add the index
-only if the result is acceptable.
+Add the partial index to
+[internal/schema/internal/current/20-process.sql](../../internal/schema/internal/current/20-process.sql).
+It was measured on a scratch database already, as "Decided in planning" says.
 
-Then add the bindings counter table and change `save_aggregate_instance` in
+Then add the bindings counter table, `aggregate_stream_binding_counts`, and
+change `save_aggregate_instance` in
 [internal/schema/internal/current/20-aggregate.sql](../../internal/schema/internal/current/20-aggregate.sql).
 
 Tests, against a real database: the count for each handler and stream after
 several binds; no double count when an instance records more events; a
 rolled-back bind leaves the count unchanged.
+
+The index is created only if it doesn't exist. `CREATE INDEX` locks its table
+even when the index exists, and the engine's transactions lock
+`process_instances` and `queued_messages` in both orders, so the lock-ordering
+block at the top of
+[internal/schema/internal/current/00-application.sql](../../internal/schema/internal/current/00-application.sql)
+can't make an upgrade safe for this table. The v2.0.0 migration has a step for
+each change: one creates the counter table and fills it from the instances that
+are already bound, and one builds the index concurrently. The changelog entry
+for the schema change says that the upgrade takes longer the more instances
+there are.
 
 ### [ ] Serve `WatchMetrics` with the sample loop
 
@@ -274,7 +291,7 @@ Both are `REACH_CLUSTER`. Exclude remote streams.
 ### [ ] Report the gauges of queues and handlers for commands and deadlines
 
 Pending, due and failing, for each queue and each handler, and
-`ProcessInstanceQueueBindings` if the index was added. The node reports a queue
+`ProcessInstanceQueueBindings`, on a slower interval. The node reports a queue
 only while it owns the workload with the queue's key. "Due" uses the Go clock,
 as delivery does. Measure the cost of each query on a large engine before
 relying on it, and bound it, for example with a read-only transaction and a

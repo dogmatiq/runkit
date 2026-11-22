@@ -736,6 +736,53 @@ func TestApply_doesNotWaitForCheckpointWrites(t *testing.T) {
 	})
 }
 
+// TestApply_doesNotWaitForProcessInstanceWrites verifies that an upgrade that
+// applies "current" again does not wait for writes to process instances to
+// finish.
+//
+// The engine's transactions lock the "process_instances" and "queued_messages"
+// tables in both orders, so an upgrade that locked "process_instances" could
+// deadlock with them.
+//
+// The test changes [schema.TargetVersion], so it must not call t.Parallel().
+// Go runs the parallel tests only after every test that doesn't call it.
+func TestApply_doesNotWaitForProcessInstanceWrites(t *testing.T) {
+	db := xtesting.NewDatabaseAsOwner(t)
+
+	target := schema.TargetVersion
+	t.Cleanup(func() { schema.TargetVersion = target })
+
+	schema.TargetVersion = version.Version{
+		target.Major(),
+		target.Minor(),
+		target.Patch() + 1,
+	}
+
+	xtesting.Transact(t, db, func(tx *sql.Tx) {
+		// Keep the write uncommitted while upgrading through another database
+		// connection.
+		if _, err := tx.ExecContext(
+			t.Context(),
+			`INSERT INTO runkit.process_instances (
+				handler_key,
+				instance_id
+			) VALUES (
+				'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+				'<instance>'
+			)`,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), xtesting.WaitTimeout)
+		defer cancel()
+
+		if err := schema.Apply(ctx, db, false, testLockTimeout, testStatementTimeout); err != nil {
+			t.Fatalf("unable to upgrade during a process instance write: %v", err)
+		}
+	})
+}
+
 // TestEnqueueCommand_usesQueuedAt verifies that a command is first due at the
 // time that the caller gives, not at the time of the database's clock.
 func TestEnqueueCommand_usesQueuedAt(t *testing.T) {
@@ -767,6 +814,180 @@ func TestEnqueueCommand_usesQueuedAt(t *testing.T) {
 		FROM runkit.queued_messages
 		WHERE message_id = '0d3b3f4a-6c1e-4f4e-9d6b-2b4f0f1a6e01'`,
 	)
+}
+
+// TestSaveAggregateInstance_countsBindings verifies that each instance that
+// binds to an event stream is counted once, for its handler and the stream.
+func TestSaveAggregateInstance_countsBindings(t *testing.T) {
+	t.Parallel()
+
+	const (
+		handlerA = "65d5a8ca-e2a5-4c07-aa17-c847c4b2b322"
+		handlerB = "9b1d7f3e-2c4a-4e58-8a6d-0f3b5c7e9a11"
+	)
+
+	// save records one event for an instance. It first creates the instance,
+	// unless the stream is given, because an instance that the engine saves
+	// has always been created.
+	save := func(t testing.TB, tx *sql.Tx, handlerKey, instanceID string, streamID any) {
+		t.Helper()
+
+		if streamID == nil {
+			if _, err := tx.ExecContext(
+				t.Context(),
+				`INSERT INTO runkit.aggregate_instances (handler_key, instance_id)
+				VALUES ($1, $2)`,
+				handlerKey,
+				instanceID,
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if _, err := tx.ExecContext(
+			t.Context(),
+			`SELECT runkit.save_aggregate_instance(
+				$1,
+				$2,
+				$3,
+				'5b0d9a52-1f5e-4c0b-8a43-0e6f3d2c9a02',
+				NULL,
+				ARRAY[
+					ROW(
+						gen_random_uuid(),
+						'd2f7b8a1-4c3e-4d59-a6e0-9c8b7a5f4e04',
+						'\x01'
+					)::runkit.event
+				]
+			)`,
+			handlerKey,
+			instanceID,
+			streamID,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// expectCountsMatchInstances checks that the counts are those that counting
+	// the bound instances gives, and that there is at least one count.
+	expectCountsMatchInstances := func(t *testing.T, db *sql.DB, want int) {
+		t.Helper()
+
+		xtesting.ExpectQueryResult(
+			t,
+			"the counts match the bound instances",
+			0,
+			db,
+			`SELECT COUNT(*)
+			FROM (
+				(
+					SELECT handler_key, stream_id, COUNT(*) AS instances
+					FROM runkit.aggregate_instances
+					WHERE stream_id IS NOT NULL
+					GROUP BY handler_key, stream_id
+					EXCEPT
+					SELECT handler_key, stream_id, instances
+					FROM runkit.aggregate_stream_binding_counts
+				)
+				UNION ALL
+				(
+					SELECT handler_key, stream_id, instances
+					FROM runkit.aggregate_stream_binding_counts
+					EXCEPT
+					SELECT handler_key, stream_id, COUNT(*)
+					FROM runkit.aggregate_instances
+					WHERE stream_id IS NOT NULL
+					GROUP BY handler_key, stream_id
+				)
+			) AS differences`,
+		)
+
+		xtesting.ExpectQueryResult(
+			t,
+			"the number of bound instances",
+			want,
+			db,
+			`SELECT COALESCE(SUM(instances), 0)::int
+			FROM runkit.aggregate_stream_binding_counts`,
+		)
+	}
+
+	t.Run("it counts each instance for its handler and stream", func(t *testing.T) {
+		t.Parallel()
+
+		db := xtesting.NewDatabase(t)
+
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		for _, id := range []string{"<1>", "<2>", "<3>"} {
+			save(t, tx, handlerA, id, nil)
+		}
+		save(t, tx, handlerB, "<1>", nil)
+
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+
+		expectCountsMatchInstances(t, db, 4)
+	})
+
+	t.Run("it doesn't count an instance again when it records more events", func(t *testing.T) {
+		t.Parallel()
+
+		db := xtesting.NewDatabase(t)
+
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		save(t, tx, handlerA, "<1>", nil)
+
+		var streamID string
+		if err := tx.QueryRowContext(
+			t.Context(),
+			`SELECT stream_id
+			FROM runkit.aggregate_instances
+			WHERE handler_key = $1`,
+			handlerA,
+		).Scan(&streamID); err != nil {
+			t.Fatal(err)
+		}
+
+		save(t, tx, handlerA, "<1>", streamID)
+		save(t, tx, handlerA, "<1>", streamID)
+
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+
+		expectCountsMatchInstances(t, db, 1)
+	})
+
+	t.Run("it leaves the counts unchanged when the binding is rolled back", func(t *testing.T) {
+		t.Parallel()
+
+		db := xtesting.NewDatabase(t)
+
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		save(t, tx, handlerA, "<1>", nil)
+
+		if err := tx.Rollback(); err != nil {
+			t.Fatal(err)
+		}
+
+		expectCountsMatchInstances(t, db, 0)
+	})
 }
 
 // TestMigrate_fromReleased verifies that migrating a database created by each
@@ -879,6 +1100,24 @@ func insertRowsBeforeV2_0_0(t testing.TB, db *sql.DB, hasIdentity bool) {
 		t.Context(),
 		`INSERT INTO eventstream.streams (id)
 		VALUES ('3fc2f883-6016-4d34-b6dd-ad8cc195d3e5');
+
+		INSERT INTO aggregate.instances (
+			handler_key,
+			instance_id,
+			stream_id
+		) VALUES (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'<bound-1>',
+			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'
+		), (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'<bound-2>',
+			'3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'
+		), (
+			'65d5a8ca-e2a5-4c07-aa17-c847c4b2b322',
+			'<unbound>',
+			NULL
+		);
 
 		INSERT INTO eventstream.handler_checkpoints (
 			handler_key,
@@ -997,6 +1236,26 @@ func expectRowsMigratedToV2_0_0(t testing.TB, db *sql.DB, hadIdentity bool) {
 			FROM runkit.cluster`,
 		)
 	}
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the instances that were bound to a stream are counted",
+		true,
+		db,
+		`SELECT instances = 2
+		FROM runkit.aggregate_stream_binding_counts
+		WHERE handler_key = '65d5a8ca-e2a5-4c07-aa17-c847c4b2b322'
+		AND stream_id = '3fc2f883-6016-4d34-b6dd-ad8cc195d3e5'`,
+	)
+
+	xtesting.ExpectQueryResult(
+		t,
+		"the instance that was bound to no stream is not counted",
+		1,
+		db,
+		`SELECT COUNT(*)
+		FROM runkit.aggregate_stream_binding_counts`,
+	)
 
 	xtesting.ExpectQueryResult(
 		t,
