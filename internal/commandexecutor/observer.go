@@ -58,13 +58,6 @@ func (e *Executor) observe(
 				nextOffsets,
 			)
 			if err != nil {
-				// If ctx is done, the read probably failed because ctx
-				// interrupted its query. Return ctx's error instead, as
-				// [xsql.Transact] does.
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-
 				return err
 			}
 

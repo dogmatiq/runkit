@@ -618,7 +618,17 @@ func (e *Engine) ExecuteCommand(
 		return err
 	}
 
-	return e.commandExecutor.ExecuteCommand(ctx, command, options...)
+	if err := e.commandExecutor.ExecuteCommand(ctx, command, options...); err != nil {
+		// If ctx is done, the call probably failed because ctx ended, such as
+		// by interrupting a query, so ctx's error is the reason to report.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // waitUntilReady blocks until the engine is ready or ctx is canceled.

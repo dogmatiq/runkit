@@ -148,8 +148,8 @@ the responsible engine as soon as a command or deadline is added.
   - While the call waited, the engine queried the database every
     25 milliseconds, and each query could read every event that the engine had
     recorded. Now the observer receives each event as soon as it's recorded,
-    and the engine queries the database again only when the command causes
-    another event.
+    and the engine queries the database again when the command causes another
+    event.
   - When the context's deadline passed before an observer was satisfied, the
     call returned `dogma.ErrEventObserverNotSatisfied`, which Dogma reserves for
     when the engine has determined that no more relevant events can occur. It
