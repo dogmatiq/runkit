@@ -614,6 +614,13 @@ func (e *Engine) ExecuteCommand(
 	command dogma.Command,
 	options ...dogma.ExecuteCommandOption,
 ) error {
+	// A context that is already done gets its own error without any other
+	// work. Otherwise, waitUntilReady could choose the ready latch, and the
+	// call would pack, validate and try to enqueue the command before failing.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	if err := e.waitUntilReady(ctx); err != nil {
 		return err
 	}
