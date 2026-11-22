@@ -9,6 +9,7 @@ import (
 
 	"github.com/dogmatiq/cosyne"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
+	"github.com/dogmatiq/protobuf/metricsgrpc"
 	"github.com/dogmatiq/runkit/internal/failure"
 	"github.com/dogmatiq/runkit/internal/supervisor"
 	"github.com/dogmatiq/runkit/internal/x/xerrors"
@@ -25,6 +26,10 @@ type Server struct {
 	// EventStreamConsumerAPI is the implementation of the
 	// [messaginggrpc.EventStreamConsumerAPI] service to serve.
 	EventStreamConsumerAPI messaginggrpc.EventStreamConsumerAPIServer
+
+	// MetricsAPI is the implementation of the [metricsgrpc.MetricsAPI] service
+	// to serve.
+	MetricsAPI metricsgrpc.MetricsAPIServer
 
 	// Options are the options used to create the underlying gRPC server.
 	Options []grpc.ServerOption
@@ -71,7 +76,13 @@ func (s *Server) serve(ctx context.Context) error {
 
 	server := grpc.NewServer(s.Options...)
 
-	messaginggrpc.RegisterEventStreamConsumerAPIServer(server, s.EventStreamConsumerAPI)
+	if s.EventStreamConsumerAPI != nil {
+		messaginggrpc.RegisterEventStreamConsumerAPIServer(server, s.EventStreamConsumerAPI)
+	}
+
+	if s.MetricsAPI != nil {
+		metricsgrpc.RegisterMetricsAPIServer(server, s.MetricsAPI)
+	}
 
 	// Stop the server when ctx is canceled, and when serving fails, so that
 	// no connections are left open on the previous server when serving is

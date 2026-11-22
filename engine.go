@@ -38,6 +38,10 @@ const (
 	// uses the database when the engine starts.
 	joinClusterTimeout = 15 * time.Second
 
+	// metricsInterval is the time between the engine's measurements of its
+	// metrics, while a client is watching them.
+	metricsInterval = time.Second
+
 	// schemaLockTimeout is the longest that a step of a schema migration waits
 	// for a lock while engines may be running.
 	schemaLockTimeout = 5 * time.Second
@@ -389,6 +393,14 @@ func (e *Engine) Run(ctx context.Context) error {
 				// application.
 				EventStreams:    localEventStreams,
 				MaxSegmentBytes: eventStreamMaxSegmentBytes,
+			},
+			MetricsAPI: &grpcserver.MetricsService{
+				NodeID:       e.nodeID,
+				ClusterID:    e.clusterID,
+				Application:  grpcserver.ApplicationToProto(e.appConfig),
+				DB:           e.db,
+				Interval:     metricsInterval,
+				EngineLogger: e.engineLogger,
 			},
 			Options:             e.grpcOptions,
 			EngineFailurePolicy: e.engineFailurePolicy,

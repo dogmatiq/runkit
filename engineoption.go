@@ -32,8 +32,9 @@ func WithLogger(logger *slog.Logger) EngineOption {
 // The options are used to create the gRPC server. As with any gRPC server, it
 // is insecure by default: unless transport credentials are supplied using
 // [grpc.Creds], connections are neither encrypted nor authenticated. Any client
-// that is able to connect can consume all of the application's events, so the
-// credentials should authenticate clients, for example by using mutual TLS:
+// that is able to connect can access all of the engine's APIs, including
+// consuming all of the application's events, so the credentials should
+// authenticate clients, for example by using mutual TLS:
 //
 //	runkit.WithListenAddress(
 //		":50555",

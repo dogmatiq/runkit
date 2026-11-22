@@ -76,6 +76,8 @@ the responsible engine as soon as a command or deadline is added.
   server.
 - Added the length of the event stream to the segments that the engine's gRPC
   server sends for `WatchEvents` and `ReadEvents`.
+- Added support for the [dogmatiq/protobuf] `MetricsAPI` service to the
+  engine's gRPC server, which `WithListenAddress()` enables.
 
 ### Changed
 

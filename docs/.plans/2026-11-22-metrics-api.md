@@ -4,8 +4,9 @@
 
 Planned, and the plan was approved in planning. The protobuf bump, the cluster ID,
 the move of the event-stream service and the schema changes for the bindings are
-done, the first three as commits on the branch `bump-protobuf-v0.9.0`, which was
-made from `main` at `f585398`. The next task is to serve `WatchMetrics`.
+done, as four commits on the branch `bump-protobuf-v0.9.0`, which was made from
+`main` at `f585398`. The service, which reports `EventStreamLength` and ends
+calls with `UNAVAILABLE` when a measurement fails, is written and awaits review. The next task is to report the aggregate instance bindings.
 
 ## Context
 
@@ -118,7 +119,7 @@ What the code shows today:
   database that is bound to a different application key. `runkit.identity`
   exists only in the unreleased v2.0.0 schema, so the change goes into the
   v2.0.0 migration and needs no new schema version. #153 uses the same ID.
-- **One measurer for each node, not for each client.** Each `WatchMetrics` call
+- **One sampler for each node, not for each client.** Each `WatchMetrics` call
   holds only a map of the latest sample that it sent for each metric and
   subject, and sends the differences. A sample replaces the earlier one of the
   same metric and subject, so nothing is lost, and a slow client never builds an
@@ -127,7 +128,8 @@ What the code shows today:
   integer that the node forces to increase. All samples of one measurement share
   one revision.
 - **A failed measurement** ends the calls with `UNAVAILABLE` and a fixed message
-  that has no database error text. The measurer retries under `supervisor.Run`.
+  that has no database error text, and the next call starts the sampler again.
+  The sampler runs only while at least one call is watching.
 - **Measurements are pulled, with signals to wake the sampler.** One sampler for
   each node reads the engine's state and keeps the latest snapshot, and each
   `WatchMetrics` call sends the differences from that snapshot. The sampler
@@ -140,6 +142,11 @@ What the code shows today:
   the task that adds it says whether a client would gain from seeing a change
   at once, and if the cost is small, uses a signal to send it at once, not
   only on the timer.
+- **The sampler's interval is the same for every metric, for now.** The user
+  isn't convinced that one interval suits all of them, and asked that it not be
+  treated as fixed. Each metric task says whether it gives friction, such as a
+  query that is too costly at that rate or a count that a client wants sooner,
+  and if so proposes a separate interval or a signal for that metric.
 - **`grpcserver.Server` registers the service only if its field is set.** The
   existing test leaves unset fields nil.
 
@@ -159,29 +166,20 @@ What the code shows today:
 ## Words
 
 The protocol's own terms are used exactly: metric, sample, subject, reach,
-revision, preamble. The new names below are to be chosen by seeing them in the
-doc sentence that each would produce. They wait for the service task, because
-where each type lives depends on what the engine's other packages report: a
-small package outside `grpcserver`, which they can import, holds the types that
-describe a reading.
+revision, preamble. `grpcserver` builds each metric's protobuf message itself,
+from what the engine's packages expose, so there are no types of its own that
+mirror the protocol's.
 
-- The type that holds the node's latest sample of every metric and subject, and
-  wakes the calls that watch them. Recommended `Readings`: "Readings holds the
-  latest sample of every metric that the node measures, and wakes the calls that
-  watch them." Alternatives: `Ledger`, `Board`.
-- The unit that measures one group of related metrics. Recommended `Measurer`:
-  "A Measurer measures one or more of the metrics that the engine supports."
-  Alternatives: `Gauge`, which doesn't fit the running totals; `Probe`: "A
-  Probe measures one or more of the metrics that the engine supports."
-- The package that serves the API, with `Server` implementing
-  `metricsgrpc.MetricsAPIServer`. Chosen for now: `internal/metrics`: "Package
-  metrics serves the engine's metrics to clients." The alternatives were
-  `internal/metricsapi` and `internal/observation`.
-- The type that holds a running total. Recommended `Total`: "A Total counts the
-  occurrences of one event since the node started counting, and only ever
-  increases." Alternatives: `Counter`: "A Counter counts the occurrences of one
-  event since the node started."; `Tally`. A total of each kind is a field named
-  for what it counts, such as `Handled` and `Removed`.
+- **`snapshot`**, an unexported type of `grpcserver`: "snapshot holds the latest
+  sample of every metric and subject that the node has measured." The sampler
+  keeps it in a `cosyne.Observable`, so each call that watches can read the
+  snapshot and wait for the next one.
+- **`Total`**, for a running total, in the package that counts. Recommended:
+  "A Total counts the occurrences of one event since the node started counting,
+  and only ever increases." Alternatives: `Counter`: "A Counter counts the
+  occurrences of one event since the node started."; `Tally`. A total of each
+  kind is a field named for what it counts, such as `Handled` and `Removed`.
+  Chosen when the counters task comes.
 
 ## Tasks
 
@@ -262,31 +260,51 @@ are already bound, and one builds the index concurrently. The changelog entry
 for the schema change says that the upgrade takes longer the more instances
 there are.
 
-### [ ] Serve `WatchMetrics` with the sample loop
+### [x] Serve `WatchMetrics`, reporting `EventStreamLength`
 
-This task also writes the conversion of the application's configuration to
-`configpb.Application`, as an exported function of `grpcserver`, so that the
-engine converts once and passes the result to each service that needs it. Neither RunKit
-nor enginekit v0.32.0 has one, and the `configpb` package that enginekit has is
-an older, thinner schema that nothing in enginekit uses. It covers the
+Add `MetricsService` to [internal/grpcserver](../../internal/grpcserver), with
+the preamble, the samples that follow it, revisions, and cleanup of each call
+when it is canceled, the client disconnects or the engine shuts down. The engine
+constructs it, and `Server` serves it only if it has one. While a call watches,
+a sampler measures every second, and the calls send the differences.
+
+The conversion of the application's configuration to `configpb.Application` is
+an exported function of `grpcserver`, `ApplicationToProto`, so that the engine
+converts once and passes the result to each service that needs it. Neither
+RunKit nor enginekit v0.32.0 had one, and the `configpb` package that enginekit
+has is an older, thinner schema that nothing in enginekit uses. It covers the
 application's identity and Go type, its handlers with their types, message
 usage and concurrency preference, and its message kinds. It leaves the version
 empty, and leaves support for compaction and reset absent, because RunKit can't
-tell a real `Compact` or `Reset` from a no-op. The preamble tests cover it, so it
-has no tests of its own. #153 uses it later.
+tell a real `Compact` or `Reset` from a no-op. The preamble test covers it.
+[#153](https://github.com/dogmatiq/runkit/issues/153) uses it later.
 
-Add `metrics.Server`, `Readings`, the preamble, the initial samples followed by
-differences, revisions, `UNAVAILABLE`, and cleanup of each call when it is
-canceled, the client disconnects or the engine shuts down. Wire it into
-[internal/grpcserver/server.go](../../internal/grpcserver/server.go) and
-[engine.go](../../engine.go) with an empty supported set.
+`EventStreamLength` is the first metric, because it is the simplest one that
+exercises the sampler. It is `REACH_CLUSTER`, and every node reports the same
+lengths, read from the event streams table on each measurement, which is a cheap
+read of one row for each stream. It reads the table and not the streams that
+`source.Local` follows, so it adds nothing to that package, and it excludes
+remote streams because they aren't in the table. Real-time delivery would gain
+a client little here: the sampler's one-second interval is already close to it.
 
-Tests, with a fake measurer: the order of the responses, replacement, zeros, a
-slow client, cancellation and reconnecting.
+A failed measurement ends the calls that were watching with `UNAVAILABLE` and a
+fixed message, and the error goes to the engine's log. The next call starts the
+measuring again.
 
-### [ ] Report `EventStreamLength` and `AggregateInstanceEventStreamBindings`
+Tests, against a real cluster: the preamble, the lengths and their revisions, a
+second call that begins with the latest lengths, and a new call after the last
+one ended. A test with a closed database checks the `UNAVAILABLE` ending.
 
-Both are `REACH_CLUSTER`. Exclude remote streams.
+### [ ] Report `AggregateInstanceEventStreamBindings`
+
+Note from the review of the previous task: `samples()` in
+[internal/grpcserver/metrics.go](../../internal/grpcserver/metrics.go) will
+probably need to split apart as metrics are added, for example into one
+function for each group of metrics. This task is the first to add a second
+group, so it is where to decide how.
+
+`REACH_CLUSTER`. The counts come from the counter table, read on the sampler's
+interval.
 
 ### [ ] Report the gauges of queues and handlers for commands and deadlines
 
