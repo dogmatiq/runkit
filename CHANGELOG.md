@@ -122,6 +122,12 @@ the responsible engine as soon as a command or deadline is added.
   - The records of what a handler did while handling a message, such as each
     message it produced and each call to its scope's `Log()` method, are now
     written only if handling succeeds.
+  - When the application can't unmarshal an aggregate instance's snapshot, the
+    engine now logs a WARN instead of an ERROR. It still handles the command, by
+    replaying all of the instance's events.
+  - When the application can't marshal an aggregate instance's snapshot, the
+    engine now logs a DEBUG record instead of an ERROR. It saves the instance
+    without a snapshot.
 
 ### Removed
 

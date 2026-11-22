@@ -217,7 +217,7 @@ func (i *instance) ApplySnapshot(
 		},
 	); err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			engineLogger.ErrorContext(
+			engineLogger.WarnContext(
 				ctx,
 				"unable to unmarshal snapshot",
 				xslog.Error(err),
@@ -244,7 +244,7 @@ func (i *instance) marshalSnapshot(
 	)
 	if err != nil {
 		if !errors.Is(err, dogma.ErrNotSupported) {
-			engineLogger.ErrorContext(
+			engineLogger.DebugContext(
 				ctx,
 				"unable to marshal snapshot",
 				xslog.Error(err),

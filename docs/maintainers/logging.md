@@ -140,11 +140,12 @@ recovering on its own. Use it for:
 
 ### WARN
 
-WARN means the engine received something it couldn't make sense of, such as a
-malformed signal or bad data from a peer or a remote engine, so it didn't act
-on it. Because it was never understood, the engine can't say whether ignoring
-it is a fault. It's evidence that something outside this node is misbehaving,
-possibly maliciously.
+WARN means the engine received input that it couldn't make sense of, so it
+didn't act on that input. Examples are a malformed signal, bad data from a peer
+or a remote engine, and stored data that the application wrote and can no longer
+read, such as a snapshot. Because the engine never understood the input, it
+can't say whether ignoring the input is a fault. Such input is evidence that
+something outside the engine is misbehaving, possibly maliciously.
 
 The engine's own failures never use WARN. When bad input also stops work, log
 both. The WARN record describes the sender, and the failure rules below
