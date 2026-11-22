@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"sync"
 	"testing"
@@ -131,6 +132,37 @@ func NewDatabaseWithFailingQueries(
 			fail: fail,
 		},
 	)
+}
+
+// NewDatabaseWithSlowDials returns a database pool like [NewDatabase], except
+// that the pool waits for the given duration before each attempt to dial the
+// database, unless the context of the query that needs the connection ends
+// first.
+//
+// The schema is applied by a different pool, so it isn't slowed.
+func NewDatabaseWithSlowDials(
+	t testing.TB,
+	delay time.Duration,
+) *sql.DB {
+	t.Helper()
+
+	config := createDatabase(t)
+	owner := openPool(t, config, nil)
+	ApplySchema(t, owner)
+
+	engine := asEngineRole(t, config, owner)
+
+	dialer := &net.Dialer{}
+	engine.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+		select {
+		case <-time.After(delay):
+			return dialer.DialContext(ctx, network, address)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	return openPool(t, engine, nil)
 }
 
 // NewDatabaseWithoutSchema returns a database pool that connects to an isolated
