@@ -1,4 +1,4 @@
-package source
+package grpcserver
 
 import (
 	"errors"
@@ -9,6 +9,7 @@ import (
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
+	"github.com/dogmatiq/runkit/internal/eventstream/source"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -16,20 +17,21 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Server provides the [messaginggrpc.EventStreamConsumerAPI] service over the
-// event streams of a [Source], so that remote engines can consume them.
+// EventStreamConsumerService provides the
+// [messaginggrpc.EventStreamConsumerAPI] service over the event streams of a
+// [source.Source], so that remote engines can consume them.
 //
 // It does not yet implement the ListEventStreams and ReadEventSegment methods.
 // Clients that call them receive an UNIMPLEMENTED error.
-type Server struct {
+type EventStreamConsumerService struct {
 	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
 
-	// EventStreams is the source of the event streams that the server
+	// EventStreams is the source of the event streams that the service
 	// provides.
-	EventStreams Source
+	EventStreams source.Source
 
 	// MaxSegmentBytes is the maximum combined size, in bytes, of the events in
-	// each segment that the server sends. A segment whose events are larger is
+	// each segment that the service sends. A segment whose events are larger is
 	// sent as several contiguous segments. If a single event is larger than
 	// this, it is sent on its own. It must be positive.
 	MaxSegmentBytes int
@@ -37,7 +39,7 @@ type Server struct {
 
 // WatchEvents implements the WatchEvents method of
 // [messaginggrpc.EventStreamConsumerAPIServer].
-func (s *Server) WatchEvents(
+func (s *EventStreamConsumerService) WatchEvents(
 	req *messaginggrpc.WatchEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
 ) error {
@@ -56,7 +58,7 @@ func (s *Server) WatchEvents(
 	err = s.EventStreams.Watch(
 		res.Context(),
 		types,
-		func(seg Segment) error {
+		func(seg source.Segment) error {
 			m.Lock()
 			defer m.Unlock()
 
@@ -64,7 +66,7 @@ func (s *Server) WatchEvents(
 		},
 	)
 
-	if errors.Is(err, ErrNotContiguous) {
+	if errors.Is(err, source.ErrNotContiguous) {
 		return status.Error(codes.Aborted, err.Error())
 	}
 
@@ -73,7 +75,7 @@ func (s *Server) WatchEvents(
 
 // ReadEvents implements the ReadEvents method of
 // [messaginggrpc.EventStreamConsumerAPIServer].
-func (s *Server) ReadEvents(
+func (s *EventStreamConsumerService) ReadEvents(
 	req *messaginggrpc.ReadEventsRequest,
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
 ) error {
@@ -95,16 +97,16 @@ func (s *Server) ReadEvents(
 		req.GetEventStreamId().AsStd(),
 		types,
 		req.GetBeginOffset(),
-		func(seg Segment) error {
+		func(seg source.Segment) error {
 			return splitAndSendSegment(res, seg, s.MaxSegmentBytes)
 		},
 	)
 
-	if errors.Is(err, ErrUnrecognizedStream) {
+	if errors.Is(err, source.ErrUnrecognizedStream) {
 		return status.Error(codes.NotFound, err.Error())
 	}
 
-	if errors.Is(err, ErrOffsetOutOfRange) {
+	if errors.Is(err, source.ErrOffsetOutOfRange) {
 		return status.Error(codes.OutOfRange, err.Error())
 	}
 
@@ -135,7 +137,7 @@ func requestedTypes(filter *messaginggrpc.MessageFilter) (*uuidset.SetR, error) 
 // contiguous segments if its events are larger than maxBytes combined.
 func splitAndSendSegment(
 	res grpc.ServerStreamingServer[messaginggrpc.EventStreamSegment],
-	seg Segment,
+	seg source.Segment,
 	maxBytes int,
 ) error {
 	for part := range splitSegment(seg, maxBytes) {
@@ -154,7 +156,7 @@ func splitAndSendSegment(
 // Consecutive events with equal headers share a multi-envelope. The header
 // counts towards the size of each segment that holds any of those events.
 func splitSegment(
-	seg Segment,
+	seg source.Segment,
 	maxBytes int,
 ) iter.Seq[*messaginggrpc.EventStreamSegment] {
 	return func(yield func(*messaginggrpc.EventStreamSegment) bool) {
@@ -199,4 +201,9 @@ func splitSegment(
 		part.SetEndOffset(seg.End)
 		yield(part)
 	}
+}
+
+// offsetOf returns the offset of the event in env.
+func offsetOf(env *envelopepb.Envelope) uint64 {
+	return envelopepb.MustGetExtension[*envelopepb.EventStreamPosition](env).GetOffset()
 }

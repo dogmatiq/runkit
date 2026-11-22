@@ -392,7 +392,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.listenAddress != "" {
 		server = &grpcserver.Server{
 			ListenAddress: e.listenAddress,
-			EventStreamConsumerAPI: &source.Server{
+			EventStreamConsumerAPI: &grpcserver.EventStreamConsumerService{
 				// The server provides only the application's own streams, so
 				// that it never relays events recorded by a remote engine's
 				// application.

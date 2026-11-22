@@ -1,4 +1,4 @@
-package source_test
+package grpcserver_test
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func consumerAPIApp() dogma.HandlerRoute {
 	)
 }
 
-func TestServer_contemporaryEvents(t *testing.T) {
+func TestEventStreamConsumerService_contemporaryEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -105,7 +105,7 @@ func TestServer_contemporaryEvents(t *testing.T) {
 	)
 }
 
-func TestServer_eventsRecordedTogetherShareAHeader(t *testing.T) {
+func TestEventStreamConsumerService_eventsRecordedTogetherShareAHeader(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -175,7 +175,7 @@ func TestServer_eventsRecordedTogetherShareAHeader(t *testing.T) {
 	)
 }
 
-func TestServer_largeEventsRecordedTogetherAreSplit(t *testing.T) {
+func TestEventStreamConsumerService_largeEventsRecordedTogetherAreSplit(t *testing.T) {
 	events := []dogma.Event{
 		largeEvent("1", 800<<10),
 		largeEvent("2", 800<<10),
@@ -238,7 +238,7 @@ func TestServer_largeEventsRecordedTogetherAreSplit(t *testing.T) {
 	)
 }
 
-func TestServer_historicalEvents(t *testing.T) {
+func TestEventStreamConsumerService_historicalEvents(t *testing.T) {
 	xtesting.RunEngines(
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
@@ -268,7 +268,7 @@ func TestServer_historicalEvents(t *testing.T) {
 	)
 }
 
-func TestServer_WatchEvents(t *testing.T) {
+func TestEventStreamConsumerService_WatchEvents(t *testing.T) {
 	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 
 	t.Run("it begins each existing stream at its end", func(t *testing.T) {
@@ -473,7 +473,7 @@ func TestServer_WatchEvents(t *testing.T) {
 	})
 }
 
-func TestServer_ReadEvents(t *testing.T) {
+func TestEventStreamConsumerService_ReadEvents(t *testing.T) {
 	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 	typeX := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeX]]()
 
