@@ -71,6 +71,11 @@ the responsible engine as soon as a command or deadline is added.
   waits before retrying a command or deadline that can't be delivered until
   another delivery finishes, such as a second command for the same aggregate
   instance.
+- Added support for the `ListEventStreams` and `ReadEventSegment` calls of the
+  [dogmatiq/protobuf] `EventStreamConsumerAPI` service to the engine's gRPC
+  server.
+- Added the length of the event stream to the segments that the engine's gRPC
+  server sends for `WatchEvents` and `ReadEvents`.
 
 ### Changed
 

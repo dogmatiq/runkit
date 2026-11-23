@@ -2,9 +2,10 @@
 
 ## Where the work stands
 
-Planned, and the plan was approved in planning. The first two tasks are done, as
-one commit each on the branch `bump-protobuf-v0.9.0`. The third task is written
-and awaits review.
+Planned, and the plan was approved in planning. The first three tasks are done,
+as one commit each on the branch `event-stream-consumer-segments`. The fourth task, the
+changelog entry, is written and awaits review. The doc comment on
+`EventStreamConsumerService` was fixed in the commits for the calls.
 
 ## Context
 
@@ -18,8 +19,8 @@ It also sets the optional `stream_length` field of `EventStreamSegment`.
 What the code shows:
 
 - The protobuf bump the issue asks for is done: [go.mod](/Users/james/grit/github.com/dogmatiq/runkit/go.mod)
-  already pins dogmatiq/protobuf v0.10.0 (commit `d955d92` bumped to v0.9.0). No
-  bump task is needed.
+  pins dogmatiq/protobuf v0.9.0, the version that adds both calls, since commit
+  `ed52f60`. No bump task is needed.
 - [internal/grpcserver/eventstreamconsumer.go](/Users/james/grit/github.com/dogmatiq/runkit/internal/grpcserver/eventstreamconsumer.go)
   serves `WatchEvents` and `ReadEvents` over a `source.Source`. Its doc comment
   says the other two calls are unimplemented, which must change. The engine
@@ -57,7 +58,7 @@ What the code shows:
 
 Work one task at a time, with a review after each.
 
-### 1. Carry the stream length in segments, and send it — [x] 4921ac2
+### 1. Carry the stream length in segments, and send it — [x] 9234dc0
 
 - Add `StreamLength optional.Optional[uint64]` to `source.Segment`
   ([segment.go](/Users/james/grit/github.com/dogmatiq/runkit/internal/eventstream/source/segment.go)): the
@@ -80,7 +81,7 @@ Work one task at a time, with a review after each.
   that `WatchEvents` and `ReadEvents` set `stream_length`, including on each part
   of a split segment.
 
-### 2. Serve ListEventStreams — [x] 07e26ce
+### 2. Serve ListEventStreams — [x] cd6a050
 
 - Add `(*Local).Streams(ctx) (map[uuid.UUID]uint64, error)`, which runs
   `SELECT id, next_offset FROM runkit.event_streams`. The lengths are read in
@@ -95,7 +96,7 @@ Work one task at a time, with a review after each.
   with different lengths). `ListEventStreams` in the service test against a real
   engine, after events are recorded in more than one stream.
 
-### 3. Serve ReadEventSegment — [x] written, awaiting review
+### 3. Serve ReadEventSegment — [x] 6b23f8b
 
 - Add `(*Local).ReadSegment(ctx, streamID, types, begin uint64, end optional.Optional[uint64]) (Segment, error)`.
   It runs `loadSegment` once, then:
@@ -121,14 +122,14 @@ Work one task at a time, with a review after each.
   existing `largeEventsRecordedTogetherAreSplit` test is the pattern for a
   segment cut short by `MaxSegmentBytes`.
 
-### 4. Document
+### 4. Document — [x] written, awaiting review
 
 - Fix the doc comment on `EventStreamConsumerService`, which says that the two
   methods are unimplemented, and describe the limits of `ReadEventSegment`.
 - Add a line to the `[Unreleased]` "Added" list in
-  [CHANGELOG.md](/Users/james/grit/github.com/dogmatiq/runkit/CHANGELOG.md), next to the entry for
-  `MetricsAPI`, saying that the engine's gRPC server now serves `ListEventStreams`
-  and `ReadEventSegment`, and sets `stream_length`, naming no tables.
+  [CHANGELOG.md](/Users/james/grit/github.com/dogmatiq/runkit/CHANGELOG.md),
+  saying that the engine's gRPC server now serves `ListEventStreams` and
+  `ReadEventSegment`, and sets `stream_length`, naming no tables.
 - Run `maintaining-changelogs` and `writing-prose` for the wording.
 
 ## Risks
