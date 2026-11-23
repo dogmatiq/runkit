@@ -224,6 +224,72 @@ func (s *Local) Read(
 	}
 }
 
+// ReadSegment returns one [Segment] of a stream, which holds the events of the
+// given types from a range of the stream. A nil set of types means events of
+// every type.
+//
+// The range begins at the given begin offset, and ends at the given end offset
+// or, if there is none, at the end of the stream. The segment is limited to
+// [Local.SegmentSize] events. If the range holds more, the caller reads the
+// rest from where the segment ends. The segment's [Segment.StreamLength] is
+// always present.
+//
+// It returns an error that wraps [ErrOffsetOutOfRange] if either offset is
+// beyond the end of the stream, and one that wraps [ErrUnrecognizedStream] for
+// a stream that the source does not have. It panics if the set of types is
+// empty, or if the end offset is less than the begin offset.
+func (s *Local) ReadSegment(
+	ctx context.Context,
+	streamID uuid.UUID,
+	types *uuidset.SetR,
+	begin uint64,
+	end optional.Optional[uint64],
+) (Segment, error) {
+	panicIfEmpty(types)
+
+	if s.SegmentSize <= 0 {
+		panic("segment size must be positive")
+	}
+
+	endOffset, hasEnd := end.TryGet()
+
+	if hasEnd && endOffset < begin {
+		panic("end offset must not be less than the begin offset")
+	}
+
+	seg, _, err := s.loadSegment(ctx, s.buildSegmentQuery(streamID, types), streamID, begin)
+	if err != nil {
+		return Segment{}, err
+	}
+
+	if !hasEnd {
+		return seg, nil
+	}
+
+	if length := seg.StreamLength.Get(); endOffset > length {
+		return Segment{}, fmt.Errorf(
+			"unable to read event stream %s up to offset %d: the stream ends at offset %d: %w",
+			streamID,
+			endOffset,
+			length,
+			ErrOffsetOutOfRange,
+		)
+	}
+
+	if endOffset < seg.End {
+		seg.End = endOffset
+
+		for i, env := range seg.Envelopes {
+			if offsetOf(env) >= endOffset {
+				seg.Envelopes = seg.Envelopes[:i]
+				break
+			}
+		}
+	}
+
+	return seg, nil
+}
+
 // Streams returns the length of each event stream, by the stream's ID. A
 // stream's length is the number of events in it, which is also the offset at
 // which its next event will be appended. It includes streams with no events.

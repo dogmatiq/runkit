@@ -2,9 +2,9 @@
 
 ## Where the work stands
 
-Planned, and the plan was approved in planning. The first task is done, as one
-commit on the branch `bump-protobuf-v0.9.0`. The second task is written and
-awaits review.
+Planned, and the plan was approved in planning. The first two tasks are done, as
+one commit each on the branch `bump-protobuf-v0.9.0`. The third task is written
+and awaits review.
 
 ## Context
 
@@ -80,7 +80,7 @@ Work one task at a time, with a review after each.
   that `WatchEvents` and `ReadEvents` set `stream_length`, including on each part
   of a split segment.
 
-### 2. Serve ListEventStreams — [x] written, awaiting review
+### 2. Serve ListEventStreams — [x] 07e26ce
 
 - Add `(*Local).Streams(ctx) (map[uuid.UUID]uint64, error)`, which runs
   `SELECT id, next_offset FROM runkit.event_streams`. The lengths are read in
@@ -95,7 +95,7 @@ Work one task at a time, with a review after each.
   with different lengths). `ListEventStreams` in the service test against a real
   engine, after events are recorded in more than one stream.
 
-### 3. Serve ReadEventSegment
+### 3. Serve ReadEventSegment — [x] written, awaiting review
 
 - Add `(*Local).ReadSegment(ctx, streamID, types, begin uint64, end optional.Optional[uint64]) (Segment, error)`.
   It runs `loadSegment` once, then:

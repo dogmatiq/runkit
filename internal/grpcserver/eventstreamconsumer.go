@@ -7,6 +7,7 @@ import (
 	"iter"
 	"sync"
 
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -21,9 +22,6 @@ import (
 // EventStreamConsumerService provides the
 // [messaginggrpc.EventStreamConsumerAPI] service over the event streams of a
 // [source.Local], so that remote engines can consume them.
-//
-// It does not yet implement the ReadEventSegment method. Clients that call it
-// receive an UNIMPLEMENTED error.
 type EventStreamConsumerService struct {
 	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
 
@@ -32,9 +30,11 @@ type EventStreamConsumerService struct {
 	EventStreams *source.Local
 
 	// MaxSegmentBytes is the maximum combined size, in bytes, of the events in
-	// each segment that the service sends. A segment whose events are larger is
-	// sent as several contiguous segments. If a single event is larger than
-	// this, it is sent on its own. It must be positive.
+	// each segment that the service sends. WatchEvents and ReadEvents send a
+	// segment whose events are larger as several contiguous segments.
+	// ReadEventSegment ends its segment before the events that would exceed it.
+	// If a single event is larger than this, it is sent on its own. It must be
+	// positive.
 	MaxSegmentBytes int
 }
 
@@ -100,6 +100,71 @@ func (s *EventStreamConsumerService) WatchEvents(
 	}
 
 	return err
+}
+
+// ReadEventSegment implements the ReadEventSegment method of
+// [messaginggrpc.EventStreamConsumerAPIServer].
+//
+// The segment it returns can end before the requested end offset. The client
+// reads the rest of the range from where the segment ends.
+func (s *EventStreamConsumerService) ReadEventSegment(
+	ctx context.Context,
+	req *messaginggrpc.ReadEventSegmentRequest,
+) (*messaginggrpc.EventStreamSegment, error) {
+	if s.MaxSegmentBytes <= 0 {
+		panic("maximum segment size must be positive")
+	}
+
+	if err := req.GetEventStreamId().Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid event stream ID: %s", err)
+	}
+
+	types, err := requestedTypes(req.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+
+	end := optional.None[uint64]()
+
+	if req.HasEndOffset() {
+		if req.GetBeginOffset() > req.GetEndOffset() {
+			return nil, status.Errorf(
+				codes.InvalidArgument,
+				"begin offset %d is greater than end offset %d",
+				req.GetBeginOffset(),
+				req.GetEndOffset(),
+			)
+		}
+
+		end = optional.Some(req.GetEndOffset())
+	}
+
+	seg, err := s.EventStreams.ReadSegment(
+		ctx,
+		req.GetEventStreamId().AsStd(),
+		types,
+		req.GetBeginOffset(),
+		end,
+	)
+	if err != nil {
+		if errors.Is(err, source.ErrUnrecognizedStream) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+
+		if errors.Is(err, source.ErrOffsetOutOfRange) {
+			return nil, status.Error(codes.OutOfRange, err.Error())
+		}
+
+		return nil, err
+	}
+
+	// The first part is the largest that fits in a message. If the segment is
+	// larger, the client reads the rest from where the part ends.
+	for part := range splitSegment(seg, s.MaxSegmentBytes) {
+		return part, nil
+	}
+
+	panic("unreachable: splitSegment always yields a segment")
 }
 
 // ReadEvents implements the ReadEvents method of

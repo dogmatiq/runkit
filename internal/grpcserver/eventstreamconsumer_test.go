@@ -177,6 +177,363 @@ func TestEventStreamConsumerService_ListEventStreams(t *testing.T) {
 	})
 }
 
+func TestEventStreamConsumerService_ReadEventSegment(t *testing.T) {
+	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
+
+	// request returns a request for the given range of the given stream, with
+	// no end offset if end is nil, for events of the given types or of every
+	// type if there are none.
+	request := func(
+		streamID *uuidpb.UUID,
+		begin uint64,
+		end *uint64,
+		messageTypeIDs ...uuid.UUID,
+	) *messaginggrpc.ReadEventSegmentRequest {
+		b := messaginggrpc.NewReadEventSegmentRequestBuilder().
+			WithEventStreamId(streamID).
+			WithBeginOffset(begin).
+			WithFilter(filterOf(messageTypeIDs))
+
+		if end != nil {
+			b.WithEndOffset(*end)
+		}
+
+		return b.Build()
+	}
+
+	offset := func(v uint64) *uint64 { return &v }
+
+	// expectSegment asserts that seg is the given range of a stream with the
+	// given length, holding exactly the given events.
+	expectSegment := func(
+		t testing.TB,
+		seg *messaginggrpc.EventStreamSegment,
+		begin, end, length uint64,
+		want ...dogma.Event,
+	) {
+		t.Helper()
+
+		if seg.GetBeginOffset() != begin || seg.GetEndOffset() != end {
+			t.Fatalf(
+				"unexpected segment: got [%d, %d), want [%d, %d)",
+				seg.GetBeginOffset(),
+				seg.GetEndOffset(),
+				begin,
+				end,
+			)
+		}
+
+		if !seg.HasStreamLength() || seg.GetStreamLength() != length {
+			t.Fatalf("unexpected stream length: got %d, want %d", seg.GetStreamLength(), length)
+		}
+
+		xtesting.Expect(t, "events", eventsIn(t, seg), want)
+	}
+
+	t.Run("it returns the requested range of the stream", func(t *testing.T) {
+		cases := []struct {
+			Name           string
+			Begin          uint64
+			End            *uint64
+			MessageTypeIDs []uuid.UUID
+			WantBegin      uint64
+			WantEnd        uint64
+			WantEvents     []dogma.Event
+		}{
+			{
+				Name:       "a range with an end offset",
+				Begin:      1,
+				End:        offset(3),
+				WantBegin:  1,
+				WantEnd:    3,
+				WantEvents: []dogma.Event{stubs.EventB1, stubs.EventC1},
+			},
+			{
+				Name:       "a range with no end offset",
+				Begin:      1,
+				WantBegin:  1,
+				WantEnd:    4,
+				WantEvents: []dogma.Event{stubs.EventB1, stubs.EventC1, stubs.EventA1},
+			},
+			{
+				Name:           "a range with a filter",
+				Begin:          0,
+				End:            offset(4),
+				MessageTypeIDs: []uuid.UUID{typeA},
+				WantBegin:      0,
+				WantEnd:        4,
+				WantEvents:     []dogma.Event{stubs.EventA1, stubs.EventA1},
+			},
+			{
+				Name:      "an empty range inside the stream",
+				Begin:     2,
+				End:       offset(2),
+				WantBegin: 2,
+				WantEnd:   2,
+			},
+			{
+				Name:      "an empty range at the end of the stream",
+				Begin:     4,
+				End:       offset(4),
+				WantBegin: 4,
+				WantEnd:   4,
+			},
+			{
+				Name:      "a range with no end offset that begins at the end of the stream",
+				Begin:     4,
+				WantBegin: 4,
+				WantEnd:   4,
+			},
+		}
+
+		for _, c := range cases {
+			t.Run(c.Name, func(t *testing.T) {
+				xtesting.RunEngines(
+					t,
+					func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+						streamID := xtesting.CreateEventStream(t, db)
+						xtesting.AppendToEventStream(
+							t,
+							db,
+							streamID,
+							stubs.EventA1,
+							stubs.EventB1,
+							stubs.EventC1,
+							stubs.EventA1,
+						)
+
+						client, ctx := newConsumerClient(t, cluster)
+
+						seg, err := client.ReadEventSegment(
+							ctx,
+							request(uuidpb.FromStd(streamID), c.Begin, c.End, c.MessageTypeIDs...),
+						)
+						if err != nil {
+							t.Fatal(err)
+						}
+
+						if seg.GetEventStreamId().AsStd() != streamID {
+							t.Fatalf("unexpected stream: got %s, want %s", seg.GetEventStreamId(), streamID)
+						}
+
+						expectSegment(t, seg, c.WantBegin, c.WantEnd, 4, c.WantEvents...)
+					},
+					consumerAPIApp(),
+				)
+			})
+		}
+	})
+
+	// readRange calls ReadEventSegment, beginning at the given begin offset and
+	// then from where each segment ends, until the segments cover the range up
+	// to the given end offset. It returns the segments.
+	readRange := func(
+		t testing.TB,
+		ctx context.Context,
+		client messaginggrpc.EventStreamConsumerAPIClient,
+		streamID uuid.UUID,
+		begin, end uint64,
+	) []*messaginggrpc.EventStreamSegment {
+		t.Helper()
+
+		var segments []*messaginggrpc.EventStreamSegment
+
+		for begin < end {
+			seg, err := client.ReadEventSegment(
+				ctx,
+				request(uuidpb.FromStd(streamID), begin, offset(end)),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if seg.GetBeginOffset() != begin || seg.GetEndOffset() <= begin || seg.GetEndOffset() > end {
+				t.Fatalf(
+					"unexpected segment: got [%d, %d), want a segment that begins at %d and ends after it, no later than %d",
+					seg.GetBeginOffset(),
+					seg.GetEndOffset(),
+					begin,
+					end,
+				)
+			}
+
+			segments = append(segments, seg)
+			begin = seg.GetEndOffset()
+		}
+
+		return segments
+	}
+
+	// expectRangeInSeveralSegments asserts that the segments are more than one,
+	// that they hold exactly the given events between them, and that each reports
+	// the given stream length.
+	expectRangeInSeveralSegments := func(
+		t testing.TB,
+		segments []*messaginggrpc.EventStreamSegment,
+		length uint64,
+		want []dogma.Event,
+	) {
+		t.Helper()
+
+		if len(segments) < 2 {
+			t.Fatalf("unexpected number of segments: got %d, want more than 1", len(segments))
+		}
+
+		var got []dogma.Event
+
+		for _, seg := range segments {
+			if !seg.HasStreamLength() || seg.GetStreamLength() != length {
+				t.Fatalf("unexpected stream length: got %d, want %d", seg.GetStreamLength(), length)
+			}
+
+			got = append(got, eventsIn(t, seg)...)
+		}
+
+		xtesting.Expect(t, "events", got, want)
+	}
+
+	t.Run("it returns a segment that ends before the requested end when the range holds more events than the engine loads at once", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				events := make([]dogma.Event, 150)
+				for i := range events {
+					events[i] = &stubs.EventStub[stubs.TypeA]{
+						Content: stubs.TypeA(fmt.Sprintf("<%d>", i)),
+					}
+				}
+
+				streamID := xtesting.CreateEventStream(t, db)
+				xtesting.AppendToEventStream(t, db, streamID, events...)
+
+				client, ctx := newConsumerClient(t, cluster)
+
+				expectRangeInSeveralSegments(
+					t,
+					readRange(t, ctx, client, streamID, 0, 150),
+					150,
+					events,
+				)
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it returns a segment that ends before the requested end when the events are larger than the maximum segment size", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				events := []dogma.Event{
+					largeEvent("1", 800<<10),
+					largeEvent("2", 800<<10),
+					largeEvent("3", 800<<10),
+					largeEvent("4", 800<<10),
+					largeEvent("5", 800<<10),
+				}
+
+				streamID := xtesting.CreateEventStream(t, db)
+				xtesting.AppendToEventStream(t, db, streamID, events...)
+
+				client, ctx := newConsumerClient(t, cluster)
+
+				expectRangeInSeveralSegments(
+					t,
+					readRange(t, ctx, client, streamID, 0, 5),
+					5,
+					events,
+				)
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it returns an error for a request that can not be served", func(t *testing.T) {
+		cases := []struct {
+			Name     string
+			StreamID func(streamID uuid.UUID) *uuidpb.UUID
+			Request  func(streamID *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest
+			Want     codes.Code
+		}{
+			{
+				Name:     "an unrecognized stream",
+				StreamID: func(uuid.UUID) *uuidpb.UUID { return uuidpb.Generate() },
+				Request:  func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 0, nil, typeA) },
+				Want:     codes.NotFound,
+			},
+			{
+				Name:     "a missing stream ID",
+				StreamID: func(uuid.UUID) *uuidpb.UUID { return nil },
+				Request:  func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 0, nil, typeA) },
+				Want:     codes.InvalidArgument,
+			},
+			{
+				Name: "a stream ID that is not version 4 or 5",
+				StreamID: func(uuid.UUID) *uuidpb.UUID {
+					return uuidpb.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+				},
+				Request: func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 0, nil, typeA) },
+				Want:    codes.InvalidArgument,
+			},
+			{
+				Name:     "a missing filter",
+				StreamID: uuidpb.FromStd,
+				Request: func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest {
+					return messaginggrpc.NewReadEventSegmentRequestBuilder().
+						WithEventStreamId(id).
+						Build()
+				},
+				Want: codes.InvalidArgument,
+			},
+			{
+				Name:     "a begin offset greater than the end offset",
+				StreamID: uuidpb.FromStd,
+				Request:  func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 2, offset(1), typeA) },
+				Want:     codes.InvalidArgument,
+			},
+			{
+				Name:     "a begin offset beyond the end of the stream",
+				StreamID: uuidpb.FromStd,
+				Request:  func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 4, nil, typeA) },
+				Want:     codes.OutOfRange,
+			},
+			{
+				Name:     "an end offset beyond the end of the stream",
+				StreamID: uuidpb.FromStd,
+				Request:  func(id *uuidpb.UUID) *messaginggrpc.ReadEventSegmentRequest { return request(id, 0, offset(4), typeA) },
+				Want:     codes.OutOfRange,
+			},
+		}
+
+		for _, c := range cases {
+			t.Run(c.Name, func(t *testing.T) {
+				xtesting.RunEngines(
+					t,
+					func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+						// The stream holds three events.
+						streamID := xtesting.CreateEventStream(t, db)
+						xtesting.AppendToEventStream(
+							t,
+							db,
+							streamID,
+							stubs.EventA1,
+							stubs.EventB1,
+							stubs.EventC1,
+						)
+
+						client, ctx := newConsumerClient(t, cluster)
+
+						_, err := client.ReadEventSegment(ctx, c.Request(c.StreamID(streamID)))
+						if status.Code(err) != c.Want {
+							t.Fatalf("unexpected error: got %v, want %s", err, c.Want)
+						}
+					},
+					consumerAPIApp(),
+				)
+			})
+		}
+	})
+}
+
 func TestEventStreamConsumerService_streamLength(t *testing.T) {
 	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 

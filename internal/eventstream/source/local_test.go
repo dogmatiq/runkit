@@ -879,6 +879,238 @@ func TestLocal(t *testing.T) {
 		})
 	})
 
+	t.Run("ReadSegment", func(t *testing.T) {
+		// readSegment returns the segment that ReadSegment returns, without an
+		// end offset if end is nil.
+		readSegment := func(
+			t *testing.T,
+			src *Local,
+			streamID uuid.UUID,
+			types *uuidset.SetR,
+			begin uint64,
+			end *uint64,
+		) (Segment, error) {
+			t.Helper()
+
+			endOffset := optional.None[uint64]()
+			if end != nil {
+				endOffset = optional.Some(*end)
+			}
+
+			return src.ReadSegment(t.Context(), streamID, types, begin, endOffset)
+		}
+
+		offset := func(v uint64) *uint64 { return &v }
+
+		t.Run("it returns the events of the given types, to the end of the stream if there is no end offset", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			all := xtesting.AppendToEventStream(
+				t,
+				db,
+				streamID,
+				EventE1,
+				EventX1,
+				EventE2,
+				EventX2,
+			)
+
+			seg, err := readSegment(t, src, streamID, typesE, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			xtesting.Expect(
+				t,
+				"segment",
+				seg,
+				Segment{
+					StreamID:     streamID,
+					Begin:        0,
+					End:          4,
+					StreamLength: optional.Some(uint64(4)),
+					Envelopes:    []*envelopepb.Envelope{all[0], all[2]},
+				},
+			)
+		})
+
+		t.Run("it ends after the last event when the range holds more events than the segment size", func(t *testing.T) {
+			src, db := setup(t, 2)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			want := xtesting.AppendToEventStream(
+				t,
+				db,
+				streamID,
+				EventE1,
+				EventE2,
+				EventE3,
+				EventE1,
+				EventE2,
+			)
+
+			seg, err := readSegment(t, src, streamID, typesE, 1, offset(5))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			xtesting.Expect(
+				t,
+				"segment",
+				seg,
+				Segment{
+					StreamID:     streamID,
+					Begin:        1,
+					End:          3,
+					StreamLength: optional.Some(uint64(5)),
+					Envelopes:    want[1:3],
+				},
+			)
+		})
+
+		t.Run("it ends at the end offset, and omits the events from it onwards", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			want := xtesting.AppendToEventStream(
+				t,
+				db,
+				streamID,
+				EventE1,
+				EventE2,
+				EventE3,
+				EventE1,
+			)
+
+			seg, err := readSegment(t, src, streamID, nil, 1, offset(3))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			xtesting.Expect(
+				t,
+				"segment",
+				seg,
+				Segment{
+					StreamID:     streamID,
+					Begin:        1,
+					End:          3,
+					StreamLength: optional.Some(uint64(4)),
+					Envelopes:    want[1:3],
+				},
+			)
+		})
+
+		t.Run("it returns an empty segment for an empty range", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3)
+
+			seg, err := readSegment(t, src, streamID, nil, 2, offset(2))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(seg.Envelopes) != 0 {
+				t.Fatalf("unexpected number of events: got %d, want 0", len(seg.Envelopes))
+			}
+
+			if seg.Begin != 2 || seg.End != 2 {
+				t.Fatalf("unexpected segment: got [%d, %d), want [2, 2)", seg.Begin, seg.End)
+			}
+
+			if want := optional.Some(uint64(3)); seg.StreamLength != want {
+				t.Fatalf("unexpected stream length: got %v, want %v", seg.StreamLength, want)
+			}
+		})
+
+		t.Run("it returns an empty segment for an empty range at the end of the stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2, EventE3)
+
+			seg, err := readSegment(t, src, streamID, nil, 3, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			xtesting.Expect(
+				t,
+				"segment",
+				seg,
+				Segment{
+					StreamID:     streamID,
+					Begin:        3,
+					End:          3,
+					StreamLength: optional.Some(uint64(3)),
+				},
+			)
+		})
+
+		t.Run("it returns ErrOffsetOutOfRange for a begin offset beyond the end of the stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(t, db, streamID, EventE1)
+
+			if _, err := readSegment(t, src, streamID, nil, 2, nil); !errors.Is(err, ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrOffsetOutOfRange)
+			}
+		})
+
+		t.Run("it returns ErrOffsetOutOfRange for an end offset beyond the end of the stream", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(t, db, streamID, EventE1)
+
+			if _, err := readSegment(t, src, streamID, nil, 0, offset(2)); !errors.Is(err, ErrOffsetOutOfRange) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrOffsetOutOfRange)
+			}
+		})
+
+		t.Run("it returns ErrUnrecognizedStream for a stream that does not exist", func(t *testing.T) {
+			src, _ := setup(t, 10)
+
+			if _, err := readSegment(t, src, uuid.New(), nil, 0, nil); !errors.Is(err, ErrUnrecognizedStream) {
+				t.Fatalf("unexpected error: got %v, want %v", err, ErrUnrecognizedStream)
+			}
+		})
+
+		t.Run("it panics when the end offset is less than the begin offset", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			defer func() {
+				want := "end offset must not be less than the begin offset"
+
+				if got := recover(); got != want {
+					t.Fatalf("unexpected panic: got %v, want %q", got, want)
+				}
+			}()
+
+			readSegment(t, src, streamID, nil, 2, offset(1))
+		})
+
+		t.Run("it panics when given an empty set of types", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			defer func() {
+				want := "event types must not be empty"
+
+				if got := recover(); got != want {
+					t.Fatalf("unexpected panic: got %v, want %q", got, want)
+				}
+			}()
+
+			readSegment(t, src, streamID, uuidset.New().R(), 0, nil)
+		})
+	})
+
 	t.Run("Read", func(t *testing.T) {
 		t.Run("it delivers all matching events in one segment that ends at the end of the stream", func(t *testing.T) {
 			src, db := setup(t, 10)
