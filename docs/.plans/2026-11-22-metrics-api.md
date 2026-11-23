@@ -2,8 +2,10 @@
 
 ## Where the work stands
 
-Planned, and the plan was approved in planning. No task has started. The work
-will go on a branch made from `main`, which is at `f585398`.
+Planned, and the plan was approved in planning. The protobuf bump, the cluster ID
+and the move of the event-stream service are done, as three commits on the
+branch `bump-protobuf-v0.9.0`, which was made from `main` at `f585398`. The next
+task is the schema changes for the bindings.
 
 ## Context
 
@@ -119,16 +121,42 @@ What the code shows today:
   one revision.
 - **A failed measurement** ends the calls with `UNAVAILABLE` and a fixed message
   that has no database error text. The measurer retries under `supervisor.Run`.
-- **No new database signals.** Gauges are measured on a timer, and each node's
-  totals change in process.
+- **Measurements are pulled, with signals to wake the sampler.** One sampler for
+  each node reads the engine's state and keeps the latest snapshot, and each
+  `WatchMetrics` call sends the differences from that snapshot. The sampler
+  asks the engine's other packages for as little as possible. It prefers the
+  signals that the engine already has, such as "messages_enqueued" and the
+  signals for events appended to a stream, and database state that is very
+  cheap to poll. Anything added to another package only for the metrics is
+  called out to the user when it comes up in review, and the user decides how it
+  is marked. For each metric,
+  the task that adds it says whether a client would gain from seeing a change
+  at once, and if the cost is small, uses a signal to send it at once, not
+  only on the timer.
 - **`grpcserver.Server` registers the service only if its field is set.** The
   existing test leaves unset fields nil.
 
+- **The engine's gRPC services live in `grpcserver`.** Each service's
+  implementation is one exported type, in one file of
+  [internal/grpcserver](../../internal/grpcserver), which the engine constructs
+  and gives to `Server`. It stays a thin layer over the
+  engine's other packages. A package under `internal/grpcserver/internal/` holds
+  only what several services share, such as the conversion of the application's
+  configuration to `configpb.Application`. This replaces the earlier plan for a
+  package `internal/metrics` that serves the API. The event-stream service
+  moves there too, from `source.Server`, in its own task. The conversion of the
+  application's configuration to `configpb.Application` is an exported function
+  of `grpcserver`, with no tests of its own, and is written as part of the
+  metrics service, because the preamble is its first user. The engine converts
+  once, and passes the result to each service that needs it.
 ## Words
 
 The protocol's own terms are used exactly: metric, sample, subject, reach,
 revision, preamble. The new names below are to be chosen by seeing them in the
-doc sentence that each would produce.
+doc sentence that each would produce. They wait for the service task, because
+where each type lives depends on what the engine's other packages report: a
+small package outside `grpcserver`, which they can import, holds the types that
+describe a reading.
 
 - The type that holds the node's latest sample of every metric and subject, and
   wakes the calls that watch them. Recommended `Readings`: "Readings holds the
@@ -191,16 +219,16 @@ Tests, against a real database: two engines on one database report the same
 cluster ID; two databases report different IDs; joining a cluster of a
 different application key is still refused.
 
-### [ ] Describe the application as `configpb.Application`
+### [x] Move the event-stream service into `grpcserver`
 
-Shared with #153, and needed by the preamble of the metrics service. Neither
-RunKit nor enginekit v0.32.0 converts an application's configuration to
-`configpb.Application` from dogmatiq/protobuf. The `configpb` package that
-enginekit has is an older, thinner schema, and nothing in enginekit uses it.
-Write the conversion once, covering the application's identity, version and Go
-type, its handlers with their types, message usage, concurrency preference and
-support for compaction and reset, and its message kinds. Show the names before
-writing code.
+Move `source.Server` from
+[internal/eventstream/source/server.go](../../internal/eventstream/source/server.go)
+into a file of [internal/grpcserver](../../internal/grpcserver), with its tests,
+as the exported type `EventStreamConsumerService`, so that every gRPC service of
+the engine is in one package, one file each. `Server` keeps its field that holds
+the service, and the engine constructs the service.
+Nothing a client can see changes. Done before the metrics service, so that the
+metrics service lands beside it.
 
 ### [ ] Make the schema changes for the bindings
 
@@ -218,6 +246,17 @@ several binds; no double count when an instance records more events; a
 rolled-back bind leaves the count unchanged.
 
 ### [ ] Serve `WatchMetrics` with the sample loop
+
+This task also writes the conversion of the application's configuration to
+`configpb.Application`, as an exported function of `grpcserver`, so that the
+engine converts once and passes the result to each service that needs it. Neither RunKit
+nor enginekit v0.32.0 has one, and the `configpb` package that enginekit has is
+an older, thinner schema that nothing in enginekit uses. It covers the
+application's identity and Go type, its handlers with their types, message
+usage and concurrency preference, and its message kinds. It leaves the version
+empty, and leaves support for compaction and reset absent, because RunKit can't
+tell a real `Compact` or `Reset` from a no-op. The preamble tests cover it, so it
+has no tests of its own. #153 uses it later.
 
 Add `metrics.Server`, `Readings`, the preamble, the initial samples followed by
 differences, revisions, `UNAVAILABLE`, and cleanup of each call when it is
