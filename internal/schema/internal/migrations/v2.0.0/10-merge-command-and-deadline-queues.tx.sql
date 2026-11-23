@@ -39,7 +39,7 @@ ON runkit.queued_messages (
     queue_id,
     next_attempt_at,
     message_type_id
-);
+) INCLUDE (handler_key);
 
 CREATE INDEX queued_messages_by_instance
 ON runkit.queued_messages (

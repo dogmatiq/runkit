@@ -210,14 +210,16 @@ evaluation.
   database runs in a transaction that sets `max_parallel_workers_per_gather`
   to 0 with `SET LOCAL`, so that the elapsed time is never less than the
   processor time.
-- **The queue index gains the handler key, and a second index covers the
-  failing messages.** `queued_messages_by_queue` includes `handler_key`, so
-  the counts read the index alone. A partial index on
-  `(queue_id, message_type_id)`, which also includes `handler_key` and covers
-  only the messages with `failures > 0`, makes the failing count read only the
-  failing messages. Both go into the unreleased v2.0.0 schema, and the v2.0.0
-  migration replaces the existing queue index. The failing index is created
-  only if it doesn't exist, as the index for the process bindings is.
+- **The queue index gains the handler key, and a second index covers the failing
+  messages.** `queued_messages_by_queue` includes `handler_key`, so the counts
+  read the index alone. A partial index on `(queue_id, message_type_id)`, which
+  also includes `handler_key` and covers only the messages with `failures > 0`,
+  makes the failing count read only the failing messages. Both go into the
+  unreleased v2.0.0 schema. The step of the migration that creates the table
+  also creates the queue index with the handler key. The failing index is new,
+  so `current/` creates it with `CREATE INDEX IF NOT EXISTS`. That is safe for
+  `queued_messages`, because the lock block at the top of `00-application.sql`
+  already locks that table in the engine's order.
 - **A deadline's handler comes from its row, and a command's from its type.**
   Dogma lets two process handlers schedule the same deadline type, so a
   deadline's type doesn't identify its handler. Its row's `handler_key` does.
@@ -494,12 +496,14 @@ is built by a function that takes them. The cluster call reports
 which is the in-memory counters. The tests use the cluster call. "Decided while
 designing the gauges" says which metrics each call reports as they are added.
 
-### [ ] Add the handler key to the queue index, and add the failing index
+### [x] Add the handler key to the queue index, and add the failing index
 
 Change `queued_messages_by_queue` and add the failing index in
-[internal/schema/internal/current/10-messagequeue.sql](../../internal/schema/internal/current/10-messagequeue.sql),
-with a step of the v2.0.0 migration for each, as the schema changes for the
-bindings have. The changelog entry for the schema change covers them.
+[internal/schema/internal/current/10-messagequeue.sql](../../internal/schema/internal/current/10-messagequeue.sql).
+The v2.0.0 migration creates the queue index the same way, in
+[internal/schema/internal/migrations/v2.0.0/10-merge-command-and-deadline-queues.tx.sql](../../internal/schema/internal/migrations/v2.0.0/10-merge-command-and-deadline-queues.tx.sql).
+The test that compares a migrated database with a new one covers both. The
+changelog entry for the schema change covers them.
 
 ### [ ] Report the due and failing gauges of queues and handlers
 

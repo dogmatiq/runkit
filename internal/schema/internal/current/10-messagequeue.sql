@@ -42,12 +42,26 @@ CREATE TABLE IF NOT EXISTS runkit.queued_messages (
 -- the order in which they're due, and for listing the queues that have
 -- messages. It includes each message's type, which lets a search skip a message
 -- whose type has no handler on the engine, without reading the table.
+--
+-- It also includes each deadline's handler key, so that counting the messages
+-- of each queue and handler, as the engine's metrics do, reads the index alone.
 CREATE INDEX IF NOT EXISTS queued_messages_by_queue
 ON runkit.queued_messages (
     queue_id,
     next_attempt_at,
     message_type_id
-);
+) INCLUDE (handler_key);
+
+-- Create an index of the failing messages, which are the ones that have failed
+-- at least once, so that counting them, as the engine's metrics do, reads one
+-- entry for each failing message. It includes each deadline's handler key for
+-- the same reason as "queued_messages_by_queue".
+CREATE INDEX IF NOT EXISTS queued_messages_failing_by_queue
+ON runkit.queued_messages (
+    queue_id,
+    message_type_id
+) INCLUDE (handler_key)
+WHERE failures > 0;
 
 -- Create an index for finding the deadlines of a process instance.
 CREATE INDEX IF NOT EXISTS queued_messages_by_instance
