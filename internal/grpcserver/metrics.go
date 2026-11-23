@@ -29,11 +29,6 @@ import (
 //
 // WatchClusterMetrics panics unless MinInterval is positive and MaxDutyCycle is
 // above 0 and at most 1.
-//
-// WatchClusterMetrics reports these metrics:
-//
-//   - EventStreamLength
-//   - AggregateInstanceEventStreamBindings
 type MetricsService struct {
 	metricsgrpc.UnimplementedMetricsAPIServer
 
@@ -45,6 +40,10 @@ type MetricsService struct {
 
 	// Application describes the application that runs on the engine.
 	Application *configpb.Application
+
+	// CommandHandlerKeys maps the ID of each command type to the key of the
+	// handler that handles it.
+	CommandHandlerKeys map[uuid.UUID]uuid.UUID
 
 	// DB is the database to measure.
 	DB *sql.DB
@@ -133,6 +132,7 @@ func (s *MetricsService) clusterReporter() *metrics.Reporter {
 			Groups: []metrics.Group{
 				metrics.EventStreamLengths,
 				metrics.AggregateInstanceEventStreamBindings,
+				metrics.DueAndFailingQueuedMessages(s.CommandHandlerKeys),
 			},
 		}
 	})

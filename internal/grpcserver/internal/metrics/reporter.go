@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -190,8 +191,9 @@ type measurement struct {
 	// Group is the group that was measured.
 	Group Group
 
-	// Samples is the measurement of every metric in the group. It is empty if
-	// Err is set.
+	// Samples is the group's measurement of its metrics, followed by a zero
+	// sample for each subject that dropped out since the last measurement. It is
+	// empty if Err is set.
 	Samples []*metricsgrpc.WatchMetricsResponse_Sample
 
 	// Err is the error that ended the measuring of the group, or nil if the
@@ -224,14 +226,20 @@ func (r *Reporter) measure(ctx context.Context) {
 	groups.Wait()
 }
 
-// measureRepeatedly repeatedly measures the given group, and sends each
-// measurement to the given channel. It returns when ctx is canceled, or after
-// it has sent a measurement that failed.
+// measureRepeatedly repeatedly measures the given group, adds a zero sample for
+// each subject that dropped out of a measurement, and sends each measurement to
+// the given channel. It returns when ctx is canceled, or after it has sent a
+// measurement that failed.
 func (r *Reporter) measureRepeatedly(
 	ctx context.Context,
 	group Group,
 	measurements chan<- measurement,
 ) {
+	// previous is the last successful measurement of the group, as the group
+	// returned it. A subject in previous that drops out of the next measurement
+	// gets one zero sample.
+	var previous []*metricsgrpc.WatchMetricsResponse_Sample
+
 	dutycycle.Run(
 		ctx,
 		r.MinInterval,
@@ -239,6 +247,15 @@ func (r *Reporter) measureRepeatedly(
 		func(ctx context.Context) error {
 			m := measurement{Group: group}
 			m.Samples, m.Err = r.measureOnce(ctx, group)
+
+			if m.Err == nil {
+				measured := m.Samples
+				m.Samples = slices.Concat(
+					measured,
+					r.droppedAsZeros(previous, measured),
+				)
+				previous = measured
+			}
 
 			select {
 			case measurements <- m:

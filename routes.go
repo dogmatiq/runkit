@@ -65,6 +65,19 @@ func commandHandlersForQueueRouter(appConfig *config.Application) map[uuid.UUID]
 	return handlers
 }
 
+// commandHandlerKeys returns the key of the handler of each command type,
+// keyed by the type's ID, for the metrics service to count the commands of each
+// handler.
+func commandHandlerKeys(appConfig *config.Application) map[uuid.UUID]uuid.UUID {
+	keys := map[uuid.UUID]uuid.UUID{}
+
+	for typeID, handler := range commandHandlersForQueueRouter(appConfig) {
+		keys[typeID] = handler.Key
+	}
+
+	return keys
+}
+
 // consumedEventTypeIDs returns the message type IDs of every event type that
 // is routed to a non-disabled handler within the given application.
 func consumedEventTypeIDs(appConfig *config.Application) *uuidset.Set {

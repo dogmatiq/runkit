@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -88,6 +89,14 @@ func TestMetricsService_preamble(t *testing.T) {
 			want := []string{
 				"dogma.metrics.v1alpha1.EventStreamLength",
 				"dogma.metrics.v1alpha1.AggregateInstanceEventStreamBindings",
+				"dogma.metrics.v1alpha1.QueueCommandsDue",
+				"dogma.metrics.v1alpha1.QueueDeadlinesDue",
+				"dogma.metrics.v1alpha1.QueueCommandsFailing",
+				"dogma.metrics.v1alpha1.QueueDeadlinesFailing",
+				"dogma.metrics.v1alpha1.HandlerCommandsDue",
+				"dogma.metrics.v1alpha1.HandlerDeadlinesDue",
+				"dogma.metrics.v1alpha1.HandlerCommandsFailing",
+				"dogma.metrics.v1alpha1.HandlerDeadlinesFailing",
 			}
 			if got := preamble.GetSupportedMetrics(); !slices.Equal(got, want) {
 				t.Fatalf("unexpected supported metrics: got %v, want %v", got, want)
@@ -274,6 +283,73 @@ func TestMetricsService_aggregateInstanceEventStreamBindings(t *testing.T) {
 	)
 }
 
+func TestMetricsService_dueAndFailingCommandsOfAHandler(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			client, ctx := newMetricsClient(t, cluster)
+			responses := watchClusterMetrics(t, ctx, client)
+
+			metrics := responses.receive().GetPreamble().GetSupportedMetrics()
+
+			// The handler fails every command, so the command stays in its
+			// queue with one failure after the first attempt.
+			xtesting.ExecuteCommand(t, cluster, stubs.CommandA1)
+
+			for {
+				sample := responses.receive().GetSample()
+				if sample == nil {
+					t.Fatal("expected a sample")
+				}
+
+				if metrics[sample.GetMetricIndex()] != "dogma.metrics.v1alpha1.HandlerCommandsFailing" {
+					continue
+				}
+
+				failing := &metricsgrpc.HandlerCommandsFailing{}
+				if err := proto.Unmarshal(sample.GetValue(), failing); err != nil {
+					t.Fatal(err)
+				}
+
+				if got, want := failing.GetHandlerKey().AsStd().String(), failingHandlerKey; got != want {
+					t.Fatalf("unexpected handler: got %s, want %s", got, want)
+				}
+
+				if failing.GetValue() == 1 {
+					return
+				}
+			}
+		},
+		failingApp(),
+	)
+}
+
+// failingHandlerKey is the identity key of the handler of [failingApp].
+const failingHandlerKey = "4646ab53-38cf-49e4-9cd8-39c1cd39588f"
+
+// failingApp returns a handler route for an integration handler that fails
+// every command that it handles.
+func failingApp() dogma.HandlerRoute {
+	return dogma.ViaIntegration(
+		&stubs.IntegrationMessageHandlerStub{
+			ConfigureFunc: func(c dogma.IntegrationConfigurer) {
+				c.Identity("<handler>", failingHandlerKey)
+				c.Routes(
+					dogma.HandlesCommand[*stubs.CommandStub[stubs.TypeA]](),
+					dogma.RecordsEvent[*stubs.EventStub[stubs.TypeA]](),
+				)
+			},
+			HandleCommandFunc: func(
+				context.Context,
+				dogma.IntegrationCommandScope,
+				dogma.Command,
+			) error {
+				return errors.New("<always fails>")
+			},
+		},
+	)
+}
+
 // aggregateApp returns a handler route for an aggregate that records an event
 // for each command, in the instance that the command's content names.
 func aggregateApp() dogma.HandlerRoute {
@@ -450,7 +526,7 @@ func (r *metricsReceiver) receiveSample() []byte {
 		r.Bindings[key] = bindings.GetValue()
 
 	default:
-		r.T.Fatalf("unexpected metric index: %d", sample.GetMetricIndex())
+		// The tests that use this read only the two metrics above.
 	}
 
 	return sample.GetRevision()

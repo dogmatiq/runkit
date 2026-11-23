@@ -226,20 +226,25 @@ evaluation.
   A command's row has no handler key, and the application's configuration
   allows one handler for each command type. A message is a deadline if its row
   has a handler key.
-- **Due and failing are read in one statement, and pending in another.** The
-  due count reads only the part of the queue index that is due, and the
-  failing count reads only the failing index. One `UNION ALL` of the two, with
-  a column that tells them apart, feeds 8 metrics from one snapshot. The
-  pending count reads every queued message, so it is its own group, and a
+- **Due and failing are read in one statement, and pending in another.** The due
+  count reads only the part of the queue index that is due, and the failing
+  count reads only the failing index. One `UNION ALL` of the two, with a column
+  that tells them apart, feeds 8 metrics from one snapshot. On 1M queued
+  messages in 5 queues, in PostgreSQL 18 with the table vacuumed and parallel
+  workers on, the due branch was an index-only scan that skips from queue to
+  queue. It took 0.06 ms with nothing due and 30 ms with 500,000 due. It was not
+  measured with parallel workers off. Without statistics, which a test database
+  has when its role can't vacuum, the planner chooses a scan of the whole table.
+  The pending count reads every queued message, so it is its own group, and a
   client can briefly see more messages due than pending for one queue.
 - **Zeros.** The protocol requires a zero for a subject whose count falls to
   nothing. The measuring remembers the subjects of its last measurement, and
   sends a zero for each one that the next measurement no longer contains,
   whether the queue emptied or its workload moved to another node.
-- **The counts of queued messages take the set of queues to count.** The due
-  and failing counts and the pending count are each given that set. In the node
-  call it is the queues for which the node owns the workload, and in the
-  cluster call it is every queue that has messages.
+- **The counts of queued messages cover every queue that has messages, in the
+  cluster call.** The node call, when it exists, restricts the same statements
+  to the queues for which the node owns the workload, with `queue_id =
+  ANY(...)`.
 - **The protocol has two calls, and no `Reach`.** The cluster call reports
   `EventStreamLength`, `AggregateInstanceEventStreamBindings`,
   `ProcessInstanceQueueBindings`, and the 12 gauges of queues and handlers,
@@ -505,13 +510,36 @@ The v2.0.0 migration creates the queue index the same way, in
 The test that compares a migrated database with a new one covers both. The
 changelog entry for the schema change covers them.
 
-### [ ] Report the due and failing gauges of queues and handlers
+### [x] Send a zero for each subject that a group stops measuring
 
-`QueueCommands{Due,Failing}`, `QueueDeadlines{Due,Failing}`,
-`HandlerCommands{Due,Failing}` and `HandlerDeadlines{Due,Failing}`, from one
-statement, for the queues for which the node owns the workload. "Due" uses the Go
-clock, as delivery does. The measuring sends a zero for a subject that a
-measurement no longer contains.
+The protocol requires a zero for a subject whose count falls to nothing.
+[Reporter](../../internal/grpcserver/internal/metrics/reporter.go) remembers the
+last measurement of each group, as the group returned it. After a measurement
+that lacks a subject that the last one had, it adds a sample of that subject
+with a value of zero, once. `WithMetric` requires the metric's message to have
+`SetValue(uint64)`, which shows that the metric is a count, and the manifest
+keeps a function for each metric that decodes a message, sets its value to zero
+and encodes it again. `Reporter.droppedAsZeros` uses those functions to build
+the zero samples. Every gauge group gets this, so the groups themselves stay
+values that reporters share. A test with a scripted group of two metrics checks
+that the reporter sends the zeros, with each metric's own index. The structured
+metrics of the compaction task need another option, because they have no count.
+
+### [x] Report the due and failing counts of queued messages
+
+`DueAndFailingQueuedMessages` in
+[queuedmessages.go](../../internal/grpcserver/internal/metrics/queuedmessages.go)
+holds `QueueCommands{Due,Failing}`, `QueueDeadlines{Due,Failing}`,
+`HandlerCommands{Due,Failing}` and `HandlerDeadlines{Due,Failing}`. One
+statement reads them for every queue that has messages, and the cluster call
+reports them. A message is due when `next_attempt_at` is at or before the Go
+clock's time, as delivery decides, and failing when `failures > 0`. A deadline's
+handler is its row's `handler_key`. A command's handler comes from
+`CommandHandlerKeys`, a field of the service that the engine fills from the same
+routes as the queue router. A command counts toward its handler only when
+`CommandHandlerKeys` has an entry for its type, and always toward its queue.
+Tests against a real database cover the counts and the zeros, and a test with a
+handler that fails every command covers the engine's wiring.
 
 ### [ ] Report the pending gauges and `ProcessInstanceQueueBindings`
 
