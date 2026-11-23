@@ -27,7 +27,7 @@ func TestMetricsService_preamble(t *testing.T) {
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			client, ctx := newMetricsClient(t, cluster)
-			responses := watchMetrics(t, ctx, client)
+			responses := watchClusterMetrics(t, ctx, client)
 
 			preamble := responses.receive().GetPreamble()
 			if preamble == nil {
@@ -85,21 +85,35 @@ func TestMetricsService_preamble(t *testing.T) {
 				t.Fatalf("an event should be produced and not consumed: got %v", usage)
 			}
 
-			var supported []string
-			for _, m := range preamble.GetSupportedMetrics() {
-				supported = append(supported, m.GetMessageName())
-
-				if m.GetReach() != metricsgrpc.Reach_REACH_CLUSTER {
-					t.Fatalf("unexpected reach of %s: %s", m.GetMessageName(), m.GetReach())
-				}
-			}
-
 			want := []string{
 				"dogma.metrics.v1alpha1.EventStreamLength",
 				"dogma.metrics.v1alpha1.AggregateInstanceEventStreamBindings",
 			}
-			if !slices.Equal(supported, want) {
-				t.Fatalf("unexpected supported metrics: got %v, want %v", supported, want)
+			if got := preamble.GetSupportedMetrics(); !slices.Equal(got, want) {
+				t.Fatalf("unexpected supported metrics: got %v, want %v", got, want)
+			}
+		},
+		consumerAPIApp(),
+	)
+}
+
+func TestMetricsService_nodeMetricsAreUnimplemented(t *testing.T) {
+	xtesting.RunEngines(
+		t,
+		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+			client, ctx := newMetricsClient(t, cluster)
+
+			responses, err := client.WatchNodeMetrics(
+				ctx,
+				metricsgrpc.NewWatchNodeMetricsRequestBuilder().Build(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = responses.Recv()
+			if got, want := status.Code(err), codes.Unimplemented; got != want {
+				t.Fatalf("unexpected status code: got %s, want %s: %v", got, want, err)
 			}
 		},
 		consumerAPIApp(),
@@ -111,7 +125,7 @@ func TestMetricsService_eventStreamLength(t *testing.T) {
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			client, ctx := newMetricsClient(t, cluster)
-			responses := watchMetrics(t, ctx, client)
+			responses := watchClusterMetrics(t, ctx, client)
 
 			// The preamble shows that the call has begun.
 			responses.receive()
@@ -137,13 +151,13 @@ func TestMetricsService_newCallsStartWithTheLatestMeasurements(t *testing.T) {
 			client, ctx := newMetricsClient(t, cluster)
 
 			// While another call is in progress, the sampler is running.
-			first := watchMetrics(t, ctx, client)
+			first := watchClusterMetrics(t, ctx, client)
 			first.receive()
 
 			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1, stubs.CommandB1)
 			first.expectTotalLength(2)
 
-			second := watchMetrics(t, ctx, client)
+			second := watchClusterMetrics(t, ctx, client)
 			second.receive()
 			second.expectTotalLength(2)
 		},
@@ -160,7 +174,7 @@ func TestMetricsService_measuresAgainAfterTheLastCallEnds(t *testing.T) {
 			firstCtx, endFirst := context.WithCancel(t.Context())
 			defer endFirst()
 
-			first := watchMetrics(t, firstCtx, client)
+			first := watchClusterMetrics(t, firstCtx, client)
 			first.receive()
 
 			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
@@ -173,7 +187,7 @@ func TestMetricsService_measuresAgainAfterTheLastCallEnds(t *testing.T) {
 			xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandB1)
 
 			// A new call starts them again, with the current lengths.
-			second := watchMetrics(t, t.Context(), client)
+			second := watchClusterMetrics(t, t.Context(), client)
 			second.receive()
 			second.expectTotalLength(2)
 		},
@@ -197,7 +211,8 @@ func TestMetricsService_endsTheCallWhenMeasuringFails(t *testing.T) {
 			ClusterID:    uuid.New(),
 			Application:  configpb.NewApplicationBuilder().Build(),
 			DB:           db,
-			Interval:     time.Hour,
+			MinInterval:  time.Hour,
+			MaxDutyCycle: 0.1,
 			EngineLogger: spruce.NewTestLogger(t),
 		},
 		EngineFailurePolicy: xtesting.FailurePolicy(),
@@ -218,7 +233,7 @@ func TestMetricsService_endsTheCallWhenMeasuringFails(t *testing.T) {
 		xtesting.DialGRPCAddr(t, addr.String()),
 	)
 
-	responses := watchMetrics(t, ctx, client)
+	responses := watchClusterMetrics(t, ctx, client)
 
 	// The preamble comes first, and then the call ends.
 	responses.receive()
@@ -234,7 +249,7 @@ func TestMetricsService_aggregateInstanceEventStreamBindings(t *testing.T) {
 		t,
 		func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
 			client, ctx := newMetricsClient(t, cluster)
-			responses := watchMetrics(t, ctx, client)
+			responses := watchClusterMetrics(t, ctx, client)
 
 			// The preamble shows that the call has begun.
 			responses.receive()
@@ -321,17 +336,17 @@ func newMetricsClient(
 	return metricsgrpc.NewMetricsAPIClient(conn), ctx
 }
 
-// watchMetrics begins watching the metrics.
-func watchMetrics(
+// watchClusterMetrics begins watching the cluster's metrics.
+func watchClusterMetrics(
 	t testing.TB,
 	ctx context.Context,
 	client metricsgrpc.MetricsAPIClient,
 ) *metricsReceiver {
 	t.Helper()
 
-	responses, err := client.WatchMetrics(
+	responses, err := client.WatchClusterMetrics(
 		ctx,
-		metricsgrpc.NewWatchMetricsRequestBuilder().Build(),
+		metricsgrpc.NewWatchClusterMetricsRequestBuilder().Build(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -352,10 +367,10 @@ type bindingKey struct {
 	StreamID   uuid.UUID
 }
 
-// metricsReceiver receives the responses of a call to WatchMetrics.
+// metricsReceiver receives the responses of a call to WatchClusterMetrics.
 type metricsReceiver struct {
 	T         testing.TB
-	Responses metricsgrpc.MetricsAPI_WatchMetricsClient
+	Responses metricsgrpc.MetricsAPI_WatchClusterMetricsClient
 
 	// Lengths maps each stream to the length in the last sample of it that the
 	// call received.
