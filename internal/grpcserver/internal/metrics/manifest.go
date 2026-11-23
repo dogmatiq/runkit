@@ -14,6 +14,10 @@ import (
 type Manifest struct {
 	names   []string
 	indexes map[string]int
+
+	// zeroValues holds, for each metric, a function that returns the encoded
+	// message that it is given with its value set to zero.
+	zeroValues []func([]byte) []byte
 }
 
 // ManifestOption is an argument of [NewManifest]. Each option adds one metric
@@ -21,13 +25,15 @@ type Manifest struct {
 type ManifestOption func(*Manifest)
 
 // WithMetric returns an option that adds the metric whose samples are messages
-// of type M, such as [metricsgrpc.EventStreamLength], to a manifest.
+// of type M, such as [metricsgrpc.EventStreamLength], to a manifest. The
+// metric must be a count, which M shows by having the method SetValue.
 //
 // The metric's index is its position in the list, which follows the order of
 // the options.
 func WithMetric[M any, P interface {
 	*M
 	proto.Message
+	SetValue(uint64)
 }]() ManifestOption {
 	name := string(proto.MessageName(P(new(M))))
 
@@ -38,6 +44,21 @@ func WithMetric[M any, P interface {
 
 		m.indexes[name] = len(m.names)
 		m.names = append(m.names, name)
+
+		m.zeroValues = append(
+			m.zeroValues,
+			func(value []byte) []byte {
+				message := P(new(M))
+
+				if err := proto.Unmarshal(value, message); err != nil {
+					panic(err)
+				}
+
+				message.SetValue(0)
+
+				return marshalMetric(message)
+			},
+		)
 	}
 }
 
@@ -79,16 +100,21 @@ func (m Manifest) NewSample(
 		panic(fmt.Sprintf("%s is not in the manifest", name))
 	}
 
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(value)
+	return metricsgrpc.NewWatchMetricsResponse_SampleBuilder().
+		WithMetricIndex(uint32(index)).
+		WithSubject(subject).
+		WithValue(marshalMetric(value)).
+		Build()
+}
+
+// marshalMetric returns the encoded form of the message of a metric.
+func marshalMetric(message proto.Message) []byte {
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(message)
 	if err != nil {
 		// The metric messages hold only UUIDs and numbers, so they always
 		// marshal.
 		panic(err)
 	}
 
-	return metricsgrpc.NewWatchMetricsResponse_SampleBuilder().
-		WithMetricIndex(uint32(index)).
-		WithSubject(subject).
-		WithValue(data).
-		Build()
+	return data
 }

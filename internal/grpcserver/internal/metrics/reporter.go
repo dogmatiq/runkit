@@ -267,6 +267,52 @@ func (r *Reporter) measureRepeatedly(
 	)
 }
 
+// droppedAsZeros returns zero samples for the subjects that appear in the
+// previous samples and drop out of the current ones. A zero sample has the
+// metric and subject of a previous sample, and a value of zero. The zero
+// samples follow the order of the previous samples.
+//
+// It panics if a previous sample belongs to a metric outside the manifest.
+func (r *Reporter) droppedAsZeros(
+	previous []*metricsgrpc.WatchMetricsResponse_Sample,
+	current []*metricsgrpc.WatchMetricsResponse_Sample,
+) []*metricsgrpc.WatchMetricsResponse_Sample {
+	present := make(map[sampleKey]struct{}, len(current))
+
+	for _, sample := range current {
+		present[keyOf(sample)] = struct{}{}
+	}
+
+	var zeros []*metricsgrpc.WatchMetricsResponse_Sample
+
+	for _, sample := range previous {
+		if _, ok := present[keyOf(sample)]; !ok {
+			zeros = append(zeros, r.zero(sample))
+		}
+	}
+
+	return zeros
+}
+
+// zero returns a sample of the same metric and subject as the given sample,
+// with a value of zero.
+func (r *Reporter) zero(
+	sample *metricsgrpc.WatchMetricsResponse_Sample,
+) *metricsgrpc.WatchMetricsResponse_Sample {
+	zeroValues := r.getManifest().zeroValues
+
+	index := int(sample.GetMetricIndex())
+	if index >= len(zeroValues) {
+		panic(fmt.Sprintf("metric index %d is outside the manifest", index))
+	}
+
+	return metricsgrpc.NewWatchMetricsResponse_SampleBuilder().
+		WithMetricIndex(sample.GetMetricIndex()).
+		WithSubject(sample.GetSubject()).
+		WithValue(zeroValues[index](sample.GetValue())).
+		Build()
+}
+
 // measureOnce measures every metric in the given group.
 //
 // It runs the group's queries in one transaction, with parallel workers off.
