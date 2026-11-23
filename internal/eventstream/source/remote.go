@@ -7,6 +7,7 @@ import (
 	"io"
 	"uuid"
 
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
 	"github.com/dogmatiq/protobuf/uuidpb"
@@ -258,6 +259,20 @@ func parseSegment(
 
 	if seg.End < seg.Begin {
 		return Segment{}, invalidSegment(res, "it ends before it begins")
+	}
+
+	if res.HasStreamLength() {
+		length := res.GetStreamLength()
+
+		if length < seg.End {
+			return Segment{}, invalidSegment(
+				res,
+				"it has a stream length of %d, which is less than its end",
+				length,
+			)
+		}
+
+		seg.StreamLength = optional.Some(length)
 	}
 
 	// next is the lowest offset that the next event may have.

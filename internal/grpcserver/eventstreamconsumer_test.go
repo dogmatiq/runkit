@@ -105,6 +105,75 @@ func TestEventStreamConsumerService_contemporaryEvents(t *testing.T) {
 	)
 }
 
+func TestEventStreamConsumerService_streamLength(t *testing.T) {
+	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
+
+	t.Run("it is set on the segments of ReadEvents", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				xtesting.ExecuteCommandsSequentially(
+					t,
+					cluster,
+					db,
+					stubs.CommandA1,
+					stubs.CommandB1,
+					stubs.CommandA1,
+				)
+
+				client, ctx := newConsumerClient(t, cluster)
+
+				streamID := watch(t, ctx, client, typeA).receive().GetEventStreamId().AsStd()
+
+				// The length counts every event of the stream, and not only
+				// those that match the filter.
+				seg := read(t, ctx, client, streamID, 0, typeA).receive()
+
+				if !seg.HasStreamLength() || seg.GetStreamLength() != 3 {
+					t.Fatalf("unexpected stream length: got %d, want 3", seg.GetStreamLength())
+				}
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it is set on the segments of WatchEvents", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandB1)
+
+				client, ctx := newConsumerClient(t, cluster)
+				segments := watch(t, ctx, client, typeA)
+
+				// The stream's first segment shows that the watch has begun.
+				seg := segments.receive()
+
+				if !seg.HasStreamLength() || seg.GetStreamLength() != 1 {
+					t.Fatalf("unexpected stream length: got %d, want 1", seg.GetStreamLength())
+				}
+
+				xtesting.ExecuteCommandsSequentially(t, cluster, db, stubs.CommandA1)
+
+				for {
+					seg := segments.receive()
+
+					if len(seg.GetEnvelopes()) == 0 {
+						continue
+					}
+
+					if !seg.HasStreamLength() || seg.GetStreamLength() != 2 {
+						t.Fatalf("unexpected stream length: got %d, want 2", seg.GetStreamLength())
+					}
+
+					return
+				}
+			},
+			consumerAPIApp(),
+		)
+	})
+}
+
 func TestEventStreamConsumerService_eventsRecordedTogetherShareAHeader(t *testing.T) {
 	xtesting.RunEngines(
 		t,
@@ -206,6 +275,12 @@ func TestEventStreamConsumerService_largeEventsRecordedTogetherAreSplit(t *testi
 
 				if n := len(seg.GetEnvelopes()); n != 1 {
 					t.Fatalf("unexpected number of multi-envelopes: got %d, want 1", n)
+				}
+
+				// Every part of a split segment reports the length of the
+				// whole stream.
+				if !seg.HasStreamLength() || seg.GetStreamLength() != 5 {
+					t.Fatalf("unexpected stream length: got %d, want 5", seg.GetStreamLength())
 				}
 
 				xtesting.Expect(t, "events", eventsIn(t, seg), want)
@@ -1011,6 +1086,15 @@ func (r *segmentReceiver) receive() *messaginggrpc.EventStreamSegment {
 			streamID,
 			seg.GetEndOffset(),
 			seg.GetBeginOffset(),
+		)
+	}
+
+	if seg.HasStreamLength() && seg.GetStreamLength() < seg.GetEndOffset() {
+		r.T.Fatalf(
+			"segment of stream %s has a stream length of %d, which is less than its end offset of %d",
+			streamID,
+			seg.GetStreamLength(),
+			seg.GetEndOffset(),
 		)
 	}
 

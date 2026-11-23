@@ -151,7 +151,8 @@ func splitAndSendSegment(
 
 // splitSegment returns the contiguous segments that together cover the given
 // segment, each holding events that are no larger than maxBytes combined. If a
-// single event is larger than maxBytes, it is in a segment on its own.
+// single event is larger than maxBytes, it is in a segment on its own. Each
+// segment has the stream length of the given segment, if it has one.
 //
 // Consecutive events with equal headers share a multi-envelope. The header
 // counts towards the size of each segment that holds any of those events.
@@ -160,10 +161,19 @@ func splitSegment(
 	maxBytes int,
 ) iter.Seq[*messaginggrpc.EventStreamSegment] {
 	return func(yield func(*messaginggrpc.EventStreamSegment) bool) {
-		part := messaginggrpc.NewEventStreamSegmentBuilder().
-			WithEventStreamId(uuidpb.FromStd(seg.StreamID)).
-			WithBeginOffset(seg.Begin).
-			Build()
+		newPart := func(begin uint64) *messaginggrpc.EventStreamSegment {
+			b := messaginggrpc.NewEventStreamSegmentBuilder().
+				WithEventStreamId(uuidpb.FromStd(seg.StreamID)).
+				WithBeginOffset(begin)
+
+			if length, ok := seg.StreamLength.TryGet(); ok {
+				b.WithStreamLength(length)
+			}
+
+			return b.Build()
+		}
+
+		part := newPart(seg.Begin)
 
 		var (
 			multi *envelopepb.MultiEnvelope
@@ -181,10 +191,7 @@ func splitSegment(
 					return
 				}
 
-				part = messaginggrpc.NewEventStreamSegmentBuilder().
-					WithEventStreamId(uuidpb.FromStd(seg.StreamID)).
-					WithBeginOffset(part.GetEndOffset()).
-					Build()
+				part = newPart(part.GetEndOffset())
 				multi = nil
 				size = 0
 			}

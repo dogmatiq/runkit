@@ -14,6 +14,7 @@ import (
 
 	"github.com/dogmatiq/dogma"
 	"github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/identitypb"
 	"github.com/dogmatiq/protobuf/messaginggrpc"
@@ -669,6 +670,32 @@ func TestRemote(t *testing.T) {
 			}
 		})
 
+		t.Run("it sets the length of the stream when the remote engine provides it", func(t *testing.T) {
+			withLength := segment(streamA, 0, 2)
+			withLength.SetStreamLength(5)
+
+			src := reading(withLength, segment(streamA, 2, 3))
+
+			segments, err := read(t, src, streamA, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(segments) != 2 {
+				t.Fatalf("unexpected number of segments: got %d, want 2", len(segments))
+			}
+
+			if got, want := segments[0].StreamLength, optional.Some(uint64(5)); got != want {
+				t.Fatalf("unexpected stream length: got %v, want %v", got, want)
+			}
+
+			// The remote engine did not provide the length of the second
+			// segment, so it is not known.
+			if got, want := segments[1].StreamLength, optional.None[uint64](); got != want {
+				t.Fatalf("unexpected stream length: got %v, want %v", got, want)
+			}
+		})
+
 		t.Run("it reads every type if none are given", func(t *testing.T) {
 			var req *messaginggrpc.ReadEventsRequest
 
@@ -891,6 +918,18 @@ func TestRemote(t *testing.T) {
 					func() (*messaginggrpc.EventStreamSegment, string) {
 						return segment(streamA, 2, 1), fmt.Sprintf(
 							"invalid segment [2, 1) of event stream %s: it ends before it begins",
+							streamA,
+						)
+					},
+				},
+				{
+					"its stream length is less than its end",
+					func() (*messaginggrpc.EventStreamSegment, string) {
+						seg := segment(streamA, 0, 3)
+						seg.SetStreamLength(2)
+
+						return seg, fmt.Sprintf(
+							"invalid segment [0, 3) of event stream %s: it has a stream length of 2, which is less than its end",
 							streamA,
 						)
 					},

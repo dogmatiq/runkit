@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/dogmatiq/cosyne"
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/runkit/internal/uuidset"
 )
@@ -212,9 +213,10 @@ func (s *Memory) segment(
 	begin, end uint64,
 ) Segment {
 	seg := Segment{
-		StreamID: streamID,
-		Begin:    begin,
-		End:      end,
+		StreamID:     streamID,
+		Begin:        begin,
+		End:          end,
+		StreamLength: optional.Some(ms.End),
 	}
 
 	for _, env := range ms.Envelopes {

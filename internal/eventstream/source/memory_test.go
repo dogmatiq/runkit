@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -180,6 +181,28 @@ func TestMemory(t *testing.T) {
 			expectSegment(t, segments[1], streamA, 2, 6, 2)
 		})
 
+		t.Run("it sets the length of the stream on each segment", func(t *testing.T) {
+			src := &Memory{
+				SegmentSize: 2,
+			}
+			src.Append(Segment{
+				StreamID: streamA,
+				Begin:    0,
+				End:      6,
+				Envelopes: []*envelopepb.Envelope{
+					event(streamA, 0, typeA),
+					event(streamA, 1, typeA),
+					event(streamA, 2, typeA),
+				},
+			})
+
+			for _, seg := range read(t, src, streamA, nil, 0) {
+				if want := optional.Some(uint64(6)); seg.StreamLength != want {
+					t.Fatalf("unexpected stream length: got %v, want %v", seg.StreamLength, want)
+				}
+			}
+		})
+
 		t.Run("it delivers nothing from the end of the stream", func(t *testing.T) {
 			src := &Memory{}
 			src.Append(Segment{
@@ -305,6 +328,31 @@ func TestMemory(t *testing.T) {
 				return seg
 			}
 		}
+
+		t.Run("it sets the length of the stream on each segment", func(t *testing.T) {
+			src := &Memory{}
+			src.Append(Segment{
+				StreamID: streamA,
+				Begin:    0,
+				End:      2,
+			})
+
+			segments := watch(t, src, nil)
+
+			if got, want := expect(t, segments).StreamLength, optional.Some(uint64(2)); got != want {
+				t.Fatalf("unexpected stream length: got %v, want %v", got, want)
+			}
+
+			src.Append(Segment{
+				StreamID: streamA,
+				Begin:    2,
+				End:      5,
+			})
+
+			if got, want := expect(t, segments).StreamLength, optional.Some(uint64(5)); got != want {
+				t.Fatalf("unexpected stream length: got %v, want %v", got, want)
+			}
+		})
 
 		t.Run("it returns fn's error unchanged", func(t *testing.T) {
 			src := &Memory{}

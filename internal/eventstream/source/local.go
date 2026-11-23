@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/dogmatiq/cosyne"
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/protobuf/uuidpb"
 	"github.com/dogmatiq/runkit/internal/cluster"
@@ -52,19 +53,29 @@ type Local struct {
 	// EngineLogger is the target for log messages produced by the source.
 	EngineLogger *slog.Logger
 
-	// m guards the offsets and watchers fields.
+	// m guards the progress and watchers fields.
 	m sync.Mutex
 
-	// offsets maps the ID of each watched stream to the offset at which its
-	// next segment begins, which is the end of the last segment delivered. A
-	// call to [Local.Watch] that begins now begins the stream at that offset.
-	// A stream keeps its entry while its delivery is retried after a failure,
-	// so that delivery can resume there.
-	offsets map[uuid.UUID]uint64
+	// progress maps each stream ID to a description of the last segment
+	// delivered for that stream. It is where the opening segments of a new
+	// call to [Local.Watch] come from (see [Source.Watch]), and where delivery
+	// of a stream resumes from after a failure.
+	progress map[uuid.UUID]deliveryProgress
 
 	// watchers is the set of calls to [Local.Watch] that are receiving
 	// segments.
 	watchers map[*watcher]struct{}
+}
+
+// deliveryProgress describes the last segment that the source delivered for
+// one stream.
+type deliveryProgress struct {
+	// Offset is the end offset of the segment, which is the offset at which
+	// the next segment of the stream begins.
+	Offset uint64
+
+	// Length is the length of the stream when the segment was loaded.
+	Length uint64
 }
 
 // watcher is a call to [Local.Watch] that is receiving segments.
@@ -286,7 +297,7 @@ func (s *Local) loadStreamIDs(ctx context.Context) (*uuidset.Set, error) {
 
 // register adds a watcher, and returns it with the opening segment of each
 // watched stream, which is empty and begins at that stream's offset in
-// s.offsets.
+// s.progress.
 func (s *Local) register() (*watcher, []Segment) {
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -303,13 +314,14 @@ func (s *Local) register() (*watcher, []Segment) {
 
 	var openings []Segment
 
-	for streamID, offset := range s.offsets {
+	for streamID, p := range s.progress {
 		openings = append(
 			openings,
 			Segment{
-				StreamID: streamID,
-				Begin:    offset,
-				End:      offset,
+				StreamID:     streamID,
+				Begin:        p.Offset,
+				End:          p.Offset,
+				StreamLength: optional.Some(p.Length),
 			},
 		)
 	}
@@ -325,8 +337,8 @@ func (s *Local) unregister(w *watcher) {
 	delete(s.watchers, w)
 }
 
-// deliver sends a segment to every watcher, and records the segment's end in
-// s.offsets.
+// deliver sends a segment to every watcher, and records it in s.progress. The
+// segment must have a stream length.
 //
 // A watcher whose buffer is full is removed, as the segment's stream can no
 // longer be delivered to it contiguously.
@@ -334,11 +346,14 @@ func (s *Local) deliver(seg Segment) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	if s.offsets == nil {
-		s.offsets = map[uuid.UUID]uint64{}
+	if s.progress == nil {
+		s.progress = map[uuid.UUID]deliveryProgress{}
 	}
 
-	s.offsets[seg.StreamID] = seg.End
+	s.progress[seg.StreamID] = deliveryProgress{
+		Offset: seg.End,
+		Length: seg.StreamLength.Get(),
+	}
 
 	for w := range s.watchers {
 		select {
@@ -355,14 +370,14 @@ func (s *Local) deliver(seg Segment) {
 // discontinue removes every watcher, as the given stream can no longer be
 // delivered to any of them contiguously.
 //
-// It also removes the stream from s.offsets, so that a watcher that registers
+// It also removes the stream from s.progress, so that a watcher that registers
 // before the stream's delivery begins again isn't given an opening segment at
 // the old offset.
 func (s *Local) discontinue(streamID uuid.UUID) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	delete(s.offsets, streamID)
+	delete(s.progress, streamID)
 
 	err := fmt.Errorf("unable to deliver event stream %s contiguously: %w", streamID, ErrNotContiguous)
 
@@ -468,12 +483,12 @@ func (s *Local) openStream(ctx context.Context, streamID uuid.UUID) (uint64, err
 	}
 
 	s.m.Lock()
-	offset, ok := s.offsets[streamID]
+	p, ok := s.progress[streamID]
 	s.m.Unlock()
 
 	if ok {
-		if end >= offset && end-offset <= uint64(s.BufferSize*s.SegmentSize) {
-			return offset, nil
+		if end >= p.Offset && end-p.Offset <= uint64(s.BufferSize*s.SegmentSize) {
+			return p.Offset, nil
 		}
 
 		s.discontinue(streamID)
@@ -481,9 +496,10 @@ func (s *Local) openStream(ctx context.Context, streamID uuid.UUID) (uint64, err
 
 	s.deliver(
 		Segment{
-			StreamID: streamID,
-			Begin:    end,
-			End:      end,
+			StreamID:     streamID,
+			Begin:        end,
+			End:          end,
+			StreamLength: optional.Some(end),
 		},
 	)
 
@@ -633,9 +649,10 @@ func (s *Local) loadSegment(
 	}
 
 	seg := Segment{
-		StreamID: streamID,
-		Begin:    begin,
-		End:      begin,
+		StreamID:     streamID,
+		Begin:        begin,
+		End:          begin,
+		StreamLength: optional.Some(next),
 	}
 
 	for rows.Next() {

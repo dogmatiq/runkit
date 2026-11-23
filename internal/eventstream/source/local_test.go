@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	. "github.com/dogmatiq/enginekit/enginetest/stubs"
+	"github.com/dogmatiq/enginekit/optional"
 	"github.com/dogmatiq/protobuf/envelopepb"
 	"github.com/dogmatiq/runkit/internal/cluster"
 	. "github.com/dogmatiq/runkit/internal/eventstream/source"
@@ -776,6 +777,56 @@ func TestLocal(t *testing.T) {
 			expectEnvelopes(t, segments, streamID, 0, 0)
 			expectNoSegment(t, segments)
 		})
+
+		t.Run("it sets the stream length of the opening segment", func(t *testing.T) {
+			db := xtesting.NewDatabase(t)
+			src := newSource(t, db, 10, 100)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2)
+
+			// The source runs after the events are appended, so that its
+			// watch of the stream begins after both of them.
+			xtesting.GoE(t, src.Run)
+			segments, _ := watch(t, src, nil)
+
+			xtesting.Expect(
+				t,
+				"segment",
+				<-segments,
+				Segment{
+					StreamID:     streamID,
+					Begin:        2,
+					End:          2,
+					StreamLength: optional.Some(uint64(2)),
+				},
+			)
+		})
+
+		t.Run("it sets the stream length of the opening segment of a stream that is already being delivered", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamID := xtesting.CreateEventStream(t, db)
+
+			first, _ := watch(t, src, nil)
+			expectEnvelopes(t, first, streamID, 0, 0)
+
+			want := xtesting.AppendToEventStream(t, db, streamID, EventE1, EventE2)
+			expectEnvelopes(t, first, streamID, 0, 2, want...)
+
+			second, _ := watch(t, src, nil)
+
+			xtesting.Expect(
+				t,
+				"segment",
+				<-second,
+				Segment{
+					StreamID:     streamID,
+					Begin:        2,
+					End:          2,
+					StreamLength: optional.Some(uint64(2)),
+				},
+			)
+		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
@@ -798,10 +849,11 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, typesE, 0),
 				[]Segment{
 					{
-						StreamID:  streamID,
-						Begin:     0,
-						End:       3,
-						Envelopes: want,
+						StreamID:     streamID,
+						Begin:        0,
+						End:          3,
+						StreamLength: optional.Some(uint64(3)),
+						Envelopes:    want,
 					},
 				},
 			)
@@ -828,22 +880,25 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, typesE, 0),
 				[]Segment{
 					{
-						StreamID:  streamID,
-						Begin:     0,
-						End:       2,
-						Envelopes: want[0:2],
+						StreamID:     streamID,
+						Begin:        0,
+						End:          2,
+						StreamLength: optional.Some(uint64(5)),
+						Envelopes:    want[0:2],
 					},
 					{
-						StreamID:  streamID,
-						Begin:     2,
-						End:       4,
-						Envelopes: want[2:4],
+						StreamID:     streamID,
+						Begin:        2,
+						End:          4,
+						StreamLength: optional.Some(uint64(5)),
+						Envelopes:    want[2:4],
 					},
 					{
-						StreamID:  streamID,
-						Begin:     4,
-						End:       5,
-						Envelopes: want[4:5],
+						StreamID:     streamID,
+						Begin:        4,
+						End:          5,
+						StreamLength: optional.Some(uint64(5)),
+						Envelopes:    want[4:5],
 					},
 				},
 			)
@@ -868,10 +923,11 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, typesE, 1),
 				[]Segment{
 					{
-						StreamID:  streamID,
-						Begin:     1,
-						End:       3,
-						Envelopes: want[1:],
+						StreamID:     streamID,
+						Begin:        1,
+						End:          3,
+						StreamLength: optional.Some(uint64(3)),
+						Envelopes:    want[1:],
 					},
 				},
 			)
@@ -899,10 +955,11 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, typesE, 0),
 				[]Segment{
 					{
-						StreamID:  streamID,
-						Begin:     0,
-						End:       4,
-						Envelopes: []*envelopepb.Envelope{all[0], all[2]},
+						StreamID:     streamID,
+						Begin:        0,
+						End:          4,
+						StreamLength: optional.Some(uint64(4)),
+						Envelopes:    []*envelopepb.Envelope{all[0], all[2]},
 					},
 				},
 			)
@@ -926,10 +983,11 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, nil, 0),
 				[]Segment{
 					{
-						StreamID:  streamID,
-						Begin:     0,
-						End:       2,
-						Envelopes: want,
+						StreamID:     streamID,
+						Begin:        0,
+						End:          2,
+						StreamLength: optional.Some(uint64(2)),
+						Envelopes:    want,
 					},
 				},
 			)
@@ -953,9 +1011,10 @@ func TestLocal(t *testing.T) {
 				read(t, src, streamID, typesE, 0),
 				[]Segment{
 					{
-						StreamID: streamID,
-						Begin:    0,
-						End:      2,
+						StreamID:     streamID,
+						Begin:        0,
+						End:          2,
+						StreamLength: optional.Some(uint64(2)),
 					},
 				},
 			)
