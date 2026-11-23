@@ -224,6 +224,50 @@ func (s *Local) Read(
 	}
 }
 
+// Streams returns the length of each event stream, by the stream's ID. A
+// stream's length is the number of events in it, which is also the offset at
+// which its next event will be appended. It includes streams with no events.
+//
+// Each length is the stream's length at some moment during the call, and the
+// lengths of different streams may be from different moments.
+func (s *Local) Streams(ctx context.Context) (map[uuid.UUID]uint64, error) {
+	rows, err := s.DB.QueryContext(
+		ctx,
+		`SELECT
+			id,
+			next_offset
+		FROM runkit.event_streams`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to query event streams: %w", err)
+	}
+	defer rows.Close()
+
+	lengths := map[uuid.UUID]uint64{}
+
+	for rows.Next() {
+		var (
+			id     uuid.UUID
+			length uint64
+		)
+
+		if err := rows.Scan(
+			xsql.UUID(&id),
+			&length,
+		); err != nil {
+			return nil, fmt.Errorf("unable to scan event stream: %w", err)
+		}
+
+		lengths[id] = length
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("unable to iterate event streams: %w", err)
+	}
+
+	return lengths, nil
+}
+
 // discover reports each event stream that isn't in the given set to fn, and
 // adds it to the set.
 //

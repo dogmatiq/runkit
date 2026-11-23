@@ -1,6 +1,7 @@
 package grpcserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"iter"
@@ -19,22 +20,50 @@ import (
 
 // EventStreamConsumerService provides the
 // [messaginggrpc.EventStreamConsumerAPI] service over the event streams of a
-// [source.Source], so that remote engines can consume them.
+// [source.Local], so that remote engines can consume them.
 //
-// It does not yet implement the ListEventStreams and ReadEventSegment methods.
-// Clients that call them receive an UNIMPLEMENTED error.
+// It does not yet implement the ReadEventSegment method. Clients that call it
+// receive an UNIMPLEMENTED error.
 type EventStreamConsumerService struct {
 	messaginggrpc.UnimplementedEventStreamConsumerAPIServer
 
 	// EventStreams is the source of the event streams that the service
 	// provides.
-	EventStreams source.Source
+	EventStreams *source.Local
 
 	// MaxSegmentBytes is the maximum combined size, in bytes, of the events in
 	// each segment that the service sends. A segment whose events are larger is
 	// sent as several contiguous segments. If a single event is larger than
 	// this, it is sent on its own. It must be positive.
 	MaxSegmentBytes int
+}
+
+// ListEventStreams implements the ListEventStreams method of
+// [messaginggrpc.EventStreamConsumerAPIServer].
+func (s *EventStreamConsumerService) ListEventStreams(
+	ctx context.Context,
+	_ *messaginggrpc.ListEventStreamsRequest,
+) (*messaginggrpc.ListEventStreamsResponse, error) {
+	lengths, err := s.EventStreams.Streams(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	eventStreams := make([]*messaginggrpc.EventStream, 0, len(lengths))
+
+	for id, length := range lengths {
+		eventStreams = append(
+			eventStreams,
+			messaginggrpc.NewEventStreamBuilder().
+				WithEventStreamId(uuidpb.FromStd(id)).
+				WithLength(length).
+				Build(),
+		)
+	}
+
+	return messaginggrpc.NewListEventStreamsResponseBuilder().
+		WithEventStreams(eventStreams).
+		Build(), nil
 }
 
 // WatchEvents implements the WatchEvents method of

@@ -829,6 +829,56 @@ func TestLocal(t *testing.T) {
 		})
 	})
 
+	t.Run("Streams", func(t *testing.T) {
+		// lengths returns the length of each stream by its ID.
+		lengths := func(t *testing.T, src *Local) map[uuid.UUID]uint64 {
+			t.Helper()
+
+			lengths, err := src.Streams(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			return lengths
+		}
+
+		t.Run("it returns nothing when there are no streams", func(t *testing.T) {
+			src, _ := setup(t, 10)
+
+			xtesting.Expect(t, "lengths", lengths(t, src), map[uuid.UUID]uint64{})
+		})
+
+		t.Run("it returns each stream with its length, including a stream with no events", func(t *testing.T) {
+			src, db := setup(t, 10)
+			streamIDs := xtesting.CreateEventStreams(t, db, 3)
+
+			xtesting.AppendToEventStream(t, db, streamIDs[0], EventE1, EventE2, EventE3)
+			xtesting.AppendToEventStream(t, db, streamIDs[1], EventE1)
+
+			xtesting.Expect(
+				t,
+				"lengths",
+				lengths(t, src),
+				map[uuid.UUID]uint64{
+					streamIDs[0]: 3,
+					streamIDs[1]: 1,
+					streamIDs[2]: 0,
+				},
+			)
+		})
+
+		t.Run("it returns an error when the context is canceled", func(t *testing.T) {
+			src, _ := setup(t, 10)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			if _, err := src.Streams(ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("unexpected error: got %v, want %v", err, context.Canceled)
+			}
+		})
+	})
+
 	t.Run("Read", func(t *testing.T) {
 		t.Run("it delivers all matching events in one segment that ends at the end of the stream", func(t *testing.T) {
 			src, db := setup(t, 10)

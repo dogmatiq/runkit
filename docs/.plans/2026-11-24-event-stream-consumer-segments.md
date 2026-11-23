@@ -2,8 +2,9 @@
 
 ## Where the work stands
 
-Planned, and the plan was approved in planning. The first task is written and
-awaits review, on the branch `bump-protobuf-v0.9.0`.
+Planned, and the plan was approved in planning. The first task is done, as one
+commit on the branch `bump-protobuf-v0.9.0`. The second task is written and
+awaits review.
 
 ## Context
 
@@ -43,10 +44,12 @@ What the code shows:
 ## Decided in planning
 
 - **Local only.** The new methods go on `source.Local` and not on the
-  `source.Source` interface. `EventStreamConsumerService` takes a small interface
-  that `*source.Local` satisfies, so `Memory` and `Remote` do not change.
-- **The listing method is `Streams`**, returning `[]source.Stream`, a new type
-  with `ID` and `Length`. "Streams returns each event stream with its length."
+  `source.Source` interface. `EventStreamConsumerService.EventStreams` is a
+  `*source.Local`, since the engine gives it nothing else, so no interface or
+  name for one is needed.
+- **The listing method is `Streams`**, returning a map from each stream's ID to
+  its length, because the order of the streams means nothing and a slice would
+  promise one. It needs no new type.
 - **An unknown length is `optional.Optional[uint64]`** (enginekit's `optional`
   package, already a dependency), because zero is a valid length.
 
@@ -54,7 +57,7 @@ What the code shows:
 
 Work one task at a time, with a review after each.
 
-### 1. Carry the stream length in segments, and send it — [x] written, awaiting review
+### 1. Carry the stream length in segments, and send it — [x] 4921ac2
 
 - Add `StreamLength optional.Optional[uint64]` to `source.Segment`
   ([segment.go](/Users/james/grit/github.com/dogmatiq/runkit/internal/eventstream/source/segment.go)): the
@@ -77,9 +80,9 @@ Work one task at a time, with a review after each.
   that `WatchEvents` and `ReadEvents` set `stream_length`, including on each part
   of a split segment.
 
-### 2. Serve ListEventStreams
+### 2. Serve ListEventStreams — [x] written, awaiting review
 
-- Add `source.Stream` and `(*Local).Streams(ctx) ([]Stream, error)`, which runs
+- Add `(*Local).Streams(ctx) (map[uuid.UUID]uint64, error)`, which runs
   `SELECT id, next_offset FROM runkit.event_streams`. The lengths are read in
   one statement, and the protocol allows each to be from a different moment.
 - Add `EventStreamConsumerService.ListEventStreams`. It lists streams that have

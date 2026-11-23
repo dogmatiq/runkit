@@ -105,6 +105,78 @@ func TestEventStreamConsumerService_contemporaryEvents(t *testing.T) {
 	)
 }
 
+func TestEventStreamConsumerService_ListEventStreams(t *testing.T) {
+	// lengths returns the length of each stream that the server lists, by the
+	// stream's ID.
+	lengths := func(
+		t testing.TB,
+		ctx context.Context,
+		client messaginggrpc.EventStreamConsumerAPIClient,
+	) map[uuid.UUID]uint64 {
+		t.Helper()
+
+		res, err := client.ListEventStreams(
+			ctx,
+			messaginggrpc.NewListEventStreamsRequestBuilder().Build(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result := map[uuid.UUID]uint64{}
+
+		for _, stream := range res.GetEventStreams() {
+			id := stream.GetEventStreamId().AsStd()
+
+			if _, ok := result[id]; ok {
+				t.Fatalf("stream %s is listed more than once", id)
+			}
+
+			result[id] = stream.GetLength()
+		}
+
+		return result
+	}
+
+	t.Run("it lists no streams when the application has recorded no events", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				client, ctx := newConsumerClient(t, cluster)
+
+				xtesting.Expect(t, "lengths", lengths(t, ctx, client), map[uuid.UUID]uint64{})
+			},
+			consumerAPIApp(),
+		)
+	})
+
+	t.Run("it lists each stream with its length, including a stream with no events", func(t *testing.T) {
+		xtesting.RunEngines(
+			t,
+			func(t testing.TB, cluster *xtesting.Cluster, db *sql.DB) {
+				streamIDs := xtesting.CreateEventStreams(t, db, 3)
+
+				xtesting.AppendToEventStream(t, db, streamIDs[0], stubs.EventA1, stubs.EventB1)
+				xtesting.AppendToEventStream(t, db, streamIDs[1], stubs.EventC1)
+
+				client, ctx := newConsumerClient(t, cluster)
+
+				xtesting.Expect(
+					t,
+					"lengths",
+					lengths(t, ctx, client),
+					map[uuid.UUID]uint64{
+						streamIDs[0]: 2,
+						streamIDs[1]: 1,
+						streamIDs[2]: 0,
+					},
+				)
+			},
+			consumerAPIApp(),
+		)
+	})
+}
+
 func TestEventStreamConsumerService_streamLength(t *testing.T) {
 	typeA := stubs.MessageTypeID[*stubs.EventStub[stubs.TypeA]]()
 
